@@ -2,7 +2,7 @@
   display: grid;
   gap: 12px;
 }
-.your-computer h5 {
+.your-computer h3 {
   margin-top: 8px;
   font-size: var(--text-control);
   font-weight: 500;

@@ -2466,7 +2466,7 @@ test(
       });
 
       await t.test(
-        'native action receipts preserve authority and exclude unsuccessful work',
+        'native action receipts preserve authority and include commands with nonzero exits',
         async (t) => {
           for (const operation of [
             'apps',
@@ -2613,9 +2613,11 @@ test(
                 if (
                   ['success', 'nonzero'].includes(outcome) ||
                   (operation === 'open running' && outcome === 'failure')
-                )
-                  await work;
-                else
+                ) {
+                  const result = await work;
+                  if (outcome === 'nonzero')
+                    assert.deepEqual(result, { exitCode: 1, output: 'synthetic output' });
+                } else
                   await assert.rejects(
                     work,
                     outcome === 'failure'
@@ -2627,7 +2629,8 @@ test(
                 assert.equal(effects, 1);
                 assert.equal(checks, read ? 0 : 1);
                 const completed =
-                  outcome === 'success' || (operation === 'open running' && outcome === 'failure');
+                  ['success', 'nonzero'].includes(outcome) ||
+                  (operation === 'open running' && outcome === 'failure');
                 assert.deepEqual(
                   await nativeReceipts(turn.turnId),
                   completed

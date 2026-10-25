@@ -2579,70 +2579,74 @@ test('Windows storage starts on a free port, and a readiness failure names its c
   }
 });
 
-test('runtime preloads verified legacy and current image archives and rejects damaged or escaping paths', async (t) => {
-  const { preloadRuntimeImages } = await import('../runtime/index.mjs');
-  const root = await mkdtemp(join(tmpdir(), 'nod-image-compatibility-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'images'));
-  await mkdir(join(root, 'docker-host', 'docker'), { recursive: true });
-  const receipt = join(root, 'loaded.json');
-  await writeFile(
-    join(root, 'docker-host', 'docker', 'docker'),
-    `#!${process.execPath}\nconst fs = require('node:fs');\nif (process.argv[2] === 'image') process.exit(1);\nfs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify(process.argv.slice(2)));\n`,
-    { mode: 0o755 },
-  );
-  const bytes = Buffer.from('synthetic image archive');
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  for (const extension of ['gz', 'zst']) {
-    const file = `images/workspace.tar.${extension}`;
-    await writeFile(join(root, file), bytes);
-    const image = {
-      name: 'workspace',
-      reference: 'synthetic:workspace',
-      id: `sha256:${digest}`,
-      sha256: digest,
-      file,
-    };
-    await writeFile(join(root, 'manifest.json'), JSON.stringify({ images: [image] }));
-    assert.deepEqual(
-      await preloadRuntimeImages({
-        dataRoot: root,
-        assets: root,
-        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
-      }),
-      ['workspace'],
-    );
-    assert.deepEqual(JSON.parse(await readFile(receipt, 'utf8')), [
-      'load',
-      '--input',
-      join(root, file),
-    ]);
-    await rm(receipt);
-    await writeFile(join(root, file), 'damaged image');
-    await assert.rejects(
-      preloadRuntimeImages({
-        dataRoot: root,
-        assets: root,
-        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
-      }),
-      /damaged/,
-    );
-    await assert.rejects(stat(receipt), { code: 'ENOENT' });
+test(
+  'Mac runtime preloads verified legacy and current image archives and rejects damaged or escaping paths',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { preloadRuntimeImages } = await import('../runtime/index.mjs');
+    const root = await mkdtemp(join(tmpdir(), 'nod-image-compatibility-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await mkdir(join(root, 'images'));
+    await mkdir(join(root, 'docker-host', 'docker'), { recursive: true });
+    const receipt = join(root, 'loaded.json');
     await writeFile(
-      join(root, 'manifest.json'),
-      JSON.stringify({ images: [{ ...image, file: `images/../../workspace.tar.${extension}` }] }),
+      join(root, 'docker-host', 'docker', 'docker'),
+      `#!${process.execPath}\nconst fs = require('node:fs');\nif (process.argv[2] === 'image') process.exit(1);\nfs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify(process.argv.slice(2)));\n`,
+      { mode: 0o755 },
     );
-    await assert.rejects(
-      preloadRuntimeImages({
-        dataRoot: root,
-        assets: root,
-        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
-      }),
-      /invalid/,
-    );
-    await assert.rejects(stat(receipt), { code: 'ENOENT' });
-  }
-});
+    const bytes = Buffer.from('synthetic image archive');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    for (const extension of ['gz', 'zst']) {
+      const file = `images/workspace.tar.${extension}`;
+      await writeFile(join(root, file), bytes);
+      const image = {
+        name: 'workspace',
+        reference: 'synthetic:workspace',
+        id: `sha256:${digest}`,
+        sha256: digest,
+        file,
+      };
+      await writeFile(join(root, 'manifest.json'), JSON.stringify({ images: [image] }));
+      assert.deepEqual(
+        await preloadRuntimeImages({
+          dataRoot: root,
+          assets: root,
+          inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+        }),
+        ['workspace'],
+      );
+      assert.deepEqual(JSON.parse(await readFile(receipt, 'utf8')), [
+        'load',
+        '--input',
+        join(root, file),
+      ]);
+      await rm(receipt);
+      await writeFile(join(root, file), 'damaged image');
+      await assert.rejects(
+        preloadRuntimeImages({
+          dataRoot: root,
+          assets: root,
+          inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+        }),
+        /damaged/,
+      );
+      await assert.rejects(stat(receipt), { code: 'ENOENT' });
+      await writeFile(
+        join(root, 'manifest.json'),
+        JSON.stringify({ images: [{ ...image, file: `images/../../workspace.tar.${extension}` }] }),
+      );
+      await assert.rejects(
+        preloadRuntimeImages({
+          dataRoot: root,
+          assets: root,
+          inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+        }),
+        /invalid/,
+      );
+      await assert.rejects(stat(receipt), { code: 'ENOENT' });
+    }
+  },
+);
 
 async function windowsImageFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'nod-windows-image-order-'));

@@ -407,7 +407,7 @@ export function Onboarding({
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}
-          nextLabel={!desktop && step === 'apps' ? 'Start chatting' : undefined}
+          nextLabel={!desktop && step === 'apps' && computerReady ? 'Start chatting' : undefined}
           usage={
             step === 'intro' && onUsageData
               ? { enabled: usageData, onChange: onUsageData }

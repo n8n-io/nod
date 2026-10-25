@@ -1671,16 +1671,10 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
   };
 }
 
-test('container bridge selects current and legacy entrypoints without replaying failed work', async (t) => {
+test('container bridge runs the packaged entrypoint directly without replaying failed work', async (t) => {
   const { build } = await import('esbuild');
-  for (const [layout, fail] of [
-    ['current', false],
-    ['legacy', false],
-    ['both', false],
-    ['both', true],
-    ['legacy', true],
-  ] as const) {
-    await t.test(`${layout}${fail ? ' fails after execution' : ''}`, async () => {
+  for (const fail of [false, true]) {
+    await t.test(fail ? 'fails after execution' : 'completes execution', async () => {
       const root = await mkdtemp('/tmp/sk-entrypoint-');
       await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
       const starts = join(root, 'starts');
@@ -1700,12 +1694,14 @@ test('container bridge selects current and legacy entrypoints without replaying 
         spawn: (command, args, options) => {
           launched++;
           assert.equal(command, 'docker');
-          assert.deepEqual(args.slice(0, 5), [
+          assert.deepEqual(args, [
             'exec',
             '-i',
             '--user',
             'node',
             'nod-browser-entrypoint',
+            'node',
+            '/app/bridge.mjs',
           ]);
           assert.equal(options.shell, false);
           return spawn(
@@ -1719,46 +1715,32 @@ test('container bridge selects current and legacy entrypoints without replaying 
         },
       });
       try {
-        for (const shape of layout === 'both' ? ['current', 'legacy'] : [layout]) {
-          const source = `
+        const source = `
 import { appendFileSync } from 'node:fs';
 import { runBrowserBridge } from ${JSON.stringify(fileURLToPath(new URL('../src/providers/container-browser/bridge.ts', import.meta.url)))};
-appendFileSync(${JSON.stringify(starts)}, ${JSON.stringify(shape + '\n')});
+appendFileSync(${JSON.stringify(starts)}, 'packaged\\n');
 const code: number = await runBrowserBridge({input:process.stdin,output:process.stdout,socketPath:${JSON.stringify(socketPath)}});
 process.exitCode = ${fail ? '1' : 'code'};
 process.stdin.destroy();
 `;
-          const path = join(
-            root,
-            shape === 'current' ? 'bridge.mjs' : 'src/providers/container-browser/bridge.ts',
-          );
-          if (shape === 'current') {
-            const bundled = await build({
-              stdin: { contents: source, loader: 'ts', resolveDir: process.cwd() },
-              bundle: true,
-              platform: 'node',
-              format: 'esm',
-              define: {
-                'import.meta.url': JSON.stringify(
-                  new URL('../src/providers/container-browser/bridge.ts', import.meta.url).href,
-                ),
-              },
-              write: false,
-            });
-            await writeFile(path, bundled.outputFiles[0].contents);
-          } else {
-            await mkdir(join(root, 'src/providers/container-browser'), { recursive: true });
-            await writeFile(path, source);
-          }
-        }
+        const bundled = await build({
+          stdin: { contents: source, loader: 'ts', resolveDir: process.cwd() },
+          bundle: true,
+          platform: 'node',
+          format: 'esm',
+          define: {
+            'import.meta.url': JSON.stringify(
+              new URL('../src/providers/container-browser/bridge.ts', import.meta.url).href,
+            ),
+          },
+          write: false,
+        });
+        await writeFile(join(root, 'bridge.mjs'), bundled.outputFiles[0].contents);
         const action = computer.act('entrypoint', { action: 'snapshot' });
         if (fail) await assert.rejects(action, /did not finish safely/);
         else assert.equal((await action).text, 'Synthetic page');
         assert.equal(launched, 1);
-        assert.equal(
-          await readFile(starts, 'utf8'),
-          `${layout === 'legacy' ? 'legacy' : 'current'}\n`,
-        );
+        assert.equal(await readFile(starts, 'utf8'), 'packaged\n');
         assert.equal(fixture.calls.filter((call) => call.method === 'act').length, 1);
       } finally {
         await computer.dispose().catch(() => {});

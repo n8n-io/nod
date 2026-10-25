@@ -652,6 +652,13 @@ test('native codemode sequences keep fresh results, cancellation and partial com
     `,
     direct_overlap: `await tools.computer({action:'look',app:'Fixture Calculator'});`,
     direct_owner: `await tools.computer({action:'look',app:'Fixture Calculator'});`,
+    open_unavailable: `
+      const opened = JSON.parse(await tools.computer({action:'open',app:'Fixture Calculator'}));
+      if (!opened.done || opened.observation !== 'unavailable') throw new Error('Unexpected launch receipt');
+      await tools.computer({action:'look',app:'Fixture Calculator'});
+    `,
+    open_missing_done: `try { await tools.computer({action:'open',app:'Fixture Calculator'}); } catch {} await tools.computer({action:'look',app:'Fixture Calculator'});`,
+    open_not_done: `try { await tools.computer({action:'open',app:'Fixture Calculator'}); } catch {} await tools.computer({action:'look',app:'Fixture Calculator'});`,
     non_native: `await tools.ls({}); return 'Workspace sequence completed';`,
   };
   for (const mode of Object.keys(scripts) as Array<keyof typeof scripts>)
@@ -824,6 +831,10 @@ test('native codemode sequences keep fresh results, cancellation and partial com
             if (mode === 'failure' && args.key === 'Return')
               throw new Error('Synthetic action result is uncertain');
             if (mode === 'uncertain' && args.key === 'Return') return { result: 'unavailable' };
+            if (args.action === 'open') {
+              if (mode === 'open_unavailable') return { done: true, observation: 'unavailable' };
+              return { ...(mode === 'open_not_done' ? { done: false } : {}), app, tree: 'ready' };
+            }
             if (args.action === 'act') effects.push(String(args.key));
             if (args.action === 'share_screenshot') {
               assert.deepEqual(effects, ['1', 'Return']);
@@ -881,6 +892,18 @@ test('native codemode sequences keep fresh results, cancellation and partial com
             assert.deepEqual(overlaps, ['refused']);
           } else if (mode === 'direct_owner') {
             assert.deepEqual(calls, ['look']);
+          } else if (mode.startsWith('open_')) {
+            const done = mode === 'open_unavailable';
+            assert.deepEqual(calls, done ? ['open', 'look'] : ['open']);
+            assert.deepEqual(effects, []);
+            assert.deepEqual(resultFailures, [!done]);
+            const receipts = JSON.parse(
+              output.match(/Computer step receipts: (\[[^\n]+\])/)?.[1] ?? 'null',
+            );
+            assert.deepEqual(receipts, [
+              { action: 'open', status: done ? 'done' : 'unknown' },
+              ...(done ? [{ action: 'look', status: 'done' }] : []),
+            ]);
           } else if (mode === 'non_native') {
             assert.deepEqual(calls, []);
             assert.deepEqual(resultFailures, [false]);

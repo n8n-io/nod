@@ -552,7 +552,7 @@ export function createComputerPolicy(options: {
         timeoutMs: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       });
       signal.throwIfAborted();
-      return result.exitCode === 0 ? completed(result) : result;
+      return completed(result);
     }
     const rememberAllowed = () =>
       action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false

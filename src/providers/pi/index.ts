@@ -355,7 +355,7 @@ function completedNativeCall(action: unknown, result: AgentToolResult) {
     );
     if (action === 'apps') return Array.isArray(value);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    if (action === 'act') return value.done === true;
+    if (action === 'act' || action === 'open') return value.done === true;
     if (action === 'shell') return Number.isInteger(value.exitCode);
     if (action === 'share_file' || action === 'share_screenshot')
       return (
@@ -364,7 +364,6 @@ function completedNativeCall(action: unknown, result: AgentToolResult) {
       );
     if (!value.app || typeof value.app.name !== 'string' || typeof value.app.bundleId !== 'string')
       return false;
-    if (action === 'open') return true;
     if (action === 'look') return typeof value.tree === 'string';
     return (
       action === 'screenshot' &&

@@ -261,7 +261,7 @@ export function YourComputer() {
                 installation.
               </p>
             )}
-            {status.apps.length > 0 && <h5>Allowed apps</h5>}
+            {status.apps.length > 0 && <h3>Allowed apps</h3>}
             {status.apps.length > 0 && (
               <ul className="computer-apps">
                 {status.apps.map((app) => {
