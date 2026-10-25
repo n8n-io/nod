@@ -926,8 +926,13 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     ],
     recommended: { sectionId: 'main', seatLabel: '1A' },
   };
+  const seatSections = Array.from({ length: 9 }, (_, index) => ({
+    ...seats.sections[0],
+    id: index === 0 ? 'main' : String(index),
+  }));
   assert.ok(presentationSchema.safeParse(diagram).success);
   assert.ok(presentationSchema.safeParse(seats).success);
+  assert.ok(presentationSchema.safeParse({ ...seats, sections: seatSections.slice(0, 8) }).success);
   for (const url of [
     'javascript:alert(1)',
     'data:text/html,hello',
@@ -1142,10 +1147,7 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     },
     {
       ...seats,
-      sections: Array.from({ length: 9 }, (_, index) => ({
-        ...seats.sections[0],
-        id: String(index),
-      })),
+      sections: seatSections,
     },
     { ...common, type: 'image', artifactId: 'https://example.com/picture.png', alt: 'A picture' },
     { ...common, type: 'map', places: [{ id: 'one', name: 'Place', latitude: 91, longitude: 0 }] },
