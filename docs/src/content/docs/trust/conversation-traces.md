@@ -1,11 +1,13 @@
 ---
 title: Conversation traces
-description: What nod sends to the nod team when you turn on conversation traces, what it removes on your computer first, and how traces are pseudonymised.
+description: What nod sends to the nod team when you turn on conversation traces, what it removes before sending, and how traces are pseudonymised.
 sidebar:
   order: 12
 ---
 
-Conversation traces let the nod team at n8n see how nod handles real requests, so they can find and fix problems. They're off until you turn them on, and nod removes personal details on your computer before anything leaves.
+Conversation traces let the nod team at n8n see how nod handles real requests, so they can find and fix problems. They're off until you turn them on. nod removes personal details on the machine running your assistant before sending a trace.
+
+This page describes n8n's trace service, used by official desktop builds. A server operator can configure another receiver; that receiver controls access and retention.
 
 ![Settings → General, Privacy group, with Share conversation traces turned on and its explanation underneath.](../../../assets/screens/conversation-traces-setting.png)
 
@@ -16,7 +18,7 @@ Conversation traces let the nod team at n8n see how nod handles real requests, s
 
 Turn the switch off to stop sending at once. A trace that was already on its way can still arrive. Traces already sent are deleted when they expire, 14 days after they arrive.
 
-The switch is separate from **Share usage data**, and you can turn either on without the other. It appears in the official desktop app. A source install shows it only when an operator sets `NOD_TRACES_URL` and `NOD_TRACES_TOKEN` (see [Configuration](/deploy/configuration/#analytics-and-feedback)).
+The switch is separate from **Share usage data**, and you can turn either on without the other. It appears for an official local desktop assistant. A source install or self-hosted server needs `NOD_TRACES_TOKEN` and a nonempty receiver URL. `NOD_TRACES_URL` defaults to n8n's service (see [Configuration](/deploy/configuration/#analytics-and-feedback)). A connected desktop client uses the server's trace configuration.
 
 ## What a trace contains
 
@@ -31,11 +33,11 @@ While the switch is on, each request nod makes to your model becomes one trace, 
 | The model name, token counts and cost                                     | Requests to decision services                                  |
 | Whether it came from chat, a task, a helper or a background check         | Your usage analytics, which have their own switch              |
 
-n8n's service sees your IP address when it receives a trace, as it does for update checks. It doesn't add the address to the trace.
+n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
 
 ## What nod removes first
 
-Every trace passes through these layers on your computer before it's sent.
+Every trace passes through these layers on the machine running your assistant before it's sent.
 
 | Layer                       | What it removes                                                                                     | How it decides                                               |
 | --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -72,7 +74,7 @@ nod removes what it can recognize. A trace can still contain personal details wr
 ## How traces are pseudonymised
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever nod restarts. Its key never leaves your computer, so the ID alone doesn't link traces to you, to other days or to other nod data such as feedback reports.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other nod data such as feedback reports.
 - **No owner context.** nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
 - **No images.** Images are replaced with `[image]`.
 
@@ -82,7 +84,7 @@ These steps remove the direct links to you. Traces are still pseudonymised, not 
 
 ```mermaid
 flowchart LR
-  nod[nod on your computer<br/>scrubs each trace]:::accent -- "HTTPS, with nod's token" --> broker["nod Traces service (n8n)<br/>checks and forwards"]
+  nod[nod on your computer or server<br/>scrubs each trace]:::accent -- "HTTPS, with nod's token" --> broker["nod Traces service (n8n)<br/>checks and forwards"]
   broker -- write-only key --> langsmith[LangSmith, EU<br/>deleted after 14 days]
 ```
 
@@ -93,7 +95,7 @@ flowchart LR
 n8n uses traces to find and fix problems in nod. It doesn't use them to train AI models.
 
 :::note[The token isn't a secret from you]
-Anyone who unpacks the desktop app can read the token it sends. The token keeps out scanners and stray requests. The real protection is the scrubbing on your computer, the checks in the service and the write-only key.
+Anyone who unpacks the desktop app can read the token it sends. The token keeps out scanners and stray requests. The real protection is the scrubbing before sending, the checks in the service and the write-only key.
 :::
 
 ## For operators

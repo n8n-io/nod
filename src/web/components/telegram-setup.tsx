@@ -93,8 +93,8 @@ export function TelegramSetup({
   const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
   const setupError =
     error ||
-    (unavailable && !state.paired
-      ? 'Set up the secure key store on this computer to connect Telegram.'
+    (unavailable && !state.paired && !setup?.managed
+      ? 'Set up nod’s secure key store to connect Telegram.'
       : '');
 
   function verify(event: React.FormEvent) {
@@ -111,6 +111,11 @@ export function TelegramSetup({
   return (
     <div className="telegram-setup">
       {setupError && <Notice>{setupError}</Notice>}
+      {setup?.managed && (
+        <p>
+          Telegram is managed by the server environment. Change its settings there and restart nod.
+        </p>
+      )}
       {state.paired ? (
         <div className="telegram-setup-connected" role="status">
           <Check size={20} aria-hidden="true" />
@@ -126,7 +131,7 @@ export function TelegramSetup({
             <p>Keep nod running to receive messages.</p>
           </div>
         </div>
-      ) : (
+      ) : setup?.managed ? null : (
         <ol className="telegram-setup-steps">
           {steps.map((title, index) => {
             const step = index + 1;

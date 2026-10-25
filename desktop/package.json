@@ -16,7 +16,7 @@
   "devDependencies": {
     "@electron/osx-sign": "2.7.1",
     "@electron/packager": "20.3.0",
-    "electron": "44.5.0"
+    "electron": "44.9.1"
   },
   "packageManager": "pnpm@10.34.5"
 }

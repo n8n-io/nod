@@ -45,6 +45,7 @@ export function WhatsAppSetup({
   const revision = useRef(0);
   const saved = Boolean(setup?.enabled && setup.mode === 'linked');
   async function cancel(link?: ChannelLinkStatus) {
+    if (setup?.managed) return;
     if (!link?.pairingId || link.state === 'connected') return;
     await api('/api/channel-settings/whatsapp/pairing', {
       method: 'DELETE',

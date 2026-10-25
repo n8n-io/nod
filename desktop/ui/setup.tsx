@@ -22,9 +22,11 @@ type RuntimeStatus = {
   progress?: number;
   needsWsl?: boolean;
   needsRuntimeArchive?: boolean;
+  needsServerConnection?: boolean;
 };
 
 type Status = RuntimeStatus & {
+  remote?: boolean;
   engineReady?: boolean;
   windowError?: string;
   unlockingKeys?: boolean;
@@ -45,6 +47,10 @@ type Desktop = {
   saveSettings(change: { welcome: WelcomeChoice }): Promise<{ welcome?: WelcomeChoice }>;
   status(): Promise<Status>;
   getPreferences(): Promise<Preferences>;
+  getConnection(): Promise<{ url: string }>;
+  saveConnection(connection: { url: string; token: string } | null): Promise<void>;
+  openConnectionSettings(): Promise<void>;
+  closeConnectionSettings(): Promise<void>;
   prepare(options?: { retry: boolean }): Promise<Status>;
   installWsl(): Promise<Status>;
   importRuntime(): Promise<Status | undefined>;
@@ -67,6 +73,119 @@ function applyPreferences(value: Preferences) {
       : value.theme;
 }
 
+function ConnectionSetup() {
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
+  useEffect(() => {
+    if (!desktop) return;
+    let active = true;
+    void Promise.all([desktop.getConnection(), desktop.getPreferences()])
+      .then(([connection, preferences]) => {
+        if (!active) return;
+        setUrl(connection.url);
+        setConnected(Boolean(connection.url));
+        applyPreferences(preferences);
+      })
+      .catch(() => {
+        if (active) setError('Your saved connection could not be opened.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function connect(local = false) {
+    if (!desktop || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await desktop.saveConnection(local ? null : { url, token });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Your connection could not be saved.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="titlebar" aria-hidden="true" />
+      <main className="server-setup">
+        <form
+          className="server-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void connect();
+          }}
+        >
+          <h1>Connect to your server</h1>
+          <p>Use the same assistant in this app, your browser and your chat apps.</p>
+          <label htmlFor="server-address">Server address</label>
+          <input
+            id="server-address"
+            type="url"
+            placeholder="https://nod.example.com"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            autoComplete="url"
+            spellCheck={false}
+            required
+            disabled={busy || loading}
+          />
+          <label htmlFor="server-token">Authentication token</label>
+          <input
+            id="server-token"
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            required
+            disabled={busy || loading}
+            aria-describedby="server-token-help"
+          />
+          <p id="server-token-help" className="server-help">
+            Enter your server’s NOD_AUTH_TOKEN. nod saves it in your computer’s secure storage.
+          </p>
+          {error && (
+            <p className="server-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="server-connect" type="submit" disabled={busy || loading}>
+            {busy ? 'Connecting…' : 'Connect and restart app'}
+          </button>
+          <p className="server-help">
+            Your local chats and files are kept. You can switch back anytime.
+          </p>
+          <div className="server-actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void desktop?.closeConnectionSettings()}
+            >
+              Back
+            </button>
+            {connected && (
+              <button type="button" disabled={busy || loading} onClick={() => void connect(true)}>
+                Use this computer
+              </button>
+            )}
+          </div>
+        </form>
+      </main>
+    </>
+  );
+}
+
 function Startup() {
   const [status, setStatus] = useState<Status>(() =>
     !desktop
@@ -77,10 +196,10 @@ function Startup() {
   );
   const [busy, setBusy] = useState(false);
   const [recovering, setRecovering] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
   const currentWelcome = useRef<WelcomeChoice | null>(null);
+  const localChoiceSaved = useRef(false);
   const [welcomeStep, setWelcomeStep] = useState<'welcome' | 'waiting' | 'intro'>('welcome');
   const [handingOff, setHandingOff] = useState(false);
   const [welcomeError, setWelcomeError] = useState('');
@@ -101,38 +220,33 @@ function Startup() {
       if (active) setStatus(value);
     });
     const stopPreferences = desktop.onPreferences(applyPreferences);
-    void Promise.all([
-      desktop.status().then(
-        (value) => {
-          if (active && !receivedStatus) setStatus(value);
-        },
-        () => {
-          if (active && !receivedStatus)
-            setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
-        },
-      ),
-      Promise.all([desktop.getPreferences(), desktop.getSettings()])
-        .then(([preferences, settings]) => {
-          if (!active) return;
-          applyPreferences(preferences);
-          if (firstSetup) acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
-        })
-        .catch(() => {
-          if (active) setSettingsError('Your saved settings could not be opened. Try again.');
-        }),
-    ]).then(() => {
-      if (active) setInitialized(true);
-    });
+    void desktop.status().then(
+      (value) => {
+        if (active && !receivedStatus) setStatus(value);
+      },
+      () => {
+        if (active && !receivedStatus)
+          setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
+      },
+    );
+    void Promise.all([desktop.getPreferences(), desktop.getSettings()])
+      .then(([preferences, settings]) => {
+        if (!active) return;
+        applyPreferences(preferences);
+        if (firstSetup) {
+          localChoiceSaved.current = Boolean(settings.welcome);
+          acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+        }
+      })
+      .catch(() => {
+        if (active) setSettingsError('Your saved settings could not be opened. Try again.');
+      });
     return () => {
       active = false;
       stopStatus?.();
       stopPreferences?.();
     };
   }, []);
-
-  useEffect(() => {
-    if (initialized) void desktop?.ready?.();
-  }, [initialized]);
 
   useEffect(() => {
     if (welcomeStep === 'waiting' && status.engineReady) setWelcomeStep('intro');
@@ -166,6 +280,7 @@ function Startup() {
     if (choice.continued) setHandingOff(true);
     try {
       const saved = await desktop.saveSettings({ welcome: choice });
+      localChoiceSaved.current = true;
       acceptWelcome(saved.welcome ?? choice);
       if (choice.continued) await desktop.prepare();
     } catch (cause) {
@@ -199,12 +314,22 @@ function Startup() {
           <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
             {welcomeStep === 'welcome' ? (
               <Welcome
+                local
                 arrived="forward"
                 onBack={() => {}}
-                onNext={() => setWelcomeStep(status.engineReady ? 'intro' : 'waiting')}
+                actionLabel="Use this computer"
+                onNext={() =>
+                  void run(async () => {
+                    if (!currentWelcome.current) return;
+                    await saveWelcome({ ...currentWelcome.current, continued: false });
+                    setWelcomeStep(status.engineReady ? 'intro' : 'waiting');
+                    return desktop?.prepare();
+                  })
+                }
               />
             ) : (
               <Introduction
+                local
                 arrived="forward"
                 continuing={handingOff}
                 onBack={() => setWelcomeStep('welcome')}
@@ -227,6 +352,13 @@ function Startup() {
             </p>
           )}
         </OnboardingFrame>
+        <button
+          className="server-entry"
+          type="button"
+          onClick={() => void desktop?.openConnectionSettings()}
+        >
+          Connect to a server
+        </button>
       </>
     );
 
@@ -275,7 +407,14 @@ function Startup() {
     <>
       <div className="titlebar" aria-hidden="true" />
       <SetupProgress
-        title={error ? 'nod needs another try' : startupMessage(active.stage)}
+        local={!status.remote}
+        title={
+          error
+            ? 'nod needs another try'
+            : status.remote
+              ? 'Connecting to your server…'
+              : startupMessage(active.stage)
+        }
         description={unlocking || error ? description : undefined}
         error={error}
         progress={progress}
@@ -287,21 +426,32 @@ function Startup() {
               disabled={working}
               onClick={() =>
                 void run(async () => {
+                  if (failure.needsServerConnection) {
+                    await desktop.openConnectionSettings();
+                    return;
+                  }
                   if (settingsError || (firstSetup && !welcome)) {
                     const [preferences, settings] = await Promise.all([
                       desktop.getPreferences(),
                       desktop.getSettings(),
                     ]);
                     applyPreferences(preferences);
-                    if (firstSetup)
+                    if (firstSetup) {
+                      localChoiceSaved.current = Boolean(settings.welcome);
                       acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+                    }
                     setSettingsError('');
                   }
+                  if (firstSetup && !localChoiceSaved.current) return;
                   return desktop.prepare({ retry: true });
                 })
               }
             >
-              {working ? 'Trying again…' : 'Try again'}
+              {working
+                ? 'Trying again…'
+                : failure.needsServerConnection
+                  ? 'Reconnect to server'
+                  : 'Try again'}
             </button>
             {(failure.needsWsl || runtime?.needsWsl) && (
               <button
@@ -329,9 +479,23 @@ function Startup() {
           </div>
         )}
       </SetupProgress>
+      <button
+        className="server-entry"
+        type="button"
+        onClick={() => void desktop?.openConnectionSettings()}
+      >
+        Server connection
+      </button>
     </>
   );
 }
 
+function Setup() {
+  useEffect(() => {
+    void desktop?.ready?.();
+  }, []);
+  return parameters.get('server') === 'true' ? <ConnectionSetup /> : <Startup />;
+}
+
 initializeFocusVisibility();
-createRoot(document.getElementById('root')!).render(<Startup />);
+createRoot(document.getElementById('root')!).render(<Setup />);

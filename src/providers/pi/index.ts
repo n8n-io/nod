@@ -398,6 +398,7 @@ export function createPiAgent(options: {
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
+        settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
         additionalExtensionPaths: [webExtension],
         extensionFactories: [
           createCodemodeExtension(),

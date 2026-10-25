@@ -97,7 +97,7 @@ flowchart LR
 | Read your calendar or inbox                            | It runs.                                                                                                                                                                                   |
 | Draft a reply                                          | It runs.                                                                                                                                                                                   |
 | Add an event, send an email or delete files            | A review checks it matches your request, then it runs. If it doesn't match, nod asks.                                                                                                      |
-| Email an address it found on a web page                | The review doesn't find it in your request, so nod asks.                                                                                                                                   |
+| Email a recipient you didn't ask it to contact         | The review finds no permission for that recipient, so nod asks.                                                                                                                            |
 | Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately.                                                                                                                |
 | Pay at a checkout                                      | You approve that one payment with your card's security code, which nod never saves.                                                                                                        |
 | Do something while it reacts to a new email on its own | It does what you told it to do on its own, such as forwarding Ana's invoices to accounting@acme.com, unless a rule says to ask first. Anything else waits for you unless a rule allows it. |
@@ -125,6 +125,6 @@ nod doesn't add its own confirmation on top of these checks, which ask you whene
 - [Saved browser sessions](/trust/browser-sessions/): reuse a signed-in browser on the websites you allow.
 - [Payments](/trust/payments/): approve one checkout with a saved card.
 - [One use, one result](/trust/outcomes/): why approved work never runs twice.
-- [Your data and privacy](/trust/privacy/): what stays on your computer and what leaves it.
+- [Your data and privacy](/trust/privacy/): where your assistant stores data and what it sends to other services.
 - [Conversation traces](/trust/conversation-traces/): what the optional traces contain, what nod removes first and how they avoid identifying you.
 - [Security model and limits](/trust/security-model/): the exact boundaries, and what they don't cover.

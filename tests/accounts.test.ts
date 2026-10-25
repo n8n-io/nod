@@ -35,6 +35,70 @@ import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { runProcess } from '../src/providers/process.ts';
 
+test('server sign-in preserves the entered token until a session is confirmed and allows retry', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 10_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { ServerAccess } = await import('./src/web/components/server-access.tsx');
+      const { createSessionStore } = await import('./src/web/lib/session.ts');
+      const requests = [];
+      globalThis.fetch = async (path, options) => {
+        assert.equal(path, '/api/access');
+        requests.push(JSON.parse(options.body));
+        return Response.json({ ok: true });
+      };
+      let result = 'outage';
+      const store = createSessionStore(async path => {
+        assert.equal(path, '/api/session');
+        if (result === 'outage') throw new Error('Synthetic session service outage');
+        if (result === 'malformed') return { invalid: true };
+        if (result === 'anonymous') return { user: null, settings: null,
+          capabilities: { developer: false, traces: false } };
+        return { user: { id: 'fixture', name: 'Fixture', email: null, avatarUrl: null },
+          settings: { theme: 'system', onboardingCompleted: false, usageData: false, traces: false },
+          capabilities: { developer: false, traces: false } };
+      }, () => {});
+      store.invalidate('', true);
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(createElement(ServerAccess, { onConnected: store.refresh })));
+        const input = document.querySelector('input');
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, 'synthetic-token');
+          input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+        });
+        const submit = () => act(async () => document.querySelector('form').dispatchEvent(
+          new dom.window.Event('submit', { bubbles: true, cancelable: true })));
+        for (result of ['outage', 'malformed', 'anonymous']) {
+          await submit();
+          assert.equal(store.getSnapshot().locked, true);
+          assert.equal(input.value, 'synthetic-token');
+          assert.ok(document.querySelector('.notice'));
+        }
+        assert.equal(requests.length, 3);
+        result = 'connected';
+        await submit();
+        assert.equal(requests.length, 4);
+        assert.equal(store.getSnapshot().locked, false);
+        assert.equal(input.value, '');
+        assert.equal(document.querySelector('.notice'), null);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('settings Escape preserves nested interactions and pending changes before returning to the prior page', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -252,6 +316,7 @@ test('settings Escape preserves nested interactions and pending changes before r
         const desktopPreferences = { theme: 'system', resolvedTheme: 'light',
           notifications: true, launchAtLogin: true, onboardingPreferenceStep: 'complete' };
         runInNewContext(readFileSync('./desktop/preload/engine.cjs', 'utf8'), {
+          process: { argv: [] },
           require: () => ({
             contextBridge: { exposeInMainWorld: (name, value) => { window[name] = value; } },
             ipcRenderer: {
@@ -1310,6 +1375,65 @@ test('Azure endpoints need HTTPS away from this computer and resolve to the v1 A
   );
 });
 
+test('server model credentials reject invalid destinations and cloud accounts before startup', async () => {
+  const { modelEnvironment } = await import('../src/server/composition.ts');
+  const key = 'fixture-environment-key';
+  const invalid: Record<string, string>[] = [
+    { AWS_BEARER_TOKEN_BEDROCK: key },
+    { AWS_BEARER_TOKEN_BEDROCK: key, AWS_REGION: 'eu-west-1.example.test/path' },
+    { AZURE_OPENAI_API_KEY: key },
+    { AZURE_OPENAI_API_KEY: key, AZURE_OPENAI_ENDPOINT: 'https://fixture.example.test' },
+    ...[
+      'http://fixture.example.test',
+      'https://user:secret@fixture.example.test',
+      'https://fixture.example.test?key=other',
+    ].map((endpoint) => ({
+      AZURE_OPENAI_API_KEY: key,
+      AZURE_OPENAI_ENDPOINT: endpoint,
+      AZURE_OPENAI_MODEL: 'gpt-6.1-sol',
+    })),
+    {
+      AZURE_OPENAI_API_KEY: key,
+      AZURE_OPENAI_ENDPOINT: 'https://fixture.example.test',
+      AZURE_OPENAI_MODEL: 'gpt-6.1-sol',
+      AZURE_OPENAI_DEPLOYMENT: '../other-deployment',
+    },
+    { CLOUDFLARE_WORKERS_AI_API_KEY: key },
+    { CLOUDFLARE_WORKERS_AI_API_KEY: key, CLOUDFLARE_ACCOUNT_ID: '../other-account' },
+    { CLOUDFLARE_AI_GATEWAY_API_KEY: key, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) },
+    {
+      CLOUDFLARE_AI_GATEWAY_API_KEY: key,
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+      CLOUDFLARE_GATEWAY_ID: '../other-gateway',
+    },
+    { OPENAI_COMPATIBLE_BASE_URL: 'https://user:secret@fixture.example.test/v1' },
+    { OPENAI_COMPATIBLE_BASE_URL: 'https://fixture.example.test/v1?key=other' },
+  ];
+  for (const environment of invalid)
+    assert.throws(
+      () => modelEnvironment(environment),
+      (error: unknown) => error instanceof Error && !error.message.includes(key),
+    );
+  assert.deepEqual(
+    modelEnvironment({
+      OPENAI_API_KEY: ' ',
+      HF_TOKEN: '\t',
+      AWS_BEARER_TOKEN_BEDROCK: '',
+      AWS_REGION: '../unused',
+      OPENAI_COMPATIBLE_API_KEY: key,
+    }).credentials,
+    {},
+  );
+  assert.deepEqual(
+    modelEnvironment({
+      LLM_PROVIDER: 'compatible',
+      OPENAI_COMPATIBLE_BASE_URL: 'http://192.168.1.5:8080/v1/',
+      OPENAI_COMPATIBLE_API_KEY: key,
+    }).credentials.compatible,
+    { type: 'endpoint', url: 'http://192.168.1.5:8080/v1', key },
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');
@@ -1400,6 +1524,82 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('every environment model connection resolves only its managed credential and loses access after removal', async (t) => {
+    const f = await fixture(t);
+    const { modelEnvironment } = await import('../src/server/composition.ts');
+    const { apiKeyModelProviders, modelProviderInfo } = await import('../src/shared/models.ts');
+    const environment = {
+      ...Object.fromEntries(
+        apiKeyModelProviders.map((provider) => [
+          modelProviderInfo[provider].env,
+          `  fixture-environment-${provider}-key  `,
+        ]),
+      ),
+      AWS_REGION: 'eu-west-1',
+      AZURE_OPENAI_ENDPOINT: 'https://fixture.example.test',
+      AZURE_OPENAI_MODEL: 'gpt-6.1-sol',
+      AZURE_OPENAI_DEPLOYMENT: 'fixture-deployment',
+      CLOUDFLARE_ACCOUNT_ID: 'ABCDEF0123456789ABCDEF0123456789',
+      CLOUDFLARE_GATEWAY_ID: 'fixture-gateway',
+    };
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const owner = await f.create(
+      'fixture-environment-owner',
+      backend,
+      modelEnvironment(environment),
+    );
+    const captured: import('../src/ports/models.ts').ModelAccess[] = [];
+    assert.equal(owner.view().connections.length, apiKeyModelProviders.length);
+    assert.equal((await owner.resolve()).provider, 'openai');
+    for (const provider of apiKeyModelProviders) {
+      const row = owner.view().connections.find((item) => item.provider === provider)!;
+      assert.equal(row.managed, true, provider);
+      assert.equal(row.status, 'connected', provider);
+      const choice = row.models[0];
+      await owner.select({ connectionId: row.id, modelId: choice.id, effort: choice.efforts[0] });
+      const access = await owner.resolve();
+      captured.push(access);
+      const credential = await access.read();
+      const key = `fixture-environment-${provider}-key`;
+      assert.equal(access.provider, provider);
+      assert.deepEqual(
+        credential,
+        provider === 'amazon-bedrock'
+          ? { type: 'bedrock', key, region: 'eu-west-1' }
+          : provider === 'azure'
+            ? {
+                type: 'azure',
+                key,
+                url: 'https://fixture.example.test/openai/v1',
+                model: 'gpt-6.1-sol',
+                deployment: 'fixture-deployment',
+              }
+            : provider.startsWith('cloudflare-')
+              ? {
+                  type: 'cloudflare',
+                  key,
+                  accountId: 'abcdef0123456789abcdef0123456789',
+                  ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: 'fixture-gateway' } : {}),
+                }
+              : { type: 'api_key', key },
+      );
+    }
+    assert.doesNotMatch(JSON.stringify(owner.view()), /fixture-environment-/);
+    assert.doesNotMatch(
+      JSON.stringify((await f.database.query('SELECT * FROM model_connections')).rows),
+      /fixture-environment-.*-key/,
+    );
+    assert.equal((await f.database.query('SELECT * FROM vault_app_grants')).rowCount, 0);
+    const removed = await f.create('fixture-environment-owner', backend, modelEnvironment({}));
+    assert.deepEqual(removed.view(), { connections: [], selection: null });
+    await assert.rejects(removed.resolve());
+    for (const access of captured) assert.equal(await access.read(), undefined);
+  });
 
   test('native provider connections keep owned credentials private and preserve the selected model', async (t) => {
     const f = await fixture(t);
@@ -2115,6 +2315,110 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.ok(!stored.includes('fixture-endpoint-key'));
     assert.ok(!stored.includes('fixture-server-key'));
     assert.ok(!stored.includes('fixture-rotated-key'));
+  });
+
+  test('server-managed model keys rotate privately and disappear when removed without changing other connections', async (t) => {
+    for (const selected of ['managed', 'saved'] as const) {
+      await t.test(selected, async (t) => {
+        const f = await fixture(t);
+        const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+        const backend = createPiModelBackend({
+          fetch: async (input) => {
+            if (String(input) === 'https://api.anthropic.com/v1/models?limit=1000')
+              return Response.json({ data: [{ id: 'claude-opus-5-5' }] });
+            assert.equal(String(input), 'https://api.openai.com/v1/models');
+            return Response.json({ data: ['gpt-6.1-sol', 'gpt-6-luna'].map((id) => ({ id })) });
+          },
+        });
+        const originalKey = 'fixture-managed-original-key';
+        const rotatedKey = 'fixture-managed-rotated-key';
+        const savedKey = 'fixture-saved-key';
+        const otherKey = 'fixture-other-owner-key';
+        const replacementKey = 'fixture-anthropic-key';
+        const bootstrap = (key: string) => ({
+          provider: 'openai' as const,
+          credentials: { openai: { type: 'api_key' as const, key } },
+        });
+        const original = await f.create('fixture-owner', backend, bootstrap(originalKey));
+        const managed = original.view().connections[0];
+        const initialSelection = original.view().selection;
+        assert.equal(managed.managed, true);
+        assert.equal(initialSelection?.connectionId, managed.id);
+        const savedId = await original.addKey('openai', savedKey);
+        const other = await f.create('fixture-other', backend);
+        await other.addKey('openai', otherKey);
+        const otherView = other.view();
+        await other.close();
+        await original.close();
+
+        const rotated = await f.create('fixture-owner', backend, bootstrap(rotatedKey));
+        assert.equal(rotated.view().connections.find((row) => row.managed)?.id, managed.id);
+        assert.deepEqual(rotated.view().selection, initialSelection);
+        assert.deepEqual(await (await rotated.resolve()).read(), {
+          type: 'api_key',
+          key: rotatedKey,
+        });
+        const saved = rotated.view().connections.find((row) => row.id === savedId)!;
+        const choice = saved.models.find((model) => model.id === 'gpt-6-luna')!;
+        const savedSelection = {
+          connectionId: savedId,
+          modelId: choice.id,
+          effort: choice.efforts[0],
+        };
+        if (selected === 'saved') await rotated.select(savedSelection);
+        const visible = JSON.stringify([original.view(), rotated.view(), otherView]);
+        const stored = JSON.stringify([
+          (await f.database.query('SELECT * FROM model_connections')).rows,
+          (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+        ]);
+        for (const key of [originalKey, rotatedKey, savedKey, otherKey]) {
+          assert.ok(!visible.includes(key));
+          assert.ok(!stored.includes(key));
+        }
+        assert.equal(
+          (await f.database.query('SELECT id FROM vault_app_grants WHERE id=$1', [managed.id]))
+            .rowCount,
+          0,
+        );
+        await rotated.close();
+
+        const removed = await f.create('fixture-owner', backend, {
+          provider: 'anthropic',
+          credentials: { anthropic: { type: 'api_key', key: replacementKey } },
+        });
+        assert.equal(
+          removed.view().connections.some((row) => row.id === managed.id),
+          false,
+        );
+        assert.equal(
+          (await f.database.query('SELECT id FROM model_connections WHERE id=$1', [managed.id]))
+            .rowCount,
+          0,
+        );
+        assert.deepEqual(
+          removed.view().connections.find((row) => row.id === savedId),
+          saved,
+        );
+        assert.ok(removed.view().connections.some((row) => row.provider === 'anthropic'));
+        if (selected === 'saved') {
+          assert.deepEqual(removed.view().selection, savedSelection);
+          assert.deepEqual(await (await removed.resolve()).read(), {
+            type: 'api_key',
+            key: savedKey,
+          });
+        } else {
+          assert.equal(removed.view().selection, null);
+          assert.equal(removed.configured, false);
+          await assert.rejects(removed.resolve());
+        }
+        const unchanged = await f.create('fixture-other', backend);
+        assert.deepEqual(unchanged.view(), otherView);
+        assert.deepEqual(await (await unchanged.resolve()).read(), {
+          type: 'api_key',
+          key: otherKey,
+        });
+      });
+    }
   });
 
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {

@@ -63,25 +63,30 @@ async function packageFixtures(planPath) {
       join(directory, 'main.cjs'),
       `
 const { app, autoUpdater, safeStorage } = require('electron');
-const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { createHash, sign } = require('node:crypto');
 const fixture = ${JSON.stringify(fixture)};
 app.setPath('userData', fixture.profile);
 const receipt = (event, fields = {}) => appendFileSync(fixture.events,
-  JSON.stringify({ event, version: app.getVersion(), at: Date.now(), executable: process.execPath,
+  JSON.stringify({ event, version: app.getVersion(), at: Date.now(), pid: process.pid, executable: process.execPath,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
 app.whenReady().then(async () => {
+  const { createSettingsStore } = await import('./settings.mjs');
+  const initialLaunch = !existsSync(fixture.remoteSettings);
+  const remoteSettings = createSettingsStore(fixture.remoteSettings, safeStorage);
+  if (initialLaunch) await remoteSettings.saveConnection({ url: fixture.serverUrl, token: fixture.serverToken });
+  const remoteSettingsBefore = readFileSync(fixture.remoteSettings);
+  const connection = await remoteSettings.connection();
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Fixture encryption is unavailable.');
-  if (app.getVersion() === fixture.installed)
+  if (initialLaunch)
     writeFileSync(fixture.encrypted, safeStorage.encryptString(fixture.sentinel), { mode: 0o600, flag: 'wx' });
   const encrypted = readFileSync(fixture.encrypted);
-  if (app.getVersion() === fixture.installed)
+  if (initialLaunch)
     writeFileSync(fixture.settings, JSON.stringify({
       version: 1, theme: 'dark', launchAtLogin: true, notifications: false, onboardingCompleted: true,
       secrets: { vaultKey: encrypted.toString('base64') },
     }), { mode: 0o600, flag: 'wx' });
   const settingsBefore = readFileSync(fixture.settings);
-  const { createSettingsStore } = await import('./settings.mjs');
   const environment = await createSettingsStore(fixture.settings, safeStorage).environment();
   const owner = JSON.parse(readFileSync(fixture.ownerFile)).ownerId;
   const { loadIntegrationIdentity } = await import('./identity.mjs');
@@ -108,6 +113,10 @@ app.whenReady().then(async () => {
     asyncDecryptedHash: createHash('sha256').update(environment.NOD_VAULT_KEY).digest('hex'),
     settingsBeforeHash: createHash('sha256').update(settingsBefore).digest('hex'),
     settingsHash: createHash('sha256').update(readFileSync(fixture.settings)).digest('hex'),
+    remoteSettingsBeforeHash: createHash('sha256').update(remoteSettingsBefore).digest('hex'),
+    remoteSettingsHash: createHash('sha256').update(readFileSync(fixture.remoteSettings)).digest('hex'),
+    serverUrl: connection?.url,
+    serverTokenHash: connection && createHash('sha256').update(connection.token).digest('hex'),
     owner,
     identityHash: createHash('sha256').update(identityBytes).digest('hex'),
     markerHash: createHash('sha256').update(markerBytes).digest('hex'),
@@ -116,6 +125,10 @@ app.whenReady().then(async () => {
     managedOwner: identity.userId,
     identityProof: sign(null, Buffer.from(fixture.challenge + ':' + app.getVersion()), identity.key).toString('base64url'),
   });
+  if (initialLaunch) {
+    app.relaunch();
+    return app.exit(0);
+  }
   if (app.getVersion() !== fixture.installed) return setTimeout(() => app.quit(), 500);
   autoUpdater.on('error', (error) => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
@@ -274,7 +287,10 @@ async function main() {
         data: join(root, `${kind}-profile`, 'saved.json'),
         encrypted: join(root, `${kind}-profile`, 'encrypted.bin'),
         settings: join(integrationRoot, 'settings.json'),
+        remoteSettings: join(root, `${kind}-profile`, 'server-connection.json'),
         sentinel: randomBytes(32).toString('base64'),
+        serverUrl: 'https://nod-server.example',
+        serverToken: randomBytes(32).toString('base64url'),
         integrationRoot,
         ownerFile: join(integrationRoot, 'profile.json'),
         identityFile: join(identityDirectory, `${sha256(owner)}.encrypted`),
@@ -364,7 +380,7 @@ async function main() {
       );
       const archive = await readFile(fixture.archive);
       const entry = {
-        id: { install: 'UPD-NATIVE.v3', reject: 'UPD-SIGNATURE.v3', downgrade: 'UPD-DOWNGRADE.v1' }[
+        id: { install: 'UPD-NATIVE.v4', reject: 'UPD-SIGNATURE.v4', downgrade: 'UPD-DOWNGRADE.v2' }[
           fixture.kind
         ],
         startedAt: new Date().toISOString(),
@@ -462,6 +478,7 @@ async function main() {
           events.every((event) => event.dataHash === before),
       );
       const readyEvents = events.filter((event) => event.event === 'ready');
+      const expectedOpens = fixture.kind === 'install' ? 3 : 2;
       const initialIdentity = readyEvents[0];
       const publicKey = initialIdentity?.publicKey
         ? createPublicKey({
@@ -470,8 +487,18 @@ async function main() {
           })
         : undefined;
       check(
+        'UPD-REOPEN',
+        readyEvents.length === expectedOpens &&
+          new Set(readyEvents.map((event) => event.pid)).size === expectedOpens &&
+          readyEvents
+            .slice(0, 2)
+            .every(
+              (event) => event.version === fixture.installed && event.executable === executable,
+            ),
+      );
+      check(
         'UPD-KEYS',
-        readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+        readyEvents.length === expectedOpens &&
           readyEvents.every(
             (event) =>
               event.decryptedHash === sha256(fixture.sentinel) &&
@@ -481,7 +508,7 @@ async function main() {
       );
       check(
         'UPD-ASYNC-KEYS',
-        readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+        readyEvents.length === expectedOpens &&
           readyEvents.every(
             (event) =>
               event.asyncDecryptedHash === sha256(fixture.sentinel) &&
@@ -490,10 +517,31 @@ async function main() {
           ) &&
           sha256(await readFile(fixture.settings)) === readyEvents[0].settingsHash,
       );
+      const savedRemoteSettings = await readFile(fixture.remoteSettings, 'utf8');
+      const remoteSecrets = JSON.parse(savedRemoteSettings).secrets;
+      check(
+        'UPD-REMOTE-CONNECTION',
+        readyEvents.length === expectedOpens &&
+          readyEvents.every(
+            (event) =>
+              event.serverUrl === fixture.serverUrl &&
+              event.serverTokenHash === sha256(fixture.serverToken) &&
+              event.remoteSettingsBeforeHash === event.remoteSettingsHash &&
+              event.remoteSettingsHash === readyEvents[0].remoteSettingsHash,
+          ) &&
+          sha256(savedRemoteSettings) === readyEvents[0].remoteSettingsHash &&
+          typeof remoteSecrets.serverToken === 'string' &&
+          remoteSecrets.vaultKey === undefined &&
+          !savedRemoteSettings.includes(fixture.serverToken) &&
+          !Buffer.from(remoteSecrets.serverToken, 'base64').includes(
+            Buffer.from(fixture.serverToken),
+          ) &&
+          ((await stat(fixture.remoteSettings)).mode & 0o777) === 0o600,
+      );
       check(
         'UPD-INTEGRATION-IDENTITY',
         !!publicKey &&
-          readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+          readyEvents.length === expectedOpens &&
           readyEvents.every(
             (event) =>
               event.owner === JSON.parse(ownerBefore).ownerId &&
@@ -599,7 +647,7 @@ async function main() {
   }
   if (failure) throw failure;
   process.stdout.write(
-    'Native update installation, signature and downgrade rejection, encrypted profile and integration identity preservation passed.\n',
+    'Native restart and update installation, signature and downgrade rejection, encrypted profile, remote token and integration identity preservation passed.\n',
   );
 }
 

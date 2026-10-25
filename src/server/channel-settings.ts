@@ -21,6 +21,7 @@ const providerSchema = z.enum(['telegram', 'whatsapp']);
 const summarySchema = z.object({
   provider: providerSchema,
   enabled: z.boolean(),
+  managed: z.boolean().optional(),
   accountName: z.string().max(200).optional(),
   accountHandle: z.string().max(200).optional(),
   mode: z.enum(['polling', 'webhook', 'linked']).optional(),
@@ -92,6 +93,45 @@ const fields: Record<ChannelProvider, Set<string>> = {
     'WHATSAPP_VERIFY_TOKEN',
   ]),
 };
+export function managedChannelEnvironment(environment: Record<string, string | undefined>) {
+  const managed: Partial<Record<ChannelProvider, Record<string, string>>> = {};
+  for (const provider of ['telegram', 'whatsapp'] as const) {
+    const values = Object.fromEntries(
+      [...fields[provider]]
+        .filter((name) => !name.includes('_PAIRING_'))
+        .map((name) => [name, environment[name]] as const)
+        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+    );
+    if (!Object.keys(values).length) continue;
+    const enabled = `${provider.toUpperCase()}_ENABLED`;
+    for (const name of [enabled, ...(provider === 'whatsapp' ? ['WHATSAPP_POLICY_CONFIRMED'] : [])])
+      if (values[name] !== undefined && !['true', 'false'].includes(values[name]))
+        throw new Error(`${name} must be true, false or empty.`);
+    values[enabled] ??= 'true';
+    const mode = `${provider.toUpperCase()}_MODE`;
+    values[mode] ??= provider === 'telegram' ? 'polling' : 'cloud';
+    if (
+      !(provider === 'telegram' ? ['polling', 'webhook'] : ['bot', 'self-chat', 'cloud']).includes(
+        values[mode],
+      )
+    )
+      throw new Error(`Invalid ${mode}.`);
+    if (provider === 'whatsapp' && values[enabled] === 'true' && values[mode] !== 'cloud') {
+      if (values.WHATSAPP_POLICY_CONFIRMED !== 'true')
+        throw new Error('Set WHATSAPP_POLICY_CONFIRMED=true before enabling linked WhatsApp.');
+      if (
+        (values[mode] === 'bot' || values.WHATSAPP_ALLOWED_NUMBER) &&
+        !/^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
+      )
+        throw new Error('WHATSAPP_ALLOWED_NUMBER must contain 7 to 15 digits.');
+    }
+    if (provider === 'telegram' && values[mode] === 'polling')
+      values.TELEGRAM_WEBHOOK_SECRET_TOKEN ||= randomBytes(32).toString('base64url');
+    managed[provider] = values;
+  }
+  return managed;
+}
+
 type ChannelSettingsRow = {
   provider: ChannelProvider;
   enabled: boolean;
@@ -233,6 +273,7 @@ export async function createChannelSettings(
     ownerId: string;
     keyStore: CredentialKeyStore;
     verifier: ChannelSetupVerifier;
+    managed?: ReturnType<typeof managedChannelEnvironment>;
     apply(environment: Record<string, string>): Promise<void>;
     linkStatus?(): Promise<ChannelLinkStatus>;
     cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
@@ -241,6 +282,7 @@ export async function createChannelSettings(
   },
 ) {
   const owner = z.string().min(1).max(200).parse(options.ownerId);
+  const managed = options.managed ?? {};
   const store = await databaseStore(pool, owner);
   const exclusive = createLock();
   const pairingExclusive = createLock();
@@ -260,9 +302,10 @@ export async function createChannelSettings(
   }
   async function environment() {
     const rows = await store.read();
-    const result: Record<string, string> = {};
+    const result: Record<string, string> = Object.assign({}, ...Object.values(managed));
     for (const row of rows) {
       providerSchema.parse(row.provider);
+      if (managed[row.provider]) continue;
       if (row.enabled && row.ciphertext) {
         Object.assign(result, openChannelSettings(await encryptionKey(), owner, row));
       } else result[`${row.provider.toUpperCase()}_ENABLED`] = 'false';
@@ -270,11 +313,28 @@ export async function createChannelSettings(
     return result;
   }
   async function status() {
-    const rows = await store.read();
+    const rows = (await store.read()).filter((row) => !managed[row.provider]);
+    for (const provider of ['telegram', 'whatsapp'] as const) {
+      const values = managed[provider];
+      if (!values) continue;
+      const mode = values[`${provider.toUpperCase()}_MODE`];
+      const linked = provider === 'whatsapp' && (mode === 'bot' || mode === 'self-chat');
+      const summary = summarySchema.parse({
+        provider,
+        enabled: values[`${provider.toUpperCase()}_ENABLED`] === 'true',
+        managed: true,
+        mode: linked ? 'linked' : mode === 'polling' ? 'polling' : 'webhook',
+        ...(linked ? { linkMode: mode } : {}),
+        ...(provider === 'telegram' && telegramUserId.test(values.TELEGRAM_ALLOWED_USER_ID ?? '')
+          ? { allowedUserId: values.TELEGRAM_ALLOWED_USER_ID }
+          : {}),
+      });
+      rows.push({ provider, enabled: summary.enabled, ciphertext: null, summary });
+    }
     const linked = rows.some(
       (row) => row.provider === 'whatsapp' && row.enabled && row.summary.mode === 'linked',
     )
-      ? await options.linkStatus?.()
+      ? await options.linkStatus?.().catch(() => undefined)
       : undefined;
     return {
       ready: options.keyStore.configured,
@@ -303,7 +363,10 @@ export async function createChannelSettings(
   async function recover() {
     return exclusive(async () => {
       const rows = (await store.read()).filter(
-        (row) => row.enabled && row.summary.webhookStatus === 'registration_pending',
+        (row) =>
+          !managed[row.provider] &&
+          row.enabled &&
+          row.summary.webhookStatus === 'registration_pending',
       );
       for (const row of rows) {
         try {
@@ -320,6 +383,7 @@ export async function createChannelSettings(
   }
   async function change(provider: ChannelProvider, input?: unknown, cancelPairingId?: string) {
     return exclusive(async () => {
+      if (managed[provider]) throw new ChannelSetupFailure('server_managed');
       if (cancelPairingId && !(await options.cancelPairing?.(cancelPairingId))) {
         const row = (await store.read()).find((item) => item.provider === provider);
         return {
@@ -386,6 +450,7 @@ export async function createChannelSettings(
     });
   }
   async function telegramRow() {
+    if (managed.telegram) return;
     const row = (await store.read()).find((item) => item.provider === 'telegram' && item.enabled);
     return row?.ciphertext
       ? { row, configured: openChannelSettings(await encryptionKey(), owner, row) }
@@ -479,6 +544,7 @@ export async function createChannelSettings(
   }
   async function bind(allowedUserId?: string) {
     const bound = await exclusive(async () => {
+      if (managed.telegram) throw new ChannelSetupFailure('server_managed');
       const current = await telegramRow();
       if (!current || current.configured.TELEGRAM_ALLOWED_USER_ID)
         throw new ChannelSetupFailure('pairing_unavailable');
@@ -526,6 +592,7 @@ export async function createChannelSettings(
   }
   async function restartPairing() {
     return exclusive(async () => {
+      if (managed.telegram) throw new ChannelSetupFailure('server_managed');
       const current = await telegramRow();
       if (!current) throw new ChannelSetupFailure('pairing_unavailable');
       const summary = summarySchema.parse(current.row.summary);
@@ -580,16 +647,20 @@ export async function createChannelSettings(
             'Telegram did not confirm the webhook registration. Check the public URL and try again.',
           activation_pending:
             'The setup was saved and the bot token is valid, but nod could not start receiving messages. Retry the connection to continue.',
+          server_managed:
+            'This channel is managed by the server environment. Update it there and restart nod.',
           pairing_unavailable:
             'This channel setup step is no longer available. Refresh Channels and try again.',
         };
         reply
           .code(
-            error instanceof ChannelSetupFailure && error.reason === 'activation_pending'
-              ? 503
-              : error instanceof ChannelSetupFailure || error instanceof z.ZodError
-                ? 400
-                : 503,
+            error instanceof ChannelSetupFailure && error.reason === 'server_managed'
+              ? 409
+              : error instanceof ChannelSetupFailure && error.reason === 'activation_pending'
+                ? 503
+                : error instanceof ChannelSetupFailure || error instanceof z.ZodError
+                  ? 400
+                  : 503,
           )
           .send({
             error:
@@ -601,8 +672,8 @@ export async function createChannelSettings(
       scope.get('/api/channel-settings', status);
       scope.get('/api/channel-settings/whatsapp/pairing', async (_request, reply) => {
         reply.header('Cache-Control', 'no-store');
-        const row = (await store.read()).find(
-          (item) => item.provider === 'whatsapp' && item.enabled && item.summary.mode === 'linked',
+        const row = (await status()).channels.find(
+          (item) => item.provider === 'whatsapp' && item.enabled && item.mode === 'linked',
         );
         if (!row || !options.linkStatus) throw new ChannelSetupFailure('pairing_unavailable');
         return options.linkStatus();
@@ -611,9 +682,8 @@ export async function createChannelSettings(
         exclusive(async () => {
           reply.header('Cache-Control', 'no-store');
           const { pairingId } = z.object({ pairingId: z.uuid() }).strict().parse(request.body);
-          const row = (await store.read()).find(
-            (item) =>
-              item.provider === 'whatsapp' && item.enabled && item.summary.mode === 'linked',
+          const row = (await status()).channels.find(
+            (item) => item.provider === 'whatsapp' && item.enabled && item.mode === 'linked',
           );
           if (!row || !options.linkStatus || !options.cancelPairing)
             throw new ChannelSetupFailure('pairing_unavailable');
@@ -625,6 +695,7 @@ export async function createChannelSettings(
       );
       scope.delete('/api/channel-settings/whatsapp/pairing', { bodyLimit: 1024 }, (request) => {
         const { pairingId } = z.object({ pairingId: z.uuid() }).strict().parse(request.body);
+        if (managed.whatsapp) throw new ChannelSetupFailure('server_managed');
         return change('whatsapp', undefined, pairingId);
       });
       scope.put<{ Params: { provider: string } }>(

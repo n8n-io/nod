@@ -617,7 +617,7 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     runCommand: async (_id, args, input) => {
       launches++;
       const request = JSON.parse(input.input!);
-      assert.ok([artifactWriteProgram, artifactReadProgram].includes(args[2]));
+      assert.ok([artifactWriteProgram, artifactReadProgram].includes(args.at(-1)!));
       request.base = f.directory;
       return f.run(args, { ...input, input: JSON.stringify(request) });
     },
@@ -650,5 +650,140 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     await workspace.dispose();
     await f.close();
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('self-hosted runtime limits Docker access to unprivileged execution in its two containers', async () => {
+  const { createServer } = await import('node:http');
+  const { createRuntimeProxy } = await import(
+    new URL('../deployment/self-host/docker-proxy.mjs', import.meta.url).href
+  );
+  const root = await mkdtemp(join(tmpdir(), 'nod-runtime-proxy-'));
+  const socket = join(root, 'docker.sock');
+  const forwarded: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const executionId = 'a'.repeat(64);
+  const engine = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+    forwarded.push({ path: request.url!, body });
+    if (request.url?.endsWith('/json')) {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          Id: 'host-container-id',
+          Config: { Env: ['SECRET=synthetic'], Tty: false },
+          Mounts: [{ Source: '/host/private' }],
+          State: { Running: true, Paused: false, Restarting: false },
+        }),
+      );
+      return;
+    }
+    response.writeHead(201, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ Id: executionId }));
+  });
+  const proxy = createRuntimeProxy({
+    socketPath: socket,
+    workspace: 'nod-workspace-fixture',
+    browser: 'nod-browser-fixture',
+  });
+  await new Promise<void>((resolve) => engine.listen(socket, resolve));
+  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const address = proxy.address();
+  const origin = `http://127.0.0.1:${address.port}`;
+  const call = (path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST') =>
+    fetch(origin + path, {
+      method,
+      ...(body !== undefined && {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    });
+  const command = {
+    User: 'node',
+    WorkingDir: `/workspace/${randomUUID()}`,
+    Cmd: ['python3', '-c', 'print("synthetic")'],
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+    Privileged: false,
+  };
+  try {
+    for (const path of ['/containers/json', '/images/json', '/info'])
+      assert.equal((await call(path)).status, 403, path);
+    assert.equal((await call('/containers/create', {})).status, 403);
+    for (const change of [
+      { User: 'root' },
+      { User: '0' },
+      { Privileged: true },
+      { Detach: true },
+      { Env: ['SECRET=synthetic'] },
+      { WorkingDir: '/' },
+      { WorkingDir: '/workspace/../var/tmp' },
+      { Tty: true },
+      { HostConfig: { Binds: ['/host:/host'] } },
+    ])
+      assert.equal(
+        (await call('/v1.41/containers/nod-workspace-fixture/exec', { ...command, ...change }))
+          .status,
+        403,
+      );
+    assert.equal((await call('/containers/unrelated/exec', command)).status, 403);
+    assert.equal((await call(`/exec/${executionId}/json`)).status, 403);
+    assert.equal(forwarded.length, 0);
+    assert.equal((await call('/v1.41/containers/nod-workspace-fixture/exec', command)).status, 201);
+    assert.equal(forwarded.length, 1);
+    assert.deepEqual(forwarded[0], {
+      path: '/v1.41/containers/nod-workspace-fixture/exec',
+      body: command,
+    });
+    const inspection = await call('/containers/nod-workspace-fixture/json');
+    assert.equal(inspection.status, 200);
+    assert.deepEqual(await inspection.json(), {
+      Id: 'nod-workspace-fixture',
+      Name: '/nod-workspace-fixture',
+      Config: { Tty: false },
+      State: { Running: true, Paused: false, Restarting: false },
+    });
+    assert.equal((await call('/containers/unrelated/json')).status, 403);
+    assert.equal(
+      (
+        await call('/containers/nod-workspace-fixture/exec', {
+          ...command,
+          User: '24000:1002',
+          WorkingDir: '/var/tmp',
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      (
+        await call('/containers/nod-browser-fixture/exec', {
+          ...command,
+          WorkingDir: '',
+          Cmd: ['node', '/app/bridge.mjs'],
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      (await call('/containers/nod-browser-fixture/exec', { ...command, Cmd: ['sh'] })).status,
+      403,
+    );
+    assert.equal(
+      (await call(`/exec/${executionId}/start`, { Detach: true, Tty: false })).status,
+      403,
+    );
+    assert.equal(
+      (await call('/containers/nod-workspace-fixture/exec?unsafe=true', command)).status,
+      403,
+    );
+  } finally {
+    await Promise.all([
+      new Promise<void>((resolve) => proxy.close(() => resolve())),
+      new Promise<void>((resolve) => engine.close(() => resolve())),
+    ]);
+    await rm(root, { recursive: true, force: true });
   }
 });

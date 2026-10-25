@@ -9,15 +9,21 @@ import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 The desktop app is the quickest way to run nod. You don't need Node.js, Docker or developer tools.
 
-Before you start, have a model connection ready: an OpenAI, Anthropic or OpenRouter API key, an Amazon Bedrock key and Region, a Google Vertex AI key, an Azure OpenAI endpoint, deployment and key, a ChatGPT Plus or Pro plan, or a [local model](/connect/local-models/) server such as Ollama. Paid providers bill you for use. A local model costs nothing per request.
+Already have a [nod server](/deploy/self-host/)? Choose **Connect to a server** on first launch, or **Server connection** in the app menu or tray. Enter its address and access token to use that assistant.
+
+For a local assistant, have a [supported model service](/connect/models/) ready with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server such as Ollama. Paid providers bill you for use. A local model costs nothing per request. A remote assistant uses the models configured on its server.
 
 ```mermaid
 flowchart LR
   dl[Download<br/>the installer] --> open[Open and<br/>approve it]
-  open --> prep[nod prepares<br/>its computer]:::accent
-  open --> ob[Onboarding]
+  open --> local[Use this computer]
+  local --> prep[nod prepares<br/>its computer]:::accent
+  local --> ob[Onboarding]
+  open --> remote[Connect to a server]
+  remote --> address[Enter address<br/>and token]
   prep --> chat([Start chatting]):::go
   ob --> chat
+  address --> chat
 ```
 
 ## Install nod
@@ -25,7 +31,7 @@ flowchart LR
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime are about 1.8 GB to download.
+You need macOS 14 or later, on Apple silicon or Intel. For a local assistant, the app and its runtime are about 1.8 GB to download.
 
 <Steps>
 
@@ -35,9 +41,9 @@ You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime a
 
 3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
-4. Welcome opens while nod prepares its computer. Select **Get started**; if storage is still preparing, nod waits and continues automatically. Choose whether to share usage data, optionally connect email and calendar, then choose a model. You can connect other tools and Telegram or WhatsApp while the workspace and browser finish starting. Enable **Open at login** to finish setup. nod gets to know you in chat, where it requests notification permission once on a new installation. You can change the desktop preferences later in Settings. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
+4. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. macOS may ask for permission. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
 
-5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with the connections and answers you just saved. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
@@ -61,9 +67,9 @@ Run it as your normal user, without `sudo`. It verifies the download, installs t
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-<Badge text="Preview" variant="caution" /> You need Windows 11 x64, WSL 2 with hardware
-virtualization, and at least 20 GB of free disk space. The app and its runtime are about 2.1 GB to
-download.
+<Badge text="Preview" variant="caution" /> You need Windows 11 x64. A local assistant also needs WSL
+2 with hardware virtualization and at least 20 GB of free disk space. Its app and runtime are about
+2.1 GB to download. Connecting to a server doesn't need WSL or a local runtime.
 
 <Steps>
 
@@ -71,11 +77,11 @@ download.
 
 2. Run `nod-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds nod to the Start menu.
 
-3. Welcome opens while nod prepares its computer. Select **Get started**; if storage is still preparing, nod waits and continues automatically. Choose whether to share usage data, optionally connect email and calendar, then choose a model. You can connect other tools and Telegram or WhatsApp while the workspace and browser finish starting. Enable **Open at login** to finish setup. nod gets to know you in chat, where it requests notification permission once on a new installation. You can change the desktop preferences later in Settings.
+3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. Windows notification settings control delivery. You can change these preferences later in Settings.
 
 4. If nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open nod again afterwards; your saved connections and settings are kept.
 
-5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with your saved connections and answers. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
@@ -97,7 +103,7 @@ Use a normal PowerShell window, not **Run as administrator**. It verifies the in
 
 ## Keep nod running
 
-Closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
+For a local assistant, closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
 
 | nod is                                  | What runs                                       |
 | --------------------------------------- | ----------------------------------------------- |
@@ -105,6 +111,8 @@ Closing the window keeps nod running in the menu bar on a Mac, or the tray on Wi
 | Quit, or your computer is asleep        | Nothing, until nod is open and awake again      |
 
 If you rely on scheduled tasks, turn on **Open at login** in **Settings → General**.
+
+When connected to a server, the server keeps your assistant, channels and schedules running after you quit the app or put your computer to sleep. The server must stay running and connected.
 
 ## Update nod
 
@@ -114,9 +122,13 @@ When an update is ready, choose **Restart** to install it or **Later** to keep w
 
 On Windows, the restart runs the new installer in the background and opens nod again when it's done.
 
+Updating a connected desktop client does not update its server. Follow [Server operations](/deploy/server-operations/) to update the server separately.
+
 ## Where your data lives
 
-nod's database, workspace and browser stay on your computer. Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
+For a local assistant, nod's database, workspace and browser stay on your computer. When connected to a server, the server stores them along with model credentials and the Composio identity. Every client using the same server reaches the same assistant and connected accounts. Your device keeps its server address, encrypted access token, preferences and client data, such as unsent drafts and downloaded files.
+
+Requests go to the model provider and apps you choose. Managed app requests and results pass through the configured connection service and Composio; n8n hosts the default service. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
 
 nod starts with a fresh profile and doesn't import data from a source install.
 
@@ -128,7 +140,7 @@ nod starts with a fresh profile and doesn't import data from a source install.
 
 ## Remove nod
 
-Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. To delete everything first:
+Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To delete a local assistant first, choose **Use this computer** in **Server connection**, then:
 
 1. Select **Remove all data** in **Settings → General**. If nod can't finish setup, select **Remove all data…** in the **nod** menu instead.
 2. Confirm. nod deletes your profile and private computer, then quits.
@@ -140,13 +152,13 @@ If you deleted nod's folders by hand, nod removes the private computer they leav
 
 ## Troubleshooting
 
-| Problem                            | Try this                                                                                                          |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| macOS blocks the first launch      | Install the newest release. On a managed Mac, ask your IT team to allow nod.                                      |
-| Setup stops with an error          | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.   |
-| nod asks for a runtime file        | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                           |
-| Windows can't download the runtime | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again. |
-| A scheduled task didn't run        | Check that nod was open and your computer was awake at that time.                                                 |
+| Problem                            | Try this                                                                                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| macOS blocks the first launch      | Install the newest release. On a managed Mac, ask your IT team to allow nod.                                           |
+| Setup stops with an error          | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.        |
+| nod asks for a runtime file        | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                                |
+| Windows can't download the runtime | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again.      |
+| A scheduled task didn't run        | Check that the machine running your assistant was awake and nod was running. For a remote assistant, check the server. |
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.

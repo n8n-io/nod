@@ -16,14 +16,14 @@ import {
   Tray,
   utilityProcess,
 } from 'electron';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createSettingsStore } from './settings.mjs';
+import { createSettingsStore, serverOrigin } from './settings.mjs';
 import { createDesktopAnalytics } from './analytics.mjs';
 import {
   assistantNotificationPreview,
@@ -108,6 +108,9 @@ let tray;
 let engineOrigin = '';
 let engineBound = false;
 let authToken = '';
+let remoteConnection;
+let connectionSettingsOpen = false;
+let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
 let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
@@ -128,11 +131,11 @@ let status = {
 const knownSecrets = new Set();
 const engineWindows = new Set();
 const pendingRenderers = new Map();
-const appPreferences = createAppPreferencesStore(join(profileRoot, 'preferences.json'), {
+let appPreferences = createAppPreferencesStore(join(profileRoot, 'preferences.json'), {
   request: (path, options) => engineRequest(path, options),
   isReady: () => Boolean(engine) && enginePreferencesReady && !closingEngine && !quitting,
 });
-const chatReadCursors = createChatReadCursorStore(join(profileRoot, 'chat-read-cursors.json'), {
+let chatReadCursors = createChatReadCursorStore(join(profileRoot, 'chat-read-cursors.json'), {
   owner: async () => JSON.parse(await readFile(join(profileRoot, 'profile.json'), 'utf8')).ownerId,
 });
 
@@ -256,7 +259,12 @@ function publicPreferences() {
 }
 
 async function readDesktopSettings() {
-  return { ...(await settings.get()), ...publicPreferences() };
+  return {
+    ...(remoteConnection
+      ? { onboardingCompleted: true, onboardingPreferenceStep: 'complete' }
+      : await settings.get()),
+    ...publicPreferences(),
+  };
 }
 
 function publishPreferences() {
@@ -281,7 +289,12 @@ function applyPreferences(saved) {
 }
 
 function synchronizeNotifications() {
-  if (!preferences.notifications || !engine || status.phase !== 'ready' || quitting) {
+  if (
+    !preferences.notifications ||
+    !(engine || remoteConnection) ||
+    status.phase !== 'ready' ||
+    quitting
+  ) {
     stopNotifications?.();
     stopNotifications = undefined;
     return;
@@ -297,11 +310,11 @@ function synchronizeNotifications() {
 async function notifyAssistantMessage(message, threadId) {
   if (!preferences.notifications || !Notification.isSupported() || quitting) return;
   if ([...engineWindows].some((window) => !window.isDestroyed() && window.isFocused())) return;
-  const sourceEngine = engine;
+  const sourceEngine = remoteConnection || engine;
   const saved = await appPreferences.get();
   if (
     !sourceEngine ||
-    engine !== sourceEngine ||
+    (remoteConnection || engine) !== sourceEngine ||
     !preferences.notifications ||
     quitting ||
     isQuietTime(saved.preferences) ||
@@ -322,7 +335,7 @@ async function notifyAssistantMessage(message, threadId) {
       if (quitting || window.isDestroyed() || status.phase !== 'ready') return;
       window.webContents.send(
         'nod:focus-message',
-        engine === sourceEngine ? { threadId, messageId: message.id } : null,
+        (remoteConnection || engine) === sourceEngine ? { threadId, messageId: message.id } : null,
       );
     };
     if (window.webContents.isLoadingMainFrame()) window.webContents.once('did-finish-load', focus);
@@ -468,7 +481,8 @@ function protectWindow(window, origin) {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
-            partition: 'persist:nod-app',
+            partition: clientPartition,
+            additionalArguments: remoteConnection ? ['--nod-remote'] : [],
           },
         },
       };
@@ -508,7 +522,7 @@ function waitForRenderer(window, present, failed) {
 
 function showSettings(section = 'general', loading = false) {
   if (quitting) return;
-  if (!loading && onboardingCompleted && engine && status.phase === 'ready') {
+  if (!loading && onboardingCompleted && (engine || remoteConnection) && status.phase === 'ready') {
     showEngine();
     const window = engineWindow;
     if (!window || window.isDestroyed()) return;
@@ -576,13 +590,17 @@ function showSettings(section = 'general', loading = false) {
   window.on('closed', () => {
     pendingRenderers.delete(window);
     presented();
-    if (setupWindow === window) setupWindow = undefined;
+    if (setupWindow === window) {
+      setupWindow = undefined;
+      connectionSettingsOpen = false;
+    }
   });
   setupWindowLoaded = Promise.all([
     window
       .loadFile(setupPath, {
         query: {
           firstSetup: String(!onboardingCompleted),
+          ...(section === 'server' ? { server: 'true' } : {}),
           ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
         },
       })
@@ -594,6 +612,13 @@ function showSettings(section = 'general', loading = false) {
 
 function showEngine({ focus = true } = {}) {
   if (quitting) return;
+  if (connectionSettingsOpen && setupWindow && !setupWindow.isDestroyed()) {
+    if (focus) {
+      setupWindow.show();
+      setupWindow.focus();
+    }
+    return;
+  }
   if (
     !enginePreferencesReady ||
     !engineOrigin ||
@@ -642,7 +667,8 @@ function showEngine({ focus = true } = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: 'persist:nod-app',
+      partition: clientPartition,
+      additionalArguments: remoteConnection ? ['--nod-remote'] : [],
     },
   });
   engineWindows.add(engineWindow);
@@ -908,8 +934,134 @@ async function engineRequest(path, options = {}) {
   if (!engineBound) throw new Error('nod is not ready.');
   return fetch(`${engineOrigin}${path}`, {
     ...options,
-    headers: { ...options.headers, 'x-nod-desktop-token': authToken },
+    headers: { ...options.headers, ...authenticationHeaders() },
+    redirect: 'error',
     signal: options.signal ?? AbortSignal.timeout(5000),
+  });
+}
+
+function authenticationHeaders() {
+  return remoteConnection
+    ? { Authorization: `Bearer ${authToken}` }
+    : { 'x-nod-desktop-token': authToken };
+}
+
+function configureAppSession() {
+  const appSession = session.fromPartition(clientPartition);
+  appSession.on('will-download', saveEngineDownload);
+  appSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = { ...details.requestHeaders };
+    for (const key of Object.keys(headers))
+      if (['x-nod-desktop-token', 'authorization'].includes(key.toLowerCase())) delete headers[key];
+    const window = [...engineWindows].find(
+      (candidate) => !candidate.isDestroyed() && details.webContentsId === candidate.webContents.id,
+    );
+    const main = window?.webContents.mainFrame;
+    const trustedFrame =
+      main &&
+      details.frame?.routingId === main.routingId &&
+      details.frame?.processId === main.processId &&
+      trustedAppURL(main.url);
+    if (
+      engineBound &&
+      new URL(details.url).origin === engineOrigin &&
+      window &&
+      ((details.resourceType === 'mainFrame' && trustedAppURL(details.url)) || trustedFrame)
+    )
+      Object.assign(headers, authenticationHeaders());
+    callback({ requestHeaders: headers });
+  });
+}
+
+function showConnectionSettings() {
+  if (quitting) return;
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
+  connectionSettingsOpen = true;
+  return showSettings('server', true);
+}
+
+async function checkRemoteConnection(connection) {
+  const url = serverOrigin(connection.url);
+  if (typeof connection.token !== 'string' || !/^[A-Za-z0-9_-]{43,}$/.test(connection.token))
+    throw new Error('Enter the authentication token configured on your server.');
+  knownSecrets.add(connection.token);
+  let response;
+  try {
+    response = await fetch(`${url}/api/session`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    throw new Error('Could not reach your server. Check its address and HTTPS certificate.');
+  }
+  if (response.status === 401 || response.status === 403)
+    throw new Error('Your server rejected this token. Check its address and authentication token.');
+  let account;
+  try {
+    account = await response.json();
+  } catch {}
+  if (
+    !response.ok ||
+    !account ||
+    typeof account.user?.id !== 'string' ||
+    !account.user.id ||
+    account.user.id.length > 200 ||
+    typeof account.settings?.onboardingCompleted !== 'boolean'
+  )
+    throw new Error('This address did not respond as a nod server.');
+  return { url, token: connection.token, owner: account.user.id };
+}
+
+async function startRemote(connection) {
+  update({ remote: true, phase: 'starting', message: 'Connecting to your server.' });
+  const connected = await checkRemoteConnection(connection);
+  if (quitting) return;
+  remoteConnection = connected;
+  engineOrigin = connected.url;
+  authToken = connected.token;
+  engineBound = true;
+  enginePreferencesReady = true;
+  engineRuntimeReady = true;
+  onboardingCompleted = true;
+  welcomePassed = true;
+  const id = createHash('sha256').update(`${connected.url}\0${connected.owner}`).digest('hex');
+  const directory = join(app.getPath('userData'), 'profiles', 'servers', id);
+  clientPartition = `persist:nod-server-${id}`;
+  configureAppSession();
+  appPreferences = createAppPreferencesStore(join(directory, 'preferences.json'), {
+    request: (path, options) => engineRequest(path, options),
+    isReady: () => engineBound && !quitting,
+  });
+  const cursorOwner = `${id.slice(0, 8)}-${id.slice(8, 12)}-4${id.slice(13, 16)}-8${id.slice(17, 20)}-${id.slice(20, 32)}`;
+  remoteConnection.cursorOwner = cursorOwner;
+  chatReadCursors = createChatReadCursorStore(join(directory, 'chat-read-cursors.json'), {
+    owner: async () => cursorOwner,
+  });
+  update({
+    phase: 'ready',
+    message: 'Connected to your server.',
+    needsServerConnection: false,
+    engineReady: true,
+    runtime: { phase: 'ready', message: 'Your server is ready.' },
+  });
+  synchronizeNotifications();
+  showEngine();
+  return status;
+}
+
+async function saveConnection(input) {
+  if (quitting) throw new Error('nod is closing.');
+  if (input !== null) {
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('Enter your server address and authentication token.');
+    await checkRemoteConnection(input);
+  }
+  if (!(await confirmRestart())) return;
+  await settings.saveConnection(input);
+  await quit(() => {
+    app.relaunch();
+    app.exit();
   });
 }
 
@@ -1054,6 +1206,7 @@ function refreshUpdateMenu() {
       Menu.buildFromTemplate([
         { label: 'Open nod', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
+        { label: 'Server connection…', click: showConnectionSettings },
         { label: 'Send feedback…', click: showFeedback },
         {
           label,
@@ -1254,6 +1407,7 @@ async function quit(complete, failure = 'nod could not finish shutting down.') {
 
 async function removeAllData() {
   if (quitting) return;
+  if (remoteConnection) return showConnectionSettings();
   const { response } = await dialog.showMessageBox({
     type: 'warning',
     message: 'Remove all nod data?',
@@ -1355,6 +1509,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     NODE_ENV: 'production',
     PORT: String(port),
     NOD_DESKTOP: 'true',
+    NOD_HOST: '127.0.0.1',
     NOD_APP_VERSION: app.getVersion(),
     NOD_DESKTOP_OWNER_ID: owner,
     NOD_DESKTOP_AUTH_TOKEN: authToken,
@@ -1465,15 +1620,27 @@ async function prepare(options = {}) {
     return retryAfterFailure ? prepare(options) : status;
   }
   if (options?.retry === true) engineFailure = undefined;
-  update({
-    phase: 'preparing',
-    windowError: undefined,
-    message: status.runtime.message,
-    progress: status.runtime.progress,
-    needsRuntimeArchive: false,
-  });
-  preparing = lifecycle
-    .start({ retry: options?.retry === true })
+  preparing = (async () => {
+    if (status.remote)
+      update({
+        phase: 'starting',
+        unlockingKeys: true,
+        message: 'Unlocking your saved server token…',
+      });
+    const connection = await settings.connection();
+    if (quitting) return status;
+    if (status.unlockingKeys) update({ unlockingKeys: false });
+    if (connection) return startRemote(connection);
+    update({
+      phase: 'preparing',
+      windowError: undefined,
+      needsServerConnection: false,
+      message: status.runtime.message,
+      progress: status.runtime.progress,
+      needsRuntimeArchive: false,
+    });
+    return lifecycle.start({ retry: options?.retry === true });
+  })()
     .catch((error) => {
       void writeDiagnostic(error.message).catch(() => {});
       const deferred =
@@ -1488,6 +1655,7 @@ async function prepare(options = {}) {
         error: bounded(error.message),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
+        needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',
       });
       return status;
     })
@@ -1593,6 +1761,9 @@ else {
           currentVersion: app.getVersion(),
           native: windows ? undefined : autoUpdater,
           prepareRuntime: async (candidate, signal) => {
+            const saved = await settings.get();
+            const includeRuntime =
+              !saved.serverUrl && (saved.onboardingCompleted || saved.welcome?.continued === true);
             if (windows) {
               const { stageWindowsUpdate } = await import(
                 pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
@@ -1601,8 +1772,10 @@ else {
                 directory: windowsUpdates,
                 resourcesPath: engineRoot,
                 signal,
+                includeRuntime,
               });
             }
+            if (!includeRuntime) return;
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );
@@ -1626,31 +1799,7 @@ else {
         });
       }
       nativeTheme.on('updated', publishPreferences);
-      const appSession = session.fromPartition('persist:nod-app');
-      appSession.on('will-download', saveEngineDownload);
-      appSession.webRequest.onBeforeSendHeaders((details, callback) => {
-        const headers = { ...details.requestHeaders };
-        for (const key of Object.keys(headers))
-          if (key.toLowerCase() === 'x-nod-desktop-token') delete headers[key];
-        const window = [...engineWindows].find(
-          (candidate) =>
-            !candidate.isDestroyed() && details.webContentsId === candidate.webContents.id,
-        );
-        const main = window?.webContents.mainFrame;
-        const trustedFrame =
-          main &&
-          details.frame?.routingId === main.routingId &&
-          details.frame?.processId === main.processId &&
-          trustedAppURL(main.url);
-        if (
-          engineBound &&
-          new URL(details.url).origin === engineOrigin &&
-          window &&
-          ((details.resourceType === 'mainFrame' && trustedAppURL(details.url)) || trustedFrame)
-        )
-          headers['x-nod-desktop-token'] = authToken;
-        callback({ requestHeaders: headers });
-      });
+      configureAppSession();
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
       image.setTemplateImage(true);
       tray = new Tray(image);
@@ -1662,6 +1811,7 @@ else {
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
+              { label: 'Server connection…', click: showConnectionSettings },
               { label: 'Send feedback…', click: showFeedback },
               {
                 id: 'desktop-update',
@@ -1673,7 +1823,11 @@ else {
                 label: 'Replay onboarding…',
                 click: replayOnboarding,
               },
-              { label: 'Remove all data…', click: () => void removeAllData() },
+              {
+                id: 'remove-local-data',
+                label: 'Remove all data…',
+                click: () => void removeAllData(),
+              },
               { type: 'separator' },
               { role: 'hide' },
               { role: 'hideOthers' },
@@ -1691,7 +1845,7 @@ else {
       registerArtifactFileHandlers({
         isEngine,
         origin: () => engineOrigin,
-        token: () => authToken,
+        headers: authenticationHeaders,
         window: () => engineWindow,
         icon: join(desktopRoot, 'assets/nod-macos.png'),
       });
@@ -1713,6 +1867,23 @@ else {
       ipcMain.handle('nod:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return readDesktopSettings();
+      });
+      ipcMain.handle('nod:connection:get', (event) => {
+        allowSetup(event);
+        return settings.get().then((value) => ({ url: value.serverUrl || '' }));
+      });
+      ipcMain.handle('nod:connection:save', (event, value) => {
+        allowSetup(event);
+        return saveConnection(value);
+      });
+      ipcMain.handle('nod:connection:open', (event) => {
+        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        return showConnectionSettings();
+      });
+      ipcMain.handle('nod:connection:close', (event) => {
+        allowSetup(event);
+        setupWindow.destroy();
+        showEngine();
       });
       ipcMain.handle('nod:notifications:request', async (event, messageId) => {
         if (
@@ -1758,7 +1929,7 @@ else {
       ipcMain.handle('nod:settings:save', async (event, value) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         const allowed = ['theme', 'notifications', 'launchAtLogin'];
-        if (isEngine(event)) allowed.push('onboardingCompleted');
+        if (isEngine(event) && !remoteConnection) allowed.push('onboardingCompleted');
         if (isEngine(event) && !onboardingCompleted) allowed.push('onboardingPreferenceStep');
         if (isSetup(event) && !onboardingCompleted) allowed.push('welcome');
         if (
@@ -1803,7 +1974,7 @@ else {
           }
           throw error;
         }
-        onboardingCompleted = saved.onboardingCompleted;
+        onboardingCompleted = remoteConnection ? true : saved.onboardingCompleted;
         if (onboardingCompleted) nativePreferencesPending = false;
         applyPreferences(saved);
         for (const window of engineWindows) deliverAppLink(window);
@@ -1856,12 +2027,16 @@ else {
       });
       ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        return chatReadCursors.get(ownerId, threadId);
+        if (remoteConnection && ownerId !== remoteConnection.owner)
+          throw new Error('This chat does not belong to your server.');
+        return chatReadCursors.get(remoteConnection?.cursorOwner || ownerId, threadId);
       });
       ipcMain.handle('nod:chat-read:set', (event, ownerId, threadId, cursor) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (quitting) throw new Error('nod is closing.');
-        return chatReadCursors.set(ownerId, threadId, cursor);
+        if (remoteConnection && ownerId !== remoteConnection.owner)
+          throw new Error('This chat does not belong to your server.');
+        return chatReadCursors.set(remoteConnection?.cursorOwner || ownerId, threadId, cursor);
       });
       ipcMain.handle('nod:external', (event, url) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
@@ -1879,11 +2054,14 @@ else {
       });
       try {
         const saved = await settings.get();
-        onboardingCompleted = saved.onboardingCompleted;
+        const removeData = Menu.getApplicationMenu?.()?.getMenuItemById('remove-local-data');
+        if (removeData) removeData.enabled = !saved.serverUrl;
+        onboardingCompleted = Boolean(saved.serverUrl) || saved.onboardingCompleted;
+        update({ remote: Boolean(saved.serverUrl) });
         applyPreferences(saved);
-        guidedStartup = !saved.onboardingCompleted;
+        guidedStartup = !saved.serverUrl && !saved.onboardingCompleted;
         const presented = showSettings('general', true);
-        void prepare();
+        if (saved.serverUrl || saved.onboardingCompleted || saved.welcome) void prepare();
         await presented;
       } catch (error) {
         showSettings('general', true);

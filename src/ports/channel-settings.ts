@@ -19,6 +19,7 @@ export class ChannelSetupFailure extends Error {
       | 'existing_webhook'
       | 'webhook_failed'
       | 'activation_pending'
+      | 'server_managed'
       | 'pairing_unavailable',
   ) {
     super(reason);

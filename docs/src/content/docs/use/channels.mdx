@@ -9,6 +9,8 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 You can chat with nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the nod app.
 
+With a [self-hosted server](/deploy/self-host/), channels stay connected while the server runs. You can close the web or desktop app.
+
 nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the nod app.
 
 nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
@@ -30,6 +32,8 @@ A long reply arrives as several messages. If a file doesn't arrive, open nod to 
 ## Set up a channel
 
 Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. nod checks your details before it saves them, and keeps them encrypted, outside the chat.
+
+On a self-hosted server, leave that channel's environment variables blank or unset to use this setup. A channel configured through the environment is server-managed: edit its settings in `.env` and [apply the configuration](/deploy/configuration/#apply-configuration-changes).
 
 <Tabs syncKey="channel">
 <TabItem label="Telegram">
@@ -72,8 +76,8 @@ Select **Use Meta Cloud API instead** in the setup panel. You need a Meta app wi
 
 The Cloud API replies only within 24 hours of your last message. Its file support is limited: open nod to get files. The QR connection supports files directly.
 
-:::caution[Keep nod private]
-Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app does not provide a public address, so Cloud API mode suits nod running on a server. This mode accepts text only. It does not accept incoming media. Use the QR connection for files and voice.
+:::caution[Use a protected server]
+Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTPS, or a proxy exposing only `/api/webhooks/whatsapp` from a local install. It accepts text only; use the QR connection for files and voice.
 :::
 
 </details>
@@ -84,7 +88,9 @@ Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest o
 <details>
 <summary>Configure channels in .env instead</summary>
 
-When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
+On a source install or self-hosted server, set the `TELEGRAM_*` or `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then [apply the configuration](/deploy/configuration/#apply-configuration-changes). Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
+
+To configure and pair the channel in the app, clear all its environment variables and apply the configuration again. This restores any configuration previously saved through **Channels**.
 
 </details>
 
@@ -170,7 +176,7 @@ Reactions work both ways, as they do in the [nod app](/use/chat/#react-to-messag
 
 If a reaction send fails, its result can be unclear. nod keeps the attempt and does not send it again. You can ask nod to remove it. A failed removal keeps the previous reaction.
 
-A Telegram bot that uses a webhook only passes your reactions on to nod if nod registered that webhook with reactions turned on. If nod doesn't see your Telegram reactions, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, needs nothing.
+A Telegram webhook must include `message_reaction` in its allowed update types to pass your reactions to nod. For an environment-managed channel, follow [Telegram webhooks](/deploy/configuration/#telegram-webhooks) to register it again. For a channel configured in the app, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, already requests reactions.
 
 ## Commands
 
@@ -187,6 +193,7 @@ Both channels have task controls. `/tasks` lists open tasks, with one message pe
 
 ## Related resources
 
+- [Host your own server](/deploy/self-host/)
 - [Chat with nod](/use/chat/)
 - [Spending and usage](/use/spending/)
 - [Memory](/use/memory/)

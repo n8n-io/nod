@@ -11,7 +11,7 @@ Until there's something to show, the page helps you start instead. Select **some
 
 When writing a task or schedule request, press Enter to send or Shift+Enter for a new line.
 
-nod starts a saved task session for substantial work with several steps, even when it can finish in one sitting. Research across several sources, comparisons, reports and app workflows can become tasks. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also becomes a task. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat. There is no fixed limit of three tasks.
+nod starts a saved task session for substantial work with several steps, even when it can finish in one sitting. Research across several sources, comparisons, reports and app workflows can become tasks. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also becomes a task. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat.
 
 For example, "Compare these options and make a report" becomes a task. So does "Ask three venues for quotes and tell me when they've all replied". "What time is this meeting?" stays in chat. The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement.
 

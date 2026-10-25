@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import {
   copyFile,
   mkdtemp,
@@ -40,6 +40,8 @@ import {
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
+import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
+import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));
@@ -76,6 +78,258 @@ async function releaseRepository(t) {
   commit();
   return { root, git, commit };
 }
+
+async function serverReleaseFixture(t) {
+  const f = await releaseRepository(t);
+  const source = f.git('rev-parse', 'HEAD');
+  const directory = join(f.root, 'bundles');
+  await mkdir(directory);
+  const pack = async (architecture, revision = source, contentsArchitecture = architecture) => {
+    const name = `nod-server-linux-${architecture}`;
+    await mkdir(join(f.root, name), { recursive: true });
+    await writeFile(join(f.root, name, 'source-revision'), `${revision}\n`);
+    await writeFile(join(f.root, name, 'architecture'), `${contentsArchitecture}\n`);
+    const archive = `${name}-${source}.tar.gz`;
+    await create({ cwd: f.root, file: join(directory, archive), gzip: true }, [name]);
+    const checksum = createHash('sha256')
+      .update(await readFile(join(directory, archive)))
+      .digest('hex');
+    await writeFile(join(directory, `${archive}.sha256`), `${checksum}  ${archive}\n`);
+    return join(directory, archive);
+  };
+  await pack('amd64');
+  await pack('arm64');
+  const state = {
+    private: true,
+    refs: [],
+    releases: [],
+    writes: [],
+    corruptUpload: false,
+    occupiedDraft: false,
+  };
+  const prefix = 'repos/synthetic/nod';
+  const request = (route, options = {}) => {
+    if (options.method === 'POST') {
+      state.writes.push({ route, ...options });
+      if (route === `${prefix}/git/refs`) {
+        const ref = { ref: options.body.ref, object: { type: 'commit', sha: options.body.sha } };
+        if (state.refs.some((entry) => entry.ref === ref.ref)) throw new Error('Duplicate ref');
+        state.refs.push(ref);
+        return ref;
+      }
+      if (route === `${prefix}/releases`) {
+        const release = {
+          id: 1,
+          ...options.body,
+          assets: state.occupiedDraft ? [{ name: 'unexpected' }] : [],
+        };
+        state.releases.push(release);
+        return release;
+      }
+      const target = new URL(route);
+      assert.equal(target.origin, 'https://uploads.github.com');
+      assert.equal(target.pathname, `/${prefix}/releases/1/assets`);
+      const bytes = readFileSync(options.file);
+      const asset = {
+        name: target.searchParams.get('name'),
+        size: bytes.length,
+        digest: `sha256:${createHash('sha256')
+          .update(state.corruptUpload ? Buffer.from('corrupt') : bytes)
+          .digest('hex')}`,
+        state: 'uploaded',
+      };
+      assert.equal(
+        state.releases[0].assets.some((entry) => entry.name === asset.name),
+        false,
+      );
+      state.releases[0].assets.push(asset);
+      return asset;
+    }
+    if (route === prefix) return { private: state.private };
+    if (route.startsWith(`${prefix}/git/matching-refs/`)) return state.refs;
+    if (route === `${prefix}/releases?per_page=100`) return state.releases;
+    if (route === `${prefix}/releases/1`) return state.releases[0];
+    if (route.startsWith(`${prefix}/git/ref/`)) return state.refs[0];
+    throw new Error(`Unexpected synthetic GitHub request: ${route}`);
+  };
+  const environment = {
+    GITHUB_SHA: source,
+    GITHUB_REPOSITORY: 'synthetic/nod',
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_RUN_ID: '123',
+    GITHUB_RUN_ATTEMPT: '1',
+    NOD_DRAFT_RELEASE: 'true',
+  };
+  return {
+    ...f,
+    source,
+    directory,
+    state,
+    pack,
+    environment,
+    draft: () => draftServerRelease({ root: f.root, directory, environment, request }),
+  };
+}
+
+async function imageArchive(t, change = () => {}) {
+  const root = await mkdtemp(join(tmpdir(), 'nod-image-archive-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const contents = join(root, 'contents');
+  await mkdir(join(contents, 'blobs', 'sha256'), { recursive: true });
+  const blobs = new Map();
+  const add = (value) => {
+    const bytes = Buffer.from(JSON.stringify(value));
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    blobs.set(digest, bytes);
+    return { digest, size: bytes.length };
+  };
+  const revision = 'a'.repeat(40);
+  const architecture = 'arm64';
+  const manifest = [];
+  const index = { schemaVersion: 2, manifests: [] };
+  const expected = [];
+  for (const service of ['server', 'browser']) {
+    const reference = `nod-${service}:bundle-synthetic`;
+    const config = add({
+      architecture,
+      os: 'linux',
+      config: {
+        Env: [`SERVICE=${service}`],
+        Labels: { 'org.opencontainers.image.revision': revision },
+      },
+      rootfs: { type: 'layers', diff_ids: [] },
+    });
+    const image = add({ schemaVersion: 2, config, layers: [] });
+    const target = service === 'server' ? add({ schemaVersion: 2, manifests: [image] }) : image;
+    manifest.push({
+      Config: `blobs/sha256/${config.digest.slice(7)}`,
+      RepoTags: [reference],
+      Layers: [],
+    });
+    index.manifests.push({
+      ...target,
+      annotations: { 'io.containerd.image.name': `docker.io/library/${reference}` },
+    });
+    expected.push({ reference, config: config.digest, target: target.digest });
+  }
+  change({ blobs, manifest, index });
+  for (const [digest, bytes] of blobs)
+    await writeFile(join(contents, 'blobs', 'sha256', digest.slice(7)), bytes);
+  await writeFile(join(contents, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(join(contents, 'index.json'), JSON.stringify(index));
+  const archive = join(root, 'images.tar.gz');
+  await create({ cwd: contents, file: archive, gzip: true }, [
+    'blobs',
+    'index.json',
+    'manifest.json',
+  ]);
+  return {
+    expected,
+    read: (options = {}) =>
+      imageIdentities(
+        archive,
+        expected.map(({ reference }) => reference),
+        {
+          architecture,
+          revision,
+          ...options,
+        },
+      ),
+  };
+}
+
+test('server bundle binds classic and containerd identities to the same archived image', async (t) => {
+  const archive = await imageArchive(t);
+  assert.deepEqual(await archive.read(), archive.expected);
+  await assert.rejects(archive.read({ architecture: 'amd64' }), /platform, source or reference/);
+  await assert.rejects(archive.read({ revision: 'b'.repeat(40) }), /platform, source or reference/);
+});
+
+test('server bundle rejects image substitution and corrupt archive identity metadata', async (t) => {
+  const substitution = await imageArchive(t, ({ index }) => {
+    index.manifests[0].digest = index.manifests[1].digest;
+  });
+  await assert.rejects(substitution.read(), /platform, source or reference/);
+  const corrupt = await imageArchive(t, ({ blobs, index }) => {
+    blobs.set(index.manifests[0].digest, Buffer.from('{}'));
+  });
+  await assert.rejects(corrupt.read(), /content digest/);
+  const duplicate = await imageArchive(t, ({ manifest }) => {
+    manifest.push(manifest[0]);
+  });
+  await assert.rejects(duplicate.read(), /exactly once/);
+});
+
+test('server release refuses unapproved, public, branch and source-mismatched uploads', async (t) => {
+  const f = await serverReleaseFixture(t);
+  for (const [key, value] of [
+    ['NOD_DRAFT_RELEASE', 'false'],
+    ['GITHUB_EVENT_NAME', 'pull_request'],
+    ['GITHUB_REF', 'refs/heads/feature'],
+    ['GITHUB_SHA', 'a'.repeat(40)],
+  ]) {
+    const saved = f.environment[key];
+    f.environment[key] = value;
+    await assert.rejects(f.draft());
+    f.environment[key] = saved;
+  }
+  f.state.private = false;
+  await assert.rejects(f.draft(), /private source repository/);
+  assert.deepEqual(f.state.writes, []);
+});
+
+test('server release refuses corrupt, relabelled and incomplete native bundles before writing', async (t) => {
+  const f = await serverReleaseFixture(t);
+  const archive = await f.pack('arm64');
+  await writeFile(archive, 'corrupted archive');
+  await assert.rejects(f.draft(), /checksum/);
+  await f.pack('arm64', 'a'.repeat(40));
+  await assert.rejects(f.draft(), /tested source and architecture/);
+  await f.pack('arm64', f.source, 'amd64');
+  await assert.rejects(f.draft(), /tested source and architecture/);
+  await rm(archive);
+  await assert.rejects(f.draft(), { code: 'ENOENT' });
+  assert.deepEqual(f.state.writes, []);
+});
+
+test('server release preserves existing tags, published releases and unfinished drafts', async (t) => {
+  const f = await serverReleaseFixture(t);
+  const tag = `server-${f.source}`;
+  for (const source of [f.source, 'a'.repeat(40)]) {
+    f.state.refs = [{ ref: `refs/tags/${tag}`, object: { type: 'commit', sha: source } }];
+    await assert.rejects(f.draft(), /already exists/);
+  }
+  f.state.refs = [];
+  for (const draft of [true, false]) {
+    f.state.releases = [
+      { id: 1, tag_name: tag, target_commitish: f.source, draft, assets: [{ name: 'existing' }] },
+    ];
+    await assert.rejects(f.draft(), /already exists/);
+  }
+  assert.deepEqual(f.state.writes, []);
+});
+
+test('server release rejects conflicting or corrupt uploaded assets and never publishes', async (t) => {
+  const occupied = await serverReleaseFixture(t);
+  occupied.state.occupiedDraft = true;
+  await assert.rejects(occupied.draft(), /already contains assets/);
+  assert.equal(occupied.state.writes.length, 2);
+  const corrupt = await serverReleaseFixture(t);
+  corrupt.state.corruptUpload = true;
+  await assert.rejects(corrupt.draft(), /uploaded release asset/);
+  assert.equal(corrupt.state.releases[0].draft, true);
+  assert.equal(corrupt.state.releases[0].assets.length, 1);
+  const valid = await serverReleaseFixture(t);
+  await valid.draft();
+  assert.equal(valid.state.releases[0].draft, true);
+  assert.equal(valid.state.releases[0].target_commitish, valid.source);
+  assert.equal(valid.state.refs[0].object.sha, valid.source);
+  assert.equal(valid.state.releases[0].assets.length, 4);
+  const writes = valid.state.writes.length;
+  await assert.rejects(valid.draft(), /already exists/);
+  assert.equal(valid.state.writes.length, writes);
+});
 
 test('release gate rejects malformed metadata, uncommitted notes and source drift', async (t) => {
   const f = await releaseRepository(t);
