@@ -1,11 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import {
-  flightJourneySummary,
-  presentationSchema,
-  type Presentation,
-} from '../../shared/presentation';
-import { ArrowRight, Check, ChevronDown, ExternalLink, MapPin, Plane } from './icons';
+import { useId, useState } from 'react';
+import { presentationSchema, type Presentation } from '../../shared/presentation';
+import { ArrowRight, ChevronDown, ExternalLink, Link2, MapPin } from './icons';
 import { useArtifactDrawer } from './artifact-context';
+import { Booking } from './presentation-booking';
+import { PresentationChart } from './presentation-chart';
+import { Flights, Seats } from './presentation-travel';
 
 type Visual<T extends Presentation['type']> = Extract<Presentation, { type: T }>;
 
@@ -43,16 +42,41 @@ export function MessagePresentation({ value }: { value: unknown }) {
       {visual.type === 'map' && <Places key={JSON.stringify(visual)} visual={visual} />}
       {visual.type === 'booking' && <Booking visual={visual} />}
       {visual.type === 'diagram' && <Diagram key={JSON.stringify(visual)} visual={visual} />}
-      {visual.type === 'chart' && <Chart key={JSON.stringify(visual)} visual={visual} />}
+      {visual.type === 'chart' && (
+        <PresentationChart key={JSON.stringify(visual)} visual={visual} />
+      )}
       {(visual.sources.length > 0 || visual.asOf) && (
-        <footer className="presentation-sources">
-          {visual.asOf && <span>As of {visual.asOf}</span>}
-          {visual.sources.map((source, index) => (
-            <SourceLink key={index} href={source.url}>
-              {source.label}
-            </SourceLink>
-          ))}
-        </footer>
+        <details className="presentation-sources">
+          <summary>
+            <Link2 size={14} aria-hidden="true" />
+            <span>{visual.sources.length ? 'Sources' : 'Information date'}</span>
+            {visual.sources.length > 0 && (
+              <span className="presentation-source-count">{visual.sources.length}</span>
+            )}
+            <ChevronDown size={14} aria-hidden="true" />
+          </summary>
+          <div className="presentation-source-details">
+            {visual.sources.length > 0 && (
+              <ul>
+                {visual.sources.map((source, index) => (
+                  <li key={index}>
+                    <SourceLink href={source.url}>
+                      <span>
+                        <strong>{source.label}</strong>
+                        <small>{new URL(source.url).hostname.replace(/^www\./, '')}</small>
+                      </span>
+                    </SourceLink>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {visual.asOf && (
+              <p>
+                <span>Information from</span> {visual.asOf}
+              </p>
+            )}
+          </div>
+        </details>
       )}
     </section>
   );
@@ -92,364 +116,6 @@ function PresentedImage({ visual }: { visual: Visual<'image'> }) {
   );
 }
 
-function FlightAirport({
-  point,
-}: {
-  point: Visual<'flights'>['options'][number]['journeys'][number]['segments'][number]['departure'];
-}) {
-  return (
-    <div className="flight-airport">
-      <strong>{point.time}</strong>
-      {point.date && <span>{point.date}</span>}
-      <span>
-        {point.airport}
-        {point.terminal && ` · Terminal ${point.terminal}`}
-      </span>
-      {point.timeZone && <small>{point.timeZone}</small>}
-    </div>
-  );
-}
-
-function Flights({ visual }: { visual: Visual<'flights'> }) {
-  return (
-    <div className="flight-options">
-      {visual.options.map((flight) => {
-        const airlines = [
-          ...new Set(
-            flight.journeys.flatMap((journey) =>
-              journey.segments.map((segment) => segment.airline),
-            ),
-          ),
-        ];
-        const connections = flight.journeys.flatMap((journey) =>
-          journey.segments.flatMap((segment, index) =>
-            segment.connectionAfter
-              ? [
-                  {
-                    ...segment.connectionAfter,
-                    from: segment.arrival.airport,
-                    to: journey.segments[index + 1]!.departure.airport,
-                  },
-                ]
-              : [],
-          ),
-        );
-        const warnings = [
-          ...new Set(
-            connections.flatMap((connection) =>
-              [
-                connection.airportChange === 'yes'
-                  ? `Airport change: ${connection.from} → ${connection.to}`
-                  : undefined,
-                connection.selfTransfer === 'yes' ? 'Self-transfer' : undefined,
-                connection.airportChange === 'unknown' || connection.selfTransfer === 'unknown'
-                  ? 'Transfer details not supplied'
-                  : undefined,
-              ].filter((value): value is string => Boolean(value)),
-            ),
-          ),
-        ];
-        if (
-          flight.journeys.some((journey) =>
-            journey.segments.some(
-              (segment) =>
-                !segment.departure.date ||
-                !segment.arrival.date ||
-                !segment.departure.timeZone ||
-                !segment.arrival.timeZone,
-            ),
-          )
-        )
-          warnings.push('Some dates or time zones were not supplied');
-        return (
-          <details className="flight-option" key={flight.id}>
-            <summary>
-              <div className="flight-topline">
-                <span className="flight-airline">
-                  <Plane size={16} aria-hidden="true" />
-                  {flight.label ||
-                    (airlines.length > 2
-                      ? `${airlines[0]} + ${airlines.length - 1} airlines`
-                      : airlines.join(' + '))}
-                </span>
-                {flight.recommended && <span className="presentation-tag">Recommended</span>}
-                <strong className="flight-price">{flight.price}</strong>
-              </div>
-              {flight.journeys.map((journey) => (
-                <div className="flight-summary-journey" key={journey.id}>
-                  <span className="flight-journey-label">{journey.label}</span>
-                  <div className="flight-route">
-                    <FlightAirport point={journey.segments[0]!.departure} />
-                    <div className="flight-journey">
-                      {journey.duration && <span>{journey.duration}</span>}
-                      <span className="flight-track" aria-hidden="true">
-                        <i />
-                        <ArrowRight size={15} />
-                      </span>
-                      <span>{flightJourneySummary(journey)}</span>
-                    </div>
-                    <FlightAirport point={journey.segments.at(-1)!.arrival} />
-                  </div>
-                </div>
-              ))}
-              {warnings.length > 0 && (
-                <div className="flight-warnings">
-                  {warnings.map((warning) => (
-                    <span key={warning}>{warning}</span>
-                  ))}
-                </div>
-              )}
-              <span className="flight-details-toggle">
-                Journey details <ChevronDown size={14} aria-hidden="true" />
-              </span>
-            </summary>
-            <div className="flight-details">
-              {flight.journeys.map((journey) => (
-                <section className="flight-itinerary" key={journey.id} aria-label={journey.label}>
-                  <h4>{journey.label}</h4>
-                  <ol className="flight-segments">
-                    {journey.segments.map((segment, index) => (
-                      <li key={index}>
-                        <div className="flight-segment-heading">
-                          <strong>
-                            {[segment.airline, segment.flightNumber].filter(Boolean).join(' · ')}
-                          </strong>
-                          {segment.duration && <span>{segment.duration}</span>}
-                        </div>
-                        {segment.operatedBy && (
-                          <p className="flight-segment-meta">Operated by {segment.operatedBy}</p>
-                        )}
-                        <div className="flight-segment-route">
-                          <FlightAirport point={segment.departure} />
-                          <ArrowRight size={14} aria-hidden="true" />
-                          <FlightAirport point={segment.arrival} />
-                        </div>
-                        {(segment.aircraft || segment.cabin) && (
-                          <p className="flight-segment-meta">
-                            {[segment.aircraft, segment.cabin].filter(Boolean).join(' · ')}
-                          </p>
-                        )}
-                        {segment.technicalStops?.map((stop, stopIndex) => (
-                          <div className="flight-stop" key={stopIndex}>
-                            <strong>
-                              Technical stop · {stop.airport}
-                              {stop.duration && ` · ${stop.duration}`}
-                            </strong>
-                            {stop.details && <p>{stop.details}</p>}
-                          </div>
-                        ))}
-                        {segment.technicalStops === undefined && (
-                          <p className="flight-segment-meta">
-                            Technical stop details not supplied.
-                          </p>
-                        )}
-                        {segment.connectionAfter && (
-                          <div className="flight-connection">
-                            <strong>
-                              Connection ·{' '}
-                              {segment.connectionAfter.duration || 'Duration not supplied'}
-                            </strong>
-                            {segment.connectionAfter.airportChange === 'yes' && (
-                              <p>
-                                Airport change: {segment.arrival.airport} →{' '}
-                                {journey.segments[index + 1]!.departure.airport}
-                              </p>
-                            )}
-                            {segment.connectionAfter.airportChange === 'unknown' && (
-                              <p>Airport transfer details not supplied.</p>
-                            )}
-                            {segment.connectionAfter.selfTransfer === 'yes' && <p>Self-transfer</p>}
-                            {segment.connectionAfter.selfTransfer === 'unknown' && (
-                              <p>Self-transfer status not supplied.</p>
-                            )}
-                            {segment.connectionAfter.details && (
-                              <p>{segment.connectionAfter.details}</p>
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                  {journey.segments.some(
-                    (segment) =>
-                      !segment.departure.date ||
-                      !segment.arrival.date ||
-                      !segment.departure.timeZone ||
-                      !segment.arrival.timeZone,
-                  ) && (
-                    <p className="presentation-footnote">
-                      Some dates or time zones were not supplied. Times are shown as provided.
-                    </p>
-                  )}
-                </section>
-              ))}
-              <div className="flight-fare-details">
-                <dl>
-                  <div>
-                    <dt>Baggage</dt>
-                    <dd>{flight.baggage || 'Not provided'}</dd>
-                  </div>
-                </dl>
-                {flight.url && <SourceLink href={flight.url}>View option</SourceLink>}
-              </div>
-            </div>
-          </details>
-        );
-      })}
-      <p className="presentation-footnote">
-        Prices and availability can change. Opening an option does not book it.
-      </p>
-    </div>
-  );
-}
-
-function Seats({ visual }: { visual: Visual<'seats'> }) {
-  const wide = visual.sections.some((section) =>
-    section.rows.some((row) => row.groups.flat().length > 8),
-  );
-  const seats = visual.sections.flatMap((section) =>
-    section.rows.flatMap((row) =>
-      row.groups.flatMap((group) => group.flatMap((seat) => (seat ? [{ seat, section }] : []))),
-    ),
-  );
-  const [selected, setSelected] = useState(
-    visual.recommended ?? {
-      sectionId: seats[0]!.section.id,
-      seatLabel: seats[0]!.seat.label,
-    },
-  );
-  const current = seats.find(
-    ({ seat, section }) => section.id === selected.sectionId && seat.label === selected.seatLabel,
-  )!;
-  const recommended =
-    visual.recommended?.sectionId === current.section.id &&
-    visual.recommended.seatLabel === current.seat.label;
-  const detailId = useId();
-  const sectionId = useId();
-  return (
-    <>
-      <div className="seat-context">
-        <div>
-          <Plane size={16} aria-hidden="true" />
-          <strong>{visual.aircraft || 'Seat plan'}</strong>
-        </div>
-        {visual.flight && <p>{visual.flight}</p>}
-        <small>Schematic layout</small>
-      </div>
-      <div className={`seat-layout${wide ? ' is-wide' : ''}`}>
-        <div className="seat-plan-scroll" tabIndex={0} role="region" aria-label="Seat plan">
-          <div className="seat-plan">
-            {visual.sections.map((section) => (
-              <section
-                className="seat-section"
-                key={section.id}
-                aria-labelledby={`${sectionId}-${section.id}`}
-              >
-                <header className="seat-section-header">
-                  <h4 id={`${sectionId}-${section.id}`}>{section.name}</h4>
-                  {section.deck && <span>{section.deck}</span>}
-                </header>
-                <div className="seat-rows">
-                  {section.rows.map((row) => (
-                    <div
-                      className="seat-row"
-                      key={row.label}
-                      role="group"
-                      aria-label={`Row ${row.label}`}
-                    >
-                      <span className="seat-row-label" aria-hidden="true">
-                        {row.label}
-                      </span>
-                      <div className="seat-row-groups">
-                        {row.groups.map((group, groupIndex) => (
-                          <div
-                            className="seat-group"
-                            key={groupIndex}
-                            role="group"
-                            aria-label={`Seat group ${groupIndex + 1} of ${row.groups.length}`}
-                          >
-                            {group.map((item, index) => {
-                              if (!item)
-                                return (
-                                  <span className="seat-empty" key={index} aria-hidden="true" />
-                                );
-                              const active =
-                                selected.sectionId === section.id &&
-                                selected.seatLabel === item.label;
-                              const suggested =
-                                visual.recommended?.sectionId === section.id &&
-                                visual.recommended.seatLabel === item.label;
-                              return (
-                                <button
-                                  key={item.label}
-                                  type="button"
-                                  className={`seat is-${item.status}${suggested ? ' is-recommended' : ''}`}
-                                  aria-label={`Seat ${item.label}, ${item.status}, ${section.name}${section.deck ? `, ${section.deck}` : ''}${suggested ? ', recommended' : ''}`}
-                                  aria-pressed={active}
-                                  aria-describedby={active ? detailId : undefined}
-                                  title={item.label}
-                                  onClick={() =>
-                                    setSelected({ sectionId: section.id, seatLabel: item.label })
-                                  }
-                                >
-                                  <span className="seat-label">{item.label}</span>
-                                  {active && (
-                                    <Check
-                                      className="seat-selection-check"
-                                      size={10}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        </div>
-        <div className="seat-inspector" id={detailId} aria-live="polite" aria-atomic="true">
-          <span className="presentation-eyebrow">Seat details</span>
-          <strong className="seat-number">{current.seat.label}</strong>
-          <span className="seat-location">
-            {current.section.name}
-            {current.section.deck ? ` · ${current.section.deck}` : ''}
-          </span>
-          <span className={`seat-status is-${current.seat.status}`}>
-            {current.seat.status === 'unknown'
-              ? 'Availability unknown'
-              : current.seat.status === 'available'
-                ? 'Available in source'
-                : 'Unavailable in source'}
-          </span>
-          {recommended && <span className="presentation-tag">Recommended</span>}
-          {current.seat.note && <p>{current.seat.note}</p>}
-          {current.seat.price && <strong>{current.seat.price}</strong>}
-          <p className="presentation-footnote">Explore seats here. Nothing is reserved.</p>
-        </div>
-      </div>
-      <div className="seat-legend">
-        <span>
-          <i className="is-available" />
-          Available
-        </span>
-        <span>
-          <i className="is-unavailable" />
-          Unavailable
-        </span>
-        <span>
-          <i className="is-unknown" />
-          Unknown
-        </span>
-      </div>
-    </>
-  );
-}
 function Places({ visual }: { visual: Visual<'map'> }) {
   const [selected, setSelected] = useState(visual.places[0]!.id);
   const [map, setMap] = useState(false);
@@ -558,209 +224,6 @@ function Places({ visual }: { visual: Visual<'map'> }) {
           Open location
         </SourceLink>
       </div>
-    </>
-  );
-}
-
-function Booking({ visual }: { visual: Visual<'booking'> }) {
-  const labels = {
-    option: 'Option',
-    pending: 'Pending confirmation',
-    confirmed: 'Confirmed',
-    cancelled: 'Cancelled',
-  };
-  return (
-    <div className="booking-summary">
-      <div className="booking-name">
-        <strong>{visual.name}</strong>
-        <span className={`booking-status is-${visual.status}`}>{labels[visual.status]}</span>
-      </div>
-      <dl>
-        {visual.facts.map((fact, index) => (
-          <div key={index}>
-            <dt>{fact.label}</dt>
-            <dd>{fact.value}</dd>
-          </div>
-        ))}
-      </dl>
-      {visual.url && <SourceLink href={visual.url}>View details</SourceLink>}
-    </div>
-  );
-}
-
-function Chart({ visual }: { visual: Visual<'chart'> }) {
-  const canvas = useRef<SVGSVGElement>(null);
-  const [width, setWidth] = useState(560);
-  useEffect(() => {
-    if (!canvas.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry && entry.contentRect.width > 0) setWidth(entry.contentRect.width);
-    });
-    observer.observe(canvas.current);
-    return () => observer.disconnect();
-  }, []);
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const visible = visual.series.filter((series) => !hidden.has(series.id));
-  const values = visible.flatMap((series) => series.points.map((point) => point.value));
-  const low = Math.min(0, ...values);
-  const high = Math.max(0, ...values);
-  const span = high - low || 1;
-  const y = (value: number) => 208 - ((value - low) / span) * 170;
-  const labels = [
-    ...new Set(visual.series.flatMap((series) => series.points.map((point) => point.label))),
-  ];
-  const plotWidth = Math.max(80, width - 92);
-  const x = (index: number) => 64 + ((index + 0.5) / labels.length) * plotWidth;
-  const tickCount = Math.max(2, Math.floor(plotWidth / 90));
-  const labelLength = width < 400 ? 8 : 14;
-  const colours = ['var(--accent)', 'var(--info)', 'var(--success)'];
-  const format = (value: number) =>
-    new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(
-      value,
-    );
-  const title = useId();
-  return (
-    <>
-      <div className="chart-legend" aria-label="Chart series">
-        {visual.series.map((series, index) => (
-          <button
-            type="button"
-            key={series.id}
-            aria-pressed={!hidden.has(series.id)}
-            disabled={visible.length === 1 && !hidden.has(series.id)}
-            onClick={() =>
-              setHidden((current) => {
-                const next = new Set(current);
-                if (next.has(series.id)) next.delete(series.id);
-                else next.add(series.id);
-                return next;
-              })
-            }
-          >
-            <i style={{ background: colours[index] }} />
-            {series.label}
-          </button>
-        ))}
-      </div>
-      {(visual.yLabel || visual.unit) && (
-        <p className="chart-unit">{[visual.yLabel, visual.unit].filter(Boolean).join(' · ')}</p>
-      )}
-      <svg
-        ref={canvas}
-        className="presentation-chart"
-        viewBox={`0 0 ${width} 250`}
-        role="img"
-        aria-labelledby={title}
-      >
-        <title id={title}>
-          {visual.title}. {visible.map((series) => series.label).join(', ')}. Exact values are in
-          the data table below.
-        </title>
-        {[low, low + span / 2, low + span].map((value, index) => (
-          <g key={index}>
-            <line x1="64" x2={width - 28} y1={y(value)} y2={y(value)} className="chart-gridline" />
-            <text x="54" y={y(value) + 4} textAnchor="end">
-              {format(value)}
-            </text>
-          </g>
-        ))}
-        <line x1="64" x2={width - 28} y1={y(0)} y2={y(0)} className="chart-baseline" />
-        {visible.map((series, index) => {
-          const seriesIndex = visual.series.indexOf(series);
-          const colour = colours[seriesIndex];
-          const barWidth = Math.min(36, plotWidth / labels.length / (visible.length + 1));
-          return (
-            <g key={series.id} style={{ color: colour }}>
-              {visual.chart === 'line' && (
-                <polyline
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeDasharray={
-                    seriesIndex === 1 ? '6 3' : seriesIndex === 2 ? '2 3' : undefined
-                  }
-                  points={series.points
-                    .map((point) => `${x(labels.indexOf(point.label))},${y(point.value)}`)
-                    .join(' ')}
-                />
-              )}
-              {series.points.map((point) =>
-                visual.chart === 'bar' ? (
-                  <rect
-                    key={point.label}
-                    x={x(labels.indexOf(point.label)) + (index - visible.length / 2) * barWidth}
-                    y={Math.min(y(0), y(point.value))}
-                    width={Math.max(1, barWidth - 2)}
-                    height={Math.max(point.value === 0 ? 0 : 1, Math.abs(y(point.value) - y(0)))}
-                    fill="currentColor"
-                    rx="2"
-                  >
-                    <title>
-                      {series.label}, {point.label}: {point.value} {visual.unit}
-                    </title>
-                  </rect>
-                ) : (
-                  <circle
-                    key={point.label}
-                    cx={x(labels.indexOf(point.label))}
-                    cy={y(point.value)}
-                    r="3.5"
-                    fill="currentColor"
-                  >
-                    <title>
-                      {series.label}, {point.label}: {point.value} {visual.unit}
-                    </title>
-                  </circle>
-                ),
-              )}
-            </g>
-          );
-        })}
-        {labels.map((label, index) =>
-          index % Math.ceil((labels.length - 1) / tickCount || 1) === 0 ||
-          index === labels.length - 1 ? (
-            <text key={label} x={x(index)} y="235" textAnchor="middle">
-              {label.length > labelLength ? `${label.slice(0, labelLength - 2)}…` : label}
-            </text>
-          ) : null,
-        )}
-      </svg>
-      {visual.xLabel && <p className="chart-x-label">{visual.xLabel}</p>}
-      <details className="chart-data">
-        <summary>
-          View data table <ChevronDown size={14} aria-hidden="true" />
-        </summary>
-        <div tabIndex={0} role="region" aria-label="Chart data">
-          <table>
-            <caption>
-              {visual.title}
-              {visual.unit ? ` (${visual.unit})` : ''}
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">{visual.xLabel || 'Label'}</th>
-                {visual.series.map((series) => (
-                  <th key={series.id} scope="col">
-                    {series.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {labels.map((label) => (
-                <tr key={label}>
-                  <th scope="row">{label}</th>
-                  {visual.series.map((series) => (
-                    <td key={series.id}>
-                      {series.points.find((point) => point.label === label)?.value ?? '—'}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
     </>
   );
 }

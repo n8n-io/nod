@@ -7,7 +7,11 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Message } from '../../shared/contracts';
 import { reactionEmoji } from '../../shared/emoji';
-import { presentationSchema, presentationText } from '../../shared/presentation';
+import {
+  presentationImages,
+  presentationSchema,
+  presentationText,
+} from '../../shared/presentation';
 import { Checkbox, Loading, Notice } from './ui';
 import { BrandMark } from './brand';
 import { errorMessage, post } from '../lib/api';
@@ -547,8 +551,10 @@ export function MessageBubble({
                 <MessageAttachments
                   attachments={message.attachments.filter(
                     (attachment) =>
-                      message.presentation?.type !== 'image' ||
-                      attachment.id !== message.presentation.artifactId,
+                      !message.presentation ||
+                      !presentationImages(message.presentation).some(
+                        (image) => image.artifactId === attachment.id,
+                      ),
                   )}
                 />
               )}

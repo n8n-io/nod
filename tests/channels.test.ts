@@ -2587,6 +2587,37 @@ test(
     const sent: { provider: string; body: Record<string, unknown> }[] = [];
     const handoffPresentations: unknown[] = [];
     const whatsappFileId = randomUUID();
+    const pngId = randomUUID();
+    const jpegId = randomUUID();
+    const largeImageId = randomUUID();
+    const brokenImageId = randomUUID();
+    const wrongSizeImageId = randomUUID();
+    const images = new Map<string, ReturnType<typeof attachment>>([
+      [pngId, attachment('page.png', 'image/png', 'synthetic screenshot pixels')],
+      [jpegId, attachment('venue.jpg', 'image/jpeg', 'synthetic venue pixels')],
+      [
+        largeImageId,
+        {
+          ...attachment('large.png', 'image/png', ''),
+          size: 5 * 1024 * 1024 + 1,
+          read: async () => {
+            throw new Error('Oversized media must not be read.');
+          },
+        },
+      ],
+      [
+        brokenImageId,
+        {
+          ...attachment('missing.png', 'image/png', 'missing'),
+          read: async () => {
+            throw new Error('Missing artifact.');
+          },
+        },
+      ],
+      [wrongSizeImageId, { ...attachment('changed.png', 'image/png', 'changed bytes'), size: 1 }],
+    ]);
+    const uploaded: Array<{ name: string; mimeType: string; bytes: Buffer }> = [];
+    let failImage = false;
     let providerCalls = 0;
     let failSend = false;
     let failSubmit = false;
@@ -2625,6 +2656,18 @@ test(
             },
           });
         }
+        if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/media$/.test(url)) {
+          assert.ok(init?.body instanceof FormData);
+          assert.equal(init.body.get('messaging_product'), 'whatsapp');
+          const image = init.body.get('file');
+          assert.ok(image instanceof File);
+          uploaded.push({
+            name: image.name,
+            mimeType: image.type,
+            bytes: Buffer.from(await image.arrayBuffer()),
+          });
+          return Response.json({ id: `fixture-media-${uploaded.length}` });
+        }
         if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url)) {
           if (body.type === 'reaction') {
             reacting.push({ provider: 'whatsapp', body });
@@ -2633,6 +2676,7 @@ test(
             });
           }
           sent.push({ provider: 'whatsapp', body });
+          if (body.type === 'image' && failImage) throw new Error('Possible image acceptance.');
           return Response.json({ messages: [{ id: `wamid.fixture-out-${sent.length}` }] });
         }
         throw new Error('Unexpected fixture provider call.');
@@ -2649,9 +2693,13 @@ test(
       transport: createChatSdkTransport(pool, fixtureEnv),
       resolveAttachments: async (resolvedThreadId, ids) => {
         assert.equal(resolvedThreadId, threadId);
-        if (ids.length !== 1 || ids[0] !== whatsappFileId)
+        if (ids.some((id) => id !== whatsappFileId && !images.has(id)))
           throw new Error('Attachment unavailable.');
-        return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
+        return ids.map((id) =>
+          id === whatsappFileId
+            ? attachment('research.csv', 'text/csv', 'A,B\n1,2\n')
+            : images.get(id)!,
+        );
       },
       subscribe: () => () => {},
       intervalMs: 600000,
@@ -2798,7 +2846,7 @@ test(
         [{ id: whatsappFileId }],
       );
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
       const fileText = JSON.stringify(sent[2].body);
       assert.doesNotMatch(fileText, /api\/artifacts/);
       assert.equal(
@@ -2811,7 +2859,7 @@ test(
         { id: randomUUID() },
       ]);
       await channels.drain();
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
       assert.deepEqual(
         (
           await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
@@ -2829,7 +2877,7 @@ test(
       assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
 
       const idOf = async (query: string) => (await pool.query(query)).rows[0].message_id;
       const ownerMessage = await idOf(
@@ -2991,7 +3039,7 @@ test(
         ).rows[0],
         { state: 'blocked', reason: 'reply_window_closed' },
       );
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
 
       const paragraphs = Array.from({ length: 30 }, (_, index) =>
         `Paragraph ${index} ${'detail '.repeat(40)}`.trim(),
@@ -2999,7 +3047,7 @@ test(
       await addReply('channel:telegram:987:123456:10', paragraphs.join('\n\n'));
       await channels.drain();
       const parts = sent
-        .slice(4)
+        .slice(5)
         .map((message) =>
           String(
             (message.body.rich_message as { markdown?: string })?.markdown ?? message.body.text,
@@ -3052,6 +3100,101 @@ test(
           messageId: multipart,
         });
       }
+
+      const imageReply = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'Here are the page and venue images.',
+        [{ id: pngId }, { id: jpegId }],
+      );
+      await pool.query('UPDATE messages SET reply_to_message_id=$2 WHERE id=$1', [
+        imageReply,
+        whatsappReply,
+      ]);
+      const beforeImages = sent.length;
+      await channels.drain();
+      assert.deepEqual(uploaded, [
+        {
+          name: 'page.png',
+          mimeType: 'image/png',
+          bytes: Buffer.from('synthetic screenshot pixels'),
+        },
+        { name: 'venue.jpg', mimeType: 'image/jpeg', bytes: Buffer.from('synthetic venue pixels') },
+      ]);
+      const mediaMessages = sent.slice(beforeImages);
+      assert.deepEqual(
+        mediaMessages.map(({ body }) => body.type),
+        ['text', 'image', 'image'],
+      );
+      assert.deepEqual(
+        mediaMessages.slice(1).map(({ body }) => body.image),
+        [{ id: 'fixture-media-1' }, { id: 'fixture-media-2' }],
+      );
+      assert.ok(
+        mediaMessages.every(
+          ({ body }) =>
+            (body.context as { message_id: string }).message_id === 'wamid.fixture-out-2',
+        ),
+      );
+      assert.doesNotMatch(JSON.stringify(mediaMessages), /api\/artifacts|https?:|"link"/);
+      const imageProviderIds = mediaMessages.map(
+        (_, index) => `wamid.fixture-out-${beforeImages + index + 1}`,
+      );
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+            [imageReply],
+          )
+        ).rows[0],
+        { state: 'sent', provider_message_ids: imageProviderIds },
+      );
+      for (const nativeId of imageProviderIds.slice(1)) {
+        await sendWhatsApp(whatsappReaction(nativeId, '👍'));
+        assert.deepEqual(reactedTo.at(-1), [imageReply, '👍']);
+        const inbound = whatsappPayload(`wamid.media-reply-${nativeId}`);
+        Object.assign(inbound.entry[0].changes[0].value.messages[0], { context: { id: nativeId } });
+        await sendWhatsApp(inbound);
+        await channels.drain();
+        assert.equal(replyTargets.at(-1)?.messageId, imageReply);
+      }
+      const rejectedImages = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'These files remain in nod.',
+        [
+          { id: largeImageId },
+          { id: brokenImageId },
+          { id: wrongSizeImageId },
+          { id: whatsappFileId },
+        ],
+      );
+      const beforeRejected = sent.length;
+      await channels.drain();
+      assert.equal(uploaded.length, 2);
+      assert.equal(sent.length, beforeRejected + 2);
+      assert.ok(sent.slice(beforeRejected).every(({ body }) => body.type === 'text'));
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [rejectedImages]))
+          .rows[0].state,
+        'sent',
+      );
+      failImage = true;
+      const uncertainImage = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'Sending the screenshot.',
+        [{ id: pngId }],
+      );
+      await channels.drain();
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [uncertainImage]))
+          .rows[0].state,
+        'uncertain',
+      );
+      const attemptedImages = sent.length;
+      const attemptedUploads = uploaded.length;
+      await channels.drain();
+      assert.equal(sent.length, attemptedImages);
+      assert.equal(uploaded.length, attemptedUploads);
+      failImage = false;
 
       for (const [sourceId, provider] of [
         ['channel:telegram:987:123456:10', 'telegram'],
@@ -3148,7 +3291,7 @@ test(
           { id: whatsappFileId },
         ]);
         await restarted.drain();
-        assert.equal(sent.length, attempts + 1);
+        assert.equal(sent.length, attempts + 2);
         assert.doesNotMatch(JSON.stringify(sent.at(-1)?.body), /api\/artifacts/);
       } finally {
         await restarted.close();

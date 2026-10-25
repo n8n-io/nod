@@ -2205,6 +2205,68 @@ test(
         (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
         'Review the synthetic connecting itinerary.',
       );
+      const venue: Presentation = {
+        version: 1,
+        type: 'booking',
+        title: 'Synthetic venue comparison',
+        sources: [],
+        name: 'Courtyard',
+        status: 'option',
+        facts: [{ label: 'Total', value: 'EUR 120' }],
+        photos: [{ artifactId: image.id, alt: 'The courtyard entrance' }],
+        notes: ['Step-free entry reported by the venue'],
+        rating: {
+          value: 4.2,
+          scale: 5,
+          count: 93,
+          sourceLabel: 'Fixture reviews',
+          url: 'https://example.com/reviews',
+          summary: 'Visitors report a quiet courtyard.',
+        },
+        alternatives: [
+          {
+            name: 'Terrace',
+            status: 'option',
+            facts: [{ label: 'Total', value: 'EUR 140' }],
+            notes: ['Outdoor tables only'],
+            url: 'https://example.com/terrace',
+          },
+        ],
+      };
+      const venueReply = await addReply(
+        turnId,
+        [image],
+        'Compare these two sourced venues.',
+        venue,
+      );
+      const beforeVenue = sent.length;
+      const beforeVenueText = texts.length;
+      await channels.drain();
+      assert.equal((await state(venueReply)).state, 'sent');
+      assert.equal(sent.length, beforeVenue + 1);
+      assert.deepEqual(Buffer.from(sent.at(-1)!.file), imageBytes);
+      const deliveredVenue = [
+        ...texts.slice(beforeVenueText),
+        ...sent.slice(beforeVenue).map((message) => message.caption),
+      ]
+        .join('\n')
+        .replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+      for (const detail of [
+        'Courtyard',
+        'Terrace',
+        'EUR 120',
+        'EUR 140',
+        '4.2/5',
+        '93 reviews',
+        'https://example.com/reviews',
+        'Visitors report a quiet courtyard.',
+        'Step-free entry',
+        'Outdoor tables only',
+        'The courtyard entrance',
+        'https://example.com/terrace',
+      ])
+        assert.ok(deliveredVenue.includes(detail), detail);
+      assert.doesNotMatch(deliveredVenue, /artifactId|"photos"|api\/artifacts/);
       const chart: Presentation = {
         version: 1,
         type: 'chart',
@@ -2239,6 +2301,7 @@ test(
       await channels.drain();
       assert.equal((await state(invalidVisual)).state, 'sent');
       assert.equal(texts.at(-1), 'Plain fallback survives.');
+      const beforeAccountChange = sent.length;
       holdResolve = true;
       const changedAccount = await addReply(turnId, [image]);
       const pending = channels.drain();
@@ -2268,7 +2331,7 @@ test(
         state: 'blocked',
         reason: 'channel_access_changed',
       });
-      assert.equal(sent.length, failedCount);
+      assert.equal(sent.length, beforeAccountChange);
       const localOnly = await addReply(turnId, [image], '');
       await channels.drain();
       assert.equal((await state(localOnly)).state, 'sent');

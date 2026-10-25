@@ -5411,6 +5411,7 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       assert.match(document.querySelector('.seat-inspector').textContent,/Already occupied/);
       assert.equal(seat.textContent,'12C');
       assert.equal(document.querySelectorAll('.seat-empty').length,1);
+      await act(async () => [...document.querySelectorAll('.seat-section-controls button')].find(button=>button.textContent==='All sections').click());
       const upperSeat = document.querySelector('[aria-label="Seat 12A, unknown, Business, Upper deck"]');
       await act(async () => upperSeat.click());
       assert.equal(upperSeat.getAttribute('aria-pressed'),'true');
@@ -5433,6 +5434,8 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       assert.equal(journeySummaries.length,2);
       assert.match(journeySummaries[0].textContent,/2 connections/);
       assert.match(journeySummaries[0].textContent,/1 technical stop/);
+      for (const stop of ['LHR → LGW','4h 10m','DXB','4h','BKK','45m'])
+        assert.ok(journeySummaries[0].querySelector('.flight-summary-stops').textContent.includes(stop),stop);
       assert.doesNotMatch(journeySummaries[0].textContent,/Nonstop/);
       assert.match(journeySummaries[1].textContent,/Nonstop/);
       for (const detail of ['Airport change: LHR → LGW','Self-transfer','Transfer details not supplied'])
@@ -5453,7 +5456,7 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
               assert.ok(airports[pointIndex].textContent.includes(detail),detail);
         }
       }
-      for (const detail of ['Operated by Fixture Regional','A321','Economy','2h 50m','A350','Premium economy','4h 10m','Collect baggage and arrange ground transfer to LGW','Protection for the next connection is not supplied','Self-transfer status not supplied','Technical stop · BKK · 45m','Same flight; boarding instructions not supplied','One cabin bag'])
+      for (const detail of ['Operated by Fixture Regional','A321','Economy','2h 50m','A350','Premium economy','4h 10m','Collect baggage and arrange ground transfer to LGW','Protection for the next connection is not supplied','Self-transfer status not supplied','Technical stop · BKK','45m','Same flight; boarding instructions not supplied','One cabin bag'])
         assert.ok(flightOption.querySelector('.flight-details').textContent.includes(detail),detail);
       assert.equal(flightOption.querySelector('.flight-fare-details a').href,'https://example.com/fare');
       await act(async () => flightSummary.click());
@@ -5510,8 +5513,49 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       await act(async () => lineButtons[0].click());
       assert.deepEqual(lineIdentities(),[originalLines[0],originalLines[2]]);
       assert.deepEqual([...document.querySelectorAll('.chart-data tbody tr:last-child td')].map(cell=>cell.textContent),['20','25','22']);
+      const linePlot=document.querySelector('.chart-line-plot');
+      await act(async () => linePlot.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Home',bubbles:true})));
+      assert.match(document.querySelector('.chart-reading').textContent,/March/);
+      assert.deepEqual([...document.querySelectorAll('.chart-reading dd')].map(cell=>cell.textContent),['10','12']);
+      await act(async () => linePlot.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})));
+      assert.match(document.querySelector('.chart-reading').textContent,/April/);
+      assert.deepEqual([...document.querySelectorAll('.chart-reading dd')].map(cell=>cell.textContent),['20','22']);
+      for (const chart of ['pie','donut']) {
+        await render({...common,type:'chart',chart,unit:'EUR',series:[{id:'budget',label:'Budget',points:[{label:'Stay',value:300},{label:'Travel',value:100},{label:'Fees',value:0}]}]});
+        assert.equal(document.querySelectorAll('.chart-radial-plot path').length,2);
+        const slices=document.querySelectorAll('.chart-slice-option');
+        assert.deepEqual([...slices].map(slice=>slice.querySelector('.chart-share').textContent),['75%','25%','0%']);
+        await act(async () => slices[1].focus());
+        assert.equal(slices[1].getAttribute('aria-pressed'),'true');
+        assert.equal(slices[0].getAttribute('aria-pressed'),'false');
+        if (chart==='donut') assert.equal(document.querySelector('.chart-donut-centre strong').textContent,'25%');
+        await act(async () => slices[2].click());
+        assert.equal(slices[2].getAttribute('aria-pressed'),'true');
+        assert.deepEqual([...document.querySelectorAll('.chart-data tbody td')].map(cell=>cell.textContent),['300','100','0']);
+        assert.equal(requests.length,0);
+      }
       assert.equal(requests.length,0);
       assert.equal(opens.length,1);
+      const secondPhoto='00000000-0000-4000-8000-000000000002';
+      const otherVenuePhoto='00000000-0000-4000-8000-000000000003';
+      await render({...common,type:'booking',name:'First venue',status:'option',facts:[{label:'Total',value:'EUR 426'}],photos:[{artifactId,alt:'Bedroom'},{artifactId:secondPhoto,alt:'Step-free entrance'}],rating:{value:4.5,scale:5,count:27,sourceLabel:'Review provider',url:'https://example.com/reviews',summary:'Guests mention the entrance.'},notes:['No lift'],alternatives:[{name:'Second venue',status:'option',facts:[{label:'Total',value:'EUR 387'}],photos:[{artifactId:otherVenuePhoto,alt:'Second venue bedroom'}]}]});
+      const venueCards=document.querySelectorAll('.booking-summary');
+      assert.equal(venueCards.length,2);
+      assert.equal(venueCards[0].querySelector('img').getAttribute('src'),'/api/artifacts/'+artifactId);
+      assert.equal(venueCards[1].querySelector('img').getAttribute('src'),'/api/artifacts/'+otherVenuePhoto);
+      await act(async () => venueCards[0].querySelectorAll('.booking-photo-picker button')[1].click());
+      assert.equal(venueCards[0].querySelector('img').getAttribute('src'),'/api/artifacts/'+secondPhoto);
+      assert.equal(venueCards[1].querySelector('img').getAttribute('src'),'/api/artifacts/'+otherVenuePhoto);
+      await act(async () => venueCards[0].querySelector('.booking-photo').click());
+      assert.equal(opens.at(-1)[0],secondPhoto);
+      assert.equal(opens.at(-1)[1].element,venueCards[0].querySelector('.booking-photo'));
+      assert.equal(venueCards[0].querySelector('.booking-review a').href,'https://example.com/reviews');
+      await act(async () => venueCards[0].querySelector('img').dispatchEvent(new Event('error')));
+      assert.equal(venueCards[0].querySelector('img'),null);
+      assert.ok(venueCards[0].querySelector('[role="status"]'));
+      await act(async () => venueCards[0].querySelectorAll('.booking-photo-picker button')[0].click());
+      assert.equal(venueCards[0].querySelector('img').getAttribute('src'),'/api/artifacts/'+artifactId);
+      assert.equal(requests.length,0);
       for (const value of [
         {...common,type:'unknown'},
         {...common,type:'image',artifactId:'https://tracker.example.com/pixel',alt:'image'},

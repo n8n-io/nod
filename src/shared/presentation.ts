@@ -33,6 +33,28 @@ const seat = z.strictObject({
   note: text(240).optional(),
   price: text(80).optional(),
 });
+const photo = z.strictObject({ artifactId: z.uuid(), alt: text(500) });
+const booking = {
+  name: text(160),
+  status: z.enum(['option', 'pending', 'confirmed', 'cancelled']),
+  facts: z
+    .array(z.strictObject({ label: text(80), value: text(400) }))
+    .min(1)
+    .max(16),
+  url: url.optional(),
+  photos: z.array(photo).min(1).max(4).optional(),
+  notes: z.array(text(300)).min(1).max(6).optional(),
+  rating: z
+    .strictObject({
+      value: z.number().finite().min(0).max(100),
+      scale: z.number().finite().positive().max(100),
+      count: z.number().int().positive().max(1e9).optional(),
+      sourceLabel: text(100),
+      url,
+      summary: text(600).optional(),
+    })
+    .optional(),
+};
 
 export const presentationSchema = z
   .discriminatedUnion('type', [
@@ -124,6 +146,12 @@ export const presentationSchema = z
       type: z.literal('seats'),
       aircraft: text(120).optional(),
       flight: text(200).optional(),
+      coverage: z
+        .strictObject({
+          scope: z.enum(['full-aircraft', 'cabin', 'selection']),
+          description: text(240),
+        })
+        .optional(),
       sections: z
         .array(
           z.strictObject({
@@ -148,18 +176,13 @@ export const presentationSchema = z
     z.strictObject({
       ...common,
       type: z.literal('booking'),
-      name: text(160),
-      status: z.enum(['option', 'pending', 'confirmed', 'cancelled']),
-      facts: z
-        .array(z.strictObject({ label: text(80), value: text(400) }))
-        .min(1)
-        .max(16),
-      url: url.optional(),
+      ...booking,
+      alternatives: z.array(z.strictObject(booking)).min(1).max(3).optional(),
     }),
     z.strictObject({
       ...common,
       type: z.literal('chart'),
-      chart: z.enum(['bar', 'line']),
+      chart: z.enum(['bar', 'line', 'pie', 'donut']),
       xLabel: text(80).optional(),
       yLabel: text(80).optional(),
       unit: text(32).optional(),
@@ -246,6 +269,10 @@ export const presentationSchema = z
           invalid('The recommended seat must exist in its section.');
       }
     }
+    if (value.type === 'booking')
+      for (const venue of [value, ...(value.alternatives ?? [])])
+        if (venue.rating && venue.rating.value > venue.rating.scale)
+          invalid('A rating cannot exceed its source scale.');
     if (value.type === 'chart') {
       if (!unique(value.series.map((series) => series.id)))
         invalid('Chart series IDs must be unique.');
@@ -260,6 +287,16 @@ export const presentationSchema = z
         )
           invalid('Line series must use the same point labels in the same order.');
       }
+      if (value.chart === 'pie' || value.chart === 'donut') {
+        if (value.series.length !== 1)
+          invalid('A pie or donut chart must contain exactly one series.');
+        if (value.series[0].points.length > 12)
+          invalid('A pie or donut chart can contain at most 12 slices.');
+        if (value.series.some((series) => series.points.some((point) => point.value < 0)))
+          invalid('Pie and donut values cannot be negative.');
+        if (!value.series[0].points.some((point) => point.value > 0))
+          invalid('A pie or donut chart must contain a positive value.');
+      }
     }
     if (value.type === 'diagram') {
       const nodes = value.nodes.map((node) => node.id);
@@ -270,6 +307,15 @@ export const presentationSchema = z
   });
 
 export type Presentation = z.infer<typeof presentationSchema>;
+
+export function presentationImages(
+  value: Presentation,
+): Array<{ artifactId: string; alt: string }> {
+  if (value.type === 'image') return [value];
+  if (value.type === 'booking')
+    return [value, ...(value.alternatives ?? [])].flatMap((venue) => venue.photos ?? []);
+  return [];
+}
 
 type FlightJourney = Extract<
   Presentation,
@@ -376,6 +422,8 @@ export function presentationText(value: Presentation) {
   if (value.type === 'seats') {
     if (value.aircraft) lines.push(value.aircraft);
     if (value.flight) lines.push(value.flight);
+    if (value.coverage)
+      lines.push(`Coverage: ${value.coverage.scope} · ${value.coverage.description}`);
     for (const section of value.sections) {
       lines.push([section.name, section.deck].filter(Boolean).join(' · '));
       for (const row of section.rows) {
@@ -403,9 +451,26 @@ export function presentationText(value: Presentation) {
     }
   }
   if (value.type === 'booking') {
-    lines.push(`${value.name} · ${value.status}`);
-    for (const fact of value.facts) lines.push(`${fact.label}: ${fact.value}`);
-    if (value.url) lines.push(value.url);
+    for (const venue of [value, ...(value.alternatives ?? [])]) {
+      lines.push(`${venue.name} · ${venue.status}`);
+      for (const fact of venue.facts) lines.push(`${fact.label}: ${fact.value}`);
+      for (const photo of venue.photos ?? []) lines.push(`Image: ${photo.alt}`);
+      for (const note of venue.notes ?? []) lines.push(note);
+      if (venue.rating) {
+        const rating = venue.rating;
+        lines.push(
+          [
+            `Rating: ${rating.value}/${rating.scale}`,
+            rating.count === undefined ? undefined : `${rating.count} reviews`,
+            `${rating.sourceLabel}: ${rating.url}`,
+            rating.summary,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        );
+      }
+      if (venue.url) lines.push(venue.url);
+    }
   }
   if (value.type === 'chart') {
     for (const label of [value.xLabel, value.yLabel]) if (label) lines.push(label);

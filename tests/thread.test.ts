@@ -25,7 +25,7 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/objec
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
-import type { Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
+import type { Artifact, Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
@@ -382,7 +382,7 @@ test(
                 context.turnId,
               ])
             ).rows.map((row) => row.attachments.map((item: { name: string }) => item.name)),
-            [['research.png']],
+            [],
           );
           assert.equal(
             (await readFile(join(context.workspacePath, file.workspaceFile))).toString(),
@@ -636,19 +636,81 @@ test(
               );
               assert.deepEqual(shown.presentation, visual);
             }
-            for (const artifactId of [randomUUID(), otherImage.id, vector.id])
-              await assert.rejects(
-                thread.reply(ref, 'Invalid visual.', [], undefined, undefined, {
-                  ...visual,
-                  artifactId,
-                }),
-                /unavailable/,
+            const venue: Presentation = {
+              version: 1,
+              type: 'booking',
+              title: 'Synthetic venues',
+              sources: [],
+              name: 'Courtyard',
+              status: 'option',
+              facts: [{ label: 'Price', value: 'EUR 80' }],
+              photos: [{ artifactId: image.id.toUpperCase(), alt: 'Courtyard screenshot' }],
+              alternatives: [
+                {
+                  name: 'Terrace',
+                  status: 'option',
+                  facts: [{ label: 'Price', value: 'EUR 90' }],
+                  photos: [{ artifactId: image.id, alt: 'Shared exterior view' }],
+                },
+              ],
+            };
+            await thread.reply(
+              ref,
+              'Compare the two sourced venues.',
+              [{ ...image, source: 'browser_screenshot' }],
+              undefined,
+              undefined,
+              venue,
+            );
+            const savedVenue = (
+              await db.pool.query(
+                "SELECT * FROM messages WHERE turn_id=$1 AND text='Compare the two sourced venues.'",
+                [turnId],
+              )
+            ).rows[0];
+            assert.equal(savedVenue.presentation.photos[0].artifactId, image.id);
+            assert.deepEqual(
+              savedVenue.attachments.map((item: Artifact) => [item.id, item.source]),
+              [[image.id, 'browser_screenshot']],
+            );
+            for (const path of [
+              '/api/state',
+              '/api/messages',
+              `/api/messages/around/${savedVenue.id}`,
+            ]) {
+              const body = (await request('GET', path)).json();
+              const shown = (Array.isArray(body) ? body : body.messages).find(
+                (message: { id: string }) => message.id === savedVenue.id,
               );
+              assert.deepEqual(shown.presentation, savedVenue.presentation);
+            }
+            for (const artifactId of [randomUUID(), otherImage.id, vector.id])
+              for (const invalid of [
+                { ...visual, artifactId },
+                { ...venue, photos: [{ artifactId, alt: 'Invalid primary' }] },
+                {
+                  ...venue,
+                  alternatives: [
+                    {
+                      ...venue.alternatives![0],
+                      photos: [{ artifactId, alt: 'Invalid alternative' }],
+                    },
+                  ],
+                },
+              ])
+                await assert.rejects(
+                  thread.reply(ref, 'Invalid visual.', [], undefined, undefined, invalid),
+                  /unavailable/,
+                );
             await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
               image.id,
             ]);
             await assert.rejects(
               thread.reply(ref, 'Foreign visual.', [], undefined, undefined, visual),
+              /unavailable/,
+            );
+            await assert.rejects(
+              thread.reply(ref, 'Foreign venue.', [], undefined, undefined, venue),
               /unavailable/,
             );
             await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [
@@ -659,7 +721,7 @@ test(
               thread.reply(ref, ' ', [], undefined, undefined, visual),
               /text answer/,
             );
-            assert.equal(await count(), 1);
+            assert.equal(await count(), 2);
             await db.pool.query('UPDATE messages SET presentation=$2 WHERE id=$1', [
               saved.id,
               JSON.stringify({ ...visual, version: 2 }),
@@ -674,7 +736,7 @@ test(
               thread.reply(ref, 'Late visual.', [], undefined, undefined, visual),
               /no longer active/,
             );
-            assert.equal(await count(), 1);
+            assert.equal(await count(), 2);
           } finally {
             await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [turnId]);
             await db.pool.query('DELETE FROM turns WHERE id=$1', [turnId]);
@@ -3579,11 +3641,15 @@ test(
                 research,
               ])
             ).rows;
-            assert.equal(messages.length, 3);
-            const artifact = messages.find(
-              (message) => message.attachments[0]?.name === 'finished.txt',
+            assert.equal(messages.length, 2);
+            const artifact = messages.find((message) =>
+              message.attachments.some((item: Artifact) => item.name === 'finished.txt'),
             );
             assert.equal(artifact.text, 'The synthetic research summary is ready.');
+            assert.deepEqual(
+              artifact.attachments.map((item: Artifact) => item.name),
+              ['research.png', 'finished.txt'],
+            );
             const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
             await waitFor(settled(unrelated));
             block(pending);
@@ -3612,7 +3678,9 @@ test(
                 ),
               );
               assert.ok(
-                history.some((message) => message.attachments?.[0]?.name === 'finished.txt'),
+                history.some((message) =>
+                  message.attachments?.some((item) => item.name === 'finished.txt'),
+                ),
               );
               for (const text of [
                 pending,

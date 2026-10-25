@@ -1,5 +1,6 @@
 import {
   flightJourneySummary,
+  presentationImages,
   presentationSchema,
   presentationText,
 } from '../src/shared/presentation.ts';
@@ -932,6 +933,69 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   }));
   assert.ok(presentationSchema.safeParse(diagram).success);
   assert.ok(presentationSchema.safeParse(seats).success);
+  const booking = {
+    ...common,
+    type: 'booking',
+    name: 'Synthetic venue',
+    status: 'option',
+    facts: [{ label: 'Total', value: 'EUR 120' }],
+    photos: [{ artifactId: '00000000-0000-4000-8000-000000000001', alt: 'A sourced courtyard' }],
+    notes: ['Step-free entry reported by the venue'],
+    rating: {
+      value: 4.2,
+      scale: 5,
+      count: 93,
+      sourceLabel: 'Fixture reviews',
+      url: 'https://example.com/reviews',
+      summary: 'Visitors report a quiet courtyard.',
+    },
+  };
+  const alternative = {
+    name: 'Other venue',
+    status: 'option',
+    facts: booking.facts,
+    photos: booking.photos,
+    rating: booking.rating,
+  };
+  const comparison = presentationSchema.parse({ ...booking, alternatives: [alternative] });
+  assert.deepEqual(presentationImages(comparison), [...booking.photos, ...booking.photos]);
+  assert.ok(presentationText(comparison).includes('Other venue'));
+  assert.ok(
+    presentationSchema.safeParse({
+      ...booking,
+      alternatives: Array.from({ length: 3 }, () => alternative),
+    }).success,
+  );
+  const venue = presentationSchema.parse(booking);
+  assert.deepEqual(presentationImages(venue), booking.photos);
+  const venueText = presentationText(venue);
+  for (const detail of [
+    '4.2/5',
+    '93 reviews',
+    'https://example.com/reviews',
+    'Visitors report a quiet courtyard.',
+    'Step-free entry',
+    'A sourced courtyard',
+  ])
+    assert.ok(venueText.includes(detail), detail);
+  assert.ok(
+    presentationSchema.safeParse({ ...booking, rating: { ...booking.rating, count: undefined } })
+      .success,
+  );
+  for (const value of [
+    { ...booking, rating: { ...booking.rating, value: 5.1 } },
+    { ...booking, rating: { ...booking.rating, scale: 0 } },
+    { ...booking, rating: { ...booking.rating, count: 0 } },
+    { ...booking, rating: { ...booking.rating, count: 1.5 } },
+    { ...booking, rating: { ...booking.rating, url: 'https://127.0.0.1/reviews' } },
+    { ...booking, photos: [{ artifactId: 'https://example.com/photo.png', alt: 'Remote image' }] },
+    { ...booking, photos: Array.from({ length: 5 }, () => booking.photos[0]) },
+    { ...booking, notes: Array.from({ length: 7 }, () => 'Note') },
+    { ...booking, alternatives: Array.from({ length: 4 }, () => alternative) },
+    { ...booking, alternatives: [{ ...alternative, rating: { ...booking.rating, value: 6 } }] },
+    { ...booking, alternatives: [{ ...alternative, url: 'https://127.0.0.1/venue' }] },
+  ])
+    assert.equal(presentationSchema.safeParse(value).success, false);
   assert.ok(presentationSchema.safeParse({ ...seats, sections: seatSections.slice(0, 8) }).success);
   for (const url of [
     'javascript:alert(1)',
@@ -991,6 +1055,7 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   const seatText = presentationText(
     presentationSchema.parse({
       ...seats,
+      coverage: { scope: 'cabin', description: 'All source-supplied business cabin rows' },
       sections: [
         ...seats.sections,
         {
@@ -1018,6 +1083,7 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     'Upper deck',
     'Economy',
     'Business',
+    'All source-supplied business cabin rows',
     'Row 1',
     '1A',
     'Empty position',
@@ -1066,6 +1132,8 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     { ...diagram, nodes: [diagram.nodes[0], diagram.nodes[0]] },
     { ...diagram, edges: [{ from: 'missing', to: 'answer' }] },
     { ...seats, sections: [] },
+    { ...seats, coverage: { scope: 'complete', description: 'Unverified scope' } },
+    { ...seats, coverage: { scope: 'selection', description: 'x'.repeat(241) } },
     { ...seats, sections: [{ ...seats.sections[0], html: '<img src=x onerror=alert(1)>' }] },
     { ...seats, sections: [seats.sections[0], seats.sections[0]] },
     { ...seats, recommended: { sectionId: 'missing', seatLabel: '1A' } },
@@ -1462,6 +1530,43 @@ test('charts accept signed finite data and reject ambiguous series or excessive 
   };
   assert.ok(presentationSchema.safeParse(chart).success);
   assert.ok(presentationSchema.safeParse({ ...chart, chart: 'bar' }).success);
+  for (const kind of ['pie', 'donut']) {
+    const radial = {
+      ...chart,
+      chart: kind,
+      series: [
+        {
+          id: 'spend',
+          label: 'Spend',
+          points: [
+            { label: 'Travel', value: 80 },
+            { label: 'Food', value: 20 },
+            { label: 'Other', value: 0 },
+          ],
+        },
+      ],
+    };
+    assert.ok(presentationSchema.safeParse(radial).success);
+    assert.match(
+      presentationText(presentationSchema.parse(radial)),
+      /Travel: 80 EUR; Food: 20 EUR; Other: 0 EUR/,
+    );
+    for (const series of [
+      [...radial.series, { ...radial.series[0], id: 'second' }],
+      [{ ...radial.series[0], points: [{ label: 'Invalid', value: -1 }] }],
+      [{ ...radial.series[0], points: [{ label: 'Empty', value: 0 }] }],
+      [
+        {
+          ...radial.series[0],
+          points: Array.from({ length: 13 }, (_, index) => ({
+            label: String(index),
+            value: index + 1,
+          })),
+        },
+      ],
+    ])
+      assert.equal(presentationSchema.safeParse({ ...radial, series }).success, false);
+  }
   for (const value of [
     { ...chart, series: [...chart.series, chart.series[0]] },
     {

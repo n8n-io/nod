@@ -1,4 +1,9 @@
-import { presentationSchema, presentationText, type Presentation } from '../shared/presentation.ts';
+import {
+  presentationImages,
+  presentationSchema,
+  presentationText,
+  type Presentation,
+} from '../shared/presentation.ts';
 import { logFailure } from './failure-log.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -288,18 +293,32 @@ export async function insertAssistantMessage(
 ) {
   const visual = presentation === undefined ? undefined : presentationSchema.parse(presentation);
   if (visual && !text.trim()) throw new Error('A complete text answer is required.');
-  if (visual?.type === 'image') {
-    const image = (
-      await client.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2 AND thread_id=$3', [
-        visual.artifactId,
-        ownerId,
-        turn.threadId,
-      ])
-    ).rows[0];
-    if (!image || !rasterTypes.has(image.mime_type))
-      throw new Error('The presentation image is unavailable in this conversation.');
-    visual.artifactId = image.id;
-    attachments = [...attachments.filter((item) => item.id !== image.id), artifactView(image)];
+  const images = visual ? presentationImages(visual) : [];
+  if (images.length) {
+    const rows = (
+      await client.query(
+        'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND thread_id=$3',
+        [
+          [...new Set(images.map((image) => image.artifactId.toLowerCase()))],
+          ownerId,
+          turn.threadId,
+        ],
+      )
+    ).rows;
+    const owned = new Map(rows.map((row) => [row.id, row]));
+    for (const image of images) {
+      const stored = owned.get(image.artifactId.toLowerCase());
+      if (!stored || !rasterTypes.has(stored.mime_type))
+        throw new Error('The presentation image is unavailable in this conversation.');
+      image.artifactId = stored.id;
+    }
+    const attached = new Map(attachments.map((item) => [item.id, item]));
+    for (const row of rows)
+      attached.set(row.id, {
+        ...artifactView(row),
+        ...(attached.get(row.id)?.source ? { source: attached.get(row.id)!.source } : {}),
+      });
+    attachments = [...attached.values()];
   }
   replyToMessageId ??= turn.taskMessageId;
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
@@ -1501,10 +1520,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             maxBytes,
           ),
         ),
-      publishScreenshot: (bytes, name) => {
+      publishScreenshot: async (bytes, name) => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
-        return attach(bytes, fileName, 'image/png', '', true, 'browser_screenshot');
+        const artifact = await attach(
+          bytes,
+          fileName,
+          'image/png',
+          '',
+          false,
+          'browser_screenshot',
+        );
+        shared.push(artifact);
+        return artifact;
       },
       publishBrowserFile: attachFile,
     });

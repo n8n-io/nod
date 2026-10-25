@@ -20,6 +20,7 @@ type Environment = Record<string, string | undefined>;
 
 const logger = new ConsoleLogger('silent');
 const telegramFileBytes = 50 * 1024 * 1024;
+const whatsappImageBytes = 5 * 1024 * 1024;
 const telegramTextLimit = 3500;
 const telegramReaction = z.object({
   message_id: z.number().int().nonnegative(),
@@ -219,7 +220,7 @@ export function createChatSdkTransport(
       channel.provider === 'telegram' ? env.TELEGRAM_ALLOWED_USER_ID : env.WHATSAPP_ALLOWED_NUMBER,
     ].filter((value): value is string => Boolean(value)),
     ...(channel.provider === 'whatsapp'
-      ? { replyWindowMs: 86400000, presenceMs: 20000 }
+      ? { supportsAttachments: true, replyWindowMs: 86400000, presenceMs: 20000 }
       : { supportsAttachments: true, presenceMs: 4000 }),
   }));
   const error = (status: number, message: string): MessagingWebhookResult => ({
@@ -531,11 +532,15 @@ export function createChatSdkTransport(
       )
         throw new Error('Channel is not configured.');
       const attachments = input.attachments ?? [];
-      if (attachments.length && input.channelId !== 'telegram')
-        throw new Error('This channel does not support attachment delivery.');
       await bot.initialize();
       const thread = bot.thread(input.threadId);
-      const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
+      const unsent = attachments.filter((file) =>
+        input.channelId === 'whatsapp'
+          ? !['image/png', 'image/jpeg'].includes(file.mimeType) ||
+            !file.size ||
+            file.size > whatsappImageBytes
+          : !file.size || file.size > telegramFileBytes,
+      );
       const caption =
         input.channelId === 'telegram' &&
         attachments.length === 1 &&
@@ -610,6 +615,27 @@ export function createChatSdkTransport(
               ids.push(sent.id);
             }
           unsent.push(file);
+          continue;
+        }
+        if (input.channelId === 'whatsapp') {
+          if (bytes.length !== file.size || bytes.length > whatsappImageBytes) {
+            unsent.push(file);
+            continue;
+          }
+          const sent = await post({
+            markdown: '',
+            attachments: [
+              {
+                type: 'image',
+                data: Buffer.from(bytes),
+                name: file.name,
+                mimeType: file.mimeType,
+                size: file.size,
+              },
+            ],
+          });
+          id ||= sent.id;
+          ids.push(sent.id);
           continue;
         }
         if (
@@ -728,8 +754,12 @@ export function createChatSdkTransport(
         const notice = await input
           .attachmentFailure?.(unsent.map((file) => file.name))
           .catch(() => undefined);
-        for (const part of chunks(notice ?? '')) {
-          const sent = await post({ markdown: part }).catch(() => undefined);
+        const notices =
+          input.channelId === 'telegram'
+            ? chunks(notice ?? '').map((markdown) => ({ markdown }))
+            : whatsapp!.chunks(notice ?? '').map((raw) => ({ raw }));
+        for (const notice of notices) {
+          const sent = await post(notice).catch(() => undefined);
           if (sent) {
             id ||= sent.id;
             ids.push(sent.id);
