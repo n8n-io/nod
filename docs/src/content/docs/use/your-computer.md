@@ -31,7 +31,7 @@ When you ask for a screenshot, nod can attach the app window image to your conve
 
 In onboarding, use the switch beside **Accessibility** or **Screen Recording** to open its macOS permission settings. Each switch turns on after macOS confirms the permission. After granting both, return to nod and select **Continue** to turn on **Let nod use your computer**. You can select **Not now** to skip the step.
 
-Each granted permission shows **Allowed**. A failed check shows **Not checked**, so it is distinct from a denied permission. Select **Try again** to check again, or **Not now** to skip onboarding. You can still turn computer access off in Settings when a permission check fails.
+A failed check shows **Not checked**, so it is distinct from a denied permission. Select **Try again** to check again, or **Not now** to skip onboarding. You can still turn computer access off in Settings when a permission check fails.
 
 A source install without the computer helper offers files and commands only. Select **Continue** to enable those; no Accessibility or Screen Recording grants are needed.
 
