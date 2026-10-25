@@ -5380,12 +5380,62 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       const opens = [];
       const render = async (value) => act(async () => root.render(h(ArtifactDrawerContext.Provider, {value:{selectedId:null,open:(...args)=>opens.push(args),setDrafts:()=>{}}}, h(MessagePresentation,{value}))));
       const common = {version:1,title:'Synthetic visual',sources:[]};
-      await render({...common,type:'seats',columns:['A','','C'],rows:[{label:'12',seats:[{column:'A',label:'12A',status:'available',note:'Window'},{column:'C',label:'12C',status:'unavailable',note:'Already occupied'}]}]});
-      const seat = document.querySelector('[aria-label="Seat 12C, unavailable"]');
+      await render({...common,type:'seats',sections:[{id:'economy',name:'Economy',rows:[{label:'12',groups:[[{label:'12A',status:'available',note:'Window'},null],[{label:'12C',status:'unavailable',note:'Already occupied'}]]}]},{id:'upper',name:'Business',deck:'Upper deck',rows:[{label:'12',groups:[[{label:'12A',status:'unknown',note:'Upper deck availability not supplied'}]]}]}]});
+      const seat = document.querySelector('[aria-label="Seat 12C, unavailable, Economy"]');
       assert.ok(seat);
       await act(async () => seat.click());
       assert.equal(seat.getAttribute('aria-pressed'),'true');
       assert.match(document.querySelector('.seat-inspector').textContent,/Already occupied/);
+      assert.equal(seat.textContent,'12C');
+      assert.equal(document.querySelectorAll('.seat-empty').length,1);
+      const upperSeat = document.querySelector('[aria-label="Seat 12A, unknown, Business, Upper deck"]');
+      await act(async () => upperSeat.click());
+      assert.equal(upperSeat.getAttribute('aria-pressed'),'true');
+      assert.equal(seat.getAttribute('aria-pressed'),'false');
+      assert.match(document.querySelector('.seat-inspector').textContent,/Upper deck availability not supplied/);
+      assert.equal(requests.length,0);
+      assert.equal(opens.length,0);
+      const airport = (airport,date,time,timeZone,terminal) => ({airport,date,time,timeZone,terminal});
+      const outbound = [
+        {airline:'Synthetic Air',flightNumber:'ND123',operatedBy:'Fixture Regional',aircraft:'A321',cabin:'Economy',duration:'2h 50m',departure:airport('LIS','2026-11-02','09:00','Europe/Lisbon','1'),arrival:airport('LHR','2026-11-02','11:50','Europe/London','2'),technicalStops:[],connectionAfter:{duration:'4h 10m',airportChange:'yes',selfTransfer:'yes',details:'Collect baggage and arrange ground transfer to LGW'}},
+        {airline:'Fixture Air',flightNumber:'ND456',aircraft:'A350',cabin:'Premium economy',departure:airport('LGW','2026-11-02','16:00','Europe/London','South'),arrival:airport('DXB','2026-11-03','02:00','Asia/Dubai','3'),technicalStops:[],connectionAfter:{duration:'4h',airportChange:'no',selfTransfer:'unknown',details:'Protection for the next connection is not supplied'}},
+        {airline:'Fixture Air',flightNumber:'ND789',departure:airport('DXB','2026-11-03','06:00','Asia/Dubai','3'),arrival:airport('SIN','2026-11-03','21:45','Asia/Singapore','1'),technicalStops:[{airport:'BKK',duration:'45m',details:'Same flight; boarding instructions not supplied'}]},
+      ];
+      const inbound = [{airline:'Synthetic Air',flightNumber:'ND900',departure:airport('SIN','2026-11-10','22:00','Asia/Singapore','1'),arrival:airport('LIS','2026-11-11','06:00','Europe/Lisbon','1'),technicalStops:[]}];
+      await render({...common,type:'flights',options:[{id:'trip',label:'Synthetic return trip',price:'EUR 740 return for one adult',baggage:'One cabin bag',url:'https://example.com/fare',journeys:[{id:'outbound',label:'Outbound',segments:outbound},{id:'return',label:'Return',segments:inbound}]}]});
+      const flightOption = document.querySelector('.flight-option');
+      const flightSummary = flightOption.querySelector('summary');
+      assert.equal(flightOption.open,false);
+      const journeySummaries = flightSummary.querySelectorAll('.flight-summary-journey');
+      assert.equal(journeySummaries.length,2);
+      assert.match(journeySummaries[0].textContent,/2 connections/);
+      assert.match(journeySummaries[0].textContent,/1 technical stop/);
+      assert.doesNotMatch(journeySummaries[0].textContent,/Nonstop/);
+      assert.match(journeySummaries[1].textContent,/Nonstop/);
+      for (const detail of ['Airport change: LHR → LGW','Self-transfer','Transfer details not supplied'])
+        assert.ok(flightSummary.querySelector('.flight-warnings').textContent.includes(detail),detail);
+      await act(async () => flightSummary.click());
+      assert.equal(flightOption.open,true);
+      const itineraries = [...flightOption.querySelectorAll('.flight-itinerary')];
+      assert.equal(itineraries.length,2);
+      for (const [index,segments] of [outbound,inbound].entries()) {
+        const legs = [...itineraries[index].querySelectorAll('.flight-segments > li')];
+        assert.equal(legs.length,segments.length);
+        for (const [legIndex,segment] of segments.entries()) {
+          assert.ok(legs[legIndex].querySelector('.flight-segment-heading').textContent.includes(segment.flightNumber));
+          const airports = legs[legIndex].querySelectorAll('.flight-airport');
+          assert.equal(airports.length,2);
+          for (const [pointIndex,point] of [segment.departure,segment.arrival].entries())
+            for (const detail of [point.airport,point.date,point.time,point.timeZone,'Terminal '+point.terminal])
+              assert.ok(airports[pointIndex].textContent.includes(detail),detail);
+        }
+      }
+      for (const detail of ['Operated by Fixture Regional','A321','Economy','2h 50m','A350','Premium economy','4h 10m','Collect baggage and arrange ground transfer to LGW','Protection for the next connection is not supplied','Self-transfer status not supplied','Technical stop · BKK · 45m','Same flight; boarding instructions not supplied','One cabin bag'])
+        assert.ok(flightOption.querySelector('.flight-details').textContent.includes(detail),detail);
+      assert.equal(flightOption.querySelector('.flight-fare-details a').href,'https://example.com/fare');
+      await act(async () => flightSummary.click());
+      assert.equal(flightOption.open,false);
+      assert.match(flightSummary.textContent,/Airport change: LHR → LGW/);
       assert.equal(requests.length,0);
       assert.equal(opens.length,0);
       await render({...common,type:'map',places:[{id:'one',name:'Place one',latitude:38.71,longitude:-9.14},{id:'two',name:'Place two',latitude:38.72,longitude:-9.15}]});
@@ -5423,6 +5473,22 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       await act(async () => seriesButtons[0].click());
       assert.equal(document.querySelectorAll('.presentation-chart rect').length,4);
       assert.equal(requests.length,0);
+      await render({...common,type:'chart',chart:'line',series:[{id:'actual',label:'Actual',points:[{label:'March',value:10},{label:'April',value:20}]},{id:'target',label:'Target',points:[{label:'March',value:15},{label:'April',value:25}]},{id:'forecast',label:'Forecast',points:[{label:'March',value:12},{label:'April',value:22}]}]});
+      const lineIdentities = () => [...document.querySelectorAll('.presentation-chart polyline')].map(line=>({label:line.parentElement.querySelector('circle title').textContent.split(',')[0],colour:line.parentElement.style.color,pattern:line.getAttribute('stroke-dasharray')}));
+      const originalLines = lineIdentities();
+      assert.deepEqual(originalLines.map(line=>line.label),['Actual','Target','Forecast']);
+      assert.equal(new Set(originalLines.map(line=>line.pattern)).size,3);
+      const lineButtons = document.querySelectorAll('.chart-legend button');
+      await act(async () => lineButtons[0].click());
+      assert.deepEqual(lineIdentities(),originalLines.slice(1));
+      await act(async () => lineButtons[1].click());
+      assert.deepEqual(lineIdentities(),originalLines.slice(2));
+      assert.equal(lineButtons[2].disabled,true);
+      await act(async () => lineButtons[0].click());
+      assert.deepEqual(lineIdentities(),[originalLines[0],originalLines[2]]);
+      assert.deepEqual([...document.querySelectorAll('.chart-data tbody tr:last-child td')].map(cell=>cell.textContent),['20','25','22']);
+      assert.equal(requests.length,0);
+      assert.equal(opens.length,1);
       for (const value of [
         {...common,type:'unknown'},
         {...common,type:'image',artifactId:'https://tracker.example.com/pixel',alt:'image'},

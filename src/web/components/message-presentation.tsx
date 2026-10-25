@@ -1,5 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { presentationSchema, type Presentation } from '../../shared/presentation';
+import {
+  flightJourneySummary,
+  presentationSchema,
+  type Presentation,
+} from '../../shared/presentation';
 import { ArrowRight, Check, ChevronDown, ExternalLink, MapPin, Plane } from './icons';
 import { useArtifactDrawer } from './artifact-context';
 
@@ -88,59 +92,210 @@ function PresentedImage({ visual }: { visual: Visual<'image'> }) {
   );
 }
 
+function FlightAirport({
+  point,
+}: {
+  point: Visual<'flights'>['options'][number]['journeys'][number]['segments'][number]['departure'];
+}) {
+  return (
+    <div className="flight-airport">
+      <strong>{point.time}</strong>
+      {point.date && <span>{point.date}</span>}
+      <span>
+        {point.airport}
+        {point.terminal && ` · Terminal ${point.terminal}`}
+      </span>
+      {point.timeZone && <small>{point.timeZone}</small>}
+    </div>
+  );
+}
+
 function Flights({ visual }: { visual: Visual<'flights'> }) {
   return (
     <div className="flight-options">
-      {visual.options.map((flight) => (
-        <details className="flight-option" key={flight.id}>
-          <summary>
-            <div className="flight-topline">
-              <span className="flight-airline">
-                <Plane size={16} aria-hidden="true" />
-                {flight.airline}
-              </span>
-              {flight.recommended && <span className="presentation-tag">Recommended</span>}
-              <strong className="flight-price">{flight.price}</strong>
-            </div>
-            <div className="flight-route">
-              <div>
-                <strong>{flight.departure.time}</strong>
-                <span>{flight.departure.airport}</span>
-              </div>
-              <div className="flight-journey">
-                <span>{flight.duration}</span>
-                <span className="flight-track" aria-hidden="true">
-                  <i />
-                  <ArrowRight size={15} />
+      {visual.options.map((flight) => {
+        const airlines = [
+          ...new Set(
+            flight.journeys.flatMap((journey) =>
+              journey.segments.map((segment) => segment.airline),
+            ),
+          ),
+        ];
+        const connections = flight.journeys.flatMap((journey) =>
+          journey.segments.flatMap((segment, index) =>
+            segment.connectionAfter
+              ? [
+                  {
+                    ...segment.connectionAfter,
+                    from: segment.arrival.airport,
+                    to: journey.segments[index + 1]!.departure.airport,
+                  },
+                ]
+              : [],
+          ),
+        );
+        const warnings = [
+          ...new Set(
+            connections.flatMap((connection) =>
+              [
+                connection.airportChange === 'yes'
+                  ? `Airport change: ${connection.from} → ${connection.to}`
+                  : undefined,
+                connection.selfTransfer === 'yes' ? 'Self-transfer' : undefined,
+                connection.airportChange === 'unknown' || connection.selfTransfer === 'unknown'
+                  ? 'Transfer details not supplied'
+                  : undefined,
+              ].filter((value): value is string => Boolean(value)),
+            ),
+          ),
+        ];
+        if (
+          flight.journeys.some((journey) =>
+            journey.segments.some(
+              (segment) =>
+                !segment.departure.date ||
+                !segment.arrival.date ||
+                !segment.departure.timeZone ||
+                !segment.arrival.timeZone,
+            ),
+          )
+        )
+          warnings.push('Some dates or time zones were not supplied');
+        return (
+          <details className="flight-option" key={flight.id}>
+            <summary>
+              <div className="flight-topline">
+                <span className="flight-airline">
+                  <Plane size={16} aria-hidden="true" />
+                  {flight.label ||
+                    (airlines.length > 2
+                      ? `${airlines[0]} + ${airlines.length - 1} airlines`
+                      : airlines.join(' + '))}
                 </span>
-                <span>{flight.stops}</span>
+                {flight.recommended && <span className="presentation-tag">Recommended</span>}
+                <strong className="flight-price">{flight.price}</strong>
               </div>
-              <div className="flight-arrival">
-                <strong>{flight.arrival.time}</strong>
-                <span>{flight.arrival.airport}</span>
-              </div>
-            </div>
-            <span className="flight-details-toggle">
-              Details <ChevronDown size={14} aria-hidden="true" />
-            </span>
-          </summary>
-          <div className="flight-details">
-            <dl>
-              {flight.flightNumber && (
-                <div>
-                  <dt>Flight</dt>
-                  <dd>{flight.flightNumber}</dd>
+              {flight.journeys.map((journey) => (
+                <div className="flight-summary-journey" key={journey.id}>
+                  <span className="flight-journey-label">{journey.label}</span>
+                  <div className="flight-route">
+                    <FlightAirport point={journey.segments[0]!.departure} />
+                    <div className="flight-journey">
+                      {journey.duration && <span>{journey.duration}</span>}
+                      <span className="flight-track" aria-hidden="true">
+                        <i />
+                        <ArrowRight size={15} />
+                      </span>
+                      <span>{flightJourneySummary(journey)}</span>
+                    </div>
+                    <FlightAirport point={journey.segments.at(-1)!.arrival} />
+                  </div>
+                </div>
+              ))}
+              {warnings.length > 0 && (
+                <div className="flight-warnings">
+                  {warnings.map((warning) => (
+                    <span key={warning}>{warning}</span>
+                  ))}
                 </div>
               )}
-              <div>
-                <dt>Baggage</dt>
-                <dd>{flight.baggage || 'Not provided'}</dd>
+              <span className="flight-details-toggle">
+                Journey details <ChevronDown size={14} aria-hidden="true" />
+              </span>
+            </summary>
+            <div className="flight-details">
+              {flight.journeys.map((journey) => (
+                <section className="flight-itinerary" key={journey.id} aria-label={journey.label}>
+                  <h4>{journey.label}</h4>
+                  <ol className="flight-segments">
+                    {journey.segments.map((segment, index) => (
+                      <li key={index}>
+                        <div className="flight-segment-heading">
+                          <strong>
+                            {[segment.airline, segment.flightNumber].filter(Boolean).join(' · ')}
+                          </strong>
+                          {segment.duration && <span>{segment.duration}</span>}
+                        </div>
+                        {segment.operatedBy && (
+                          <p className="flight-segment-meta">Operated by {segment.operatedBy}</p>
+                        )}
+                        <div className="flight-segment-route">
+                          <FlightAirport point={segment.departure} />
+                          <ArrowRight size={14} aria-hidden="true" />
+                          <FlightAirport point={segment.arrival} />
+                        </div>
+                        {(segment.aircraft || segment.cabin) && (
+                          <p className="flight-segment-meta">
+                            {[segment.aircraft, segment.cabin].filter(Boolean).join(' · ')}
+                          </p>
+                        )}
+                        {segment.technicalStops?.map((stop, stopIndex) => (
+                          <div className="flight-stop" key={stopIndex}>
+                            <strong>
+                              Technical stop · {stop.airport}
+                              {stop.duration && ` · ${stop.duration}`}
+                            </strong>
+                            {stop.details && <p>{stop.details}</p>}
+                          </div>
+                        ))}
+                        {segment.technicalStops === undefined && (
+                          <p className="flight-segment-meta">
+                            Technical stop details not supplied.
+                          </p>
+                        )}
+                        {segment.connectionAfter && (
+                          <div className="flight-connection">
+                            <strong>
+                              Connection ·{' '}
+                              {segment.connectionAfter.duration || 'Duration not supplied'}
+                            </strong>
+                            {segment.connectionAfter.airportChange === 'yes' && (
+                              <p>
+                                Airport change: {segment.arrival.airport} →{' '}
+                                {journey.segments[index + 1]!.departure.airport}
+                              </p>
+                            )}
+                            {segment.connectionAfter.airportChange === 'unknown' && (
+                              <p>Airport transfer details not supplied.</p>
+                            )}
+                            {segment.connectionAfter.selfTransfer === 'yes' && <p>Self-transfer</p>}
+                            {segment.connectionAfter.selfTransfer === 'unknown' && (
+                              <p>Self-transfer status not supplied.</p>
+                            )}
+                            {segment.connectionAfter.details && (
+                              <p>{segment.connectionAfter.details}</p>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                  {journey.segments.some(
+                    (segment) =>
+                      !segment.departure.date ||
+                      !segment.arrival.date ||
+                      !segment.departure.timeZone ||
+                      !segment.arrival.timeZone,
+                  ) && (
+                    <p className="presentation-footnote">
+                      Some dates or time zones were not supplied. Times are shown as provided.
+                    </p>
+                  )}
+                </section>
+              ))}
+              <div className="flight-fare-details">
+                <dl>
+                  <div>
+                    <dt>Baggage</dt>
+                    <dd>{flight.baggage || 'Not provided'}</dd>
+                  </div>
+                </dl>
+                {flight.url && <SourceLink href={flight.url}>View option</SourceLink>}
               </div>
-            </dl>
-            {flight.url && <SourceLink href={flight.url}>View flight</SourceLink>}
-          </div>
-        </details>
-      ))}
+            </div>
+          </details>
+        );
+      })}
       <p className="presentation-footnote">
         Prices and availability can change. Opening an option does not book it.
       </p>
@@ -149,77 +304,132 @@ function Flights({ visual }: { visual: Visual<'flights'> }) {
 }
 
 function Seats({ visual }: { visual: Visual<'seats'> }) {
-  const seats = visual.rows.flatMap((row) => row.seats);
-  const [selected, setSelected] = useState(visual.recommended ?? seats[0]?.label);
-  const seat = seats.find((candidate) => candidate.label === selected);
+  const wide = visual.sections.some((section) =>
+    section.rows.some((row) => row.groups.flat().length > 8),
+  );
+  const seats = visual.sections.flatMap((section) =>
+    section.rows.flatMap((row) =>
+      row.groups.flatMap((group) => group.flatMap((seat) => (seat ? [{ seat, section }] : []))),
+    ),
+  );
+  const [selected, setSelected] = useState(
+    visual.recommended ?? {
+      sectionId: seats[0]!.section.id,
+      seatLabel: seats[0]!.seat.label,
+    },
+  );
+  const current = seats.find(
+    ({ seat, section }) => section.id === selected.sectionId && seat.label === selected.seatLabel,
+  )!;
+  const recommended =
+    visual.recommended?.sectionId === current.section.id &&
+    visual.recommended.seatLabel === current.seat.label;
   const detailId = useId();
-  const columns = `var(--seat-row-width, 28px) ${visual.columns.map((column) => (column ? 'minmax(var(--seat-width, 40px), 1fr)' : 'var(--seat-aisle, 20px)')).join(' ')}`;
+  const sectionId = useId();
   return (
     <>
-      <div className="seat-layout">
+      <div className="seat-context">
+        <div>
+          <Plane size={16} aria-hidden="true" />
+          <strong>{visual.aircraft || 'Seat plan'}</strong>
+        </div>
+        {visual.flight && <p>{visual.flight}</p>}
+        <small>Schematic layout</small>
+      </div>
+      <div className={`seat-layout${wide ? ' is-wide' : ''}`}>
         <div className="seat-plan-scroll" tabIndex={0} role="region" aria-label="Seat plan">
           <div className="seat-plan">
-            <div className="seat-nose">
-              <Plane size={22} aria-hidden="true" />
-              <span>{visual.aircraft || 'Seat plan'}</span>
-              <small>Front of cabin</small>
-            </div>
-            <div className="seat-grid" style={{ gridTemplateColumns: columns }}>
-              <span />
-              {visual.columns.map((column, index) => (
-                <span className="seat-column" key={index}>
-                  {column}
-                </span>
-              ))}
-              {visual.rows.map((row) => (
-                <div className="seat-row" key={row.label}>
-                  <span className="seat-row-label">{row.label}</span>
-                  {visual.columns.map((column, index) => {
-                    const item = row.seats.find((entry) => entry.column === column);
-                    return !column || !item ? (
-                      <span key={index} />
-                    ) : (
-                      <button
-                        key={column}
-                        type="button"
-                        className={`seat is-${item.status}${item.label === visual.recommended ? ' is-recommended' : ''}`}
-                        aria-label={`Seat ${item.label}, ${item.status}${item.label === visual.recommended ? ', recommended' : ''}`}
-                        aria-pressed={item.label === selected}
-                        aria-describedby={item.label === selected ? detailId : undefined}
-                        onClick={() => setSelected(item.label)}
-                      >
-                        {item.label === selected ? (
-                          <Check size={16} aria-hidden="true" />
-                        ) : (
-                          item.label
-                        )}
-                      </button>
-                    );
-                  })}
+            {visual.sections.map((section) => (
+              <section
+                className="seat-section"
+                key={section.id}
+                aria-labelledby={`${sectionId}-${section.id}`}
+              >
+                <header className="seat-section-header">
+                  <h4 id={`${sectionId}-${section.id}`}>{section.name}</h4>
+                  {section.deck && <span>{section.deck}</span>}
+                </header>
+                <div className="seat-rows">
+                  {section.rows.map((row) => (
+                    <div
+                      className="seat-row"
+                      key={row.label}
+                      role="group"
+                      aria-label={`Row ${row.label}`}
+                    >
+                      <span className="seat-row-label" aria-hidden="true">
+                        {row.label}
+                      </span>
+                      <div className="seat-row-groups">
+                        {row.groups.map((group, groupIndex) => (
+                          <div
+                            className="seat-group"
+                            key={groupIndex}
+                            role="group"
+                            aria-label={`Seat group ${groupIndex + 1} of ${row.groups.length}`}
+                          >
+                            {group.map((item, index) => {
+                              if (!item)
+                                return (
+                                  <span className="seat-empty" key={index} aria-hidden="true" />
+                                );
+                              const active =
+                                selected.sectionId === section.id &&
+                                selected.seatLabel === item.label;
+                              const suggested =
+                                visual.recommended?.sectionId === section.id &&
+                                visual.recommended.seatLabel === item.label;
+                              return (
+                                <button
+                                  key={item.label}
+                                  type="button"
+                                  className={`seat is-${item.status}${suggested ? ' is-recommended' : ''}`}
+                                  aria-label={`Seat ${item.label}, ${item.status}, ${section.name}${section.deck ? `, ${section.deck}` : ''}${suggested ? ', recommended' : ''}`}
+                                  aria-pressed={active}
+                                  aria-describedby={active ? detailId : undefined}
+                                  title={item.label}
+                                  onClick={() =>
+                                    setSelected({ sectionId: section.id, seatLabel: item.label })
+                                  }
+                                >
+                                  <span className="seat-label">{item.label}</span>
+                                  {active && (
+                                    <Check
+                                      className="seat-selection-check"
+                                      size={10}
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </section>
+            ))}
           </div>
         </div>
         <div className="seat-inspector" id={detailId} aria-live="polite" aria-atomic="true">
-          {seat && (
-            <>
-              <span className="presentation-eyebrow">Seat details</span>
-              <strong className="seat-number">{seat.label}</strong>
-              <span className={`seat-status is-${seat.status}`}>
-                {seat.status === 'unknown'
-                  ? 'Availability unknown'
-                  : seat.status === 'available'
-                    ? 'Available in source'
-                    : 'Unavailable in source'}
-              </span>
-              {seat.label === visual.recommended && (
-                <span className="presentation-tag">Recommended</span>
-              )}
-              {seat.note && <p>{seat.note}</p>}
-              {seat.price && <strong>{seat.price}</strong>}
-            </>
-          )}
+          <span className="presentation-eyebrow">Seat details</span>
+          <strong className="seat-number">{current.seat.label}</strong>
+          <span className="seat-location">
+            {current.section.name}
+            {current.section.deck ? ` · ${current.section.deck}` : ''}
+          </span>
+          <span className={`seat-status is-${current.seat.status}`}>
+            {current.seat.status === 'unknown'
+              ? 'Availability unknown'
+              : current.seat.status === 'available'
+                ? 'Available in source'
+                : 'Unavailable in source'}
+          </span>
+          {recommended && <span className="presentation-tag">Recommended</span>}
+          {current.seat.note && <p>{current.seat.note}</p>}
+          {current.seat.price && <strong>{current.seat.price}</strong>}
           <p className="presentation-footnote">Explore seats here. Nothing is reserved.</p>
         </div>
       </div>
@@ -240,7 +450,6 @@ function Seats({ visual }: { visual: Visual<'seats'> }) {
     </>
   );
 }
-
 function Places({ visual }: { visual: Visual<'map'> }) {
   const [selected, setSelected] = useState(visual.places[0]!.id);
   const [map, setMap] = useState(false);
@@ -457,7 +666,8 @@ function Chart({ visual }: { visual: Visual<'chart'> }) {
         ))}
         <line x1="64" x2={width - 28} y1={y(0)} y2={y(0)} className="chart-baseline" />
         {visible.map((series, index) => {
-          const colour = colours[visual.series.indexOf(series)];
+          const seriesIndex = visual.series.indexOf(series);
+          const colour = colours[seriesIndex];
           const barWidth = Math.min(36, plotWidth / labels.length / (visible.length + 1));
           return (
             <g key={series.id} style={{ color: colour }}>
@@ -466,7 +676,9 @@ function Chart({ visual }: { visual: Visual<'chart'> }) {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2.5"
-                  strokeDasharray={index === 1 ? '6 3' : index === 2 ? '2 3' : undefined}
+                  strokeDasharray={
+                    seriesIndex === 1 ? '6 3' : seriesIndex === 2 ? '2 3' : undefined
+                  }
                   points={series.points
                     .map((point) => `${x(labels.indexOf(point.label))},${y(point.value)}`)
                     .join(' ')}

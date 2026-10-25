@@ -20,7 +20,19 @@ const common = {
   sources: z.array(z.strictObject({ label: text(100), url })).max(8),
   asOf: text(120).optional(),
 };
-const airport = z.strictObject({ airport: text(80), time: text(80) });
+const airport = z.strictObject({
+  airport: text(80),
+  date: text(40).optional(),
+  time: text(80),
+  timeZone: text(80).optional(),
+  terminal: text(40).optional(),
+});
+const seat = z.strictObject({
+  label: text(20),
+  status: z.enum(['available', 'unavailable', 'unknown']),
+  note: text(240).optional(),
+  price: text(80).optional(),
+});
 
 export const presentationSchema = z
   .discriminatedUnion('type', [
@@ -54,16 +66,54 @@ export const presentationSchema = z
         .array(
           z.strictObject({
             id,
-            airline: text(80),
-            flightNumber: text(40).optional(),
-            departure: airport,
-            arrival: airport,
-            duration: text(80),
-            stops: text(120),
+            label: text(120).optional(),
             price: text(80),
             baggage: text(200).optional(),
             url: url.optional(),
             recommended: z.boolean().optional(),
+            journeys: z
+              .array(
+                z.strictObject({
+                  id,
+                  label: text(80),
+                  duration: text(80).optional(),
+                  segments: z
+                    .array(
+                      z.strictObject({
+                        airline: text(80),
+                        flightNumber: text(40).optional(),
+                        operatedBy: text(80).optional(),
+                        aircraft: text(120).optional(),
+                        cabin: text(80).optional(),
+                        duration: text(80).optional(),
+                        departure: airport,
+                        arrival: airport,
+                        technicalStops: z
+                          .array(
+                            z.strictObject({
+                              airport: text(80),
+                              duration: text(80).optional(),
+                              details: text(300).optional(),
+                            }),
+                          )
+                          .max(4)
+                          .optional(),
+                        connectionAfter: z
+                          .strictObject({
+                            duration: text(80).optional(),
+                            airportChange: z.enum(['yes', 'no', 'unknown']),
+                            selfTransfer: z.enum(['yes', 'no', 'unknown']),
+                            details: text(400).optional(),
+                          })
+                          .optional(),
+                      }),
+                    )
+                    .min(1)
+                    .max(8),
+                }),
+              )
+              .min(1)
+              .max(6),
           }),
         )
         .min(1)
@@ -73,36 +123,27 @@ export const presentationSchema = z
       ...common,
       type: z.literal('seats'),
       aircraft: text(120).optional(),
-      columns: z
-        .array(
-          z
-            .string()
-            .max(4)
-            .regex(/^[A-Za-z0-9]*$/),
-        )
-        .min(1)
-        .max(12),
-      rows: z
+      flight: text(200).optional(),
+      sections: z
         .array(
           z.strictObject({
-            label: text(12),
-            seats: z
+            id,
+            name: text(80),
+            deck: text(40).optional(),
+            rows: z
               .array(
                 z.strictObject({
-                  column: text(4),
-                  label: text(20),
-                  status: z.enum(['available', 'unavailable', 'unknown']),
-                  note: text(240).optional(),
-                  price: text(80).optional(),
+                  label: text(12),
+                  groups: z.array(z.array(seat.nullable()).min(1).max(12)).min(1).max(4),
                 }),
               )
               .min(1)
-              .max(12),
+              .max(60),
           }),
         )
         .min(1)
-        .max(60),
-      recommended: text(20).optional(),
+        .max(8),
+      recommended: z.strictObject({ sectionId: id, seatLabel: text(20) }).optional(),
     }),
     z.strictObject({
       ...common,
@@ -158,21 +199,52 @@ export const presentationSchema = z
       invalid('A presentation must fit within 24 KB.');
     if (value.type === 'map' && !unique(value.places.map((place) => place.id)))
       invalid('Place IDs must be unique.');
-    if (value.type === 'flights' && !unique(value.options.map((option) => option.id)))
-      invalid('Flight IDs must be unique.');
+    if (value.type === 'flights') {
+      if (!unique(value.options.map((option) => option.id))) invalid('Flight IDs must be unique.');
+      for (const option of value.options) {
+        if (!unique(option.journeys.map((journey) => journey.id)))
+          invalid('Journey IDs must be unique within each option.');
+        for (const journey of option.journeys) {
+          for (const [index, segment] of journey.segments.entries()) {
+            if (index < journey.segments.length - 1 && !segment.connectionAfter)
+              invalid('Every connecting segment must describe the following connection.');
+            if (index === journey.segments.length - 1 && segment.connectionAfter)
+              invalid('The final segment cannot have a following connection.');
+          }
+        }
+      }
+    }
     if (value.type === 'seats') {
-      const columns = value.columns.filter(Boolean);
-      const seats = value.rows.flatMap((row) => row.seats);
-      if (!columns.length || !unique(columns)) invalid('Seat columns must be named and unique.');
-      if (!unique(value.rows.map((row) => row.label)) || !unique(seats.map((seat) => seat.label)))
-        invalid('Seat and row labels must be unique.');
-      if (
-        value.rows.some((row) => !unique(row.seats.map((seat) => seat.column))) ||
-        seats.some((seat) => !columns.includes(seat.column))
-      )
-        invalid('Each seat must use a different named column within its row.');
-      if (value.recommended && !seats.some((seat) => seat.label === value.recommended))
-        invalid('The recommended seat must exist.');
+      if (!unique(value.sections.map((section) => section.id)))
+        invalid('Seat section IDs must be unique.');
+      if (value.sections.reduce((total, section) => total + section.rows.length, 0) > 60)
+        invalid('A seat plan can contain at most 60 rows.');
+      for (const section of value.sections) {
+        const seats = section.rows
+          .flatMap((row) => row.groups.flat())
+          .filter((seat) => seat !== null);
+        if (
+          !unique(section.rows.map((row) => row.label)) ||
+          !unique(seats.map((seat) => seat.label))
+        )
+          invalid('Seat and row labels must be unique within each section.');
+        for (const row of section.rows) {
+          if (!row.groups.some((group) => group.some((seat) => seat !== null)))
+            invalid('Each row must contain a seat.');
+          if (row.groups.reduce((total, group) => total + group.length, row.groups.length - 1) > 12)
+            invalid('Each row can contain at most 12 positions including aisles.');
+        }
+      }
+      if (value.recommended) {
+        const recommended = value.recommended;
+        const section = value.sections.find((section) => section.id === recommended.sectionId);
+        if (
+          !section?.rows.some((row) =>
+            row.groups.some((group) => group.some((seat) => seat?.label === recommended.seatLabel)),
+          )
+        )
+          invalid('The recommended seat must exist in its section.');
+      }
     }
     if (value.type === 'chart') {
       if (!unique(value.series.map((series) => series.id)))
@@ -199,6 +271,30 @@ export const presentationSchema = z
 
 export type Presentation = z.infer<typeof presentationSchema>;
 
+type FlightJourney = Extract<
+  Presentation,
+  { type: 'flights' }
+>['options'][number]['journeys'][number];
+
+export function flightJourneySummary(journey: FlightJourney) {
+  const connections = journey.segments.length - 1;
+  const technicalStops = journey.segments.reduce(
+    (total, segment) => total + (segment.technicalStops?.length ?? 0),
+    0,
+  );
+  const complete = journey.segments.every((segment) => segment.technicalStops !== undefined);
+  if (!connections && !technicalStops && complete) return 'Nonstop';
+  return [
+    connections ? `${connections} connection${connections === 1 ? '' : 's'}` : 'No connections',
+    technicalStops
+      ? `${technicalStops} ${complete ? '' : 'reported '}technical stop${technicalStops === 1 ? '' : 's'}`
+      : undefined,
+    !complete ? 'Technical stop details not provided' : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 export function presentationText(value: Presentation) {
   const lines = [value.title];
   if (value.caption) lines.push(value.caption);
@@ -211,14 +307,11 @@ export function presentationText(value: Presentation) {
           .filter(Boolean)
           .join(' · '),
       );
-  if (value.type === 'flights')
-    for (const option of value.options)
+  if (value.type === 'flights') {
+    for (const [index, option] of value.options.entries()) {
       lines.push(
         [
-          [option.airline, option.flightNumber].filter(Boolean).join(' '),
-          `${option.departure.airport} ${option.departure.time} → ${option.arrival.airport} ${option.arrival.time}`,
-          option.duration,
-          option.stops,
+          option.label || `Option ${index + 1}`,
           option.price,
           option.baggage,
           option.recommended ? 'Recommended' : undefined,
@@ -227,25 +320,87 @@ export function presentationText(value: Presentation) {
           .filter(Boolean)
           .join(' · '),
       );
-  if (value.type === 'seats') {
-    if (value.aircraft) lines.push(value.aircraft);
-    lines.push(`Columns: ${value.columns.map((column) => column || 'aisle').join(' · ')}`);
-    for (const row of value.rows)
-      lines.push(
-        `Row ${row.label}: ${row.seats
-          .map((seat) =>
+      for (const journey of option.journeys) {
+        lines.push(
+          [journey.label, journey.duration, flightJourneySummary(journey)]
+            .filter(Boolean)
+            .join(' · '),
+        );
+        for (const segment of journey.segments) {
+          const endpoint = (point: typeof segment.departure) =>
             [
-              `${seat.column} (${seat.label})`,
-              seat.status,
-              seat.note,
-              seat.price,
-              seat.label === value.recommended ? 'Recommended' : undefined,
+              point.airport,
+              point.date || 'Date not provided',
+              point.time,
+              point.timeZone || 'Time zone not provided',
+              point.terminal ? `Terminal ${point.terminal}` : undefined,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+          lines.push(
+            [
+              [segment.airline, segment.flightNumber].filter(Boolean).join(' '),
+              segment.operatedBy ? `Operated by ${segment.operatedBy}` : undefined,
+              segment.aircraft,
+              segment.cabin,
+              segment.duration,
+              `${endpoint(segment.departure)} → ${endpoint(segment.arrival)}`,
             ]
               .filter(Boolean)
               .join(' · '),
-          )
-          .join('; ')}`,
-      );
+          );
+          for (const stop of segment.technicalStops ?? [])
+            lines.push(
+              [`Technical stop: ${stop.airport}`, stop.duration, stop.details]
+                .filter(Boolean)
+                .join(' · '),
+            );
+          if (segment.connectionAfter) {
+            const connection = segment.connectionAfter;
+            lines.push(
+              [
+                'Connection',
+                connection.duration,
+                `Airport change: ${connection.airportChange}`,
+                `Self-transfer: ${connection.selfTransfer}`,
+                connection.details,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            );
+          }
+        }
+      }
+    }
+  }
+  if (value.type === 'seats') {
+    if (value.aircraft) lines.push(value.aircraft);
+    if (value.flight) lines.push(value.flight);
+    for (const section of value.sections) {
+      lines.push([section.name, section.deck].filter(Boolean).join(' · '));
+      for (const row of section.rows) {
+        const groups = row.groups.map((group) =>
+          group
+            .map((seat) => {
+              if (!seat) return 'Empty position';
+              return [
+                seat.label,
+                seat.status,
+                seat.note,
+                seat.price,
+                section.id === value.recommended?.sectionId &&
+                seat.label === value.recommended.seatLabel
+                  ? 'Recommended'
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ');
+            })
+            .join('; '),
+        );
+        lines.push(`Row ${row.label}: ${groups.join(' | aisle | ')}`);
+      }
+    }
   }
   if (value.type === 'booking') {
     lines.push(`${value.name} · ${value.status}`);

@@ -1852,13 +1852,70 @@ test(
         sources: [{ label: 'Synthetic fare source', url: 'https://example.com/fares' }],
         options: [
           {
-            id: 'direct',
-            airline: 'Synthetic Air',
-            flightNumber: 'ND123',
-            departure: { airport: 'LIS', time: '2026-11-02 09:00' },
-            arrival: { airport: 'LHR', time: '2026-11-02 11:50' },
-            duration: '2h 50m',
-            stops: 'Nonstop',
+            id: 'connecting',
+            journeys: [
+              {
+                id: 'outbound',
+                label: 'Outbound',
+                duration: '19h 50m',
+                segments: [
+                  {
+                    airline: 'Synthetic Air',
+                    flightNumber: 'ND123',
+                    operatedBy: 'Fixture Regional',
+                    aircraft: 'Synthetic narrow-body',
+                    cabin: 'Economy',
+                    duration: '2h 50m',
+                    departure: {
+                      airport: 'LIS',
+                      date: '2026-11-02',
+                      time: '09:00',
+                      timeZone: 'Europe/Lisbon',
+                      terminal: '1',
+                    },
+                    arrival: {
+                      airport: 'LHR',
+                      date: '2026-11-02',
+                      time: '11:50',
+                      timeZone: 'Europe/London',
+                      terminal: '2',
+                    },
+                    technicalStops: [],
+                    connectionAfter: {
+                      duration: '4h 10m',
+                      airportChange: 'yes',
+                      selfTransfer: 'yes',
+                      details: 'Ground transfer not included; recheck baggage',
+                    },
+                  },
+                  {
+                    airline: 'Fixture Air',
+                    flightNumber: 'ND456',
+                    aircraft: 'Synthetic wide-body',
+                    cabin: 'Premium economy',
+                    departure: {
+                      airport: 'LGW',
+                      date: '2026-11-02',
+                      time: '16:00',
+                      timeZone: 'Europe/London',
+                    },
+                    arrival: {
+                      airport: 'SIN',
+                      date: '2026-11-03',
+                      time: '12:50',
+                      timeZone: 'Asia/Singapore',
+                    },
+                    technicalStops: [
+                      {
+                        airport: 'BKK',
+                        duration: '45m',
+                        details: 'Same flight; boarding instructions not supplied',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
             price: 'EUR 124 return',
             baggage: 'One cabin bag',
             recommended: true,
@@ -1866,19 +1923,50 @@ test(
           },
         ],
       };
-      const visualReply = await addReply(turnId, [], 'Take the direct synthetic flight.', flight);
+      const visualReply = await addReply(
+        turnId,
+        [],
+        'Review the synthetic connecting itinerary.',
+        flight,
+      );
       await channels.drain();
       assert.equal((await state(visualReply)).state, 'sent');
       const deliveredVisual = texts.at(-1)!;
       for (const detail of [
-        'Take the direct',
+        'Review the synthetic',
         'LIS',
         'LHR',
         '09:00',
         '11:50',
         'ND123',
+        '19h 50m',
         '2h 50m',
-        'Nonstop',
+        '4h 10m',
+        '1 connection',
+        '1 technical stop',
+        'LGW',
+        'SIN',
+        'ND456',
+        'BKK',
+        '45m',
+        'Ground transfer not included',
+        'recheck baggage',
+        'Airport change: yes',
+        'Self-transfer: yes',
+        'Operated by Fixture Regional',
+        'Terminal 1',
+        'Terminal 2',
+        'Synthetic narrow-body',
+        'Synthetic wide-body',
+        'Premium economy',
+        '2026-11-02',
+        '2026-11-03',
+        '16:00',
+        '12:50',
+        'Europe/Lisbon',
+        'Europe/London',
+        'Asia/Singapore',
+        'Same flight; boarding instructions not supplied',
         'EUR 124 return',
         'One cabin bag',
         '2026-10-24',
@@ -1888,7 +1976,7 @@ test(
       assert.doesNotMatch(deliveredVisual, /artifactId|"version"|"options"|api\/artifacts/);
       assert.equal(
         (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
-        'Take the direct synthetic flight.',
+        'Review the synthetic connecting itinerary.',
       );
       const chart: Presentation = {
         version: 1,

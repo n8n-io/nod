@@ -1,4 +1,8 @@
-import { presentationSchema, presentationText } from '../src/shared/presentation.ts';
+import {
+  flightJourneySummary,
+  presentationSchema,
+  presentationText,
+} from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
@@ -902,9 +906,25 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   const seats = {
     ...common,
     type: 'seats',
-    columns: ['A', '', 'B'],
-    rows: [{ label: '1', seats: [{ column: 'A', label: '1A', status: 'unknown' }] }],
-    recommended: '1A',
+    aircraft: 'Synthetic A350',
+    flight: 'ND123 LIS–BKK 2026-12-01',
+    sections: [
+      {
+        id: 'main',
+        name: 'Economy',
+        deck: 'Main deck',
+        rows: [
+          {
+            label: '1',
+            groups: [
+              [{ label: '1A', status: 'unknown' }, null],
+              [{ label: '1B', status: 'unavailable' }],
+            ],
+          },
+        ],
+      },
+    ],
+    recommended: { sectionId: 'main', seatLabel: '1A' },
   };
   assert.ok(presentationSchema.safeParse(diagram).success);
   assert.ok(presentationSchema.safeParse(seats).success);
@@ -966,12 +986,46 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   const seatText = presentationText(
     presentationSchema.parse({
       ...seats,
-      rows: [{ label: '12', seats: [{ column: 'A', label: 'Left window', status: 'unknown' }] }],
-      recommended: 'Left window',
+      sections: [
+        ...seats.sections,
+        {
+          id: 'upper',
+          name: 'Business',
+          deck: 'Upper deck',
+          rows: [
+            {
+              label: '1',
+              groups: [
+                [{ label: '1A', status: 'available', note: 'Left window', price: 'EUR 40' }],
+                [null, { label: '1F', status: 'unknown' }],
+              ],
+            },
+          ],
+        },
+      ],
+      recommended: { sectionId: 'upper', seatLabel: '1A' },
     }),
   );
-  for (const detail of ['A · aisle · B', 'Row 12', 'A (Left window)', 'unknown', 'Recommended'])
+  for (const detail of [
+    'Synthetic A350',
+    'ND123 LIS–BKK 2026-12-01',
+    'Main deck',
+    'Upper deck',
+    'Economy',
+    'Business',
+    'Row 1',
+    '1A',
+    'Empty position',
+    'aisle',
+    'Left window',
+    'EUR 40',
+    'unknown',
+    'unavailable',
+    'available',
+    'Recommended',
+  ])
     assert.ok(seatText.includes(detail), detail);
+  assert.equal(seatText.match(/Recommended/g)?.length, 1);
   const diagramText = presentationText(
     presentationSchema.parse({
       ...diagram,
@@ -1006,19 +1060,92 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     { ...diagram, script: 'fetch("https://example.com")' },
     { ...diagram, nodes: [diagram.nodes[0], diagram.nodes[0]] },
     { ...diagram, edges: [{ from: 'missing', to: 'answer' }] },
-    { ...seats, columns: ['', ''] },
-    { ...seats, columns: ['A', 'A'] },
-    { ...seats, columns: ['B'] },
-    { ...seats, recommended: '9F' },
-    { ...seats, rows: [seats.rows[0], seats.rows[0]] },
+    { ...seats, sections: [] },
+    { ...seats, sections: [{ ...seats.sections[0], html: '<img src=x onerror=alert(1)>' }] },
+    { ...seats, sections: [seats.sections[0], seats.sections[0]] },
+    { ...seats, recommended: { sectionId: 'missing', seatLabel: '1A' } },
+    { ...seats, recommended: { sectionId: 'main', seatLabel: '9F' } },
     {
       ...seats,
-      rows: [
+      sections: [
+        { ...seats.sections[0], rows: [seats.sections[0].rows[0], seats.sections[0].rows[0]] },
+      ],
+    },
+    {
+      ...seats,
+      sections: [
         {
-          label: '1',
-          seats: [...seats.rows[0].seats, { column: 'A', label: '1B', status: 'available' }],
+          ...seats.sections[0],
+          rows: [
+            {
+              label: '1',
+              groups: [
+                [{ label: '1A', status: 'unknown' }],
+                [{ label: '1A', status: 'available' }],
+              ],
+            },
+          ],
         },
       ],
+    },
+    {
+      ...seats,
+      sections: [{ ...seats.sections[0], rows: [{ label: '1', groups: [[null], [null]] }] }],
+    },
+    {
+      ...seats,
+      sections: [
+        {
+          ...seats.sections[0],
+          rows: [{ label: '1', groups: [[], [{ label: '1A', status: 'unknown' }]] }],
+        },
+      ],
+    },
+    {
+      ...seats,
+      sections: [
+        {
+          ...seats.sections[0],
+          rows: [
+            {
+              label: '1',
+              groups: [
+                Array.from({ length: 6 }, (_, index) => ({
+                  label: `L${index}`,
+                  status: 'unknown',
+                })),
+                Array.from({ length: 6 }, (_, index) => ({
+                  label: `R${index}`,
+                  status: 'unknown',
+                })),
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...seats,
+      sections: [
+        {
+          ...seats.sections[0],
+          rows: [
+            {
+              label: '1',
+              groups: Array.from({ length: 5 }, (_, index) => [
+                { label: String(index), status: 'unknown' },
+              ]),
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...seats,
+      sections: Array.from({ length: 9 }, (_, index) => ({
+        ...seats.sections[0],
+        id: String(index),
+      })),
     },
     { ...common, type: 'image', artifactId: 'https://example.com/picture.png', alt: 'A picture' },
     { ...common, type: 'map', places: [{ id: 'one', name: 'Place', latitude: 91, longitude: 0 }] },
@@ -1033,9 +1160,279 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   assert.equal(
     presentationSchema.safeParse({
       ...seats,
-      rows: Array.from({ length: 60 }, (_, index) => ({
-        label: String(index),
-        seats: [{ column: 'A', label: `${index}A`, status: 'unknown', note: '界'.repeat(240) }],
+      recommended: undefined,
+      sections: [
+        {
+          ...seats.sections[0],
+          rows: Array.from({ length: 60 }, (_, index) => ({
+            label: String(index),
+            groups: [[{ label: `${index}A`, status: 'unknown', note: '界'.repeat(240) }]],
+          })),
+        },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(
+    presentationSchema.safeParse({
+      ...seats,
+      sections: ['main', 'upper'].map((id) => ({
+        ...seats.sections[0],
+        id,
+        rows: Array.from({ length: 31 }, (_, index) => ({
+          label: String(index),
+          groups: [[{ label: `${index}A`, status: 'unknown' }]],
+        })),
+      })),
+    }).success,
+    false,
+  );
+});
+
+test('flight journeys preserve every leg and distinguish connections from technical stops', () => {
+  const endpoint = (
+    airport: string,
+    date: string,
+    time: string,
+    timeZone: string,
+    terminal: string,
+  ) => ({ airport, date, time, timeZone, terminal });
+  const flight = {
+    version: 1,
+    type: 'flights',
+    title: 'Synthetic return itinerary',
+    sources: [{ label: 'Fare source', url: 'https://example.com/fares' }],
+    options: [
+      {
+        id: 'one',
+        label: 'Separate-ticket option',
+        price: 'EUR 740 return for one adult',
+        baggage: 'One cabin bag',
+        url: 'https://example.com/option',
+        recommended: true,
+        journeys: [
+          {
+            id: 'outbound',
+            label: 'Outbound',
+            duration: '34h 45m',
+            segments: [
+              {
+                airline: 'Marketing Air',
+                flightNumber: 'ND123',
+                operatedBy: 'Operating Air',
+                aircraft: 'A350',
+                cabin: 'Economy',
+                duration: '2h 40m',
+                departure: endpoint('LIS', '2026-12-01', '20:15', 'Europe/Lisbon', '1'),
+                arrival: endpoint('LHR', '2026-12-01', '22:55', 'Europe/London', '2'),
+                technicalStops: [],
+                connectionAfter: {
+                  duration: '11h 50m',
+                  airportChange: 'yes',
+                  selfTransfer: 'yes',
+                  details: 'Collect bags; travel independently to LGW',
+                },
+              },
+              {
+                airline: 'Second Air',
+                flightNumber: 'SA12',
+                departure: endpoint('LGW', '2026-12-02', '10:45', 'Europe/London', 'South'),
+                arrival: endpoint('DXB', '2026-12-02', '20:00', 'Asia/Dubai', '3'),
+                technicalStops: [
+                  { airport: 'DOH', duration: '45m', details: 'Remain on the aircraft' },
+                ],
+                connectionAfter: { duration: '3h', airportChange: 'no', selfTransfer: 'unknown' },
+              },
+              {
+                airline: 'Third Air',
+                departure: endpoint('DXB', '2026-12-02', '23:00', 'Asia/Dubai', '3'),
+                arrival: endpoint('BKK', '2026-12-03', '08:00', 'Asia/Bangkok', 'Main'),
+                technicalStops: [],
+              },
+            ],
+          },
+          {
+            id: 'return',
+            label: 'Return',
+            segments: [
+              {
+                airline: 'Marketing Air',
+                departure: { airport: 'BKK', time: '12:00' },
+                arrival: { airport: 'LIS', time: '20:00' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const parsed = presentationSchema.parse(flight);
+  assert.equal(parsed.type, 'flights');
+  if (parsed.type !== 'flights') throw new Error('Expected a flight presentation.');
+  const journey = parsed.options[0].journeys[0];
+  assert.equal(flightJourneySummary(journey), '2 connections · 1 technical stop');
+  assert.equal(
+    flightJourneySummary({
+      ...journey,
+      segments: journey.segments.map((segment, index) =>
+        index === 0 ? { ...segment, technicalStops: undefined } : segment,
+      ),
+    }),
+    '2 connections · 1 reported technical stop · Technical stop details not provided',
+  );
+  assert.equal(
+    flightJourneySummary(parsed.options[0].journeys[1]),
+    'No connections · Technical stop details not provided',
+  );
+  const direct = { ...journey, segments: [{ ...journey.segments[2], technicalStops: [] }] };
+  assert.equal(flightJourneySummary(direct), 'Nonstop');
+  assert.equal(
+    flightJourneySummary({
+      ...direct,
+      segments: [{ ...direct.segments[0], technicalStops: [{ airport: 'DOH' }] }],
+    }),
+    'No connections · 1 technical stop',
+  );
+  const summary = presentationText(parsed);
+  for (const detail of [
+    'Separate-ticket option',
+    'EUR 740 return for one adult',
+    'One cabin bag',
+    'Recommended',
+    'Outbound',
+    'Return',
+    '34h 45m',
+    'Marketing Air',
+    'Operating Air',
+    'ND123',
+    'A350',
+    'Economy',
+    '2h 40m',
+    'LIS',
+    'LHR',
+    'LGW',
+    'DXB',
+    'BKK',
+    '2026-12-01',
+    '2026-12-02',
+    '2026-12-03',
+    '20:15',
+    '22:55',
+    '10:45',
+    '23:00',
+    '08:00',
+    'Europe/Lisbon',
+    'Europe/London',
+    'Asia/Dubai',
+    'Asia/Bangkok',
+    'Terminal South',
+    'Airport change: yes',
+    'Self-transfer: yes',
+    'Self-transfer: unknown',
+    'Collect bags',
+    'DOH',
+    '45m',
+    'Remain on the aircraft',
+    'https://example.com/fares',
+    'https://example.com/option',
+    'Date not provided',
+    'Time zone not provided',
+  ])
+    assert.ok(summary.includes(detail), detail);
+  const option = parsed.options[0];
+  const outbound = option.journeys[0];
+  const invalidJourneys = [
+    [],
+    [outbound, outbound],
+    [{ ...outbound, segments: [] }],
+    [
+      {
+        ...outbound,
+        segments: [
+          { ...outbound.segments[0], connectionAfter: undefined },
+          ...outbound.segments.slice(1),
+        ],
+      },
+    ],
+    [
+      {
+        ...outbound,
+        segments: [
+          ...outbound.segments.slice(0, 2),
+          { ...outbound.segments[2], connectionAfter: { airportChange: 'no', selfTransfer: 'no' } },
+        ],
+      },
+    ],
+    [
+      {
+        ...outbound,
+        segments: [
+          { ...outbound.segments[0], connectionAfter: { airportChange: 'no' } },
+          ...outbound.segments.slice(1),
+        ],
+      },
+    ],
+    [
+      {
+        ...outbound,
+        segments: [
+          {
+            ...outbound.segments[0],
+            departure: { ...outbound.segments[0].departure, url: 'https://127.0.0.1/' },
+          },
+          ...outbound.segments.slice(1),
+        ],
+      },
+    ],
+    [
+      {
+        ...outbound,
+        segments: [
+          {
+            ...outbound.segments[0],
+            technicalStops: Array.from({ length: 5 }, () => ({ airport: 'DOH' })),
+          },
+          ...outbound.segments.slice(1),
+        ],
+      },
+    ],
+    [
+      {
+        ...outbound,
+        segments: Array.from({ length: 9 }, (_, index) => ({
+          ...outbound.segments[0],
+          connectionAfter: index === 8 ? undefined : outbound.segments[0].connectionAfter,
+        })),
+      },
+    ],
+    Array.from({ length: 7 }, (_, index) => ({ ...outbound, id: String(index) })),
+  ];
+  for (const journeys of invalidJourneys)
+    assert.equal(
+      presentationSchema.safeParse({ ...flight, options: [{ ...option, journeys }] }).success,
+      false,
+    );
+  assert.equal(
+    presentationSchema.safeParse({
+      ...flight,
+      options: [{ ...option, url: 'https://example.com/?access_token=secret' }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    presentationSchema.safeParse({
+      ...flight,
+      options: Array.from({ length: 8 }, (_, index) => ({
+        ...option,
+        id: String(index),
+        journeys: option.journeys.map((journey) => ({
+          ...journey,
+          segments: journey.segments.map((segment) => ({
+            ...segment,
+            aircraft: '界'.repeat(120),
+            cabin: '界'.repeat(80),
+          })),
+        })),
       })),
     }).success,
     false,

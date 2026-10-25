@@ -36,6 +36,10 @@ When a visual makes an answer easier to understand, nod can include images, maps
 
 Each visual stays beside its explanation. Source links let you check the details, and changing information can include when nod checked it. Charts also show the underlying numbers. An illustrative seat plan doesn't establish availability. A proposed booking stays an option until nod has evidence of confirmation.
 
+Flight comparisons can show each leg of an outbound, return or multi-city journey, with technical stops, connections and supplied local dates and time zones. Airport changes and self-transfers stay visible before you expand the details. Missing transfer information remains unknown.
+
+Seat plans group the supplied rows by cabin and deck, preserving different layouts, aisles and empty positions. Each plan refers to one flight or aircraft configuration. The view is schematic; nod can show the original image when exact geometry matters. Inspecting a seat doesn't reserve it or confirm its availability.
+
 Telegram and WhatsApp receive the answer and visual details as text, with source links. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. With the WhatsApp Cloud API, open nod to see images. Interactive visuals stay in nod's chat.
 
 ## Listen to audio
