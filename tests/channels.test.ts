@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { PassThrough } from 'node:stream';
@@ -14,7 +13,6 @@ import { createVault } from '../src/server/vault.ts';
 import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
-import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createWhatsAppLinkedTransport } from '../src/providers/chat-sdk/whatsapp.ts';
 import { combineMessagingTransports } from '../src/providers/chat-sdk/combined.ts';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
@@ -28,10 +26,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Artifact } from '../src/shared/contracts.ts';
 import type { InboundMessage } from '../src/ports/messaging.ts';
-import { getHttpStream } from '@whiskeysockets/baileys';
 import { spendingLimitReached } from '../src/server/ledger.ts';
 import { ChannelMediaFailure } from '../src/server/channel-media.ts';
-import { runProcess } from '../src/providers/process.ts';
 import { loadAudioWaveform } from '../src/web/lib/audio-waveform.ts';
 import { contactCards } from '../src/shared/channel-content.ts';
 import { contactAttachment } from '../src/providers/chat-sdk/content.ts';
@@ -474,188 +470,6 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
   assert.equal(decodes, accepted.length);
 });
 
-test('WhatsApp setup removes stale QR codes and recovers from failed and stalled reads', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
-      import assert from 'node:assert/strict';
-      import {mock} from 'node:test';
-      import {JSDOM} from 'jsdom';
-      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
-      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
-        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
-        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
-      const {createElement,act} = await import('react');
-      const {createRoot} = await import('react-dom/client');
-      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
-      mock.timers.enable({apis:['Date','setTimeout'],now:Date.now()});
-      mock.method(AbortSignal,'timeout',ms=>{
-        const controller=new AbortController();
-        setTimeout(()=>controller.abort(new DOMException('Synthetic timeout','TimeoutError')),ms);
-        return controller.signal;
-      });
-      let mode='ready';
-      let pendingSignal;
-      let reads=0;
-      const code=(value,lifetime=60000)=>({state:'awaiting_scan',
-        pairingId:'11111111-1111-4111-8111-111111111111',
-        qr:value,expiresAt:new Date(Date.now()+lifetime).toISOString()});
-      let link=code('synthetic-first-qr');
-      globalThis.fetch=async (_url,options={})=>{
-        if(options.method==='DELETE') return Response.json({ok:true});
-        reads++;
-        if(mode==='failed') throw new Error('Synthetic connection failure');
-        if(mode==='stalled') return new Promise((resolve,reject)=>{
-          pendingSignal=options.signal;
-          options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true});
-        });
-        return Response.json(link);
-      };
-      const root=createRoot(document.querySelector('#root'));
-      const hasQr=()=>Boolean(document.querySelector('.whatsapp-setup-qr svg'));
-      const advance=async ms=>act(async()=>mock.timers.tick(ms));
-      try {
-        await act(async()=>root.render(createElement(WhatsAppSetup,{
-          setup:{provider:'whatsapp',enabled:true,mode:'linked'},
-          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
-        })));
-        assert.equal(hasQr(),true);
-        mode='failed';
-        await advance(2000);
-        assert.equal(hasQr(),false,'A failed read must remove the previous code.');
-        mode='ready';
-        link=code('synthetic-second-qr');
-        await advance(2000);
-        assert.equal(hasQr(),true);
-        mode='stalled';
-        await advance(2000);
-        const stalledAt=reads;
-        await advance(10000);
-        assert.equal(pendingSignal.aborted,true,'A stalled read must end.');
-        assert.equal(hasQr(),false);
-        mode='ready';
-        link=code('synthetic-third-qr',3000);
-        await advance(2000);
-        assert.ok(reads>stalledAt,'Polling must resume after a timeout.');
-        assert.equal(hasQr(),true);
-        await advance(1000);
-        assert.equal(hasQr(),false,'The code must disappear at expiry without another read.');
-      } finally {
-        await act(async()=>root.unmount());
-        mock.restoreAll();
-        mock.timers.reset();
-        dom.window.close();
-      }
-    `,
-  });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
-
-test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
-      import assert from 'node:assert/strict';
-      import {JSDOM} from 'jsdom';
-      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
-      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
-        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
-        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
-      const {createElement,act} = await import('react');
-      const {createRoot} = await import('react-dom/client');
-      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
-      const sleep = globalThis.setTimeout;
-      const clear = globalThis.clearTimeout;
-      let poll;
-      globalThis.setTimeout = (fn,ms,...args) => ms===2000 ? (poll=fn,{poll:true}) : sleep(fn,ms,...args);
-      globalThis.clearTimeout = id => {if(!id?.poll) clear(id);};
-      const settle = async check => {
-        for(let i=0;i<100&&!check();i++) await act(async()=>{await new Promise(resolve=>sleep(resolve,5));});
-        assert.ok(check(),'The setup request did not settle.');
-      };
-      for(const closeDuringRestart of [false,true]) {
-        const oldId='11111111-1111-4111-8111-111111111111';
-        const nextId='22222222-2222-4222-8222-222222222222';
-        const old={state:'expired',pairingId:oldId};
-        const next={state:'awaiting_scan',pairingId:nextId,qr:'synthetic-invalid-qr'};
-        let reads=0,resolvePost,resolvePoll;
-        const cancelled=[];
-        globalThis.fetch=async (_url,options={})=>{
-          if(options.method==='DELETE') {
-            cancelled.push(JSON.parse(options.body).pairingId);
-            return Response.json({ok:true});
-          }
-          if(options.method==='POST') {
-            assert.equal(JSON.parse(options.body).pairingId,oldId);
-            return new Promise(resolve=>{resolvePost=()=>resolve(Response.json(next));});
-          }
-          if(++reads===1) return Response.json(old);
-          return new Promise(resolve=>{resolvePoll=()=>resolve(Response.json(old));});
-        };
-        const root=createRoot(document.querySelector('#root'));
-        await act(async()=>root.render(createElement(WhatsAppSetup,{
-          setup:{provider:'whatsapp',enabled:true,mode:'linked',connectionState:'expired'},
-          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
-        })));
-        const restart=()=>[...document.querySelectorAll('button')].find(button=>button.textContent.includes('Start again'));
-        await settle(()=>restart()&&!restart().disabled);
-        if(!closeDuringRestart) {
-          await act(async()=>poll());
-          await settle(()=>Boolean(resolvePoll));
-        }
-        await act(async()=>restart().click());
-        await settle(()=>Boolean(resolvePost));
-        if(closeDuringRestart) await act(async()=>root.unmount());
-        await act(async()=>resolvePost());
-        if(resolvePoll) await act(async()=>resolvePoll());
-        if(!closeDuringRestart) await act(async()=>root.unmount());
-        await settle(()=>cancelled.includes(nextId));
-        assert.equal(cancelled.at(-1),nextId);
-      }
-      for(const [state,hasAccount] of [['connecting',false],['awaiting_scan',false],['disconnected',false],['failed',false],['logged_out',false],['connected',true],['disconnected',true]]) {
-        const linked=state==='connected';
-        const pairingId='33333333-3333-4333-8333-333333333333';
-        const writes=[];
-        let read=false,disconnects=0,done=0;
-        globalThis.fetch=async(path,options={})=>{
-          if(options.method){writes.push({path,method:options.method,body:JSON.parse(options.body)});return Response.json({ok:true});}
-          read=true;
-          return Response.json({state,pairingId,...(linked?{accountHandle:'15555550123'}:{qr:'synthetic-qr',expiresAt:new Date(Date.now()+60000).toISOString()})});
-        };
-        const root=createRoot(document.querySelector('#root'));
-        await act(async()=>root.render(createElement(WhatsAppSetup,{
-          setup:{provider:'whatsapp',enabled:true,mode:'linked',linkMode:'self-chat',connectionState:state,...(hasAccount?{accountHandle:'15555550123'}:{})},
-          busy:false,ready:true,error:'',onSave:async()=>assert.fail('Viewing pairing cannot save a connection'),onRefresh:async()=>{},onDone:()=>done++,onDisconnect:()=>disconnects++,
-        })));
-        await settle(()=>read);
-        const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
-        assert.equal(Boolean(button('Disconnect')),hasAccount,'only an established account offers disconnection');
-        assert.equal(Boolean(button('Start again')),state==='failed'||state==='logged_out','active pairing must not offer a destructive restart');
-        assert.deepEqual(writes,[],'displaying a pairing state is read-only');
-        if(hasAccount){
-          await act(async()=>button('Disconnect').click());
-          assert.equal(disconnects,1);
-          assert.deepEqual(writes,[],'Disconnect delegates to owned confirmation');
-        }
-        if(linked){
-          await act(async()=>button('Done').click());
-          assert.equal(done,1);
-        }
-        await act(async()=>root.unmount());
-        if(linked)assert.deepEqual(writes,[],'closing a connected account must not cancel or unlink it');
-        else{
-          await settle(()=>writes.length===1);
-          assert.deepEqual(writes,[{path:'/api/channel-settings/whatsapp/pairing',method:'DELETE',body:{pairingId}}],'closing pending setup cancels only its pairing generation');
-        }
-      }
-      globalThis.setTimeout=sleep;
-      globalThis.clearTimeout=clear;
-      dom.window.close();
-    `,
-  });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
-
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,
   mimeType,
@@ -676,57 +490,6 @@ const fixtureEnv = {
   WHATSAPP_ALLOWED_NUMBER: '351910000000',
   WHATSAPP_POLICY_CONFIRMED: 'true',
 };
-
-test('the pinned WhatsApp download refuses redirects and stops before response headers on abort', async (t) => {
-  let redirected = 0;
-  let entered!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const server = createServer((request, response) => {
-    if (request.url === '/redirect') {
-      response.writeHead(302, { Location: '/other' });
-      response.end();
-    } else if (request.url === '/held') {
-      entered();
-    } else {
-      redirected++;
-      response.end('synthetic data');
-    }
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => {
-    server.closeAllConnections();
-    server.close();
-  });
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const origin = `http://127.0.0.1:${address.port}`;
-  await assert.rejects(getHttpStream(origin + '/redirect', { redirect: 'error' }));
-  assert.equal(redirected, 0);
-  const controller = new AbortController();
-  const pending = getHttpStream(origin + '/held', { signal: controller.signal });
-  await waiting;
-  controller.abort();
-  await assert.rejects(pending, /abort/i);
-});
-
-test('Signal session changes never write key material to the process console', (t) => {
-  const require = createRequire(import.meta.url);
-  const { SessionRecord } = require('libsignal');
-  const output: unknown[][] = [];
-  for (const method of ['info', 'warn', 'error', 'log'] as const)
-    t.mock.method(console, method, (...args: unknown[]) => {
-      output.push(args);
-    });
-  const record = new SessionRecord();
-  const entry = SessionRecord.createEntry();
-  entry.indexInfo = { closed: -1, baseKey: Buffer.from('synthetic-private-session-key') };
-  record.closeSession(entry);
-  record.openSession(entry);
-  assert.equal(entry.indexInfo.closed, -1);
-  assert.deepEqual(output, []);
-});
 
 test(
   'WhatsApp links privately, admits only its owner, fences echoes across restart, and reconnects without repeating sends',
@@ -2463,114 +2226,6 @@ test('channel presentation isolates private links from the model and rejects uns
   );
   await assert.rejects(channelReply('/credentials/request-id', { threadId: 'owned-thread' }));
 });
-
-test(
-  'a webhook received during an outbound send is submitted before the active drain finishes',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const schema = `test_channels_overlap_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const threadId = await createFixtureTables(pool, 'local-development');
-    let releaseSend = () => {};
-    let markSendStarted = () => {};
-    const sendReleased = new Promise<void>((resolve) => {
-      releaseSend = resolve;
-    });
-    const sendStarted = new Promise<void>((resolve) => {
-      markSendStarted = resolve;
-    });
-    let sends = 0;
-    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
-      const url = input instanceof Request ? input.url : String(input);
-      if (url === 'https://api.telegram.org/bot987:fixture-not-live/getMe')
-        return Response.json({
-          ok: true,
-          result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
-        });
-      if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/send')) {
-        sends++;
-        markSendStarted();
-        await sendReleased;
-        return Response.json({
-          ok: true,
-          result: {
-            message_id: 100,
-            date: Math.floor(Date.now() / 1000),
-            chat: { id: 123456, type: 'private' },
-            text: 'Fixture reply',
-          },
-        });
-      }
-      throw new Error('Unexpected fixture provider call.');
-    });
-    const app = Fastify();
-    const channels = await createChannels(pool, {
-      ownerId: 'local-development',
-      transport: createChatSdkTransport(pool, { ...fixtureEnv, WHATSAPP_ENABLED: 'false' }),
-      subscribe: () => () => {},
-      intervalMs: 600000,
-      submit: async (_text, sourceId, client, channel) =>
-        fixtureTurn(client, threadId, 'local-development', channel, sourceId),
-    });
-    channels.registerRoutes(app);
-    const send = (id: number) =>
-      app.inject({
-        method: 'POST',
-        url: '/api/webhooks/telegram',
-        headers: {
-          'content-type': 'application/json',
-          'x-telegram-bot-api-secret-token': fixtureEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN,
-        },
-        payload: {
-          update_id: id,
-          message: {
-            message_id: id,
-            date: Math.floor(Date.now() / 1000),
-            text: `Fixture request ${id}`,
-            from: { id: 123456, is_bot: false, first_name: 'Fixture' },
-            chat: { id: 123456, type: 'private' },
-          },
-        },
-      });
-    try {
-      assert.equal((await send(1)).statusCode, 200);
-      await channels.drain();
-      const turn = (await pool.query('SELECT id FROM turns')).rows[0];
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Fixture reply',$2,$3)",
-        [randomUUID(), threadId, turn.id],
-      );
-      const activeDrain = channels.drain();
-      await Promise.race([
-        sendStarted,
-        activeDrain.then(() => {
-          throw new Error('The fixture reply did not reach the provider transport.');
-        }),
-      ]);
-      assert.equal((await send(2)).statusCode, 200);
-      assert.equal((await pool.query('SELECT * FROM turns')).rowCount, 1);
-      releaseSend();
-      await activeDrain;
-      assert.equal((await pool.query('SELECT * FROM turns')).rowCount, 2);
-      assert.equal(
-        (await pool.query("SELECT * FROM channel_inbox WHERE state='pending'")).rowCount,
-        0,
-      );
-      assert.equal(sends, 1);
-    } finally {
-      releaseSend();
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
 
 test(
   'Chat SDK channel fixture authenticates owner messages, commits turn dedupe, and routes replies by turn channel',

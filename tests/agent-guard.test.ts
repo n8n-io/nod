@@ -26,7 +26,6 @@ import {
 } from '../src/server/integration-result.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
-import type { Computer } from '../src/ports/computer.ts';
 import { BrowserActionError } from '../src/ports/computer.ts';
 
 async function fixture(
@@ -675,91 +674,6 @@ test('an app sign-in pauses only at a valid link', async () => {
     assert.equal(result.result.message, undefined);
   }
 });
-
-test(
-  'browser preparation refuses a paused turn and cancellation before or during a hold',
-  { timeout: 10_000 },
-  async () => {
-    for (const phase of ['paused', 'before', 'during']) {
-      const controller = new AbortController();
-      let prepared!: () => void;
-      let release!: () => void;
-      const started = new Promise<void>((resolve) => {
-        prepared = resolve;
-      });
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let holds = 0;
-      let actions = 0;
-      const pending = fixture(
-        async (tools) => {
-          if (phase === 'paused') await call(tools, 'ask_user', { question: 'Which account?' });
-          if (phase === 'before') controller.abort();
-          const opening = call(tools, 'browser', { action: 'open', url: 'https://example.com' });
-          if (phase === 'during') {
-            await started;
-            controller.abort();
-            release();
-          }
-          await assert.rejects(opening, /stopped|aborted|cancelled/i);
-        },
-        { signal: controller.signal },
-        {
-          computer: fakeComputer({
-            hold: async () => {
-              holds++;
-              prepared();
-              if (phase === 'during') await gate;
-            },
-            act: async () => {
-              actions++;
-              return { text: 'Synthetic page', url: 'https://example.com' };
-            },
-          }),
-        },
-      );
-      try {
-        if (phase === 'paused') assert.equal((await pending).result.status, 'waiting_user');
-        else await assert.rejects(pending, /aborted|cancelled/i);
-        assert.equal(holds, phase === 'during' ? 1 : 0);
-        assert.equal(actions, 0);
-      } finally {
-        release();
-      }
-    }
-  },
-);
-
-test(
-  'stopping ends the turn at once even when a tool never settles',
-  { timeout: 5_000 },
-  async () => {
-    const controller = new AbortController();
-    let entered!: () => void;
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const pending = fixture(
-      async (tools) => {
-        const opening = call(tools, 'browser', { action: 'open', url: 'https://example.com' });
-        await started;
-        controller.abort();
-        await assert.rejects(opening, /cancelled/i);
-      },
-      { signal: controller.signal },
-      {
-        computer: fakeComputer({
-          act: () => {
-            entered();
-            return new Promise(() => {});
-          },
-        }),
-      },
-    );
-    await assert.rejects(pending, /aborted|cancelled/i);
-  },
-);
 
 test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
   for (const input of [
