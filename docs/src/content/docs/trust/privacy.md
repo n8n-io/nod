@@ -111,7 +111,7 @@ Before a trace leaves the machine running your assistant, Nod removes known secr
 
 The feedback dialog shows who receives your submission: the Nod team at n8n by default, or your operator's configured collector.
 
-**Include diagnostic report** starts selected for every category. The report helps with support, debugging, and product improvement. Select **Review** to inspect the exact attachment, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
+**Include diagnostic report** starts selected for every category until you change it. The report helps with support, debugging, and product improvement. Select **Review** to inspect the exact attachment, or untick the checkbox to leave it out. Your choice is remembered for your account on this device, including after sending or discarding a draft.
 
 The report can include recent chat messages, tool arguments and results, runtime and app errors, and technical activity. Tool results can include text read from files, websites, or connected apps. Nod masks known secrets and recognized personal details before presenting the report. This is best-effort redaction: names and other personal information can remain. Review the report before sending it.
 
@@ -119,7 +119,7 @@ Credential fields, screenshots, binary data, system prompts, and model thinking 
 
 Nod keeps a local journal of recent tool activity and failures, with redaction before writing and again when preparing a report. The journal holds at most three files of 1 MiB each. Reports read only the latest 24 hours. Expired records are removed on startup, report preparation, journal writes, and a one-minute cleanup timer. If Nod is stopped, expired files remain until it runs again. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
 
-Preparing a report sends recent app activity and errors from the app window to your Nod runtime for redaction and assembly. The configured feedback recipient receives your submission only after you select **Send feedback**. Screenshots aren't captured automatically. Feedback text and files you choose to add are sent as provided and can contain personal information.
+Preparing a report sends recent app activity and errors from the app window to your Nod runtime for redaction and assembly. The configured feedback recipient receives your submission only after you select **Send feedback**. On desktop, a new draft includes a screenshot of the Nod window when capture is available. Capture skips private screens, embedded browsers, open dialogs, and unsent text or files. The screenshot can include visible conversation text and is separate from the diagnostic report. Review, annotate, or remove it before sending. Feedback text and attachments are sent as provided and can contain personal information.
 
 The report marks unavailable database or journal sources and omitted entries. The app activity and error buffers have fixed limits and no marker for dropped or expired entries. After an account change, app error capture pauses until the window reloads, and that source is marked unavailable. If redaction can't be prepared, the report omits message content and logs. If the report itself can't be prepared, select **Continue without report**. Your text and selected files stay in the draft.
 

@@ -163,13 +163,18 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   const wsl = join(hostEnvironment.SYSTEMROOT, 'System32/wsl.exe');
   try {
     await execute(wsl, ['--status'], { env: hostEnvironment, signal, timeout: 15_000 });
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted();
     throw Object.assign(
       new Error(
-        'Nod needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open Nod.',
+        `Nod could not start WSL 2. Select Install WSL, then restart Windows and open Nod. ${error.message}`,
       ),
-      { code: 'NOD_WSL_REQUIRED' },
+      {
+        code: 'NOD_WSL_REQUIRED',
+        details: [error.code, error.stack || error.message, error.details]
+          .filter(Boolean)
+          .join('\n'),
+      },
     );
   }
   await protectWindowsProfile(dataRoot, resourcesPath);

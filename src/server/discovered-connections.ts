@@ -326,19 +326,23 @@ export async function createDiscoveredConnections(
       slug: string;
       name: string;
       completed: boolean;
+      expired: boolean;
       link_hash: string | null;
       oauth_status: ProposalRow['oauth_status'];
     }>(
-      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash,oauth_status
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,
+       expires_at<=now() AS expired,link_hash,oauth_status
        FROM discovered_connection_proposals WHERE owner_id=$1
-       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))
-       AND (expires_at>now() OR oauth_status='connected')`,
+       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))`,
       [owner, requested, hashes],
     );
     return result.rows.map(({ oauth_status, ...row }) => ({
       ...row,
       ...(row.link_hash && hashes.includes(row.link_hash)
-        ? { available: oauth_status === 'pending' || oauth_status === 'completing' }
+        ? {
+            available:
+              !row.expired && (oauth_status === 'pending' || oauth_status === 'completing'),
+          }
         : {}),
     }));
   }
@@ -618,6 +622,19 @@ export async function createDiscoveredConnections(
       return addressProposal(service, undefined, connectionId, returnTo);
     const { id, name } = await create(official(service, connectionId), undefined, returnTo);
     return { name, ...(await beginOAuth(id, { returnTo })) };
+  }
+  async function abandonSetup(linkHash: string, reason: 'cancelled' | 'unavailable' | 'unknown') {
+    const abandoned = await transaction(async (client) => {
+      const { rows } = await client.query<ProposalRow>(
+        `UPDATE discovered_connection_proposals SET oauth_status='cancelled',oauth_state_hash=NULL
+         WHERE owner_id=$1 AND link_hash=$2 AND oauth_status='pending' RETURNING *`,
+        [owner, linkHash],
+      );
+      for (const row of rows) await options.grantVault.remove(row.id, client);
+      return rows;
+    }, pool);
+    for (const row of abandoned) track(row, 'failed', reason);
+    return abandoned.length > 0;
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
@@ -1476,6 +1493,7 @@ export async function createDiscoveredConnections(
     analyticsConnections,
     list,
     setupServices,
+    abandonSetup,
     propose,
     signIn,
     authorize,

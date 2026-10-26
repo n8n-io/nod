@@ -1146,7 +1146,8 @@ test('incomplete checkout posts do not count as accepted card submissions', asyn
   }
 });
 
-test('payment code requests get the card code only from an owner who approves', async () => {
+test('payment code requests get the card code only from an owner who approves', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-26T10:22:57.370Z'));
   const reply = async (mode: 'decline' | 'challenge', kind: 'payment' | 'otp') => {
     const scenario = paymentScenario('fixture', 'Fixture', mode);
     const world = scenario.world({ now: Date.now });
@@ -1187,11 +1188,35 @@ test('payment code requests get the card code only from an owner who approves', 
   };
   const declined = await reply('decline', 'payment');
   assert.deepEqual(declined.posted, [{ text: 'No' }]);
-  assert.ok(!JSON.stringify(declined.session.interactions).includes(declined.code));
+  assert.deepEqual(declined.session.interactions, [
+    {
+      kind: 'approval',
+      action: 'pay',
+      text: 'Send the security code to pay.',
+      reply: 'No',
+      at: Date.now(),
+    },
+  ]);
   const paid = await reply('challenge', 'payment');
   assert.deepEqual(paid.posted, [{ text: paid.code, verificationRequestId: 'r' }]);
+  assert.deepEqual(paid.session.interactions, [
+    {
+      kind: 'secret',
+      requestKind: 'payment',
+      text: 'Send the security code to pay.',
+      at: Date.now(),
+    },
+  ]);
   const bank = await reply('challenge', 'otp');
   assert.deepEqual(bank.posted, [{ text: '824631', verificationRequestId: 'r' }]);
+  assert.deepEqual(bank.session.interactions, [
+    {
+      kind: 'secret',
+      requestKind: 'otp',
+      text: 'Send the security code to pay.',
+      at: Date.now(),
+    },
+  ]);
 });
 
 test('the simulated owner selects a sign-in method through the private form', async () => {

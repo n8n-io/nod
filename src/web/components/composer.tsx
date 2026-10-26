@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { ArrowUp, Paperclip, X, RotateCcw, CornerUpLeft, Square } from './icons';
+import { ArrowUp, Paperclip, X, RotateCcw, CornerUpLeft, Square, Mic, LoaderCircle } from './icons';
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
@@ -16,6 +16,9 @@ import { readChatDraft, writeChatDraft } from '../lib/chat-draft';
 import { artifactFromPreview } from './file-actions';
 import { ownedArtifactUrl as validArtifact } from '../lib/attachment-url';
 import { useArtifactDrawer } from './artifact-context';
+import { usePageData } from '../hooks/use-page-data';
+import { useVoiceRecorder } from '../hooks/use-voice-recorder';
+import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
 
 interface DraftAttachment {
   id: string;
@@ -35,9 +38,11 @@ export interface ComposerHandle {
   upload(files: File[]): void;
 }
 
-export type ComposerSendResult = { sent: true } | { sent: false; restoreText: boolean };
+export type ComposerSendResult =
+  { sent: true } | { sent: false; restoreText: boolean; restoreRecording?: boolean };
 
 interface ComposerProps {
+  active?: boolean;
   draftKey?: string;
   privateReply?: boolean;
   restoreReply?(reply: Pick<Message, 'id' | 'role' | 'text'> | null): void;
@@ -46,13 +51,14 @@ interface ComposerProps {
   setText(value: string): void;
   replyTo: Pick<Message, 'id' | 'role' | 'text'> | null;
   clearReply(): void;
-  onSend(text: string, attachments: Artifact[]): Promise<ComposerSendResult>;
+  onSend(text: string, attachments: Artifact[], recording?: File): Promise<ComposerSendResult>;
   onStop?(): void;
   stopping?: boolean;
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
+    active = true,
     ready,
     text,
     setText,
@@ -78,9 +84,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       })) ?? [],
   );
   const drawer = useArtifactDrawer();
+  const {
+    data: speech,
+    error: speechError,
+    refresh: refreshSpeech,
+    refreshing: refreshingSpeech,
+  } = usePageData<{
+    transcription: boolean;
+    transcriptionFormat?: 'wav';
+    local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
+  }>('/api/speech');
+  const recorder = useVoiceRecorder(draftKey, speech?.transcriptionFormat, active);
+  const [showAudioSetup, setShowAudioSetup] = useState(false);
+  const [preparingAudio, setPreparingAudio] = useState(false);
+  const audioSetup = useRef<AbortController | null>(null);
+  const [sendingAudio, setSendingAudio] = useState(false);
+  const audioSend = useRef(false);
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState<DraftAttachment | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const sendButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
@@ -198,10 +221,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       document.removeEventListener('visibilitychange', visible);
       for (const controller of uploads.current) controller.abort();
       uploads.current.clear();
+      audioSetup.current?.abort();
       for (const url of previewUrls.current) URL.revokeObjectURL(url);
       previewUrls.current.clear();
     };
   }, []);
+  useEffect(() => {
+    if (active) return;
+    audioSetup.current?.abort();
+    audioSetup.current = null;
+    setPreparingAudio(false);
+    setShowAudioSetup(false);
+  }, [active]);
+  useEffect(() => {
+    if (active && recorder.phase === 'recording') sendButton.current?.focus();
+  }, [active, recorder.phase]);
+  useEffect(() => {
+    if (
+      !showAudioSetup ||
+      refreshingSpeech ||
+      (!preparingAudio && speech?.local?.state !== 'downloading')
+    )
+      return;
+    const timer = window.setTimeout(() => void refreshSpeech(), 1000);
+    return () => window.clearTimeout(timer);
+  }, [showAudioSetup, preparingAudio, speech?.local?.state, refreshSpeech, refreshingSpeech]);
   useEffect(() => {
     if (editor && text !== lastText.current) {
       lastText.current = text;
@@ -412,12 +456,50 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     );
     restoreFocus();
   }
+  function cancelAudioSetup() {
+    audioSetup.current?.abort();
+    audioSetup.current = null;
+    setPreparingAudio(false);
+    setShowAudioSetup(false);
+    focus();
+  }
+  async function prepareAudio() {
+    if (audioSetup.current) return;
+    const controller = new AbortController();
+    audioSetup.current = controller;
+    setPreparingAudio(true);
+    setError('');
+    try {
+      await api('/api/speech/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ locale: navigator.language }),
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) await refreshSpeech();
+    } catch (cause) {
+      if (mounted.current && !controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (mounted.current && audioSetup.current === controller) {
+        audioSetup.current = null;
+        setPreparingAudio(false);
+      }
+    }
+  }
   async function submit() {
-    if (!editor || !ready || attachmentValues.current.some((item) => item.state !== 'ready'))
+    if (
+      !editor ||
+      !ready ||
+      audioSend.current ||
+      recorder.phase === 'requesting' ||
+      recorder.phase === 'finishing' ||
+      attachmentValues.current.some((item) => item.state !== 'ready')
+    )
       return;
     const sentText = composerMarkdown(editor.state.doc).trim();
     const sentAttachments = attachmentValues.current;
-    if (!sentText && !sentAttachments.length) return;
+    const includesAudio = recorder.phase === 'recording' || Boolean(recorder.recording);
+    if (!sentText && !sentAttachments.length && !includesAudio) return;
+    if (includesAudio) audioSend.current = true;
     const sequence = ++sends.current;
     pendingSends.current++;
     setError('');
@@ -428,14 +510,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     focus();
     let result: ComposerSendResult = { sent: false, restoreText: true };
     try {
+      let sentRecording: File | undefined;
+      if (includesAudio) {
+        const file = await recorder.finish();
+        if (!file || !mounted.current || editor.isDestroyed) return;
+        sentRecording = file;
+        setSendingAudio(true);
+      }
       result = await onSend(
         sentText,
         sentAttachments.map((item) => item.artifact!),
+        sentRecording,
       );
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       pendingSends.current--;
+      if (includesAudio) {
+        audioSend.current = false;
+        if (mounted.current) {
+          setSendingAudio(false);
+          if (result.sent || result.restoreRecording === false) recorder.discard();
+        }
+      }
       if (result.sent || !result.restoreText)
         for (const item of sentAttachments) releasePreview(item);
       else {
@@ -501,6 +598,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [attachments],
   );
   const { setDrafts } = drawer;
+  const hasRecording = recorder.phase !== 'idle';
+  const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
+  const microphoneTitle = !recorder.supported
+    ? 'This browser cannot record audio'
+    : speech?.transcription === false && !speech.local
+      ? 'Connect speech in Settings → Models'
+      : speechError
+        ? 'Check voice message availability'
+        : !speech
+          ? 'Checking voice message availability…'
+          : 'Record an audio message';
   useEffect(() => {
     setDrafts(images);
     return () => setDrafts([]);
@@ -508,6 +616,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <div className="composer-wrap">
       {error && <Notice>{error}</Notice>}
+      {recorder.error && <Notice onDismiss={recorder.clearError}>{recorder.error}</Notice>}
       {removed && (
         <Notice
           kind="info"
@@ -563,10 +672,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       )}
       <form
         ref={form}
-        className="composer"
+        className={`composer${hasRecording ? ' has-recording' : ''}`}
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !event.defaultPrevented && hasRecording && !sendingAudio) {
+            event.preventDefault();
+            recorder.discard();
+            focus();
+          }
         }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes('Files')) event.preventDefault();
@@ -589,6 +705,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           void upload(Array.from(event.dataTransfer.files), 'drop');
         }}
       >
+        {showAudioSetup && speech?.local && (
+          <VoiceSetup
+            ready={speech.transcription}
+            preparing={preparingAudio || speech.local.state === 'downloading'}
+            progress={speech.local.progress}
+            failed={speech.local.state === 'failed'}
+            onPrepare={() => void prepareAudio()}
+            onCancel={cancelAudioSetup}
+            onRecord={() => {
+              setShowAudioSetup(false);
+              void recorder.start();
+            }}
+          />
+        )}
         {attachments.length > 0 && (
           <div
             className="pending-attachments composer-attachments"
@@ -685,6 +815,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </span>
         <div className="composer-tools">
           <div className="composer-left">
+            {active && hasRecording && (
+              <VoiceRecorder
+                recorder={recorder}
+                sending={sendingAudio}
+                onDiscard={() => {
+                  recorder.discard();
+                  focus();
+                }}
+              />
+            )}
             <input
               ref={fileInput}
               type="file"
@@ -694,18 +834,54 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="Choose files"
               onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Attach files"
-              title="Attach files or paste an image"
-              onClick={() => fileInput.current?.click()}
-            >
-              <Paperclip size={16} />
-            </Button>
           </div>
           <div className="composer-right">
+            {!hasRecording && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Attach files"
+                title="Attach files or paste an image"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip size={16} />
+              </Button>
+            )}
+            {recorder.phase === 'idle' && !showAudioSetup && (
+              <div className="composer-microphone">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="record-button"
+                  aria-label={microphoneTitle}
+                  title={microphoneTitle}
+                  disabled={
+                    !ready ||
+                    !recorder.supported ||
+                    (!speech && !speechError) ||
+                    (speech?.transcription === false && !speech.local)
+                  }
+                  onClick={() => {
+                    setError('');
+                    if (speechError) {
+                      void refreshSpeech();
+                      setError(
+                        'Voice messages could not connect. Check your connection and try again.',
+                      );
+                    } else if (!speech?.transcription && speech?.local) setShowAudioSetup(true);
+                    else void recorder.start();
+                  }}
+                >
+                  <Mic size={18} />
+                </Button>
+                <MicrophonePicker
+                  recorder={recorder}
+                  disabled={!active || !ready || !recorder.supported}
+                />
+              </div>
+            )}
             {onStop && (
               <Button
                 type="button"
@@ -721,13 +897,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </Button>
             )}
             <Button
+              ref={sendButton}
               type="submit"
               size="icon"
-              className="send-button"
-              aria-label="Send message"
-              disabled={!ready || pendingUploads > 0 || (!text.trim() && !attachments.length)}
+              className={`send-button${hasRecording ? ' send-audio-button' : ''}`}
+              aria-label={
+                sendingAudio
+                  ? 'Sending audio'
+                  : hasRecording
+                    ? 'Send audio message'
+                    : 'Send message'
+              }
+              disabled={
+                !ready ||
+                pendingUploads > 0 ||
+                recordingPending ||
+                sendingAudio ||
+                (!text.trim() && !attachments.length && !hasRecording)
+              }
             >
-              <ArrowUp size={18} />
+              {sendingAudio ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={18} />}
             </Button>
           </div>
         </div>

@@ -6,6 +6,7 @@ export function SetupProgress({
   title,
   description,
   error,
+  details,
   progress,
   children,
   local = desktopRuntimeAvailable(),
@@ -13,6 +14,7 @@ export function SetupProgress({
   title: string;
   description?: string;
   error?: string;
+  details?: string;
   progress?: number;
   children?: ReactNode;
   local?: boolean;
@@ -40,6 +42,12 @@ export function SetupProgress({
           {description && <p>{description}</p>}
           {error && <p data-analytics-private>{error}</p>}
         </div>
+        {error && details && (
+          <details className="setup-progress-details" open data-analytics-private>
+            <summary>Technical details</summary>
+            <pre>{details}</pre>
+          </details>
+        )}
         {fraction !== undefined && !error && (
           <progress
             className="setup-progress-download"

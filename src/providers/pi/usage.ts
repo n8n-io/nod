@@ -8,7 +8,8 @@ function tokenCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
-function costEstimate(value: unknown): number | null {
+function costEstimate(value: unknown, usage?: Usage): number | null {
+  if (usage && 'audioPricing' in usage && usage.audioPricing === 'unavailable') return null;
   if (!value || typeof value !== 'object') return null;
   const cost = value as Record<string, unknown>;
   const names = ['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const;
@@ -70,8 +71,8 @@ export function piUsageMetrics(usage?: Usage): Partial<ProviderUsageEvent> {
     ...(tokenCount(usage.output) ? { outputTokens: usage.output } : {}),
     ...(tokenCount(usage.cacheRead) ? { cacheReadTokens: usage.cacheRead } : {}),
     ...(tokenCount(usage.cacheWrite) ? { cacheWriteTokens: usage.cacheWrite } : {}),
-    costUsd: costEstimate(usage.cost),
-    pricing: costEstimate(usage.cost) === null ? 'unavailable' : 'sdk_estimate',
+    costUsd: costEstimate(usage.cost, usage),
+    pricing: costEstimate(usage.cost, usage) === null ? 'unavailable' : 'sdk_estimate',
   };
 }
 
@@ -91,7 +92,7 @@ export function createPiUsageTracker(options: {
     const values = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
     const tokens = values.map((value) => (tokenCount(value) ? value : 0));
     const sum = tokens.reduce((result, value) => result + value, 0);
-    const costUsd = costEstimate(usage.cost);
+    const costUsd = costEstimate(usage.cost, usage);
     if (
       !values.some(tokenCount) &&
       !tokenCount(usage.totalTokens) &&

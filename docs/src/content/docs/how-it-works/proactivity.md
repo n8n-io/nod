@@ -9,7 +9,7 @@ The proactivity engine reads your connected apps on its own, prepares useful wor
 
 ## From a change to a nudge
 
-A changed source, or a saved matter that is due for another look, starts one private run. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
+App events, periodic source checks, and due matters feed one persistent observer for your active conversation. They update a saved source queue. A single observer turn reads the due batch. Events received during a turn stay saved for its next turn. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
 
 ```mermaid
 flowchart TD
@@ -40,7 +40,9 @@ The saved-work change check covers a task's title, completion condition, state, 
 
 For an app without its own reader, the worker searches that account's tools, picks one and fills its arguments. The server checks the arguments against the tool's schema, then Trust's read-only check must classify the call as a read. Anything that would create, change, send or delete, a draft included, never runs.
 
-An owner instruction that tells Nod to act on its own, such as "forward Ana's invoices to accounting", switches every source to ordinary background work while it's set, where Trust checks every action. Your selected model classifies the instruction once per version; a failed or unclear answer keeps ordinary work.
+All sources use the same observer. An instruction such as "forward Ana's invoices to accounting" starts a separate task for that action. The task uses the normal tools and Trust check. Its question or approval wait leaves the observer free to process later activity.
+
+An upgrade cancels queued account checks from the old event path. The observer reads current sources through its own queue.
 
 ## Keep judgment and permission apart
 
@@ -54,9 +56,9 @@ The model judges usefulness. The server enforces permission, freshness and deliv
 | Are the facts still current?       | The server re-reads cited records, or requires a read from the last two minutes |
 | Can a nudge go out now?            | The server: repeats, snooze, quiet hours and the pause switch                   |
 
-The worker has three tools: `read_source`, `proactive_issue` and read-only personal context. It has no sandbox, browser, web, code or connected-app write tools, and its final text stays private. App content, memory and saved drafts reach it as data, never instructions or permission. Secret fields are removed and email that gives account access is hidden before anything reaches the model.
+The observer reads sources with `read_source`, saves work and nudges with `proactive_issue`, and reads personal context. It uses `task` to start separate work with a stable key for the source record and actual change. That key returns the existing task, including completed work. Only a spending check-in can pause the observer with `ask_user`. It has no sandbox, browser, web, code or connected-app write tools, and its final text stays private. App content, memory and saved drafts reach it as data, never instructions or permission. Secret fields are removed and email that gives account access is hidden before anything reaches the model.
 
-Sending a draft is always a new request that goes through the [trust check](/trust/approvals/).
+A separate task sends a draft only when your words permit it, through the [trust check](/trust/approvals/). An observer task keeps only your current notification rule and rules as its authority. Its generated brief grants no permission.
 
 ## Prepare the full result
 
@@ -68,11 +70,16 @@ The nudge itself states what changed and what's ready in one or two sentences, t
 
 There's no message count. The worker offers only work worth an interruption, weighed against the other open matters, and the server enforces what must always hold:
 
+- **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
 - **Quiet hours.** A nudge that comes up at night goes out when they end.
 - **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops everything.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.
+
+The saved matter and its chat message commit together. A repeated save does not repeat a nudge. A material evidence change or an ended snooze can permit another nudge. The desktop listener uses message IDs to suppress repeated alerts during refresh and reconnect.
+
+Channel delivery claims a saved message before it sends. If the channel reply is lost after acceptance, delivery stays uncertain and Nod does not send again. This prevents an automatic duplicate, but cannot prove receipt by the channel.
 
 ## Keep one record of each matter
 

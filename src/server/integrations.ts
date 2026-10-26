@@ -978,6 +978,21 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return rows[0]?.pending_account_id;
   }
 
+  async function abandonSetup(linkHash: string, reason: 'cancelled' | 'unavailable' | 'unknown') {
+    const { rows } = await pool.query<ConnectionRow>(
+      `SELECT * FROM app_connections WHERE owner_id=$1 AND setup_link_hash=$2
+       AND callback_hash IS NOT NULL AND callback_claim_id IS NULL`,
+      [configuredOwner, linkHash],
+    );
+    let abandoned = (await options.discovered?.abandonSetup(linkHash, reason)) ?? false;
+    for (const row of rows)
+      if ((await clearReconnect(row.id, row.callback_hash!)) !== undefined) {
+        track(row.slug, 'failed', reason);
+        abandoned = true;
+      }
+    return abandoned;
+  }
+
   async function reconnect(
     slug: Slug,
     connectionId: string,
@@ -2231,22 +2246,34 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const pairingHash = pairingUrl
           ? createHash('sha256').update(pairingUrl).digest('hex')
           : undefined;
-        const pendingPairing = links.rows.find((row) => row.available && row.hash === pairingHash);
+        const pendingPairing = links.rows.find(
+          (row) => row.available && row.hash === pairingHash && configurationMatches(row),
+        );
+        if (
+          pairingUrl &&
+          pendingPairing &&
+          provider.ownsConnectionUrl &&
+          !provider.ownsConnectionUrl(pairingUrl) &&
+          (await abandonSetup(pendingPairing.hash, 'unavailable'))
+        )
+          pendingPairing.available = false;
         const connectionStatus =
-          pairingUrl && pendingPairing && configurationMatches(pendingPairing)
-            ? await providerForRow(pendingPairing)
-                .connectionStatus?.(configuredOwner, pairingUrl)
-                .catch(() => undefined)
+          pairingUrl && pendingPairing?.available
+            ? await provider.connectionStatus?.(configuredOwner, pairingUrl).catch(() => undefined)
             : undefined;
-        const discoveredLinks = discovered.flatMap(({ id, link_hash, available, ...service }) => {
-          const proposalHash = createHash('sha256').update(`/apps?connect=${id}`).digest('hex');
-          return [
-            ...(link_hash && hashes.includes(link_hash)
-              ? [{ ...service, hash: link_hash, available }]
-              : []),
-            ...(hashes.includes(proposalHash) ? [{ ...service, hash: proposalHash }] : []),
-          ];
-        });
+        const discoveredLinks = discovered.flatMap(
+          ({ id, link_hash, available, expired, ...service }) => {
+            const proposalHash = createHash('sha256').update(`/apps?connect=${id}`).digest('hex');
+            return [
+              ...(link_hash && hashes.includes(link_hash)
+                ? [{ ...service, hash: link_hash, available }]
+                : []),
+              ...(hashes.includes(proposalHash)
+                ? [{ ...service, hash: proposalHash, ...(expired ? { available: false } : {}) }]
+                : []),
+            ];
+          },
+        );
         const apps = [...links.rows, ...discoveredLinks]
           .filter((link) => !link.completed)
           .filter(({ hash }) => hashes.includes(hash))
@@ -2299,6 +2326,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
         if (!changed.rowCount)
           throw new IntegrationError('This sign-in link is no longer available.', 409);
+        return reply.header('Cache-Control', 'no-store').send({ ok: true });
+      });
+      scope.post('/api/apps/setup-cancel', async (request, reply) => {
+        const { hash } = z
+          .object({ hash: z.string().regex(/^[a-f0-9]{64}$/) })
+          .strict()
+          .parse(request.body);
+        await abandonSetup(hash, 'cancelled');
         return reply.header('Cache-Control', 'no-store').send({ ok: true });
       });
       scope.post<{ Params: { slug: string } }>('/api/apps/:slug/connect', async (request) => {
@@ -2535,6 +2570,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   return {
     registerRoutes,
+    abandonSetup,
     resumeWritingStyle,
     binding,
     activitySources,

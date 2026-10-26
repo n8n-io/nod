@@ -71,25 +71,28 @@ Use the [self-hosting guide](/deploy/self-host/) to configure HTTPS and private 
 
 Keys set here become server-managed connections. They stay in server memory and aren't copied into the database. You can also add connections in **Models** without any variable. See [Models](/connect/models/).
 
-| Variable                     | What it does                                                                                                                                                                                  | Default                                                          |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `LLM_PROVIDER`               | The provider of the first model choice: any [supported provider ID](/connect/models/#set-connections-in-server-settings). A model you pick in the app takes priority.                         | `openai`                                                         |
-| `LLM_MODEL`                  | The first model choice.                                                                                                                                                                       | The [provider's default](/connect/models/#supported-connections) |
-| `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice transcription and voice replies.                                                                                                            | Empty                                                            |
-| `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                                                                                                                 | Empty                                                            |
-| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection. Also enables voice transcription when no OpenAI API connection is available.                                                                                   | Empty                                                            |
-| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. The address must be reachable from Nod's server.                                   | Empty                                                            |
-| `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                                                                                                     | Empty                                                            |
-| `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies and checking emails that give account access, regardless of the chat connection.                                                              | Empty                                                            |
-| `TTS_MODEL`                  | The OpenAI speech model for voice replies.                                                                                                                                                    | `gpt-4o-mini-tts`                                                |
-| `STT_MODEL`                  | The transcription model for incoming voice messages. OpenAI is used when its key is available; otherwise OpenRouter is used. On OpenRouter, a model ID without `/` gets the `openai/` prefix. | `gpt-transcribe` (`openai/gpt-transcribe` on OpenRouter)         |
-| `TTS_VOICE`                  | The voice for voice replies.                                                                                                                                                                  | `coral`                                                          |
+| Variable                     | What it does                                                                                                                                                          | Default                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `LLM_PROVIDER`               | The provider of the first model choice: any [supported provider ID](/connect/models/#set-connections-in-server-settings). A model you pick in the app takes priority. | `openai`                                                         |
+| `LLM_MODEL`                  | The first model choice.                                                                                                                                               | The [provider's default](/connect/models/#supported-connections) |
+| `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice transcription and voice replies.                                                                                    | Empty                                                            |
+| `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                                                                                         | Empty                                                            |
+| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection with ElevenLabs and Kokoro voices. Also enables transcription when no OpenAI API connection is available.                               | Empty                                                            |
+| `ELEVENLABS_API_KEY`         | Adds an ElevenLabs connection for account voices and transcription, without a chat model.                                                                             | Empty                                                            |
+| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. The address must be reachable from Nod's server.           | Empty                                                            |
+| `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                                                                             | Empty                                                            |
+| `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies and checking emails that give account access, regardless of the chat connection.                                      | Empty                                                            |
+| `TTS_MODEL`                  | The OpenAI speech model for voice replies.                                                                                                                            | `gpt-4o-mini-tts`                                                |
+| `STT_MODEL`                  | The OpenAI or OpenRouter model for incoming voice messages. On OpenRouter, a model ID without `/` gets the `openai/` prefix.                                          | `gpt-transcribe` (`openai/gpt-transcribe` on OpenRouter)         |
+| `TTS_VOICE`                  | The voice for voice replies.                                                                                                                                          | `coral`                                                          |
 
 The [provider settings table](/connect/models/#set-connections-in-server-settings) lists every supported key, including `GEMINI_API_KEY` for Google Gemini and `GOOGLE_CLOUD_API_KEY` for Vertex AI. It also lists the required Bedrock Region, Azure endpoint and model, and Cloudflare account and gateway settings. You can configure several providers at once; `LLM_PROVIDER` only sets the initial selection.
 
 Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Other connections use the selected model for confirmation replies and their smaller background model, when available, for email checks. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
-Voice also works with API keys saved in **Models**. OpenAI supplies spoken replies and takes precedence for transcription; OpenRouter supplies transcription when no OpenAI API connection is available.
+Voice reuses OpenRouter and OpenAI API keys saved in **Models**. To connect these services or ElevenLabs, open **Settings → General → Voice**, choose a **Voice provider**, then select **Connect** beside it. **Manage** opens an existing connection. Set `ELEVENLABS_API_KEY` for a server-managed ElevenLabs connection; it supplies speech without adding a chat model. Allow Text to Speech, Speech to Text, and Voices read on the key.
+
+Selecting an ElevenLabs account voice uses ElevenLabs for transcription and replies. Otherwise, cloud transcription uses OpenAI, then OpenRouter, then ElevenLabs, depending on which connection is available. You can also [download local voices](#local-speech) without an API connection.
 
 ## Apps and Composio
 
@@ -224,6 +227,12 @@ This version exports model spans only. It does not export metrics, logs, browser
 | `BROWSER_CONTAINER`   | The Docker container for the browser.   | `nod-browser`   |
 
 The self-hosting stack sets these names to `nod-workspace-<project>` and `nod-browser-<project>`, using `COMPOSE_PROJECT_NAME` for `<project>`. It gives the server a restricted Docker connection; the workspace and browser receive no Docker socket or provider keys.
+
+## Local speech
+
+In **Settings → General → Voice**, choose **Free voices**, then **Set up → Download voices**, or enable local speech from chat. Nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English, Spanish, French, Hindi, Italian or Brazilian Portuguese. When you enable local audio without a connected speech service, Nod picks a voice matching your browser’s language when one is available. If you connect to a remote Nod server, inference runs on that server.
+
+The default voice uses OpenRouter, then OpenAI, then ElevenLabs, then local speech, depending on which connection is available. Selecting a local voice explicitly uses local speech for both transcription and replies. Nod does not change providers automatically after a failed paid request.
 
 ## Docker stack settings
 

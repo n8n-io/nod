@@ -58,6 +58,23 @@
   flex-wrap: wrap;
   gap: 12px;
 }
+.setup-progress-details {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.setup-progress-details summary {
+  cursor: pointer;
+}
+.setup-progress-details pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 .setup-progress-download {
   position: absolute;
   width: 1px;

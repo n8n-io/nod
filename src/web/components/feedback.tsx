@@ -25,6 +25,7 @@ import { feedbackErrorsAvailable, feedbackErrorsSnapshot } from '../lib/feedback
 import { clipboardFiles } from '../lib/composer-editor';
 import type { FeedbackAttachment } from '../lib/feedback-attachment';
 import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
+import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
 import { FeedbackAttachments } from './feedback-attachments';
 import { FeedbackDiagnostics, feedbackReportData } from './feedback-diagnostics';
 import { FeedbackEditor, type FeedbackEditorHandle } from './feedback-editor';
@@ -69,6 +70,7 @@ type FeedbackDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   returnFocus(): HTMLElement | null;
+  screenshot?: File | null;
 };
 
 function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
@@ -84,11 +86,7 @@ function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
 
 function hasDraft(draft: FeedbackDraft) {
   return (
-    !!draft.feedback ||
-    !!draft.attachments.length ||
-    draft.category !== 'bug' ||
-    !!draft.pendingId ||
-    draft.reportChoice !== null
+    !!draft.feedback || !!draft.attachments.length || draft.category !== 'bug' || !!draft.pendingId
   );
 }
 
@@ -96,13 +94,23 @@ export function FeedbackDialog(props: FeedbackDialogProps) {
   return <FeedbackDraftDialog key={props.ownerId} {...props} />;
 }
 
-function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: FeedbackDialogProps) {
+function FeedbackDraftDialog({
+  ownerId,
+  open,
+  onOpenChange,
+  returnFocus,
+  screenshot,
+}: FeedbackDialogProps) {
   const storageKey = `nod.feedback.pending.${ownerId}`;
+  const reportKey = `nod.feedback.report.${ownerId}` as const;
   const [pendingId, setPendingId] = useState(() => readPending(storageKey));
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');
   const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
-  const [reportChoice, setReportChoice] = useState<boolean | null>(null);
+  const [reportChoice, setReportChoice] = useState<boolean | null>(() => {
+    const saved = readUiPreference(reportKey);
+    return saved === 'true' ? true : saved === 'false' ? false : null;
+  });
   const includeReport = reportChoice ?? true;
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -132,6 +140,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
   const restoreVersion = useRef(0);
   const persisted = useRef<FeedbackDraft | null>(null);
   const dirty = useRef(false);
+  const started = useRef(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const detailsInput = useRef<FeedbackEditorHandle>(null);
@@ -168,7 +177,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
       if (!active.current || restoreVersion.current !== version) return;
       const value = saved ?? {
         category: 'bug' as const,
-        reportChoice: null,
+        reportChoice,
         feedback: '',
         attachments: [],
         pendingId: null,
@@ -177,15 +186,18 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
       persisted.current = value;
       setKind(value.category);
       setFeedback(value.feedback);
-      setReportChoice(value.reportChoice);
+      setReportChoice(value.reportChoice ?? reportChoice);
+      if (value.reportChoice !== null) writeUiPreference(reportKey, String(value.reportChoice));
       setAttachments(value.attachments);
       setPendingId(pending);
       setReceipt(pending ? { submissionId: pending, status: 'unknown' } : null);
+      started.current = (!!saved && hasDraft(saved)) || !!pending;
       allowSave.current = true;
       setRestoreFailed(false);
     } catch {
       if (!active.current || restoreVersion.current !== version) return;
       persisted.current = currentDraft.current;
+      started.current = true;
       setRestoreFailed(true);
       setDraftError('Couldn’t restore your saved draft. You can keep writing here.');
     } finally {
@@ -300,9 +312,16 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
     if (!open || pendingId) return;
     const saved = readPending(storageKey);
     if (!saved) return;
+    started.current = true;
     setPendingId(saved);
     setReceipt({ submissionId: saved, status: 'unknown' });
   }, [open, pendingId, storageKey]);
+
+  useEffect(() => {
+    if (!open || !hydrated || pendingId || started.current) return;
+    started.current = true;
+    if (screenshot) addAttachments([screenshot]);
+  }, [open, hydrated, pendingId, screenshot]);
 
   useEffect(() => {
     if (open && hydrated && !pendingId) detailsInput.current?.focus({ preventScroll: true });
@@ -378,7 +397,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
     allowSave.current = true;
     const empty: FeedbackDraft = {
       category: 'bug',
-      reportChoice: null,
+      reportChoice,
       feedback: '',
       attachments: [],
       pendingId: null,
@@ -391,10 +410,10 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
     submission.current = null;
     setReceipt(null);
     setBusy(null);
+    started.current = false;
     setKind('bug');
     setFeedback('');
     setAttachments(empty.attachments);
-    setReportChoice(null);
     setReport(null);
     reportRef.current = null;
     setReportError('');
@@ -816,6 +835,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
                       frozen={frozen}
                       onToggleIncluded={() => {
                         setReportChoice(!includeReport);
+                        writeUiPreference(reportKey, String(!includeReport));
                         setPreview(false);
                       }}
                       onReview={async () => {

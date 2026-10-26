@@ -168,7 +168,15 @@ const lifecycle = createDesktopLifecycle({
     await stopRuntime({ dataRoot: profileRoot, resourcesPath: engineRoot });
   },
   onRuntimeStatus: (value) => {
-    const runtime = { ...value, message: bounded(value.message) };
+    const runtime = {
+      ...value,
+      message: bounded(value.message),
+      details: value.details ? bounded(value.details, 256 * 1024) : undefined,
+    };
+    if (value.phase === 'error')
+      void writeDiagnostic([runtime.message, runtime.details].filter(Boolean).join('\n')).catch(
+        () => {},
+      );
     if (
       preparing &&
       !engineFailure &&
@@ -184,7 +192,11 @@ const lifecycle = createDesktopLifecycle({
         progress: value.progress,
         needsRuntimeArchive: false,
       });
-    else update({ runtime });
+    else
+      update({
+        runtime,
+        ...(runtime.phase === 'error' ? { error: runtime.message, details: runtime.details } : {}),
+      });
   },
 });
 
@@ -228,11 +240,11 @@ function updateReadinessNotice() {
   });
 }
 
-function bounded(value) {
+function bounded(value, limit = 2000) {
   let message = String(value || 'The operation could not be completed.');
   for (const secret of knownSecrets)
     if (secret.length > 7) message = message.replaceAll(secret, '[redacted]');
-  return message.replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]').slice(0, 400);
+  return message.replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]').slice(0, limit);
 }
 
 function update(value) {
@@ -245,6 +257,9 @@ function update(value) {
   if (value.error) status.error = bounded(value.error);
   else if (Object.hasOwn(value, 'error') || (value.phase && value.phase !== 'error'))
     delete status.error;
+  if (value.details) status.details = bounded(value.details, 256 * 1024);
+  else if (Object.hasOwn(value, 'details') || Object.hasOwn(value, 'error') || value.phase)
+    delete status.details;
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
   if (tray) tray.setToolTip(`Nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
@@ -352,7 +367,7 @@ async function writeDiagnostic(value) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   if ((await stat(path).catch(() => undefined))?.size > 64 * 1024)
     await writeFile(path, '', { mode: 0o600 });
-  const line = bounded(value)
+  const line = bounded(value, 256 * 1024)
     .replaceAll(engineRoot, '<engine>')
     .replaceAll(profileRoot, '<profile>')
     .replace(/https?:\/\/\S+/g, '<url>')
@@ -386,6 +401,16 @@ function isEngine(event) {
     ) &&
     event.senderFrame === event.sender.mainFrame &&
     trustedAppURL(event.senderFrame?.url)
+  );
+}
+
+function isTrustedAppFrame(sender, details) {
+  return Boolean(
+    engineBound &&
+    details?.isMainFrame === true &&
+    trustedAppURL(details.requestingUrl) &&
+    (details.securityOrigin === undefined || trustedAppURL(details.securityOrigin)) &&
+    isEngine({ sender, senderFrame: sender?.mainFrame }),
   );
 }
 
@@ -948,6 +973,25 @@ function authenticationHeaders() {
 
 function configureAppSession() {
   const appSession = session.fromPartition(clientPartition);
+  appSession.setPermissionCheckHandler((sender, permission, origin, details) => {
+    return (
+      permission === 'notifications' ||
+      ((permission === 'clipboard-sanitized-write' ||
+        (permission === 'media' && details.mediaType === 'audio')) &&
+        trustedAppURL(origin) &&
+        isTrustedAppFrame(sender, details))
+    );
+  });
+  appSession.setPermissionRequestHandler((sender, permission, callback, details) => {
+    callback(
+      permission === 'notifications' ||
+        ((permission === 'clipboard-sanitized-write' ||
+          (permission === 'media' &&
+            details.mediaTypes?.length === 1 &&
+            details.mediaTypes[0] === 'audio')) &&
+          isTrustedAppFrame(sender, details)),
+    );
+  });
   appSession.on('will-download', saveEngineDownload);
   appSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders };
@@ -1654,6 +1698,9 @@ async function prepare(options = {}) {
         phase: deferred ? 'ready' : 'error',
         message: bounded(error.message),
         error: bounded(error.message),
+        details: [error.code, error.stack || error.message, error.details]
+          .filter(Boolean)
+          .join('\n'),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
         needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',
@@ -1920,6 +1967,16 @@ else {
       ipcMain.handle('nod:preferences:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return publicPreferences();
+      });
+      ipcMain.handle('nod:startup-log:show', async (event) => {
+        if (!isSetup(event)) throw new Error('This action is unavailable.');
+        await writeDiagnostic(
+          [status.error || status.runtime.message || status.message, status.details]
+            .filter(Boolean)
+            .join('\n'),
+        );
+        if (!isSetup(event)) throw new Error('This action is unavailable.');
+        shell.showItemInFolder(join(profileRoot, 'logs', 'startup.log'));
       });
       ipcMain.handle('nod:preferences:theme', async (event, theme) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

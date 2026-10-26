@@ -35,7 +35,7 @@ flowchart TD
   runtime --> workspace[Workspace container]:::muted
 ```
 
-Every message, schedule fire and event becomes a row in PostgreSQL plus a `thread-drain` job. The worker picks up the job and asks the runtime to run a turn. The runtime opens a Pi agent session, and Pi calls tools that act in the workspace, the browser and your connected apps.
+Messages and schedule fires become turns in PostgreSQL with a `thread-drain` job. App events and source checks feed one persistent observer through a saved source queue. The worker picks up the job and asks the runtime to run a turn. The runtime opens a Pi agent session, and Pi calls tools that act in the workspace, the browser and your connected apps.
 
 ## Main ideas
 
@@ -56,7 +56,7 @@ Every message, schedule fire and event becomes a row in PostgreSQL plus a `threa
   </Card>
 </CardGrid>
 
-Private proactive work uses a restricted runtime that reads every connected app and saves private drafts. Explicit standing automations keep ordinary background work through Trust. See [Proactivity engine](/how-it-works/proactivity/). Ordinary tasks and schedules keep their normal tools.
+One persistent observer reads connected apps and saves private work. It starts separate tasks for outside actions, questions, and approvals. Those tasks use normal tools and Trust. See [Proactivity engine](/how-it-works/proactivity/). Ordinary tasks and schedules keep their normal tools.
 
 ## Where the code lives
 

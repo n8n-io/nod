@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { readSpeechResponse } from '../speech.ts';
+import { speechVoices } from '../../shared/speech.ts';
 
 export function createOpenAISpeechProvider(options: {
   apiKey?: string | (() => Promise<string | undefined>);
@@ -12,6 +13,24 @@ export function createOpenAISpeechProvider(options: {
   fetch?: typeof fetch;
 }): SpeechProvider {
   const request = options.fetch ?? fetch;
+  const speechModel = options.speechModel || 'gpt-4o-mini-tts';
+  const voices = speechVoices.filter(
+    (voice) =>
+      voice.engine === 'OpenAI' &&
+      (!['tts-1', 'tts-1-hd'].includes(speechModel) ||
+        [
+          'openai:alloy',
+          'openai:ash',
+          'openai:coral',
+          'openai:echo',
+          'openai:fable',
+          'openai:onyx',
+          'openai:nova',
+          'openai:sage',
+          'openai:shimmer',
+        ].includes(voice.id)),
+  );
+  const defaultVoice = `openai:${options.voice || 'coral'}`;
   async function headers() {
     const key = typeof options.apiKey === 'function' ? await options.apiKey() : options.apiKey;
     if (!key) throw new Error('Speech is not configured.');
@@ -48,6 +67,8 @@ export function createOpenAISpeechProvider(options: {
   }
   return {
     id: 'openai',
+    voices,
+    defaultVoice,
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
@@ -72,7 +93,9 @@ export function createOpenAISpeechProvider(options: {
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
-        const result = JSON.parse((await readSpeechResponse(response, 1024 * 1024)).toString()) as {
+        const result = JSON.parse(
+          (await readSpeechResponse(response, 1024 * 1024, 'OpenAI')).toString(),
+        ) as {
           text?: unknown;
           usage?: {
             type?: string;
@@ -119,23 +142,28 @@ export function createOpenAISpeechProvider(options: {
         return result.text;
       });
     },
-    async synthesize(text, signal, report) {
+    async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
-      const model = options.speechModel || 'gpt-4o-mini-tts';
+      const selected = voices.find((voice) => voice.id === (synthesis?.voice ?? defaultVoice));
+      if (!selected) throw new Error('That voice is unavailable.');
+      const voice = selected.id.split(':')[1];
+      const model = speechModel;
       return measured(model, 'synthesize', signal, report, async (usage) => {
+        const authorization = await headers();
+        signal?.throwIfAborted();
         const response = await request('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
-          headers: { ...(await headers()), 'Content-Type': 'application/json' },
+          headers: { ...authorization, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model,
             input: text,
-            voice: options.voice || 'coral',
+            voice,
             response_format: 'opus',
           }),
         });
-        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024);
+        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024, 'OpenAI');
         if (model === 'tts-1' || model === 'tts-1-hd') {
           usage.costUsd = (Array.from(text).length * (model === 'tts-1' ? 15 : 30)) / 1e6;
           usage.pricing = 'sdk_estimate';

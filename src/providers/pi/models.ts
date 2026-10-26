@@ -13,6 +13,7 @@ import { Agent, Dispatcher1Wrapper } from 'undici';
 import { z } from 'zod';
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { ModelAuthError } from '../../ports/models.ts';
+import { ElevenLabsConnectionError, readElevenLabsVoices } from '../elevenlabs/speech.ts';
 import type {
   ModelAccess,
   ModelBackend,
@@ -28,8 +29,11 @@ import {
 } from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
+import type { AgentSessionOptions } from '../../ports/agent.ts';
+import { audioUsage, nativeAudioRequest, readsNativeAudio } from './audio.ts';
 import {
   antLingModel,
+  nativeAudioModel,
   assistantModelId,
   assistantModels,
   cloudflareCredential,
@@ -299,6 +303,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         name: model.name,
         efforts: getSupportedThinkingLevels(model),
         images: model.input.includes('image'),
+        ...(readsNativeAudio(model) ? { audio: true } : {}),
         contextWindow: model.contextWindow,
       },
       spec: JSON.parse(JSON.stringify(model)),
@@ -673,12 +678,27 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       return { url: url.toString(), state, result, complete };
     },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
+      if (provider === 'elevenlabs') {
+        if (credential?.type !== 'api_key' || method !== 'api_key')
+          throw new ModelAuthError('Connect ElevenLabs with an API key.');
+        try {
+          await readElevenLabsVoices(credential.key, request);
+          return [];
+        } catch (error) {
+          throw new ModelAuthError(
+            error instanceof ElevenLabsConnectionError
+              ? error.message
+              : 'ElevenLabs voices could not be loaded. Try again.',
+          );
+        }
+      }
       if (!modelProviders.includes(provider))
         throw new Error('This model provider is unavailable.');
       if (provider === 'compatible') return endpointCatalog(credential);
       const local = assistantModels(
         provider === 'ant-ling' ? [antLingModel] : (await runtime()).getModels(provider),
       );
+      if (provider === 'openai' && method === 'api_key') local.push(nativeAudioModel);
       if (!credential) return local.map(definition);
       if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
       if (provider === 'google-vertex') return vertexCatalog(local, credential);
@@ -919,6 +939,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
 export async function createPiModelRuntime(
   access: ModelAccess,
   trace?: (call: PiModelCall) => void,
+  readAudio?: AgentSessionOptions['readAudio'],
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
@@ -992,19 +1013,30 @@ export async function createPiModelRuntime(
     allowModelNetwork: false,
   });
   runtime.registerProvider(provider, {
-    models: [
-      {
-        ...access.definition.spec,
-        contextWindow: modelContextBudget(access.definition.spec as unknown as Model<Api>).window,
-      } as unknown as ProviderModelConfig,
-    ],
+    models: [access.definition, ...(access.textModel ? [access.textModel.definition] : [])].map(
+      ({ spec }) => ({
+        ...spec,
+        contextWindow: modelContextBudget(spec as unknown as Model<Api>).window,
+      }),
+    ) as unknown as ProviderModelConfig[],
   });
   await runtime.refresh({ allowNetwork: false });
+  const textModel = access.textModel
+    ? runtime.getModel(provider, access.textModel.definition.choice.id)
+    : undefined;
+  if (access.textModel && (!textModel || readsNativeAudio(textModel)))
+    throw new Error('The text companion is unavailable. Refresh the model list.');
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, options) => {
-    const events = stream(model, context, {
+    const audio = readsNativeAudio(model) ? nativeAudioRequest(context, readAudio) : undefined;
+    const target = audio && !audio.active && textModel ? textModel : model;
+    const usage = audio?.active ? audioUsage() : undefined;
+    const events = stream(target, audio?.context ?? context, {
       ...options,
       maxRetries: 0,
+      ...(target !== model
+        ? { reasoning: access.textModel!.effort === 'off' ? undefined : access.textModel!.effort }
+        : {}),
       ...(access.provider === 'compatible' ||
       access.provider === 'radius' ||
       access.provider === 'cloudflare-workers-ai' ||
@@ -1027,6 +1059,12 @@ export async function createPiModelRuntime(
                   : {}),
               } as RequestInit);
             },
+          }
+        : {}),
+      ...(usage
+        ? {
+            fetch: async (input: string | URL | Request, init?: RequestInit) =>
+              usage.response(await (options?.fetch ?? fetch)(input, init)),
           }
         : {}),
       onPayload: async (payload, target) => {
@@ -1125,11 +1163,15 @@ export async function createPiModelRuntime(
           }
         }
 
-        return body;
+        return audio?.active
+          ? audio.payload(body, options?.signal ?? AbortSignal.timeout(120000))
+          : body;
       },
     });
     const push = events.push.bind(events);
     events.push = (event) => {
+      if (usage && (event.type === 'done' || event.type === 'error'))
+        usage.apply(event.type === 'done' ? event.message.usage : event.error.usage);
       if (event.type === 'error')
         Object.assign(
           event.error,
@@ -1147,12 +1189,12 @@ export async function createPiModelRuntime(
       const startedAt = new Date().toISOString();
       void events
         .result()
-        .then((message) => trace({ model, context, message, startedAt }))
+        .then((message) => trace({ model: target, context, message, startedAt }))
         .catch(() => {});
     }
     return events;
   };
   const model = runtime.getModel(provider, access.definition.choice.id);
   if (!model) throw new Error('The selected model is unavailable. Refresh the model list.');
-  return { runtime, model };
+  return { runtime, model, textModel };
 }

@@ -17,7 +17,7 @@ import { AppConnectionDialog, type AppSignIn } from '../components/app-connectio
 import { AppDiscoveryDialog } from '../components/app-discovery-dialog';
 import { AppAccountManager } from '../components/app-account-manager';
 import { api, ApiError, errorMessage } from '../lib/api';
-import { connectionUrl } from '../lib/connection-url';
+import { connectionUrl, setupLinkHash } from '../lib/connection-url';
 import { searchApps } from '../lib/app-search';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
@@ -339,10 +339,7 @@ export function Apps({
     };
     const read = async () => {
       try {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
-        const hash = Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, '0'),
-        ).join('');
+        const hash = await setupLinkHash(url);
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({ hashes: [hash], pairingUrl: url }),

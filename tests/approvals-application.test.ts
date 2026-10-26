@@ -72,6 +72,7 @@ test(
     let decisionCost: number | undefined;
     let checkCost: number | undefined;
     let refusedDecision = '';
+    const connectionLabels: unknown[] = [];
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
     const executedApps: string[] = [];
@@ -340,6 +341,8 @@ test(
           id: 'fixture',
           configured: true,
           curate: async ({ task, input }, _signal, report) => {
+            if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
+              return connectionLabels.shift();
             if ('purpose' in input && input.purpose === 'confirmation') {
               await beforeConfirmation();
               return { text: confirmationText };
@@ -1519,6 +1522,43 @@ test(
             ).rows,
             [{ action: 'code', item_id: login, reason: 'asked' }],
           );
+        },
+      );
+
+      await t.test(
+        'a connect whose sign-in label cannot be written leaves no attempt behind',
+        async () => {
+          const pending = async () =>
+            (
+              await pool.query(
+                "SELECT count(*)::int AS count FROM app_connections WHERE owner_id=$1 AND slug='slack' AND account_id IS NULL",
+                [ownerId],
+              )
+            ).rows[0].count;
+          const connect = async (labels: unknown[]) => {
+            connectionLabels.splice(0, connectionLabels.length, ...labels);
+            const text = `Connect synthetic Slack ${randomUUID()}`;
+            batches.set(text, {
+              subagents: false,
+              calls: [{ tool: 'manage_apps', action: 'connect', args: { service: 'slack' } }],
+            });
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            ids.push(response.json().threadId as string);
+            return response.json().turnId as string;
+          };
+          const errors = batchErrors.length;
+          await waitFor(
+            await connect([{ label: 'Connect Slack' }, { label: 'Connect Slack' }]),
+            'succeeded',
+          );
+          assert.match(batchErrors.slice(errors).join('\n'), /could not write this message/);
+          assert.equal(await pending(), 0);
+          await waitFor(
+            await connect([{ label: 'Connect Slack' }, { text: 'Connect Slack' }]),
+            'waiting',
+          );
+          assert.equal(await pending(), 1);
         },
       );
     } finally {

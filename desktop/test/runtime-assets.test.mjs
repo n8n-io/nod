@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
 import { copyBundleSource, copyEngineDependencies } from '../scripts/engine-dependencies.mjs';
+import { copySpeechSources } from '../scripts/speech-sources.mjs';
 import {
   assetHash,
   ensureRuntimeAssets,
@@ -42,6 +43,68 @@ import {
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
+
+test('speech distribution includes matching source and license and rejects changed archives', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-sources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dependency = join(root, 'node_modules', '@spelling-creator', 'spellophone');
+  await mkdir(dependency, { recursive: true });
+  await mkdir(join(root, 'desktop', 'licenses'), { recursive: true });
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '0.2.1' }));
+  await writeFile(join(dependency, 'LICENSE'), 'Synthetic license fixture');
+  await writeFile(join(root, 'desktop', 'licenses', 'speech.md'), 'Synthetic source notice');
+  const bytes = Buffer.from('Synthetic corresponding source archive');
+  const archives = [
+    {
+      file: 'source.tar.gz',
+      url: 'https://source.example.invalid/pinned-source',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    },
+  ];
+  const target = join(root, 'engine');
+  const cacheDir = join(root, 'cache');
+  let calls = 0;
+  const download = async (url, options) => {
+    calls++;
+    assert.equal(url, archives[0].url);
+    assert.equal(options.redirect, 'error');
+    return new Response(bytes);
+  };
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  const sources = join(target, 'licenses', 'speech');
+  assert.deepEqual(await readFile(join(sources, 'source.tar.gz')), bytes);
+  assert.equal(await readFile(join(sources, 'GPL-3.0.txt'), 'utf8'), 'Synthetic license fixture');
+  assert.equal(await readFile(join(sources, 'NOTICE.md'), 'utf8'), 'Synthetic source notice');
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  assert.equal(calls, 1);
+  await writeFile(join(cacheDir, 'source.tar.gz'), 'corrupt');
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      cacheDir,
+      archives,
+      fetch: async () => new Response('corrupt'),
+    }),
+    /checksum mismatch/,
+  );
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      cacheDir,
+      archives,
+      fetch: async () => new Response(Buffer.alloc(200)),
+    }),
+    /too large/,
+  );
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '9.0.0' }));
+  await assert.rejects(
+    copySpeechSources({ root, target, cacheDir, archives, fetch: download }),
+    /do not match/,
+  );
+});
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));
@@ -1418,6 +1481,7 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
         'synthetic-extension': '1.0.0',
         'synthetic-linux': '1.0.0',
         '@synthetic/intel': '1.0.0',
+        'onnxruntime-node': '1.0.0',
       },
       devDependencies: { 'synthetic-tool': '1.0.0' },
     }),
@@ -1448,6 +1512,16 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
       JSON.stringify({ name, os: name.includes('linux') ? ['linux'] : ['darwin'], cpu: ['x64'] }),
     );
   }
+  const inference = join(source, 'node_modules', 'onnxruntime-node');
+  await mkdir(inference, { recursive: true });
+  await writeFile(join(inference, 'package.json'), JSON.stringify({ name: 'onnxruntime-node' }));
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    for (const arch of ['arm64', 'x64']) {
+      const directory = join(inference, 'bin', 'napi-v3', platform, arch);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'onnxruntime_binding.node'), 'synthetic native binary');
+    }
+  }
   await copyEngineDependencies({ root: source, target });
   for (const path of [
     'synthetic-linux',
@@ -1455,8 +1529,42 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'synthetic-tool',
     'synthetic-helper',
     '.bin/tool',
+    'onnxruntime-node/bin/napi-v3/linux',
+    'onnxruntime-node/bin/napi-v3/win32',
+    'onnxruntime-node/bin/napi-v3/darwin/x64',
   ])
     await assert.rejects(stat(join(target, 'node_modules', path)), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(
+      join(
+        target,
+        'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
+      ),
+      'utf8',
+    ),
+    'synthetic native binary',
+  );
+  const windowsTarget = join(root, 'windows-application');
+  await copyEngineDependencies({
+    root: source,
+    target: windowsTarget,
+    platform: 'win32',
+    arch: 'x64',
+  });
+  assert.ok(
+    (
+      await stat(
+        join(
+          windowsTarget,
+          'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
+        ),
+      )
+    ).isFile(),
+  );
+  await assert.rejects(
+    stat(join(windowsTarget, 'node_modules/onnxruntime-node/bin/napi-v3/darwin')),
+    { code: 'ENOENT' },
+  );
   assert.equal(
     JSON.parse(
       await readFile(
@@ -1900,8 +2008,16 @@ test('a failed runtime command names its cause from the end of its output, inclu
       '-e',
       'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
-    {
-      message: /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+    (error) => {
+      assert.match(
+        error.message,
+        /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+      );
+      assert.equal(
+        error.details,
+        `started\n${'x'.repeat(400)}\nError response from daemon: Pool overlaps`,
+      );
+      return true;
     },
   );
   await assert.rejects(
@@ -2218,7 +2334,14 @@ test('Windows storage starts on a free port, and a readiness failure names its c
   const taken = createServer();
   await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
   t.after(() => taken.close());
-  for (const failure of ['pg_isready', 'connect', 'query']) {
+  for (const [failure, expectedCode] of [
+    ['pg_isready', 'NOD_DATABASE_NOT_READY'],
+    ['connect', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['query', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['stopped', 'NOD_DATABASE_STOPPED'],
+    ['memory', 'NOD_DATABASE_OUT_OF_MEMORY'],
+    ['wsl', 'NOD_DATABASE_NOT_READY'],
+  ]) {
     const containers = new Map();
     const commands = [];
     const connections = [];
@@ -2245,7 +2368,11 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               connections.push(new URL(connectionString).port);
             }
             async connect() {
-              if (fault === 'connect') throw new Error('Synthetic connect failure');
+              if (['connect', 'stopped', 'memory', 'wsl'].includes(fault))
+                throw Object.assign(
+                  new Error(`Synthetic ${fault} failure: synthetic-fixture-password`),
+                  { code: 'ECONNRESET' },
+                );
             }
             async query() {
               if (fault === 'query') throw new Error('Synthetic query failure');
@@ -2275,8 +2402,13 @@ test('Windows storage starts on a free port, and a readiness failure names its c
             prepareImage: async (name) => {
               if (name === fault) throw new Error(`Synthetic ${name} startup failure`);
             },
-            runDocker: async (args) => {
+            runDocker: async (args, options) => {
               commands.push(args);
+              if (options?.timeout === 10_000) {
+                assert.ok(['inspect', 'exec'].includes(args[0]));
+                if (fault === 'wsl')
+                  throw new Error('Synthetic WSL check failure: synthetic-fixture-password');
+              }
               if (args[0] === 'container' && args[1] === 'inspect') {
                 if (!containers.has(args[2])) throw new Error('Absent synthetic container');
                 return JSON.stringify([containers.get(args[2])]);
@@ -2297,6 +2429,15 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               }
               if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
                 throw new Error('Synthetic pg_isready failure');
+              if (
+                args[0] === 'inspect' &&
+                args.includes('{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}')
+              )
+                return fault === 'memory'
+                  ? 'exited 137 true'
+                  : fault === 'stopped'
+                    ? 'exited 1 false'
+                    : 'running 0 false';
               if (args[0] === 'inspect') return 'true';
               return '';
             },
@@ -2323,10 +2464,12 @@ test('Windows storage starts on a free port, and a readiness failure names its c
       await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
       assert.equal(postgres(), original);
       fault = failure;
-      await assert.rejects(
-        lifecycle.start({ retry: true }),
-        new RegExp(`Synthetic ${failure} failure`),
-      );
+      await assert.rejects(lifecycle.start({ retry: true }), (error) => {
+        assert.equal(error.code, expectedCode);
+        assert.match(error.details, new RegExp(`Synthetic ${failure} failure`));
+        assert.ok(!JSON.stringify(error).includes('synthetic-fixture-password'));
+        return true;
+      });
       assert.equal(postgres(), original);
       assert.equal(stopped, 0);
       const attempted = commands.length;
@@ -2899,7 +3042,12 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     }),
     windowsBefore,
   );
-  for (const path of [...windowsCopies, 'desktop/scripts/prepare-windows-runtime.mjs']) {
+  for (const path of [
+    ...windowsCopies,
+    'desktop/scripts/prepare-windows-runtime.mjs',
+    'desktop/scripts/speech-sources.mjs',
+    'desktop/licenses/speech.md',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n# synthetic runtime change\n`);

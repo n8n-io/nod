@@ -17,7 +17,8 @@ import type {
   ModelsResponse,
 } from '../shared/models.ts';
 import {
-  apiKeyModelProviders,
+  apiKeyConnectionProviders,
+  modelProviderInfo,
   azureDeploymentPattern,
   bedrockRegionPattern,
   cloudflareAccountPattern,
@@ -38,7 +39,7 @@ import { logFailure } from './failure-log.ts';
 
 const keySchema = z
   .object({
-    provider: z.enum(apiKeyModelProviders),
+    provider: z.enum(apiKeyConnectionProviders),
     key: z.string().trim().min(8).max(32000),
     region: z.string().trim().max(100).optional(),
     url: z.string().trim().max(2000).optional(),
@@ -154,8 +155,30 @@ function connectionLabel(provider: ModelProvider, method: ModelMethod, value: Mo
   return modelSource({ provider, method });
 }
 
+function textCompanion(row: Pick<ModelRecord, 'provider' | 'method' | 'models'>) {
+  const candidates = row.models.filter(
+    (model) =>
+      !model.choice.audio &&
+      model.choice.efforts.length > 0 &&
+      Array.isArray(model.spec.input) &&
+      model.spec.input.includes('text'),
+  );
+  const choice = defaultModel(
+    row.provider,
+    candidates.map((model) => model.choice),
+    row.method,
+  );
+  return candidates.find((model) => model.choice.id === choice?.id);
+}
+
+function missingTextCompanion() {
+  return new ConnectionError(
+    'This audio model needs a text model on the same connection. Refresh its models or choose another model in Settings > Models.',
+  );
+}
+
 function usable(
-  connections: Pick<ModelRecord, 'id' | 'status' | 'models'>[],
+  connections: Pick<ModelRecord, 'id' | 'provider' | 'method' | 'status' | 'models'>[],
   selection: ModelSelection | null,
 ) {
   return (
@@ -167,7 +190,8 @@ function usable(
         row.models.some(
           (model) =>
             model.choice.id === selection.modelId &&
-            model.choice.efforts.includes(selection.effort),
+            model.choice.efforts.includes(selection.effort) &&
+            (!model.choice.audio || Boolean(textCompanion(row))),
         ),
     )
   );
@@ -217,6 +241,7 @@ export function createModelService(options: {
     method: ModelMethod,
     status: 'connected' | 'disconnected' | 'failed',
   ) {
+    if (provider === 'elevenlabs') return;
     analytics?.({
       event: 'nod_model_connection_changed',
       properties: { provider, method, status },
@@ -437,7 +462,7 @@ export function createModelService(options: {
       throw new ConnectionError(
         'Configure NOD_VAULT_KEY in server settings before saving a connection.',
       );
-    if (status === 'connected' && !definitions.length)
+    if (status === 'connected' && !definitions.length && !modelProviderInfo[provider].speechOnly)
       throw new ConnectionError('This connection has no supported models.');
     const saved = await store.change((state) => {
       const previous = state.connections.find((row) =>
@@ -508,7 +533,8 @@ export function createModelService(options: {
     const definitions = await catalog(snapshot.provider, snapshot.method, value, () =>
       needsReconnect(id, snapshot),
     );
-    if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
+    if (!definitions.length && !modelProviderInfo[snapshot.provider].speechOnly)
+      throw new ConnectionError('This connection has no supported models.');
     await store.change((state) => {
       const row = state.connections.find((item) => item.id === id);
       if (!row || JSON.stringify(row) !== previous)
@@ -717,7 +743,12 @@ export function createModelService(options: {
             label,
             status,
             managed,
-            models: models.map((model) => model.choice),
+            models: models.map((model) => ({
+              ...model.choice,
+              ...(model.choice.audio
+                ? { textModelName: textCompanion({ provider, method, models })?.choice.name }
+                : {}),
+            })),
             ...(keyEnding ? { keyEnding } : {}),
           }),
         ),
@@ -752,7 +783,10 @@ export function createModelService(options: {
         try {
           definitions = await catalog(provider as ModelProvider, 'api_key', value);
         } catch {}
-        const connected = !!definitions?.length;
+        const connected =
+          definitions !== undefined &&
+          (definitions.length > 0 ||
+            modelProviderInfo[provider as ModelProvider].speechOnly === true);
         await save(
           provider as ModelProvider,
           'api_key',
@@ -809,8 +843,9 @@ export function createModelService(options: {
         const model =
           row?.status === 'connected' &&
           row.models.find((item) => item.choice.id === value.modelId);
-        if (!model || !model.choice.efforts.includes(value.effort))
+        if (!row || !model || !model.choice.efforts.includes(value.effort))
           throw new ConnectionError('Choose an available model and effort.');
+        if (model.choice.audio && !textCompanion(row)) throw missingTextCompanion();
         state.selection = value;
         state.selectionSet = true;
       });
@@ -830,20 +865,24 @@ export function createModelService(options: {
       if (removed) connectionChanged(removed.provider, removed.method, 'disconnected');
     },
     analyticsConnections() {
-      return rows.map((row) => {
+      return rows.flatMap((row) => {
+        const provider = row.provider;
+        if (provider === 'elevenlabs') return [];
         const selected = row.id === selection?.connectionId;
-        return {
-          provider: row.provider,
-          method: row.method,
-          selected,
-          ...(selected && selection
-            ? {
-                ...analyticsModel(row.provider, selection.modelId),
-                provider: row.provider,
-                effort: selection.effort,
-              }
-            : {}),
-        };
+        return [
+          {
+            provider,
+            method: row.method,
+            selected,
+            ...(selected && selection
+              ? {
+                  ...analyticsModel(provider, selection.modelId),
+                  provider,
+                  effort: selection.effort,
+                }
+              : {}),
+          },
+        ];
       });
     },
     refreshCatalog,
@@ -885,6 +924,8 @@ export function createModelService(options: {
         throw new ConnectionError(
           'The selected model is unavailable. Choose another model in Settings > Models.',
         );
+      const companion = definition.choice.audio ? textCompanion(row) : undefined;
+      if (definition.choice.audio && !companion) throw missingTextCompanion();
       return {
         provider: row.provider,
         method: row.method,
@@ -893,6 +934,16 @@ export function createModelService(options: {
           ? (definition.choice.efforts.find((level) => ['off', 'low', 'medium'].includes(level)) ??
             definition.choice.efforts[0])
           : selected.effort,
+        ...(companion
+          ? {
+              textModel: {
+                definition: companion,
+                effort: auxiliary
+                  ? lightestEffort(companion.choice.efforts)
+                  : defaultEffort(row.provider, companion.choice),
+              },
+            }
+          : {}),
         read: () => read(row.id),
         needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };

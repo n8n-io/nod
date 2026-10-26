@@ -38,6 +38,7 @@ export function createDesktopLifecycle({
     report({
       phase: 'error',
       message: error.message,
+      details: [error.code, error.stack || error.message, error.details].filter(Boolean).join('\n'),
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
       needsWsl: error.code === 'NOD_WSL_REQUIRED',
     });

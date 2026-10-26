@@ -37,6 +37,7 @@ export interface ModelAccess {
   method: ModelMethod;
   definition: ModelDefinition;
   effort: ModelEffort;
+  textModel?: { definition: ModelDefinition; effort: ModelEffort };
   read(): Promise<ModelCredential | undefined>;
   needsReconnect?(credential?: ModelCredential): Promise<void>;
 }
