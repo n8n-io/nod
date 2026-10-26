@@ -33,16 +33,6 @@
   text-align: left;
 }
 
-.ob-apps-pending {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 8px;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
-
 .ob-apps-scroll {
   position: relative;
   display: flex;

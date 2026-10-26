@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -1565,15 +1565,22 @@ async function initializeApplication(
         if (!('url' in result) || !('name' in result) || typeof result.name !== 'string')
           return result;
         const turn = args[2];
-        if (!turn) throw new Error('The connection needs an active conversation.');
-        const message = await communication.present(turn.threadId, {
-          kind: 'connection',
-          app: result.name,
-          operation: 'operation' in result ? result.operation : 'connect',
-          ...('account' in result ? { account: result.account } : {}),
-          next: 'complete_private_sign_in',
-        });
-        return { ...result, message };
+        try {
+          if (!turn) throw new Error('The connection needs an active conversation.');
+          const message = await communication.present(turn.threadId, {
+            kind: 'connection',
+            app: result.name,
+            operation: 'operation' in result ? result.operation : 'connect',
+            ...('account' in result ? { account: result.account } : {}),
+            next: 'complete_private_sign_in',
+          });
+          return { ...result, message };
+        } catch (error) {
+          await integrations
+            .abandonSetup(createHash('sha256').update(result.url).digest('hex'), 'unknown')
+            .catch((cleanup) => logFailure('connection_abandon', cleanup));
+          throw error;
+        }
       },
       browserStep: async (turn, request, signal) => {
         const args = browserStepArgs(request);

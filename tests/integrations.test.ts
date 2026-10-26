@@ -806,6 +806,25 @@ test('connection bridge binds a single browser bootstrap to one installation att
   assert.equal(browser.owns(url), false);
   assert.equal(browser.remote(url), undefined);
   await assert.rejects(fetch(url));
+  const failedUrl = await browser.open(randomBytes(32).toString('base64url'), brokerOrigin, () =>
+    Promise.reject(new Error('Synthetic broker outage.')),
+  );
+  const failedOrigin = new URL(failedUrl).origin;
+  const failedKey = JSON.parse(
+    (await (await fetch(failedUrl)).text()).match(/const bridgeKey=("[^"]+");/)![1],
+  );
+  const failed = await fetch(`${failedOrigin}/start`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      origin: failedOrigin,
+      'x-nod-bridge': failedKey,
+    },
+    body: JSON.stringify({ browserKey: key }),
+  });
+  assert.equal(failed.status, 400);
+  await failed.text();
+  assert.equal(browser.owns(failedUrl), false);
   await browser.close();
   await assert.rejects(
     browser.open(randomBytes(32).toString('base64url'), brokerOrigin, async () => ''),
@@ -2693,6 +2712,79 @@ test(
           409,
         );
       },
+    );
+  },
+);
+
+test(
+  'abandoned app sign-ins can no longer complete',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const live = new Set<string>();
+    f.provider.ownsConnectionUrl = (url) => live.has(url);
+    const begin = async () => {
+      const response = await f.app.inject({ method: 'POST', url: '/api/apps/slack/connect' });
+      assert.equal(response.statusCode, 200, response.body);
+      const url = response.json().url as string;
+      live.add(url);
+      const callback = new URL(f.callbacks.at(-1)!);
+      const account = [...f.accounts.keys()].at(-1)!;
+      callback.searchParams.set('account', account);
+      return {
+        url,
+        account,
+        hash: createHash('sha256').update(url).digest('hex'),
+        callback: `${callback.pathname}${callback.search}`,
+      };
+    };
+    const available = async (attempt: Awaited<ReturnType<typeof begin>>) =>
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/apps/setup-status',
+          payload: { hashes: [attempt.hash], pairingUrl: attempt.url },
+        })
+      ).json().apps[0]?.available;
+    const finish = async (attempt: Awaited<ReturnType<typeof begin>>) =>
+      (await f.app.inject({ url: attempt.callback })).headers.location;
+
+    const cancelled = await begin();
+    assert.equal(await available(cancelled), true);
+    const cancel = await f.app.inject({
+      method: 'POST',
+      url: '/api/apps/setup-cancel',
+      payload: { hash: cancelled.hash },
+    });
+    assert.equal(cancel.statusCode, 200, cancel.body);
+    assert.equal(await available(cancelled), false);
+    assert.equal(await finish(cancelled), 'http://localhost:4310/apps?connection=expired');
+
+    const closed = await begin();
+    live.delete(closed.url);
+    assert.equal(await available(closed), false);
+    assert.equal(await finish(closed), 'http://localhost:4310/apps?connection=expired');
+
+    assert.ok(f.removed.includes(cancelled.account) && f.removed.includes(closed.account));
+    assert.equal(
+      (await f.pool.query("SELECT 1 FROM app_connections WHERE slug='slack'")).rowCount,
+      0,
+    );
+
+    const completing = await begin();
+    await f.pool.query(
+      "UPDATE app_connections SET callback_claim_id='synthetic-claim' WHERE setup_link_hash=$1",
+      [completing.hash],
+    );
+    live.delete(completing.url);
+    assert.equal(await available(completing), true);
+    assert.equal(
+      (
+        await f.pool.query('SELECT 1 FROM app_connections WHERE setup_link_hash=$1', [
+          completing.hash,
+        ])
+      ).rowCount,
+      1,
     );
   },
 );

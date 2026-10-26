@@ -125,8 +125,16 @@ export function createCommunication(options: {
         signal,
       );
       signal?.throwIfAborted();
+      if (result === undefined)
+        throw new Error('Nod could not write this message because no model is selected.');
       const drafted = response.safeParse(result);
-      if (!drafted.success) throw new Error('Nod could not write this message.');
+      if (!drafted.success) {
+        if (attempt)
+          throw new Error(
+            'Nod could not write this message: the model replied twice in the wrong format.',
+          );
+        continue;
+      }
       const text = drafted.data.text;
       if (purpose !== 'confirmation') return text;
       const reviewed = await options.review(

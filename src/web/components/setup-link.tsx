@@ -5,6 +5,7 @@ import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api, ApiError } from '../lib/api';
 import { captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
+import { setupLinkHash } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { AppDiscoveryDialog } from './app-discovery-dialog';
@@ -21,13 +22,7 @@ async function readAppLinks(links: string[], signal: AbortSignal, pairingUrl?: s
   const fingerprints = await Promise.all(
     links.map(async (href) => {
       const connectionId = appLink.exec(href)?.[1].toLowerCase();
-      const digest = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(connectionId ? `/apps?connect=${connectionId}` : href),
-      );
-      const hash = Array.from(new Uint8Array(digest), (byte) =>
-        byte.toString(16).padStart(2, '0'),
-      ).join('');
+      const hash = await setupLinkHash(connectionId ? `/apps?connect=${connectionId}` : href);
       return { href, hash, connectionId };
     }),
   );

@@ -11,9 +11,9 @@ import { AppAccountManager } from '../../../components/app-account-manager';
 import { Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
-import { api, errorMessage } from '../../../lib/api';
+import { api, errorMessage, post } from '../../../lib/api';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { connectionUrl } from '../../../lib/connection-url';
+import { connectionUrl, setupLinkHash } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import type { StepProps } from '..';
@@ -158,10 +158,7 @@ export function PersonalConnection({
     };
     const read = async () => {
       try {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signInUrl));
-        const hash = Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, '0'),
-        ).join('');
+        const hash = await setupLinkHash(signInUrl);
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({ hashes: [hash], pairingUrl: signInUrl }),
@@ -411,6 +408,10 @@ export function PersonalConnection({
   }
 
   function cancel() {
+    if (signInUrl)
+      void setupLinkHash(signInUrl)
+        .then((hash) => post('/api/apps/setup-cancel', { hash }))
+        .catch(() => {});
     request.current?.abort();
     request.current = null;
     clearAttempt();

@@ -27,7 +27,7 @@ Nod uses your conversation language for pairing notices and private-step guidanc
 
 The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client. WhatsApp can restrict the account or change how it connects. Check the WhatsApp terms before you connect.
 
-A long reply arrives as several messages. If a file doesn't arrive, open Nod to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
+A long reply arrives as several messages. If a file doesn't arrive, open Nod to get it. When the model can't write a required notice, even on a second try, that channel message stays blocked and isn't retried later.
 
 ## Set up a channel
 
@@ -136,7 +136,7 @@ After a restart or network loss, Nod uses the saved link to connect again. Repli
 
 ## Private steps happen in the Nod app
 
-Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
+Passwords, saved logins, app sign-ins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
 
 ```mermaid
 sequenceDiagram
