@@ -3717,17 +3717,46 @@ test('restricted Pi sessions load no sandbox, web, or code tools', async () => {
 
 test('native audio reaches the selected Pi model with tools and survives a reopened session', async (t) => {
   const { createServer } = await import('node:http');
-  const bodies: Array<{ messages: Array<{ role: string; content: unknown }>; tools?: unknown[] }> =
-    [];
+  const bodies: Array<{
+    model: string;
+    messages: Array<{ role: string; content: unknown }>;
+    tools?: unknown[];
+  }> = [];
   const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
   let promptTokens = 110;
   let native = true;
+  let rejectNative = false;
+  let contractRejections = 0;
+  let jsonReply = false;
   let holdRead: Promise<Uint8Array> | undefined;
   const server = createServer((request, response) => {
     const parts: Buffer[] = [];
     request.on('data', (part) => parts.push(part));
     request.on('end', () => {
       bodies.push(JSON.parse(Buffer.concat(parts).toString()));
+      const body = bodies.at(-1)!;
+      if (
+        body.model === 'gpt-audio-1.5' &&
+        !body.messages.some(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.some((part) => part.type === 'input_audio'),
+        )
+      ) {
+        contractRejections++;
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            error: { message: 'This model requires input audio or audio output.' },
+          }),
+        );
+        return;
+      }
+      if (rejectNative && body.model === 'gpt-audio-1.5') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'Synthetic provider unavailable.' } }));
+        return;
+      }
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       const first = bodies.length === 1;
       response.end(
@@ -3748,7 +3777,10 @@ test('native audio reaches the selected Pi model with tools and survives a reope
                       },
                     ],
                   }
-                : { role: 'assistant', content: 'The recording has been inspected.' },
+                : {
+                    role: 'assistant',
+                    content: jsonReply ? '{"ok":true}' : 'The recording has been inspected.',
+                  },
             },
           ],
         }) +
@@ -3759,7 +3791,10 @@ test('native audio reaches the selected Pi model with tools and survives a reope
               prompt_tokens: promptTokens,
               completion_tokens: 2,
               total_tokens: promptTokens + 2,
-              prompt_tokens_details: { audio_tokens: 100, cached_tokens: 0 },
+              prompt_tokens_details: {
+                audio_tokens: body.model === 'gpt-audio-1.5' ? 100 : 0,
+                cached_tokens: 0,
+              },
             },
           }) +
           'data: [DONE]\n\n',
@@ -3782,7 +3817,8 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   const traces: import('../src/ports/traces.ts').ModelTrace[] = [];
   const events: import('../src/ports/agent.ts').AgentEvent[] = [];
   const id = randomUUID();
-  const known = new Set<string>([id]);
+  const initialRecordings = [id, randomUUID(), randomUUID()];
+  const known = new Set<string>(initialRecordings);
   let queued: Awaited<ReturnType<NonNullable<AgentSessionOptions['nextMessages']>>> = [];
   const recording = Buffer.alloc(3244);
   recording.write('RIFF');
@@ -3802,36 +3838,55 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   let reads = 0;
   let calls = 0;
   const execution = fakeExecution(randomUUID());
-  let piSession: Awaited<ReturnType<typeof createAgentSession>>['session'];
-  const agent = createPiAgent({
-    createSession: async (options) => {
-      const result = await createAgentSession(options);
-      piSession = result.session;
-      return result;
+  const textDefinition = {
+    choice: { ...definition.choice, id: 'fixture-text-model', audio: false },
+    spec: {
+      ...definition.spec,
+      id: 'fixture-text-model',
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      contextWindow: 20000,
     },
+  };
+  const resolve = async (): Promise<import('../src/ports/models.ts').ModelAccess> => ({
     provider: 'openai',
-    sessionRoot: directory,
-    resolve: async () => ({
-      provider: 'openai',
-      method: 'api_key',
-      effort: 'off',
-      read: async () => ({ type: 'api_key', key: 'synthetic-audio-only-key' }),
-      definition: {
-        choice: { ...definition.choice, id: native ? 'gpt-audio-1.5' : 'fixture-text-model' },
-        spec: {
-          ...definition.spec,
-          id: native ? 'gpt-audio-1.5' : 'fixture-text-model',
-          baseUrl: `http://127.0.0.1:${address.port}/v1`,
-          contextWindow: 20000,
-        },
-      },
-    }),
-    traces: { active: () => true, record: (trace) => traces.push(trace) },
+    method: 'api_key',
+    effort: 'off',
+    read: async () => ({ type: 'api_key', key: 'synthetic-audio-only-key' }),
+    definition: native
+      ? {
+          ...definition,
+          spec: {
+            ...definition.spec,
+            baseUrl: `http://127.0.0.1:${address.port}/v1`,
+            contextWindow: 20000,
+          },
+        }
+      : textDefinition,
+    ...(native ? { textModel: { definition: textDefinition, effort: 'off' } } : {}),
   });
+  let piSession: Awaited<ReturnType<typeof createAgentSession>>['session'];
+  const { createLedger } = await import('../src/server/ledger.ts');
+  const ledger = createLedger({
+    pool: { query: async () => ({ rows: [] }) } as never,
+    ownerId: 'synthetic-native-audio',
+  });
+  const agent = ledger.agent(
+    createPiAgent({
+      createSession: async (options) => {
+        const result = await createAgentSession(options);
+        piSession = result.session;
+        return result;
+      },
+      provider: 'openai',
+      sessionRoot: directory,
+      resolve,
+      traces: { active: () => true, record: (trace) => traces.push(trace) },
+    }),
+  );
   t.after(() => agent.dispose());
-  const open = () =>
+  const open = (scope = execution) =>
     agent.open({
-      ...execution,
+      ...scope,
       restricted: true,
       systemPrompt: 'Use the fixture tool if needed.',
       workspace: recordingWorkspace().workspace,
@@ -3862,7 +3917,10 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   await first.prompt(
     'Listen to this synthetic recording. ' + 'Synthetic context. '.repeat(700),
     [],
-    { files: [{ id, mimeType: 'audio/wav' }], fallback: 'Internal transcription fixture words.' },
+    {
+      files: initialRecordings.map((id) => ({ id, mimeType: 'audio/wav' })),
+      fallback: 'Internal transcription fixture words.',
+    },
   );
   await first.dispose();
   assert.equal(calls, 1);
@@ -3873,18 +3931,18 @@ test('native audio reaches the selected Pi model with tools and survives a reope
         ? message.content.filter((part) => part.type === 'input_audio')
         : [],
     );
-  assert.equal(audio(bodies[0]).length, 1);
+  assert.equal(audio(bodies[0]).length, 3);
   const decoded = Buffer.from(audio(bodies[0])[0].input_audio.data, 'base64');
   assert.equal(decoded.toString('ascii', 0, 4), 'RIFF');
   assert.deepEqual(decoded.subarray(44), recording.subarray(44));
   assert.equal(audio(bodies[0])[0].input_audio.format, 'wav');
-  assert.equal(audio(bodies[1]).length, 1);
+  assert.equal(audio(bodies[1]).length, 3);
   assert.ok(!JSON.stringify(bodies).includes('Internal transcription fixture words.'));
   const second = await open();
   assert.equal(second.resumed, true);
   await second.prompt('What else did you hear?', []);
   await second.dispose();
-  assert.equal(audio(bodies.at(-1)!).length, 1);
+  assert.equal(audio(bodies.at(-1)!).length, 3);
   assert.ok(reads >= 3);
   const usage = events.filter((event) => event.type === 'model_usage');
   assert.ok(usage.length >= 3);
@@ -3915,7 +3973,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   const compacted = await open();
   await compacted.prompt('Follow up after compaction.', []);
   await compacted.dispose();
-  assert.equal(audio(bodies.at(-1)!).length, 1);
+  assert.equal(audio(bodies.at(-1)!).length, 3);
   assert.ok(JSON.stringify(bodies.at(-1)).includes('Earlier recording from'));
   const beforeRebase = piSession!.sessionManager.getSessionFile();
   piSession!.sessionManager.appendCustomEntry('synthetic-checkpoint-padding', {
@@ -3925,7 +3983,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   await rebased.prompt('Follow up after the session file is rebased.', []);
   await rebased.dispose();
   assert.notEqual(piSession!.sessionManager.getSessionFile(), beforeRebase);
-  assert.equal(audio(bodies.at(-1)!).length, 1);
+  assert.equal(audio(bodies.at(-1)!).length, 3);
   native = false;
   const fallback = await open();
   assert.equal(fallback.readsAudio, false);
@@ -3959,12 +4017,16 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   const sent = bodies.length;
   const beforeRead = reads;
   const pending = cancelling.prompt('Stop this request.', []);
-  while (reads === beforeRead) await setTimeout(10);
-  await cancelling.abort();
-  await pending;
-  release(recording);
-  holdRead = undefined;
-  await cancelling.dispose();
+  try {
+    for (let attempt = 0; reads === beforeRead && attempt < 500; attempt++) await setTimeout(10);
+    assert.ok(reads > beforeRead, 'The request did not reach the audio reader.');
+  } finally {
+    await cancelling.abort();
+    release(recording);
+    holdRead = undefined;
+    await pending;
+    await cancelling.dispose();
+  }
   assert.equal(bodies.length, sent);
   const recordings = piSession!.sessionManager
     .getBranch()
@@ -4008,6 +4070,56 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   ).join('\n');
   assert.ok(saved.includes(id));
   assert.ok(!saved.includes(recording.toString('base64')));
+  const beforeFreshRead = reads;
+  const fresh = await open(fakeExecution(randomUUID()));
+  await fresh.prompt('A new typed conversation.', []);
+  await fresh.dispose();
+  assert.equal(reads, beforeFreshRead);
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  const typedUsage = events.findLast((event) => event.type === 'model_usage');
+  assert.equal(typedUsage?.model, 'fixture-text-model');
+  assert.ok(Math.abs(typedUsage!.costUsd! - 0.000295) < 1e-9);
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  const compactions = events.filter(
+    (event) => event.type === 'provider_usage' && event.usage.operation === 'compaction',
+  );
+  assert.ok(compactions.length > 0);
+  for (const event of compactions)
+    if (event.type === 'provider_usage') assert.equal(event.usage.model, 'fixture-text-model');
+  const curatorUsage: Array<{ model: string; costUsd: number | null }> = [];
+  const curator = createPiMemoryCurator({
+    provider: 'openai',
+    resolve,
+    traces: { active: () => true, record: (trace) => traces.push(trace) },
+  });
+  jsonReply = true;
+  assert.deepEqual(
+    await curator.curate(
+      { task: 'review', instructions: 'Return JSON.', input: { synthetic: true } },
+      undefined,
+      (usage) => curatorUsage.push(usage),
+    ),
+    { ok: true },
+  );
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(curatorUsage.at(-1)!.model, 'fixture-text-model');
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  assert.equal(contractRejections, 0);
+  rejectNative = true;
+  const failing = await open(fakeExecution(randomUUID()));
+  const beforeFailure = bodies.length;
+  await failing.prompt('Provider failure must not switch models.', [], {
+    files: [{ id, mimeType: 'audio/wav' }],
+    fallback: 'Synthetic failure transcript.',
+  });
+  await failing.dispose();
+  const failedRequests = bodies.slice(beforeFailure);
+  assert.ok(failedRequests.length > 0 && failedRequests.length <= 4);
+  assert.ok(failedRequests.every((body) => body.model === 'gpt-audio-1.5'));
+  assert.ok(failedRequests.every((body) => audio(body).length > 0));
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.type === 'error' && event.message.includes('503')));
 });
 
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {

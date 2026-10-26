@@ -56,6 +56,7 @@ export interface ModelChoice {
   efforts: ModelEffort[];
   images: boolean;
   audio?: boolean;
+  textModelName?: string;
   contextWindow: number;
 }
 

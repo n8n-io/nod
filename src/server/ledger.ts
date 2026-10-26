@@ -213,9 +213,9 @@ export function createLedger({
         });
         return {
           ...opened,
-          async prompt(text, images) {
+          async prompt(...args) {
             try {
-              await activeExecution.run(session, () => opened.prompt(text, images));
+              await activeExecution.run(session, () => opened.prompt(...args));
             } finally {
               await flushUsage();
             }

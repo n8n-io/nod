@@ -9,10 +9,7 @@ const customType = 'nod-audio-input';
 const filesKey = Symbol('native audio');
 const detailsSchema = z.object({
   id: z.uuid(),
-  files: z
-    .array(z.object({ id: z.uuid(), mimeType: z.string().startsWith('audio/') }))
-    .min(1)
-    .max(2),
+  files: z.array(z.object({ id: z.uuid(), mimeType: z.string().startsWith('audio/') })).min(1),
   fallback: z.string(),
   recordedAt: z.number().int().nonnegative().optional(),
 });

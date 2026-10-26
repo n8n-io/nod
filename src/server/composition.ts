@@ -354,7 +354,18 @@ export function createDefaultAdapters(
     },
     resolve: async () => {
       const access = await models.resolve();
-      return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
+      return {
+        ...access,
+        effort: lightestEffort(access.definition.choice.efforts),
+        ...(access.textModel
+          ? {
+              textModel: {
+                ...access.textModel,
+                effort: lightestEffort(access.textModel.definition.choice.efforts),
+              },
+            }
+          : {}),
+      };
     },
     configured: () => models.configured,
     traces,

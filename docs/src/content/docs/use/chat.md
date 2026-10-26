@@ -38,7 +38,9 @@ Select **Record an audio message** beside the send button and allow microphone a
 
 Use the arrow beside the microphone to choose an input. Nod remembers your choice in this browser. If that microphone is disconnected, Nod uses your system default.
 
-Your message shows the recording and any caption you typed. Nod keeps an internal transcript for private verification and action authorization; the generated transcript is not shown in the message. Models marked **Audio input**, currently **GPT Audio 1.5** through an OpenAI API connection, also receive the actual recording. Text-only models use the transcript. Nod never changes your chat model automatically. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
+Your message shows the recording and any caption you typed. Nod keeps an internal transcript for private verification and action authorization; the generated transcript is not shown in the message. Models marked **Audio input**, currently **GPT Audio 1.5** through an OpenAI API connection, also receive the actual recording. Text-only models use the transcript. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
+
+An audio model's **Text support** label shows its companion from the same connection. Requests to the selected model without recordings, including a new text conversation, trust checks and session summaries, use that companion. Background work can still use a smaller model from the same connection. Follow-ups that still include recent recordings use the audio model. Your saved model selection stays unchanged. An audio model is unavailable when its connection has no text companion.
 
 With **Auto**, Nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.
 

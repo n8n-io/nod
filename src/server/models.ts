@@ -155,8 +155,29 @@ function connectionLabel(provider: ModelProvider, method: ModelMethod, value: Mo
   return modelSource({ provider, method });
 }
 
+function textCompanion(row: Pick<ModelRecord, 'provider' | 'models'>) {
+  const candidates = row.models.filter(
+    (model) =>
+      !model.choice.audio &&
+      model.choice.efforts.length > 0 &&
+      Array.isArray(model.spec.input) &&
+      model.spec.input.includes('text'),
+  );
+  return (
+    candidates.find((model) => model.choice.id === agentModels[row.provider]) ??
+    candidates.find((model) => model.choice.id === memoryModels[row.provider]) ??
+    candidates[0]
+  );
+}
+
+function missingTextCompanion() {
+  return new ConnectionError(
+    'This audio model needs a text model on the same connection. Refresh its models or choose another model in Settings > Models.',
+  );
+}
+
 function usable(
-  connections: Pick<ModelRecord, 'id' | 'status' | 'models'>[],
+  connections: Pick<ModelRecord, 'id' | 'provider' | 'status' | 'models'>[],
   selection: ModelSelection | null,
 ) {
   return (
@@ -168,7 +189,8 @@ function usable(
         row.models.some(
           (model) =>
             model.choice.id === selection.modelId &&
-            model.choice.efforts.includes(selection.effort),
+            model.choice.efforts.includes(selection.effort) &&
+            (!model.choice.audio || Boolean(textCompanion(row))),
         ),
     )
   );
@@ -720,7 +742,12 @@ export function createModelService(options: {
             label,
             status,
             managed,
-            models: models.map((model) => model.choice),
+            models: models.map((model) => ({
+              ...model.choice,
+              ...(model.choice.audio
+                ? { textModelName: textCompanion({ provider, models })?.choice.name }
+                : {}),
+            })),
             ...(keyEnding ? { keyEnding } : {}),
           }),
         ),
@@ -815,8 +842,9 @@ export function createModelService(options: {
         const model =
           row?.status === 'connected' &&
           row.models.find((item) => item.choice.id === value.modelId);
-        if (!model || !model.choice.efforts.includes(value.effort))
+        if (!row || !model || !model.choice.efforts.includes(value.effort))
           throw new ConnectionError('Choose an available model and effort.');
+        if (model.choice.audio && !textCompanion(row)) throw missingTextCompanion();
         state.selection = value;
         state.selectionSet = true;
       });
@@ -895,6 +923,8 @@ export function createModelService(options: {
         throw new ConnectionError(
           'The selected model is unavailable. Choose another model in Settings > Models.',
         );
+      const companion = definition.choice.audio ? textCompanion(row) : undefined;
+      if (definition.choice.audio && !companion) throw missingTextCompanion();
       return {
         provider: row.provider,
         method: row.method,
@@ -903,6 +933,16 @@ export function createModelService(options: {
           ? (definition.choice.efforts.find((level) => ['off', 'low', 'medium'].includes(level)) ??
             definition.choice.efforts[0])
           : selected.effort,
+        ...(companion
+          ? {
+              textModel: {
+                definition: companion,
+                effort: auxiliary
+                  ? lightestEffort(companion.choice.efforts)
+                  : defaultEffort(row.provider, companion.choice),
+              },
+            }
+          : {}),
         read: () => read(row.id),
         needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };

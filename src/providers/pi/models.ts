@@ -951,16 +951,30 @@ export async function createPiModelRuntime(
     allowModelNetwork: false,
   });
   runtime.registerProvider(provider, {
-    models: [access.definition.spec as unknown as ProviderModelConfig],
+    models: [
+      access.definition.spec as unknown as ProviderModelConfig,
+      ...(access.textModel
+        ? [access.textModel.definition.spec as unknown as ProviderModelConfig]
+        : []),
+    ],
   });
   await runtime.refresh({ allowNetwork: false });
+  const textModel = access.textModel
+    ? runtime.getModel(provider, access.textModel.definition.choice.id)
+    : undefined;
+  if (access.textModel && (!textModel || readsNativeAudio(textModel)))
+    throw new Error('The text companion is unavailable. Refresh the model list.');
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, options) => {
     const audio = readsNativeAudio(model) ? nativeAudioRequest(context, readAudio) : undefined;
+    const target = audio && !audio.active && textModel ? textModel : model;
     const usage = audio?.active ? audioUsage() : undefined;
-    const events = stream(model, audio?.context ?? context, {
+    const events = stream(target, audio?.context ?? context, {
       ...options,
       maxRetries: 0,
+      ...(target !== model
+        ? { reasoning: access.textModel!.effort === 'off' ? undefined : access.textModel!.effort }
+        : {}),
       ...(access.provider === 'compatible' ||
       access.provider === 'radius' ||
       access.provider === 'cloudflare-workers-ai' ||
@@ -1023,12 +1037,12 @@ export async function createPiModelRuntime(
       const startedAt = new Date().toISOString();
       void events
         .result()
-        .then((message) => trace({ model, context, message, startedAt }))
+        .then((message) => trace({ model: target, context, message, startedAt }))
         .catch(() => {});
     }
     return events;
   };
   const model = runtime.getModel(provider, access.definition.choice.id);
   if (!model) throw new Error('The selected model is unavailable. Refresh the model list.');
-  return { runtime, model };
+  return { runtime, model, textModel };
 }

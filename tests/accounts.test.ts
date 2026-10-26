@@ -1030,6 +1030,66 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal((await owner.resolve()).definition.choice.images, false);
   });
 
+  test('audio models pair with text support from the same owned connection without changing selection', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    let pairedModels = ['gpt-audio-1.5', 'gpt-6-luna', 'gpt-6.1-sol'];
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        assert.equal(String(input), 'https://api.openai.com/v1/models');
+        const key = new Headers(init?.headers).get('authorization');
+        const ids = key === 'Bearer fixture-audio-only' ? ['gpt-audio-1.5'] : pairedModels;
+        return Response.json({ data: ids.map((id) => ({ id })) });
+      },
+    });
+    const owner = await f.create('fixture-audio-pair', backend);
+    const other = await f.create('fixture-audio-pair-other', backend);
+    await other.addKey('openai', 'fixture-other-text');
+    const audioOnly = await owner.addKey('openai', 'fixture-audio-only');
+    const unavailable = {
+      connectionId: audioOnly,
+      modelId: 'gpt-audio-1.5',
+      effort: 'off' as const,
+    };
+    assert.equal(owner.configured, false);
+    await assert.rejects(owner.select(unavailable), /text model/i);
+    await assert.rejects(owner.resolve(), /text model/i);
+    assert.equal(owner.view().connections[0].models[0].textModelName, undefined);
+    const paired = await owner.addKey('openai', 'fixture-paired-text');
+    const selected = { ...unavailable, connectionId: paired };
+    await owner.select(selected);
+    assert.equal(owner.configured, true);
+    const access = await owner.resolve();
+    assert.equal(access.definition.choice.id, 'gpt-audio-1.5');
+    assert.equal(access.textModel?.definition.choice.id, 'gpt-6.1-sol');
+    assert.ok(access.textModel);
+    assert.ok(access.textModel.definition.choice.efforts.includes(access.textModel.effort));
+    assert.deepEqual(await access.read(), { type: 'api_key', key: 'fixture-paired-text' });
+    const listed = owner.view().connections.find((row) => row.id === paired)!;
+    assert.equal(
+      listed.models.find((model) => model.audio)?.textModelName,
+      access.textModel.definition.choice.name,
+    );
+    assert.equal(JSON.stringify(owner.view()).includes('fixture-paired-text'), false);
+    assert.equal((await owner.resolve(true)).definition.choice.id, 'gpt-6-luna');
+    assert.deepEqual(owner.view().selection, selected);
+    pairedModels = ['gpt-audio-1.5', 'gpt-6.1-sol'];
+    await owner.refreshCatalog(paired);
+    const auxiliary = await owner.resolve(true);
+    assert.equal(auxiliary.definition.choice.id, 'gpt-audio-1.5');
+    assert.equal(auxiliary.textModel?.definition.choice.id, 'gpt-6.1-sol');
+    pairedModels = ['gpt-audio-1.5', 'gpt-6-luna'];
+    await owner.refreshCatalog(paired);
+    assert.equal((await owner.resolve()).textModel?.definition.choice.id, 'gpt-6-luna');
+    pairedModels = ['gpt-audio-1.5'];
+    await owner.refreshCatalog(paired);
+    assert.equal(owner.configured, false);
+    await assert.rejects(owner.resolve(), /text model/i);
+    await assert.rejects(owner.resolve(true), /text model/i);
+    await assert.rejects(owner.select(unavailable), /text model/i);
+    assert.deepEqual(owner.view().selection, selected);
+  });
+
   test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
     const f = await fixture(t);
     const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');

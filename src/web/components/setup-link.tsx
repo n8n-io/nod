@@ -190,7 +190,7 @@ function SetupAction({
           data-setup={setup}
           className="setup-app-action"
           disabled={app?.available === false}
-          aria-label={`Connect ${app?.name ?? label.replace(/^Connect\s+/i, '')}`}
+          aria-label={`${app?.available === false ? 'Expired' : 'Connect'} ${app?.name ?? label.replace(/^Connect\s+/i, '')}`}
           onClick={(event) => {
             captureAnalytics('nod_setup_link_clicked', { setup });
             onConnect(href, event.currentTarget);

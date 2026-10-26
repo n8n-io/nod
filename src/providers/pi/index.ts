@@ -570,14 +570,15 @@ export function createPiAgent(options: {
         if (event.type === 'compaction_start')
           compaction = { id: randomUUID(), started: performance.now() };
         if (event.type === 'compaction_end') {
+          const target = readsNativeAudio(model) ? (connection?.textModel ?? model) : model;
           input.onEvent({
             type: 'provider_usage',
             usage: {
               id: compaction?.id ?? randomUUID(),
-              provider: model.provider,
+              provider: target.provider,
               category: 'agent',
               operation: 'compaction',
-              model: model.id,
+              model: target.id,
               turnId: input.turnId,
               status: event.aborted ? 'cancelled' : event.errorMessage ? 'failed' : 'succeeded',
               durationMs: compaction ? performance.now() - compaction.started : 0,

@@ -109,18 +109,19 @@ export function createPiMemoryCurator(options: {
           reasoning: effort === 'off' ? undefined : effort,
         });
         const durationMs = performance.now() - started;
+        const target = runtime.getModel(reply.provider, reply.model) ?? model;
         if (task !== 'access' && options.traces?.active())
           options.traces.record(
             piModelTrace(
-              { model, context, message: reply, startedAt },
+              { model: target, context, message: reply, startedAt },
               { source: 'curator', task },
             ),
           );
         if (reply.usage?.totalTokens)
           report?.({
             id: crypto.randomUUID(),
-            provider: model.provider,
-            model: model.id,
+            provider: reply.provider,
+            model: reply.model,
             durationMs,
             ...piUsageMetrics(reply.usage),
             status:

@@ -610,12 +610,23 @@ test(
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const openAIModels = await createPiModelBackend().catalog('openai', 'api_key');
     const requests: Array<{ url: string; key: string | null; model: string | null }> = [];
+    const checks: Array<{ model: string; reasoning?: { effort?: string } }> = [];
     const speechRequest = t.mock.method(
       globalThis,
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input));
         const key = new Headers(init?.headers).get('authorization');
+        if (url.pathname.endsWith('/responses')) {
+          assert.equal(url.origin, 'https://api.openai.com');
+          assert.equal(key, 'Bearer fixture-openai');
+          assert.ok(init && typeof init.body === 'string');
+          checks.push(JSON.parse(init.body as string));
+          return Response.json(
+            { error: { message: 'Synthetic check unavailable.' } },
+            { status: 400 },
+          );
+        }
         if (url.pathname.endsWith('/models') || url.pathname.endsWith('/key')) {
           if (key && rejectedKeys.has(key)) return new Response(null, { status: 401 });
           if (url.pathname.endsWith('/key')) return Response.json({ data: {} });
@@ -755,6 +766,21 @@ test(
           effort: audioModel.efforts[0],
         });
         assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, 'wav');
+        await assert.rejects(
+          localChoice.onboardingCurator!.curate({
+            task: 'access',
+            instructions: 'Check the synthetic owner request.',
+            input: { request: 'Read the synthetic record.' },
+          }),
+          /memory model is unavailable/i,
+        );
+        assert.equal(checks.length, 3);
+        assert.ok(checks.every((request) => request.model === 'gpt-6.1-sol'));
+        assert.deepEqual(
+          checks.map((request) => request.reasoning?.effort),
+          ['low', 'low', 'low'],
+        );
+        assert.equal(localChoice.models!.view().selection?.modelId, audioModel.id);
         await localChoice.models!.select(models.selection!);
         assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, undefined);
       } finally {
