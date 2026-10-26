@@ -33,7 +33,7 @@ export const help = `Nod capability evals
     analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
                                (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
-                               (--baseline main, --repeat 3, --label name, --out directory)
+                               (--baseline main, --repeat 3, --scenario a,b, --label name, --out directory)
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Nod, graded by the official judge
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)

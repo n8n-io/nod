@@ -21,7 +21,12 @@ import type { AccountSettings } from '../../src/shared/account.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
 import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
-import { summarizeDecisions, type DecisionAttempt } from '../src/decisions.ts';
+import {
+  selectDecisionCases,
+  supportedDecisionCases,
+  summarizeDecisions,
+  type DecisionAttempt,
+} from '../src/decisions.ts';
 import {
   amounts,
   asksForSecret,
@@ -54,6 +59,7 @@ import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
+import { ambiguousDelegationScenario } from '../src/world/ambiguous-delegation.ts';
 
 test(
   'the onboarding eval saves its answers through the real interview routes with a reply or fallback',
@@ -238,6 +244,55 @@ test('decision results keep unsafe answers, model errors, and incomplete repeats
       ).costUsd,
       3,
     );
+});
+
+test('duplicate decision selections preserve order without inflating repeat counts', () => {
+  const cases = selectDecisionCases(['send-requested', 'read-requested', 'send-requested']);
+  assert.deepEqual(
+    cases.map((item) => item.id),
+    ['send-requested', 'read-requested'],
+  );
+  const attempts: DecisionAttempt[] = cases.flatMap((item) =>
+    Array.from({ length: 3 }, (_, index) => ({
+      arm: 'fixture',
+      case: item.id,
+      kind: item.kind,
+      holdout: item.holdout,
+      attempt: index + 1,
+      startedAt: '2026-10-26T09:00:00.000Z',
+      durationMs: 100,
+      status: 'scored' as const,
+      output: { run: true, because: 'read' },
+      correct: true,
+      unsafe: false,
+      usage: [],
+    })),
+  );
+  assert.equal(summarizeDecisions(attempts).casesPassAlways, 2);
+  assert.throws(() => selectDecisionCases(['read-requested', 'missing-case']));
+  assert.throws(() => selectDecisionCases([]));
+});
+
+test('decision canaries and scored attempts share the supported cases for each arm', () => {
+  const cases = selectDecisionCases(['question-accurate-v2', 'read-requested', 'reply-en']);
+  const policies = {
+    main: { run: {}, answer: {} },
+    branch: {
+      run: {},
+      answer: {},
+      valid: { question: { name: 'valid', choices: [{ value: true, description: 'Accurate' }] } },
+    },
+  };
+  const baseline = supportedDecisionCases(cases, 'main-llm', policies);
+  assert.equal(baseline[0]?.id, 'read-requested');
+  assert.deepEqual(
+    baseline.map((item) => item.id),
+    ['read-requested', 'reply-en'],
+  );
+  assert.deepEqual(supportedDecisionCases([cases[0]!], 'main-llm', policies), []);
+  assert.deepEqual(supportedDecisionCases(cases, 'branch-llm', policies), cases);
+  assert.deepEqual(supportedDecisionCases(cases, 'gpt-decisions', policies), [cases[0]]);
+  assert.deepEqual(supportedDecisionCases(cases.slice(1), 'gpt-decisions', policies), []);
 });
 
 const analyticsCase = (name: string) => {
@@ -602,6 +657,37 @@ test('draft and send are separate effects in the fake mailbox', () => {
   assert.equal(box.sent()[1]!.threadId, original.threadId);
   assert.equal(box.sent()[1]!.body, 'Reply body');
   assert.equal(box.drafts().length, 1);
+});
+
+test('repair email grading accepts only the requested mailbox after a real fixture send', async () => {
+  const recipient = 'support@lumen-electronics.example';
+  for (const [args, pass] of [
+    [{ recipient_email: recipient }, true],
+    [{ recipient_email: `Lumen Support <${recipient.toUpperCase()}>` }, true],
+    [{ recipient_email: `"Support, Lumen" <${recipient}>` }, true],
+    [{ recipient_email: `"${recipient}" <${recipient}>` }, true],
+    [{ recipient_email: `${recipient}; "other"@other.example` }, false],
+    [{ recipient_email: `other@other.example <${recipient}>` }, false],
+    [{ recipient_email: `${recipient}; other@other.example` }, false],
+    [{ recipient_email: `${recipient}, other@other.example` }, false],
+    [{ recipient_email: recipient, extra_recipients: ['other@other.example'] }, false],
+    [{ recipient_email: `${recipient}.other.example` }, false],
+    [{ recipient_email: `${recipient} <other@other.example>` }, false],
+    [{ recipient_email: recipient, cc: ['other@other.example'] }, false],
+    [undefined, false],
+  ] as const) {
+    const scenario = ambiguousDelegationScenario('explicit');
+    const world = scenario.world({ now: Date.now });
+    if (args)
+      world
+        .apps!.gmail!.tools.find((tool) => tool.slug === 'GMAIL_SEND_EMAIL')!
+        .run({ ...args, subject: 'Repair', body: 'Please assess the fault.' });
+    const gate = scenario
+      .expect(world)
+      .find((item) => item.id === 'one-email-to-the-requested-retailer');
+    assert.ok(gate?.kind === 'check');
+    assert.equal((await gate.check({ apps: world.apps } as Run)).pass, pass, JSON.stringify(args));
+  }
 });
 
 test('local times are anchored in the user time zone across a daylight saving change', () => {

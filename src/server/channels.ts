@@ -1257,6 +1257,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   const presence = new Map<string, { at: number; status: string }>();
+  const confirmedProgress = new Map<string, string>();
   let presenceRunning: Promise<void> | undefined;
   let nextPresence: LiveWork[] | undefined;
   let progressCall: { turnId: string; controller: AbortController } | undefined;
@@ -1271,6 +1272,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         .filter((item) => item.messageId && item.channel.startsWith('telegram:'))
         .map((item) => [item.messageId!, item]),
     );
+    for (const id of confirmedProgress.keys()) if (!targets.has(id)) confirmedProgress.delete(id);
     const { rows } = await pool.query<
       ChannelIdentity & {
         message_id: string;
@@ -1305,9 +1307,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         original.text.length <= 2500 &&
         !current.secureAction &&
         !current.artifact
-          ? Array.from(current.text).slice(0, 1000).join('') || null
+          ? Array.from(
+              new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(current.text),
+              ({ segment }) => segment,
+            )
+              .slice(0, 1000)
+              .join('') || null
           : null;
-      if (status === row.live_status) continue;
+      if (
+        status === row.live_status &&
+        (status === null || confirmedProgress.get(row.message_id) === status)
+      )
+        continue;
       const claimed = await pool.query(
         `UPDATE channel_outbox o SET live_status=COALESCE($3,o.live_status) FROM messages m,channel_inbox i,threads th
          WHERE o.message_id=$1 AND m.id=o.message_id AND m.owner_id=$2 AND i.source_id=o.source_id AND i.owner_id=$2
@@ -1350,12 +1361,15 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
           }),
         ]);
-        if (status === null)
+        signal.throwIfAborted();
+        if (status === null) {
+          confirmedProgress.delete(row.message_id);
           await pool.query(
             `UPDATE channel_outbox o SET live_status=NULL FROM messages m
              WHERE o.message_id=$1 AND m.id=o.message_id AND m.owner_id=$2 AND o.live_status=$3`,
             [row.message_id, ownerId, row.live_status],
           );
+        } else confirmedProgress.set(row.message_id, status);
       } catch (cause) {
         if (!signal.aborted) logFailure('channel_presence_failed', cause);
       } finally {
@@ -1553,6 +1567,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       await Promise.allSettled(pendingMedia.values());
       await transport.close();
       transport = next;
+      confirmedProgress.clear();
       channels = next.channels.map((channel) => ({
         ...channel,
         allowedSenderIds: [...channel.allowedSenderIds],

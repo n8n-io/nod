@@ -62,9 +62,25 @@ class Telegram extends TelegramAdapter {
   async progress(input: Parameters<NonNullable<MessagingTransport['progress']>>[0]) {
     const chatId = this.decodeThreadId(input.threadId).chatId;
     const { messageId } = this.decodeCompositeMessageId(input.messageId, chatId);
-    const markdown = input.status
-      ? `${input.text}\n\n> **Live status**\n> ${input.status.replaceAll('\n', '\n> ')}`
-      : input.text;
+    const quote = (status: string) => `${input.text}\n\n> ${status.replaceAll('\n', '\n> ')}`;
+    let markdown = input.status ? quote(input.status) : input.text;
+    if (input.status && !this.fits(markdown, 4096)) {
+      const graphemes = Array.from(
+        new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(input.status),
+        ({ segment }) => segment,
+      );
+      let low = 1;
+      let high = graphemes.length - 1;
+      markdown = input.text;
+      while (low <= high) {
+        const count = Math.floor((low + high) / 2);
+        const candidate = quote(`${graphemes.slice(0, count).join('').trimEnd()}…`);
+        if (this.fits(candidate, 4096)) {
+          markdown = candidate;
+          low = count + 1;
+        } else high = count - 1;
+      }
+    }
     if (!this.fits(markdown, 4096)) throw new Error('The Telegram status is too long.');
     input.signal.throwIfAborted();
     try {
@@ -80,7 +96,11 @@ class Telegram extends TelegramAdapter {
         { signal: input.signal },
       );
     } catch (error) {
-      if (!(error instanceof Error && /message is not modified/i.test(error.message))) throw error;
+      if (!(
+        error instanceof Error &&
+        /message is not modified|message to edit not found/i.test(error.message)
+      ))
+        throw error;
     }
   }
 }

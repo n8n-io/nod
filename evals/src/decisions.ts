@@ -977,6 +977,32 @@ export function summarizeDecisions(attempts: DecisionAttempt[], repeat = 3) {
   };
 }
 
+export function selectDecisionCases(caseIds?: string[]) {
+  const cases = caseIds
+    ? [...new Set(caseIds)].map((id) => {
+        const item = decisionCases.find((entry) => entry.id === id);
+        if (!item) throw new Error(`Unknown decision case: ${id}`);
+        return item;
+      })
+    : decisionCases;
+  if (!cases.length) throw new Error('Choose at least one decision case.');
+  return cases;
+}
+
+export function supportedDecisionCases(
+  cases: Case[],
+  arm: string,
+  policies: {
+    main: Partial<Record<Case['kind'], { question?: unknown }>>;
+    branch: Record<Case['kind'], { question?: unknown }>;
+  },
+) {
+  return cases.filter((item) => {
+    const selected = arm === 'main-llm' ? policies.main[item.kind] : policies.branch[item.kind];
+    return Boolean(selected && (arm.endsWith('-llm') || selected.question));
+  });
+}
+
 export async function runDecisionEval(options: {
   model: Model;
   baseline: string;
@@ -991,14 +1017,7 @@ export async function runDecisionEval(options: {
     options.repeat > 5
   )
     throw new Error('Use a simple label and one to five repeats.');
-  const cases = options.caseIds
-    ? options.caseIds.map((id) => {
-        const item = decisionCases.find((entry) => entry.id === id);
-        if (!item) throw new Error(`Unknown decision case: ${id}`);
-        return item;
-      })
-    : decisionCases;
-  if (!cases.length) throw new Error('Choose at least one decision case.');
+  const cases = selectDecisionCases(options.caseIds);
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
   const baseline = git('rev-parse', '--verify', `${options.baseline}^{commit}`);
@@ -1063,6 +1082,9 @@ export async function runDecisionEval(options: {
     ...(environment.OPENAI_API_KEY ? ['gpt-decisions'] : []),
     ...(environment.OPENROUTER_API_KEY ? ['jev-openrouter'] : []),
   ];
+  const supported = Object.fromEntries(
+    arms.map((arm) => [arm, supportedDecisionCases(cases, arm, policies)]),
+  );
   const directory = join(options.root, 'decisions', options.label);
   await mkdir(join(options.root, 'decisions'), { recursive: true });
   await mkdir(directory);
@@ -1082,6 +1104,9 @@ export async function runDecisionEval(options: {
       .digest('hex'),
     policies,
     cases,
+    supportedCases: Object.fromEntries(
+      arms.map((arm) => [arm, supported[arm].map((item) => item.id)]),
+    ),
   };
   const fingerprint = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
   await writeFile(
@@ -1105,10 +1130,7 @@ export async function runDecisionEval(options: {
     let output: unknown;
     let httpStatus: number | undefined;
     let status: DecisionAttempt['status'] = 'error';
-    const selected =
-      arm === 'main-llm'
-        ? policies.main[item.kind as 'run' | 'answer']
-        : policies.branch[item.kind];
+    const selected = (arm === 'main-llm' ? policies.main[item.kind] : policies.branch[item.kind])!;
     const rules = arm === 'main-llm' ? policies.main.rules : policies.branch.rules;
     try {
       let instructions =
@@ -1194,11 +1216,10 @@ export async function runDecisionEval(options: {
   }
   for (const arm of arms) {
     if (unpriced || spent >= budgetUnits) break;
-    const canary = cases.find(
-      (item) => arm.endsWith('-llm') || policies.branch[item.kind].question,
-    );
+    const canary = supported[arm][0];
     if (!canary) {
-      blocked[arm] = 'This revision gives that model path no decision question.';
+      blocked[arm] =
+        'The selected cases have no supported decision for this revision and model path.';
       continue;
     }
     const result = await check(arm, canary, 0, true);
@@ -1216,12 +1237,7 @@ export async function runDecisionEval(options: {
         const { item, attempt } = jobs[index];
         for (let offset = 0; offset < arms.length && spent < budgetUnits && !unpriced; offset++) {
           const arm = arms[(index + offset) % arms.length];
-          if (
-            !blocked[arm] &&
-            !(arm === 'main-llm' && item.kind === 'valid' && !policies.main.valid) &&
-            (arm.endsWith('-llm') || policies.branch[item.kind].question)
-          )
-            await check(arm, item, attempt);
+          if (!blocked[arm] && supported[arm].includes(item)) await check(arm, item, attempt);
         }
       }
     }),
