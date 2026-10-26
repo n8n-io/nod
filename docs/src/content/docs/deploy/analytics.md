@@ -249,7 +249,7 @@ To add, change or remove an event, see [Change analytics](/contribute/analytics/
 
 ## Prepared work
 
-Nudges are blocked from session recordings like any other chat message. Source reads and private preparation use the existing `other` tool category and do not count as completed app writes. Feedback on prepared work stays in the owner database and adds no analytics event.
+Nudges are blocked from session recordings like any other chat message. Source reads and private preparation use the existing `other` tool category and do not count as completed app writes. Feedback on prepared work goes through `manage_personal_context`, so it counts as one ordinary `nod_tool_used` call; the feedback itself stays in the owner database.
 
 ## Related resources
 

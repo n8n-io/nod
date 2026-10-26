@@ -402,10 +402,12 @@ function Sentence({
         On its own, nod{' '}
         <StatementValue
           text={
-            rule
-              ? 'follows your instruction'
-              : paused
-                ? 'is paused'
+            paused
+              ? rule
+                ? 'follows your instruction, with preparation paused'
+                : 'is paused'
+              : rule
+                ? 'follows your instruction'
                 : 'prepares private work automatically'
           }
           label="Standing instruction"

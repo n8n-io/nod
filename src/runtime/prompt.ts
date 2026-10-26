@@ -145,7 +145,10 @@ export function firstInstruction(
               'prepared updates',
               JSON.stringify(context.proactivity.issues),
             ),
-            proactiveSources: context.proactivity.sources,
+            proactiveSources: untrustedBlock(
+              'source catalog',
+              JSON.stringify(context.proactivity.sources),
+            ),
           }
         : {}),
       currentMessageId: context.currentMessageId ?? null,

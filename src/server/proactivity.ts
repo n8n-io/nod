@@ -860,7 +860,7 @@ export function createProactivity(options: {
         summary: clean(options.redact?.(input.summary) ?? input.summary),
         benefit: clean(options.redact?.(input.benefit) ?? input.benefit),
         delayCost: clean(options.redact?.(input.delayCost) ?? input.delayCost),
-        draft: publicText(options.redact?.(input.draft) ?? input.draft),
+        draft: clean(options.redact?.(input.draft) ?? input.draft),
         unknowns: input.unknowns.map((value) => clean(options.redact?.(value) ?? value)),
       };
       const id = previous?.id ?? randomUUID();
