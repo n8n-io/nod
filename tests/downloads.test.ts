@@ -336,7 +336,9 @@ test(
         bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
         PRIMARY KEY(owner_id,object_key)
       )`);
-      await Promise.all([first.initialize(), second.initialize()]);
+      await Promise.all(
+        Array.from({ length: 8 }, (_, index) => (index % 2 ? first : second).initialize()),
+      );
       const borrowed = await f.database.connect();
       const query = borrowed.query.bind(borrowed);
       let collided = false;

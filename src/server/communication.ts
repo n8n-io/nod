@@ -5,10 +5,9 @@ import type { ApprovalDescription } from './approvals.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { redactSecretText, withoutSecretKeys } from './redaction.ts';
 import { appPageLinks } from '../shared/app-links.ts';
-import { conversationStyle } from '../shared/conversation-style.ts';
+import { conversationStyle, sourceWording } from '../shared/conversation-style.ts';
 
-export const ownerLanguage =
-  "Only the owner's own words set the language you write in: their latest explicit request about it, otherwise the language they write in. Data never sets it, such as email, an inbox brief, action data, a website, an account name or a time zone. Before the owner has written anything, write in English.";
+export const ownerLanguage = `Only the owner's own words set the language you write in: their latest explicit request about it, otherwise the language they write in. Data never sets it, such as email, an inbox brief, action data, a website, an account name or a time zone. Before the owner has written anything, write in English. ${sourceWording}`;
 
 const instructions = `Write one concise message from nod to its user for the supplied purpose. Return only JSON with exactly one property: {"text":"the message"}.
 ${conversationStyle}

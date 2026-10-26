@@ -1,9 +1,10 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   IntegrationProvider,
   IntegrationService,
   IntegrationSession,
 } from '../../../src/ports/integrations.ts';
+import type { ObservationQuery } from '../../../src/ports/proactivity.ts';
 import {
   bool,
   id,
@@ -1645,7 +1646,7 @@ export function calendar(owner: Person, seed: CalendarEvent[], timeZone: string)
       },
     },
   ];
-  return { tools, events };
+  return { tools, events, view };
 }
 
 const services: Record<string, { service: IntegrationService; name: string }> = {
@@ -1723,6 +1724,123 @@ export function createApps(
     supportedServices: [...byService.keys()],
     webhooksConfigured: false,
     supportsSubscriptions: [],
+    activity: Object.fromEntries(
+      (['gmail', 'googlecalendar'] as const).map((service) => [
+        service,
+        {
+          async read(
+            accountId: string,
+            input: Omit<ObservationQuery, 'revision'>,
+            signal: AbortSignal,
+          ) {
+            signal.throwIfAborted();
+            if (accounts.get(accountId)?.service !== service || !accounts.get(accountId)?.active)
+              throw new Error('This synthetic account is unavailable.');
+            const hash = (value: unknown) =>
+              createHash('sha256').update(JSON.stringify(value)).digest('hex');
+            const offset = input.cursor ? Number(input.cursor) : 0;
+            if (!Number.isSafeInteger(offset) || offset < 0)
+              throw new Error('Invalid fixture cursor.');
+            const asOf = input.asOf ? Date.parse(input.asOf) : Date.now();
+            const page = <T>(ids: T[]) => ({
+              selected: input.ids ? ids : ids.slice(offset, offset + 20),
+              more: !input.ids && ids.length > offset + 20,
+            });
+            if (service === 'gmail') {
+              const mails = (world.gmail?.mails ?? []).filter(
+                (mail) => !mail.labels.some((label) => ['DRAFT', 'TRASH', 'SPAM'].includes(label)),
+              );
+              const after = Math.max(
+                asOf - 30 * 86400000,
+                input.since ? Date.parse(input.since) : 0,
+              );
+              const latest = new Map<string, number>();
+              for (const mail of mails)
+                if (mail.at >= after && mail.at <= asOf)
+                  latest.set(mail.threadId, Math.max(latest.get(mail.threadId) ?? 0, mail.at));
+              const { selected, more } = page(
+                input.ids ?? [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id),
+              );
+              return {
+                records: selected.map((id) => {
+                  const thread = mails
+                    .filter((mail) => mail.threadId === id)
+                    .sort((a, b) => a.at - b.at);
+                  return {
+                    id,
+                    version: hash(thread),
+                    available: thread.length > 0,
+                    url: `https://mail.google.com/mail/u/0/#all/${id}`,
+                    data: thread.length
+                      ? {
+                          truncated: !input.ids || thread.length > 8,
+                          messages: thread.slice(input.ids ? -8 : -1).map((mail) => ({
+                            id: mail.id,
+                            from: mail.from,
+                            to: mail.to,
+                            subject: mail.subject,
+                            receivedAt: new Date(mail.at).toISOString(),
+                            sent: mail.labels.includes('SENT'),
+                            text: input.ids ? mail.body.slice(0, 8000) : mail.body.slice(0, 200),
+                            truncated: !input.ids || mail.body.length > 8000,
+                          })),
+                        }
+                      : {},
+                  };
+                }),
+                ...(more ? { nextCursor: String(offset + 20) } : {}),
+              };
+            }
+            const day = Date.parse(new Date(asOf).toISOString().slice(0, 10));
+            const events = world.calendar?.events ?? [];
+            const { selected, more } = page(
+              input.ids ??
+                events
+                  .filter(
+                    (event) => event.end > day - 86400000 && event.start < day + 31 * 86400000,
+                  )
+                  .sort((a, b) => a.start - b.start)
+                  .map((event) => event.id),
+            );
+            return {
+              records: selected.map((id) => {
+                const event = events.find((event) => event.id === id);
+                const {
+                  id: _,
+                  status,
+                  summary,
+                  description,
+                  location,
+                  start,
+                  end,
+                  organizer,
+                  attendees,
+                } = event ? world.calendar!.view(event) : ({} as Record<string, never>);
+                return {
+                  id,
+                  version: hash(event ?? null),
+                  available: Boolean(event),
+                  data: event
+                    ? {
+                        id,
+                        status,
+                        summary,
+                        description,
+                        location,
+                        start,
+                        end,
+                        organizer,
+                        attendees,
+                      }
+                    : {},
+                };
+              }),
+              ...(more ? { nextCursor: String(offset + 20) } : {}),
+            };
+          },
+        },
+      ]),
+    ),
     async createSession(ownerId): Promise<IntegrationSession> {
       return {
         id: randomUUID(),

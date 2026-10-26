@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
+import { summarizePopulation } from './proactivity.ts';
 import { runAnalyticsEval } from './analytics.ts';
 import { runDecisionEval } from './decisions.ts';
 import { parseSetups, runLongMemEval } from './longmemeval.ts';
@@ -56,6 +57,7 @@ export const help = `nod capability evals
     slack <label>... | --prefix <p>                 draft the Slack summary with the leaderboard
 
   Look closer
+    proactivity-report <label>  show discovery, misses, unwanted nudges and cost for the controlled source populations
     report <label> [--open]    show a saved run (and open its HTML report)
     markdown <label> [<label>] a saved run, or a baseline and a candidate, as Markdown for a CI summary
     review <label>             judge attempts as a user would: would you trust nod with this?
@@ -420,6 +422,12 @@ export async function main(args: Args) {
     case 'runs':
       console.log(runsTable(await listRuns(root)));
       return;
+    case 'proactivity-report': {
+      if (!first) throw new Error('Give a saved run label.');
+      const run = await loadRun(root, first);
+      console.log(JSON.stringify(summarizePopulation(run.attempts), null, 2));
+      return;
+    }
     case 'report': {
       if (!first) throw new Error('Usage: report <label> [--open]');
       const run = await loadRun(root, first);

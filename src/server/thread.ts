@@ -61,6 +61,7 @@ export interface EnqueueTurnOptions {
   background?: boolean;
   sessionId?: string;
   parentTurnId?: string;
+  proactive?: boolean;
   client?: PoolClient;
 }
 export interface SubmitUserMessageOptions {
@@ -88,6 +89,7 @@ type ConfirmAction = {
 };
 
 export interface ThreadDependencies {
+  proactivity?: (turn: TurnRef, signal: AbortSignal) => Promise<RuntimeContext['proactivity']>;
   analytics?: CaptureAnalytics;
   currentModel?: () => { provider: string; name: string; configured: boolean };
   present?: (
@@ -210,11 +212,14 @@ const messageIdInUse = () =>
   httpError('This message ID is already in use. Send this as a new message.');
 
 export async function withTurnLock<T>(
-  turnId: string,
+  turn: string | { turnId: string; signal: AbortSignal },
   operation: (client: PoolClient) => Promise<T>,
   database?: PoolClient,
 ) {
+  const turnId = typeof turn === 'string' ? turn : turn.turnId;
+  const signal = typeof turn === 'string' ? undefined : turn.signal;
   const execute = async (client: PoolClient) => {
+    signal?.throwIfAborted();
     const { rows } = await client.query(
       `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR NO KEY UPDATE OF u`,
@@ -223,7 +228,7 @@ export async function withTurnLock<T>(
     if (rows[0]?.status !== 'running') throw turnStopped();
     return operation(client);
   };
-  return database ? execute(database) : transaction(execute, pool);
+  return database ? execute(database) : transaction(execute, pool, signal);
 }
 
 async function sendDrain(client: PoolClient | undefined, threadId: string) {
@@ -326,8 +331,8 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
     const thread = await lockThread(client);
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id,proactive)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,(SELECT proactive FROM turns WHERE id=$11 AND owner_id=$2),false))
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
         id,
@@ -341,6 +346,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.channelSourceId ?? null,
         options.sessionId ?? null,
         options.parentTurnId ?? null,
+        options.proactive ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -898,7 +904,7 @@ async function claimTurns(threadId: string) {
   return transaction(async (client) => {
     if ((await lockThread(client)).id !== threadId) return [];
     const busy = await client.query(
-      "SELECT DISTINCT session_id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running'",
+      "SELECT session_id,proactive FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running'",
       [threadId, ownerId],
     );
     const { rows } = await client.query(
@@ -907,8 +913,11 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
+    let proactiveBusy = busy.rows.some((row) => row.proactive);
     const claimed = rows.filter((row) => {
       if (sessions.has(row.session_id)) return false;
+      if (row.proactive && proactiveBusy) return false;
+      proactiveBusy ||= row.proactive;
       sessions.add(row.session_id);
       return true;
     });
@@ -1222,6 +1231,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (confirmed) turn.prompt = confirmed.prompt;
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
+    const proactivity = await dependencies.proactivity?.(ref, signal);
     let sourceMessageId = loaded.sourceMessageId;
     let voice = loaded.voice;
     let ownerMessage = turn.source === 'user';
@@ -1326,6 +1336,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
       speech,
+      ...(proactivity ? { proactivity } : {}),
       taskContext,
       tasks,
       ...(checkIn ? { checkIn } : {}),

@@ -53,6 +53,8 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
       source: 'resume',
       title: id.startsWith('confirmation:') ? 'Ran an action you approved' : 'Continued a task',
     };
+  if (id.startsWith('proactivity:'))
+    return { source: 'check', title: 'Checked sources and prepared work' };
   if (id.startsWith('activity-check:'))
     return { source: 'check', title: 'Checked a connected app' };
   if (id.startsWith('reaction:')) return { source: 'chat', title: 'Your reaction' };

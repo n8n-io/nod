@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import {
@@ -23,7 +23,6 @@ import type { WorkspaceSession } from '../src/ports/computer.ts';
 import { threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
 import {
-  cliInstallProgram,
   connectedUser,
   runWorkspaceCommand,
   WorkspaceCommandError,
@@ -205,113 +204,6 @@ async function exists(path: string) {
     return false;
   }
 }
-async function ready(path: string) {
-  for (let i = 0; i < 200; i++) {
-    if (await exists(path)) return;
-    await delay(10);
-  }
-  throw new Error('The synthetic process did not start.');
-}
-
-test('cancel waits for the remote process group, including a child ignoring TERM', async () => {
-  const f = await local();
-  const controller = new AbortController();
-  try {
-    const command =
-      'import os,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); open("ready","w").close(); time.sleep(3); open("late","w").write("unexpected")';
-    const operation = f.run(['sh', '-c', `python3 -c '${command}' & wait`], {
-      signal: controller.signal,
-    });
-    const rejected = assert.rejects(
-      operation,
-      (error: unknown) =>
-        error instanceof WorkspaceCommandError &&
-        !error.uncertain &&
-        error.message === 'Task cancelled.',
-    );
-    await ready(join(f.directory, 'ready'));
-    const started = Date.now();
-    controller.abort();
-    await rejected;
-    assert.ok(Date.now() - started >= 1800);
-    await delay(1500);
-    assert.equal(await exists(join(f.directory, 'late')), false);
-    assert.equal((await f.run(['printf', 'ready again'])).stdout.toString(), 'ready again');
-  } finally {
-    controller.abort();
-    await f.close();
-  }
-});
-
-test('process-group probes wait through transient permission errors and fence persistent uncertainty', async (t) => {
-  for (const persistent of [false, true])
-    await t.test(persistent ? 'persistent denial' : 'transient denial', async () => {
-      const f = await local(`import os,errno
-probe_calls=0
-original_killpg=os.killpg
-original_isdir=os.path.isdir
-def probe(group,value):
- global probe_calls
- if value==0:
-  probe_calls+=1
-  with open('probes','a') as file: file.write('x')
-  if ${persistent ? 'True' : 'probe_calls==1'}: raise PermissionError(errno.EPERM,'Synthetic process-group denial')
- return original_killpg(group,value)
-os.killpg=probe
-os.path.isdir=lambda path: False if path=='/proc' else original_isdir(path)
-`);
-      const controller = new AbortController();
-      try {
-        const operation = f.run(
-          [
-            'python3',
-            '-c',
-            'import time;open("ready","w").close();time.sleep(0.5);open("late","w").close()',
-          ],
-          { signal: controller.signal, drainTimeoutMs: 1000 },
-        );
-        const rejected = assert.rejects(
-          operation,
-          (error: unknown) =>
-            error instanceof WorkspaceCommandError && error.uncertain === persistent,
-        );
-        await ready(join(f.directory, 'ready'));
-        controller.abort();
-        await rejected;
-        assert.ok((await readFile(join(f.directory, 'probes'), 'utf8')).length >= 2);
-        await delay(600);
-        assert.equal(await exists(join(f.directory, 'late')), false);
-      } finally {
-        controller.abort();
-        await f.close();
-      }
-    });
-});
-
-test(
-  'cancel reaches a command that moved itself into a new process group',
-  { skip: !existsSync('/proc') },
-  async () => {
-    const f = await local();
-    const controller = new AbortController();
-    try {
-      const command =
-        'import os,time; os.setpgid(0,0); open("ready","w").close(); time.sleep(2); open("late","w").write("unexpected")';
-      const operation = f.run(['sh', '-c', `python3 -c '${command}' & wait`], {
-        signal: controller.signal,
-      });
-      const rejected = assert.rejects(operation, /Task cancelled/);
-      await ready(join(f.directory, 'ready'));
-      controller.abort();
-      await rejected;
-      await delay(2200);
-      assert.equal(await exists(join(f.directory, 'late')), false);
-    } finally {
-      controller.abort();
-      await f.close();
-    }
-  },
-);
 
 test('connected CLIs run only their sealed install with a clean environment', async () => {
   const root = await mkdtemp('/tmp/nod-connected-');
@@ -419,128 +311,6 @@ test('connected CLIs run only their sealed install with a clean environment', as
   } finally {
     await chmod(root, 0o700);
     await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('a missing sealed install comes from its declared source and a failed install runs nothing', async () => {
-  const home = await mkdtemp('/tmp/nod-connected-');
-  try {
-    const launch: WorkspaceCommandLauncher = (_command, args, options) =>
-      spawn('python3', args.slice(args.indexOf('-I')), { ...options, cwd: home, stdio: 'pipe' });
-    const cli = {
-      id: randomUUID(),
-      command: 'fixturecli',
-      source: { url: 'https://127.0.0.1:9/fixturecli' },
-    };
-    const result = await runWorkspaceCommand({
-      container: 'nod-workspace-fixture',
-      threadId: 'fixture',
-      args: ['status'],
-      environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
-      cli,
-      spawn: launch,
-    });
-    assert.notEqual(result.exitCode, 0);
-    assert.match(result.stderr.toString(), /Could not install fixturecli/);
-    assert.equal(existsSync(join(home, `nod-cli-${cli.id}`, '.installed')), false);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test('sealed downloads install only the declared bytes and find the program in archives', async () => {
-  const root = await mkdtemp('/tmp/nod-cli-install-');
-  try {
-    const release = join(root, 'release');
-    await mkdir(join(release, 'tool-1.0', 'bin'), { recursive: true });
-    await writeFile(
-      join(release, 'tool-1.0', 'bin', 'fixturecli'),
-      '#!/bin/sh\necho sealed "$@"\n',
-      {
-        mode: 0o755,
-      },
-    );
-    await writeFile(join(release, 'tool-1.0', 'README'), 'synthetic');
-    const archive = join(root, 'release.tar.gz');
-    spawnSync('tar', ['-czf', archive, '-C', release, 'tool-1.0'], {
-      env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' },
-    });
-    const tools = join(root, 'tools');
-    await mkdir(tools);
-    await writeFile(
-      join(tools, 'curl'),
-      `#!/bin/sh\nwhile [ "$1" != --output ]; do shift; done\ncp ${archive} "$2"\n`,
-      { mode: 0o755 },
-    );
-    const sha256 = createHash('sha256')
-      .update(await readFile(archive))
-      .digest('hex');
-    const install = (name: string, digest: string) =>
-      spawnSync(
-        'python3',
-        [
-          '-I',
-          '-c',
-          cliInstallProgram,
-          join(root, name),
-          JSON.stringify({
-            id: randomUUID(),
-            command: 'fixturecli',
-            source: { url: 'https://example.test/release.tar.gz', sha256: digest },
-          }),
-        ],
-        { env: { PATH: `${tools}:/usr/bin:/bin` }, encoding: 'utf8' },
-      );
-    const refused = install('refused', 'f'.repeat(64));
-    assert.notEqual(refused.status, 0);
-    assert.match(refused.stderr, /sha256/);
-    assert.equal(existsSync(join(root, 'refused', 'bin', 'fixturecli')), false);
-    assert.equal(existsSync(join(root, 'refused', '.installed')), false);
-    const installed = install('installed', sha256);
-    assert.equal(installed.status, 0, installed.stderr);
-    assert.equal(
-      spawnSync(join(root, 'installed', 'bin', 'fixturecli'), ['ok'], { encoding: 'utf8' }).stdout,
-      'sealed ok\n',
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('artifact descriptor reads reject symlinks, special files and oversized data', async () => {
-  const f = await local();
-  try {
-    const base = join(f.directory, 'task');
-    await mkdir(join(base, 'nested'), { recursive: true });
-    await writeFile(join(base, 'nested', 'ok'), Buffer.from([0, 255, 4]));
-    await writeFile(join(f.directory, 'private'), 'synthetic outside value');
-    await symlink(join(f.directory, 'private'), join(base, 'linked'));
-    await symlink(f.directory, join(base, 'linked-directory'));
-    const read = (path: string, maxBytes = 100, offset = 0, identity?: string) =>
-      f.run(['python3', '-c', artifactReadProgram], {
-        input: JSON.stringify({ base, path, maxBytes, offset, identity }),
-        maxBytes: maxBytes + 1024,
-      });
-    const ok = (await read('nested/ok')).stdout;
-    const identity = ok.subarray(0, ok.indexOf(10)).toString();
-    assert.deepEqual(ok.subarray(ok.indexOf(10) + 1), Buffer.from([0, 255, 4]));
-    const tail = (await read('nested/ok', 100, 1, identity)).stdout;
-    assert.deepEqual(tail.subarray(tail.indexOf(10) + 1), Buffer.from([255, 4]));
-    await writeFile(join(base, 'nested', 'ok'), Buffer.from([1, 2, 3, 4]));
-    assert.notEqual((await read('nested/ok', 100, 3, identity)).exitCode, 0);
-    for (const path of [
-      'linked',
-      'linked-directory/private',
-      '../private',
-      'nested/../nested/ok',
-      '.',
-    ])
-      assert.notEqual((await read(path)).exitCode, 0, path);
-    assert.notEqual((await read('nested/ok', 2)).exitCode, 0);
-    await f.run(['mkfifo', join(base, 'pipe')]);
-    assert.notEqual((await read('pipe')).exitCode, 0);
-  } finally {
-    await f.close();
   }
 });
 

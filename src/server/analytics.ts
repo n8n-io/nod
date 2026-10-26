@@ -114,7 +114,8 @@ const readVerbs = new Set([
 ]);
 
 function sideEffect(action: string) {
-  if (action === 'NOD_vault_allow' || action === 'SEARCH_TOOLS') return;
+  if (action === 'NOD_vault_allow' || action === 'NOD_read_source' || action === 'SEARCH_TOOLS')
+    return;
   if (action === 'NOD_browser') return 'action';
   if (action.startsWith('NOD_')) return 'settings';
   return action

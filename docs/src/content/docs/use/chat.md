@@ -9,7 +9,7 @@ Chat is where you give nod work, answer its questions and get the results.
 
 nod keeps one ongoing conversation with you. The desktop app, the web app, Telegram and WhatsApp all add to that same conversation, so nod remembers what you said in any of them.
 
-nod follows your conversation language, including questions, confirmations and connection instructions. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, nod writes in English. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
+nod follows your conversation language, including questions, confirmations and connection instructions. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, nod writes in English. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. What nod reads on websites, in email and in documents comes back translated. It keeps the original wording only in quotes, such as a menu or button name you need to find, with a short translation when the meaning isn't clear. Region, date format and time zone are separate preferences.
 
 ## Send a message
 

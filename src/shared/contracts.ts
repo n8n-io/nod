@@ -361,6 +361,7 @@ export interface Preferences {
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
+  proactivePaused: boolean;
 }
 export type ChannelProvider = 'telegram' | 'whatsapp';
 export interface ChannelLinkStatus {
