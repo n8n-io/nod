@@ -975,31 +975,48 @@ export async function createDiscoveredConnections(
     );
     if (changed.rowCount) options.refresh?.();
   }
-  const catalogs = new Map<string, { at: number; value: Promise<DiscoveredCatalog> }>();
+  const catalogs = new Map<
+    string,
+    { at: number; value: Promise<DiscoveredCatalog>; ready?: DiscoveredCatalog }
+  >();
   async function catalog(
     row: AccountRow,
     path: Extract<AccessPath, { kind: 'mcp' }>,
     signal?: AbortSignal,
+    allowStale = false,
   ): Promise<DiscoveredCatalog> {
     signal?.throwIfAborted();
     const key = `${row.id}:${path.id}:${row.account_id}`;
     const cached = catalogs.get(key);
-    if (cached && Date.now() - cached.at < catalogMs) return cached.value;
-    const token = await tokenFor(row, path, signal);
-    const value = via(path)
-      .transport.listTools(path.endpoint, headers(path, token), signal)
-      .then(({ tools, instructions }) => ({
+    if (cached && Date.now() - cached.at < catalogMs)
+      return allowStale && cached.ready ? cached.ready : cached.value;
+    const value = (async () => {
+      const token = await tokenFor(row, path, signal);
+      const { tools, instructions } = await via(path).transport.listTools(
+        path.endpoint,
+        headers(path, token),
+        signal,
+      );
+      return {
         tools: tools.map((tool) => redact(tool, token) as DiscoveredTool),
         ...(instructions
           ? { instructions: String(redact(instructions, token)).slice(0, 20_000) }
           : {}),
-      }));
-    catalogs.set(key, { at: Date.now(), value });
-    value.catch(() => {
-      if (catalogs.get(key)?.value !== value) return;
-      if (cached) catalogs.set(key, cached);
-      else catalogs.delete(key);
-    });
+      };
+    })();
+    const entry = { at: Date.now(), value, ready: cached?.ready };
+    catalogs.set(key, entry);
+    void value.then(
+      (ready) => {
+        entry.ready = ready;
+      },
+      () => {
+        if (catalogs.get(key) !== entry) return;
+        if (cached) catalogs.set(key, { ...cached, at: Date.now() });
+        else catalogs.delete(key);
+      },
+    );
+    if (allowStale && entry.ready) return entry.ready;
     return cached ? value.catch(() => cached.value) : value;
   }
   async function tokenFor(
@@ -1216,7 +1233,7 @@ export async function createDiscoveredConnections(
         row.paths.flatMap((path) =>
           path.kind === 'mcp'
             ? [
-                catalog(row, path, AbortSignal.timeout(20_000)).then(
+                catalog(row, path, AbortSignal.timeout(20_000), true).then(
                   ({ tools, instructions }): ConnectedMcpServer => ({
                     connectionId: row.id,
                     pathId: path.id,

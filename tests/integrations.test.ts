@@ -5385,6 +5385,103 @@ test(
 );
 
 test(
+  'MCP catalog refresh keeps known tools available and drops disconnected accounts',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_catalog_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const owner = 'fixture-owner';
+      const connectionId = randomUUID();
+      const key = randomBytes(32);
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: owner,
+        keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      });
+      let refresh = false;
+      let requests = 0;
+      let entered!: () => void;
+      const refreshing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const discovered = await createDiscoveredConnections(pool, {
+        ownerId: owner,
+        baseUrl: 'http://localhost:4310',
+        grantVault,
+        transport: {
+          validateEndpoint: async (endpoint) => endpoint,
+          http: async () => {
+            throw new Error('The catalog must not run an HTTP action.');
+          },
+          callTool: async () => {
+            throw new Error('The catalog must not run an MCP action.');
+          },
+          listTools: async () => {
+            requests += 1;
+            if (refresh) {
+              entered();
+              await waiting;
+            }
+            return {
+              tools: [{ name: refresh ? 'new_tool' : 'known_tool', inputSchema: {} }],
+            };
+          },
+        },
+        oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
+      });
+      await pool.query(
+        'INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths) VALUES($1,$2,$3,$4,$5,$6)',
+        [
+          connectionId,
+          owner,
+          'fixture-app',
+          'Fixture app',
+          'Fixture account',
+          JSON.stringify([{ id: randomUUID(), kind: 'mcp', endpoint: 'https://example.com/mcp' }]),
+        ],
+      );
+      await grantVault.put(connectionId, 'synthetic-token');
+      const first = await Promise.all([discovered.servers(), discovered.servers()]);
+      assert.ok(first.every((servers) => servers[0].tools[0].name === 'known_tool'));
+      assert.equal(requests, 1);
+      const now = Date.now();
+      t.mock.method(Date, 'now', () => now + 11 * 60_000);
+      refresh = true;
+      let returned = false;
+      const next = discovered.servers().then((value) => {
+        returned = true;
+        return value;
+      });
+      await refreshing;
+      await delay(0);
+      assert.equal(returned, true);
+      assert.equal((await next)[0].tools[0].name, 'known_tool');
+      assert.equal((await discovered.servers())[0].tools[0].name, 'known_tool');
+      assert.equal(requests, 2);
+      release();
+      await delay(0);
+      assert.equal((await discovered.servers())[0].tools[0].name, 'new_tool');
+      await pool.query('DELETE FROM discovered_connections WHERE id=$1', [connectionId]);
+      assert.deepEqual(await discovered.servers(), []);
+    } finally {
+      release();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
   'a connected CLI receives each named setting and never shows their values',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
