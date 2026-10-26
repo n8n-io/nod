@@ -11,9 +11,9 @@ import { AppAccountManager } from '../../../components/app-account-manager';
 import { Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
-import { api, errorMessage, post } from '../../../lib/api';
+import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { connectionUrl, setupLinkHash } from '../../../lib/connection-url';
+import { cancelSetup, connectionUrl, setupLinkHash } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import type { StepProps } from '..';
@@ -332,9 +332,11 @@ export function PersonalConnection({
       const response = await api<{ url: string; attempt?: string }>(`/api/apps/${slug}/connect`, {
         method: 'POST',
         body: JSON.stringify({ returnTo: external ? 'desktop' : 'window', connectionId }),
-        signal: controller.signal,
       });
-      if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
+      if (controller.signal.aborted) {
+        cancelSetup(connectionUrl(response.url, window.location.origin));
+        throw new DOMException('Cancelled.', 'AbortError');
+      }
       const url = connectionUrl(response.url, window.location.origin);
       if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
         throw new Error(connectionMessage(slug, 'failed'));
@@ -408,10 +410,7 @@ export function PersonalConnection({
   }
 
   function cancel() {
-    if (signInUrl)
-      void setupLinkHash(signInUrl)
-        .then((hash) => post('/api/apps/setup-cancel', { hash }))
-        .catch(() => {});
+    if (signInUrl) cancelSetup(signInUrl);
     request.current?.abort();
     request.current = null;
     clearAttempt();

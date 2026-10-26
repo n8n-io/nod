@@ -131,7 +131,7 @@ export function createCommunication(options: {
       if (!drafted.success) {
         if (attempt)
           throw new Error(
-            'Nod could not write this message: the model replied twice in the wrong format.',
+            'Nod could not write this message: the model did not reply in the requested format.',
           );
         continue;
       }

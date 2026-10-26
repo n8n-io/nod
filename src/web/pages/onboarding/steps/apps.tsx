@@ -8,10 +8,10 @@ import { AppDiscoveryDialog } from '../../../components/app-discovery-dialog';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Button, Notice, SearchField } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
-import { api, errorMessage, post } from '../../../lib/api';
+import { api, errorMessage } from '../../../lib/api';
 import { searchApps } from '../../../lib/app-search';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { connectionUrl, setupLinkHash } from '../../../lib/connection-url';
+import { cancelSetup, connectionUrl, setupLinkHash } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import { AppAccountManager } from '../../../components/app-account-manager';
@@ -218,11 +218,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
   }
 
   function cancel() {
-    const url = signIn?.url;
-    if (url)
-      void setupLinkHash(url)
-        .then((hash) => post('/api/apps/setup-cancel', { hash }))
-        .catch(() => {});
+    if (signIn?.url) cancelSetup(signIn.url);
     closeSignIn();
     window.requestAnimationFrame(() => returnFocus()?.focus({ preventScroll: true }));
   }
@@ -386,11 +382,13 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
               ? { connectionId: connection.connectionId }
               : {}),
           }),
-          signal: controller.signal,
         },
       );
-      if (controller.signal.aborted) return;
       const url = connectionUrl(result.url, window.location.origin);
+      if (controller.signal.aborted) {
+        cancelSetup(url);
+        return;
+      }
       const proposal = new URL(url);
       if (proposal.origin === window.location.origin && proposal.pathname === '/apps') {
         const id = proposal.searchParams.get('connect');
@@ -556,6 +554,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
           type="search"
           aria-label="Search apps"
           placeholder="Search apps"
+          disabled={locked}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onClear={() => {

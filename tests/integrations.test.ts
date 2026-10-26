@@ -825,6 +825,43 @@ test('connection bridge binds a single browser bootstrap to one installation att
   assert.equal(failed.status, 400);
   await failed.text();
   assert.equal(browser.owns(failedUrl), false);
+  let starting = () => {};
+  let fail = (_error: Error) => {};
+  const pending = new Promise<void>((resolve) => {
+    starting = resolve;
+  });
+  const abandonedUrl = await browser.open(
+    randomBytes(32).toString('base64url'),
+    brokerOrigin,
+    () => {
+      starting();
+      return new Promise<string>((_resolve, reject) => {
+        fail = reject;
+      });
+    },
+  );
+  const abandonedOrigin = new URL(abandonedUrl).origin;
+  const abandonedKey = JSON.parse(
+    (await (await fetch(abandonedUrl)).text()).match(/const bridgeKey=("[^"]+");/)![1],
+  );
+  const leaving = new AbortController();
+  const abandoned = fetch(`${abandonedOrigin}/start`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      origin: abandonedOrigin,
+      'x-nod-bridge': abandonedKey,
+    },
+    body: JSON.stringify({ browserKey: key }),
+    signal: leaving.signal,
+  });
+  await pending;
+  leaving.abort();
+  await assert.rejects(abandoned);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  fail(new Error('Synthetic broker outage.'));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(browser.owns(abandonedUrl), false);
   await browser.close();
   await assert.rejects(
     browser.open(randomBytes(32).toString('base64url'), brokerOrigin, async () => ''),

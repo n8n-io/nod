@@ -198,7 +198,8 @@ export function createIntegrationBrowser(): IntegrationConnectionBrowser {
           send(200, { id, url: remote.href, expiresAt });
         } catch (error) {
           logFailure('app_connection_start', error);
-          response.once('close', () => finish(id));
+          if (response.destroyed) finish(id);
+          else response.once('close', () => finish(id));
           send(400, {
             error: 'The app connection could not be started. Return to Nod and try again.',
           });

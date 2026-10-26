@@ -1577,7 +1577,10 @@ async function initializeApplication(
           return { ...result, message };
         } catch (error) {
           await integrations
-            .abandonSetup(createHash('sha256').update(result.url).digest('hex'), 'unknown')
+            .abandonSetup(
+              createHash('sha256').update(new URL(result.url).href).digest('hex'),
+              'unknown',
+            )
             .catch((cleanup) => logFailure('connection_abandon', cleanup));
           throw error;
         }
