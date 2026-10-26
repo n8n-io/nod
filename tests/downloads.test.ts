@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
   link,
@@ -8,8 +8,10 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises';
@@ -17,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { BrowserActionError } from '../src/ports/computer.ts';
 import { IntegrationDownload } from '../src/ports/integrations.ts';
@@ -416,7 +419,7 @@ test(
     });
     try {
       await database.query(
-        `CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL); CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),name text NOT NULL CHECK(name <> 'reject'),mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL)`,
+        `CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL); CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),name text NOT NULL CHECK(name <> 'reject'),mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL,expires_at timestamptz,deleting_at timestamptz)`,
       );
       const thread = randomUUID();
       const foreignThread = randomUUID();
@@ -470,6 +473,562 @@ test(
       await admin.end();
       await rm(root, { recursive: true, force: true });
     }
+  },
+);
+
+test(
+  'temporary artifacts expire safely across retention, interrupted writes and cleanup restarts',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-artifact-lifecycle-'));
+    const schema = 'test_artifact_lifecycle_' + randomUUID().replaceAll('-', '');
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const services: ReturnType<typeof createArtifactService>[] = [];
+    const create = (ownerId: string, localRoot = root) => {
+      const service = createArtifactService({ database, ownerId, localRoot });
+      services.push(service);
+      return service;
+    };
+    const directory = (ownerId: string) =>
+      join(root, 'artifacts', createHash('sha256').update(ownerId).digest('hex'));
+    const path = (ownerId: string, id: string) => join(directory(ownerId), id);
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const age = (owner: string, ids: string[]) =>
+      database.query(
+        "UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE owner_id=$1 AND id=ANY($2::uuid[])",
+        [owner, ids],
+      );
+    const absent = (file: string) => assert.rejects(readFile(file), { code: 'ENOENT' });
+    t.after(async () => {
+      await Promise.all(services.map((service) => service.close()));
+      await database.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    });
+    await database.query(`
+      CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL);
+      CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,attachments jsonb NOT NULL DEFAULT '[]');
+      CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),
+        name text NOT NULL,mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),expires_at timestamptz,deleting_at timestamptz);
+    `);
+
+    await t.test(
+      'expiry preserves sent, published, retained and renewed files, including legacy rows',
+      async () => {
+        const owner = 'lease-owner';
+        const service = create(owner);
+        const thread = randomUUID();
+        await database.query('INSERT INTO threads VALUES($1,$2)', [thread, owner]);
+        const abandoned = await service.storeUpload(
+          Buffer.from('abandoned'),
+          'abandoned',
+          'text/plain',
+        );
+        const sent = await service.storeUpload(Buffer.from('sent'), 'sent', 'text/plain');
+        const published = await service.storeArtifact(
+          Buffer.from('published'),
+          'published',
+          'text/plain',
+          thread,
+        );
+        const retained = await service.storeArtifact(
+          Buffer.from('retained'),
+          'retained',
+          'text/plain',
+        );
+        const recent = await service.storeUpload(Buffer.from('recent'), 'recent', 'text/plain');
+        const renewed = await service.storeUpload(Buffer.from('renewed'), 'renewed', 'text/plain');
+        const legacy = await service.storeUpload(Buffer.from('legacy'), 'legacy', 'text/plain');
+        const legacyPath = join(root, 'artifacts', legacy.id);
+        await rename(path(owner, legacy.id), legacyPath);
+        await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
+          owner,
+          legacy.id,
+          legacyPath,
+        ]);
+        assert.equal((await service.readArtifact(legacy.id)).toString(), 'legacy');
+        await database.query('INSERT INTO messages VALUES($1,$2,$3)', [
+          randomUUID(),
+          owner,
+          JSON.stringify([sent]),
+        ]);
+        await age(owner, [abandoned.id, sent.id, published.id, renewed.id, legacy.id]);
+        const available = await service.renewUploads([
+          renewed.id,
+          retained.id,
+          renewed.id,
+          randomUUID(),
+        ]);
+        assert.deepEqual(available.map((file) => file.id).sort(), [renewed.id, retained.id].sort());
+        const renewedRow = (
+          await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+            owner,
+            renewed.id,
+          ])
+        ).rows[0];
+        assert.ok(renewedRow.expires_at.getTime() > Date.now() + 23 * 60 * 60 * 1000);
+        assert.equal((await service.sweep()).removed, 2);
+        await absent(path(owner, abandoned.id));
+        await absent(legacyPath);
+        for (const [file, content] of [
+          [sent, 'sent'],
+          [published, 'published'],
+          [retained, 'retained'],
+          [recent, 'recent'],
+          [renewed, 'renewed'],
+        ] as const)
+          assert.equal((await service.readArtifact(file.id)).toString(), content);
+        assert.equal(
+          (
+            await database.query('SELECT thread_id FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              sent.id,
+            ])
+          ).rows[0].thread_id,
+          null,
+        );
+        assert.equal(
+          (
+            await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              retained.id,
+            ])
+          ).rows[0].expires_at,
+          null,
+        );
+      },
+    );
+
+    await t.test('renewal and retention require available backing files', async (t) => {
+      const owner = 'availability-owner';
+      const service = create(owner);
+      const available = await service.storeUpload(
+        Buffer.from('valid bytes'),
+        'valid',
+        'text/plain',
+      );
+      const retained = await service.storeArtifact(
+        Buffer.from('retained bytes'),
+        'retained',
+        'text/plain',
+      );
+      const legacy = await service.storeUpload(Buffer.from('legacy bytes'), 'legacy', 'text/plain');
+      const legacyPath = join(root, 'artifacts', legacy.id);
+      await rename(path(owner, legacy.id), legacyPath);
+      await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
+        owner,
+        legacy.id,
+        legacyPath,
+      ]);
+      const mutations: Record<string, (file: string) => Promise<unknown>> = {
+        missing: unlink,
+        truncated: (file) => writeFile(file, 'short'),
+        oversized: (file) => writeFile(file, 'longer than the original bytes'),
+        symlink: async (file) => {
+          await unlink(file);
+          await symlink(path(owner, available.id), file);
+        },
+        directory: async (file) => {
+          await unlink(file);
+          await mkdir(file);
+        },
+      };
+      const rejected: Array<typeof available> = [];
+      for (const [name, mutate] of Object.entries(mutations)) {
+        const file = await service.storeUpload(Buffer.from('valid bytes'), name, 'text/plain');
+        await mutate(path(owner, file.id));
+        rejected.push(file);
+      }
+      await age(
+        owner,
+        rejected.map((file) => file.id),
+      );
+      const expires = (
+        await database.query('SELECT id,expires_at FROM artifacts WHERE owner_id=$1 ORDER BY id', [
+          owner,
+        ])
+      ).rows;
+      await t.test('renewal omits unusable files without extending their leases', async () => {
+        const result = await service.renewUploads(
+          [...rejected, available, retained, legacy].map((file) => file.id),
+        );
+        assert.deepEqual(
+          result.map((file) => file.id).sort(),
+          [available.id, retained.id, legacy.id].sort(),
+        );
+        for (const file of rejected)
+          assert.deepEqual(
+            (
+              await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+                owner,
+                file.id,
+              ])
+            ).rows[0].expires_at,
+            expires.find((row) => row.id === file.id).expires_at,
+          );
+      });
+      await t.test('retention rejects unusable files in the caller transaction', async () => {
+        const client = await database.connect();
+        try {
+          for (const file of rejected) {
+            await client.query('BEGIN');
+            await assert.rejects(service.retainArtifacts([file.id], client), {
+              message: 'An attachment is unavailable.',
+              statusCode: 400,
+            });
+            await client.query('ROLLBACK');
+          }
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+        }
+      });
+      const moved = directory(owner) + '-moved';
+      await rename(directory(owner), moved);
+      await symlink(moved, directory(owner));
+      try {
+        assert.deepEqual(await service.renewUploads([available.id, retained.id, legacy.id]), [
+          legacy,
+        ]);
+      } finally {
+        await unlink(directory(owner));
+        await rename(moved, directory(owner));
+      }
+    });
+
+    await t.test(
+      'uncommitted writers stay protected and rolled-back files are reclaimed after restart',
+      async () => {
+        const owner = 'writer-owner';
+        const service = create(owner);
+        const client = await database.connect();
+        try {
+          await client.query('BEGIN');
+          const active = await service.storeArtifact(
+            Buffer.from('active'),
+            'active',
+            'text/plain',
+            undefined,
+            client,
+          );
+          await utimes(path(owner, active.id), old, old);
+          assert.equal((await service.sweep()).orphans, 0);
+          assert.equal((await readFile(path(owner, active.id))).toString(), 'active');
+          await client.query('COMMIT');
+          assert.equal((await service.readArtifact(active.id)).toString(), 'active');
+          await client.query('BEGIN');
+          const interrupted = await service.storeArtifact(
+            Buffer.from('interrupted'),
+            'interrupted',
+            'text/plain',
+            undefined,
+            client,
+          );
+          await utimes(path(owner, interrupted.id), old, old);
+          await client.query('ROLLBACK');
+          await service.close();
+          const restarted = create(owner);
+          assert.equal((await restarted.sweep()).orphans, 1);
+          await absent(path(owner, interrupted.id));
+          assert.equal((await restarted.readArtifact(active.id)).toString(), 'active');
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+        }
+      },
+    );
+
+    await t.test(
+      'failed unlink leaves an unavailable tombstone and restart recovers it or missing bytes',
+      async () => {
+        const owner = 'retry-owner';
+        const service = create(owner);
+        const failed = await service.storeUpload(Buffer.from('retry'), 'retry', 'text/plain');
+        await age(owner, [failed.id]);
+        await unlink(path(owner, failed.id));
+        await mkdir(path(owner, failed.id));
+        assert.equal((await service.sweep()).failed, 1);
+        assert.ok(
+          (
+            await database.query('SELECT deleting_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              failed.id,
+            ])
+          ).rows[0].deleting_at,
+        );
+        await assert.rejects(service.readArtifact(failed.id), /unavailable/);
+        assert.deepEqual(await service.renewUploads([failed.id]), []);
+        const client = await database.connect();
+        try {
+          await client.query('BEGIN');
+          await assert.rejects(service.retainArtifacts([failed.id], client), {
+            message: 'An attachment is unavailable.',
+            statusCode: 400,
+          });
+          await client.query('ROLLBACK');
+        } finally {
+          client.release();
+        }
+        await service.close();
+        await rm(path(owner, failed.id), { recursive: true });
+        await writeFile(path(owner, failed.id), 'retry');
+        const restarted = create(owner);
+        assert.equal((await restarted.sweep()).removed, 1);
+        await absent(path(owner, failed.id));
+        const missing = await restarted.storeUpload(
+          Buffer.from('missing'),
+          'missing',
+          'text/plain',
+        );
+        await age(owner, [missing.id]);
+        await database.query('UPDATE artifacts SET deleting_at=now() WHERE owner_id=$1 AND id=$2', [
+          owner,
+          missing.id,
+        ]);
+        await unlink(path(owner, missing.id));
+        assert.equal((await restarted.sweep()).removed, 1);
+        assert.equal(
+          (
+            await database.query(
+              'SELECT id FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              [owner, [failed.id, missing.id]],
+            )
+          ).rowCount,
+          0,
+        );
+      },
+    );
+
+    await t.test(
+      'shared roots preserve foreign files, unowned flat files, symlinks and arbitrary recorded paths',
+      async () => {
+        const owner = 'isolation-owner';
+        const foreignOwner = 'foreign-owner';
+        const service = create(owner);
+        const foreign = create(foreignOwner);
+        const saved = await service.storeArtifact(Buffer.from('owned'), 'owned', 'text/plain');
+        const foreignFile = await foreign.storeUpload(
+          Buffer.from('foreign'),
+          'foreign',
+          'text/plain',
+        );
+        await age(foreignOwner, [foreignFile.id]);
+        const ownOrphan = path(owner, randomUUID());
+        const foreignOrphan = path(foreignOwner, randomUUID());
+        const legacyOrphan = join(root, 'artifacts', randomUUID());
+        const unknown = join(directory(owner), 'keep.txt');
+        for (const file of [ownOrphan, foreignOrphan, legacyOrphan, unknown]) {
+          await writeFile(file, 'unknown');
+          await utimes(file, old, old);
+        }
+        const linkPath = path(owner, randomUUID());
+        await symlink(foreignOrphan, linkPath);
+        const nested = path(owner, randomUUID());
+        await mkdir(nested);
+        await writeFile(join(nested, randomUUID()), 'nested');
+        assert.equal((await service.sweep()).orphans, 1);
+        await absent(ownOrphan);
+        for (const file of [foreignOrphan, legacyOrphan, unknown, linkPath])
+          assert.equal((await readFile(file)).toString(), 'unknown');
+        assert.equal((await foreign.readArtifact(foreignFile.id)).toString(), 'foreign');
+        assert.deepEqual(await service.renewUploads([foreignFile.id]), []);
+        const unavailable = await service.storeUpload(
+          Buffer.from('unsafe'),
+          'unsafe',
+          'text/plain',
+        );
+        await age(owner, [unavailable.id]);
+        await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
+          owner,
+          unavailable.id,
+          foreignOrphan,
+        ]);
+        assert.equal((await service.sweep()).failed, 1);
+        assert.equal((await readFile(foreignOrphan)).toString(), 'unknown');
+        assert.equal((await service.readArtifact(saved.id)).toString(), 'owned');
+        const rootLink = join(root, 'linked-root');
+        await symlink(root, rootLink);
+        const linked = create('linked-owner', rootLink);
+        await assert.rejects(
+          linked.storeArtifact(Buffer.from('unsafe'), 'unsafe', 'text/plain'),
+          /unavailable/,
+        );
+        assert.equal((await linked.sweep()).orphans, 0);
+        const hashOwner = 'linked-hash-owner';
+        await symlink(directory(foreignOwner), directory(hashOwner));
+        const linkedHash = create(hashOwner);
+        await assert.rejects(
+          linkedHash.storeArtifact(Buffer.from('unsafe'), 'unsafe', 'text/plain'),
+          /unavailable/,
+        );
+        assert.equal((await linkedHash.sweep()).orphans, 0);
+        assert.equal((await readFile(foreignOrphan)).toString(), 'unknown');
+      },
+    );
+
+    await t.test(
+      'renewal wins before deletion or returns unavailable after cleanup claims the row',
+      async () => {
+        const owner = 'renewal-race-owner';
+        const service = create(owner);
+        const gate = Math.floor(Math.random() * 1_000_000_000) + 1;
+        const barrier = await database.connect();
+        const waitBlocked = async () => {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            if (
+              (
+                await database.query(
+                  "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted",
+                  [gate],
+                )
+              ).rowCount
+            )
+              return;
+            await delay(10);
+          }
+          assert.fail('The artifact operation did not reach its database barrier.');
+        };
+        const block = async (column: 'expires_at' | 'deleting_at') => {
+          await database.query(`
+          CREATE OR REPLACE FUNCTION pause_artifact_update() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF NEW.owner_id='renewal-race-owner' THEN PERFORM pg_advisory_xact_lock(${gate}); END IF;
+            RETURN NEW;
+          END $$;
+          CREATE TRIGGER pause_artifact_update BEFORE UPDATE OF ${column} ON artifacts
+            FOR EACH ROW EXECUTE FUNCTION pause_artifact_update();
+        `);
+          await barrier.query('SELECT pg_advisory_lock($1)', [gate]);
+        };
+        const release = () => barrier.query('SELECT pg_advisory_unlock($1)', [gate]);
+        try {
+          const renewed = await service.storeUpload(
+            Buffer.from('renew-race'),
+            'renew-race',
+            'text/plain',
+          );
+          await age(owner, [renewed.id]);
+          await block('expires_at');
+          const renewing = service.renewUploads([renewed.id]);
+          await waitBlocked();
+          assert.equal((await service.sweep()).removed, 0);
+          await release();
+          assert.deepEqual(
+            (await renewing).map((file) => file.id),
+            [renewed.id],
+          );
+          assert.equal((await service.sweep()).removed, 0);
+          assert.equal((await service.readArtifact(renewed.id)).toString(), 'renew-race');
+          await database.query('DROP TRIGGER pause_artifact_update ON artifacts');
+          const deleting = await service.storeUpload(
+            Buffer.from('delete-race'),
+            'delete-race',
+            'text/plain',
+          );
+          await age(owner, [deleting.id]);
+          await block('deleting_at');
+          const sweeping = service.sweep();
+          await waitBlocked();
+          const unavailable = service.renewUploads([deleting.id]);
+          await release();
+          assert.equal((await sweeping).removed, 1);
+          assert.deepEqual(await unavailable, []);
+          await absent(path(owner, deleting.id));
+        } finally {
+          await release();
+          barrier.release();
+          await database.query(
+            'DROP TRIGGER IF EXISTS pause_artifact_update ON artifacts; DROP FUNCTION IF EXISTS pause_artifact_update()',
+          );
+        }
+      },
+    );
+
+    await t.test(
+      'bounded sweeps advance beyond failures and keep directory progress until close',
+      async () => {
+        const owner = 'bounded-owner';
+        const service = create(owner);
+        const failed = await service.storeUpload(Buffer.from('blocked'), 'blocked', 'text/plain');
+        await unlink(path(owner, failed.id));
+        await mkdir(path(owner, failed.id));
+        const files = [];
+        for (let index = 0; index < 120; index++)
+          files.push(
+            await service.storeUpload(Buffer.from('expired'), String(index), 'text/plain'),
+          );
+        await age(owner, [failed.id, ...files.map((file) => file.id)]);
+        const first = await service.sweep();
+        assert.ok(first.removed <= 100);
+        assert.ok(first.removed > 0);
+        for (let pass = 0; pass < 10; pass++) {
+          if (
+            !(
+              await database.query('SELECT 1 FROM artifacts WHERE owner_id=$1 AND id<>$2', [
+                owner,
+                failed.id,
+              ])
+            ).rowCount
+          )
+            break;
+          await service.sweep();
+        }
+        assert.equal(
+          (
+            await database.query('SELECT 1 FROM artifacts WHERE owner_id=$1 AND id<>$2', [
+              owner,
+              failed.id,
+            ])
+          ).rowCount,
+          0,
+        );
+        assert.ok(
+          (
+            await database.query('SELECT deleting_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              failed.id,
+            ])
+          ).rows[0].deleting_at,
+        );
+        const orphans = Array.from({ length: 205 }, () => path(owner, randomUUID()));
+        await Promise.all(
+          orphans.map(async (file) => {
+            await writeFile(file, 'orphan');
+            await utimes(file, old, old);
+          }),
+        );
+        let removed = 0;
+        for (let pass = 0; pass < 10 && removed < orphans.length; pass++) {
+          const result = await service.sweep();
+          assert.ok(result.orphans <= 100);
+          removed += result.orphans;
+        }
+        assert.equal(removed, orphans.length);
+        const client = await database.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('LOCK TABLE artifacts IN ACCESS EXCLUSIVE MODE');
+          const a = service.sweep();
+          const b = service.sweep();
+          const closed = service.close();
+          await client.query('COMMIT');
+          assert.equal(await a, await b);
+          await closed;
+          await service.close();
+          assert.deepEqual(await service.sweep(), { removed: 0, orphans: 0, failed: 0 });
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+        }
+      },
+    );
   },
 );
 

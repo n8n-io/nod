@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -66,6 +66,8 @@ test(
     const { createApp } = await import('../src/server/app.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
     const { createArtifactService, localArtifacts } = await import('../src/server/artifacts.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
+    cleanup.push(() => localArtifacts.close());
     const { ownerId, port } = await import('../src/server/config.ts');
     const app = await createApp();
     cleanup.push(() => app.close());
@@ -158,6 +160,103 @@ test(
         enqueueTurn: threads.enqueueTurn,
         refresh() {},
       }).initialize({ workers: false });
+      await t.test(
+        'publication and upload retention reuse a one-connection caller transaction',
+        async () => {
+          const pool = new pg.Pool({
+            connectionString: database.href,
+            max: 1,
+            connectionTimeoutMillis: 500,
+          });
+          const artifacts = createArtifactService({ database: pool, ownerId, localRoot: dataRoot });
+          const threadId = (await threads.activeThread()).id;
+          const upload = await artifacts.storeUpload(
+            Buffer.from('pending fixture'),
+            'pending.txt',
+            'text/plain',
+          );
+          const expiry = (
+            await pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [upload.id])
+          ).rows[0].expires_at;
+          const rolledBack = new Error('Synthetic publication rollback');
+          let removeRolledBack: (() => Promise<void>) | undefined;
+          let rolledBackPath = '';
+          try {
+            await assert.rejects(
+              transaction(async (client) => {
+                const stored = await artifacts.storeArtifact(
+                  browserDownloadPdf,
+                  'channel.pdf',
+                  'application/pdf',
+                  threadId,
+                  client,
+                  (remove) => {
+                    removeRolledBack = remove;
+                  },
+                );
+                const published = await artifacts.publishArtifact(
+                  threadId,
+                  'invoice.pdf',
+                  undefined,
+                  async () => browserDownloadPdf,
+                  client,
+                );
+                await artifacts.retainArtifacts([upload.id, upload.id], client);
+                const rows = (
+                  await client.query(
+                    'SELECT id,storage_path,expires_at FROM artifacts WHERE id=ANY($1::uuid[])',
+                    [[stored.id, published.id, upload.id]],
+                  )
+                ).rows;
+                assert.equal(rows.length, 3);
+                for (const row of rows) assert.equal(row.expires_at, null);
+                rolledBackPath = rows.find((row) => row.id === stored.id).storage_path;
+                assert.equal(
+                  (
+                    await db.pool.query('SELECT id FROM artifacts WHERE id=ANY($1::uuid[])', [
+                      [stored.id, published.id],
+                    ])
+                  ).rowCount,
+                  0,
+                );
+                throw rolledBack;
+              }, pool),
+              (error) => error === rolledBack,
+            );
+            assert.deepEqual(
+              (await pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [upload.id]))
+                .rows[0].expires_at,
+              expiry,
+            );
+            assert.deepEqual(await readFile(rolledBackPath), browserDownloadPdf);
+            assert.ok(removeRolledBack);
+            await removeRolledBack();
+            await assert.rejects(readFile(rolledBackPath), { code: 'ENOENT' });
+            const published = await transaction(async (client) => {
+              const artifact = await artifacts.publishArtifact(
+                threadId,
+                'invoice.pdf',
+                undefined,
+                async () => browserDownloadPdf,
+                client,
+              );
+              await artifacts.retainArtifacts([upload.id], client);
+              return artifact;
+            }, pool);
+            await artifacts.sweep();
+            assert.deepEqual(await artifacts.readArtifact(published.id), browserDownloadPdf);
+            assert.equal((await artifacts.readArtifact(upload.id)).toString(), 'pending fixture');
+            assert.equal(
+              (await pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [upload.id]))
+                .rows[0].expires_at,
+              null,
+            );
+          } finally {
+            await artifacts.close();
+            await pool.end();
+          }
+        },
+      );
       channels = await createChannels(db.pool, {
         ownerId,
         transport: createChatSdkTransport(db.pool, telegram),
@@ -367,7 +466,7 @@ test(
           await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
             webFile.id,
           ]);
-          assert.deepEqual(await foreign.readArtifact(webFile.id), browserDownloadPdf);
+          await assert.rejects(foreign.readArtifact(webFile.id), /unavailable/);
           const denied = await app.inject({ method: 'GET', url: webFile.url, headers });
           assert.equal(denied.statusCode, 404);
           await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [

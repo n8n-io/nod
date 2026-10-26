@@ -30,6 +30,8 @@ For what Nod stores and how long it keeps it, see the [Security review guide](/t
 
 Unsent chat drafts stay in app or browser storage on this device, for your account and conversation. They include text, reply targets, and uploaded file references. Private entry fields and recognized verification replies are excluded.
 
+Unsent uploads become eligible for cleanup 24 hours after upload or their last renewal from an open draft. Existing eligible uploads get a fresh 24-hour grace period on the first upgrade that adds cleanup. Removing a file stops renewal. Nod reclaims eligible files in bounded batches on startup and every five minutes while running, so deletion can take longer when many files are due. Until cleanup claims a file for deletion, it can still be renewed or sent. After that, it is unavailable. Failed deletions are retried on later passes, including after restart. Sent attachments and published files are retained. New uploads use an owner-specific directory so interrupted writes can also be reclaimed. Older unreferenced files with no ownership record are preserved because Nod cannot safely attribute them.
+
 Desktop file actions prepare private copies in the system temporary folder. The cache holds up to eight files. Saving creates a separate file in Downloads. Temporary copies remain until cache eviction or app shutdown. A forced stop can leave a temporary copy behind.
 
 ## What Nod sends to other services

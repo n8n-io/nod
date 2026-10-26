@@ -122,7 +122,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
             { statusCode: 409 },
           );
         const stored = await client.query(
-          'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2',
+          'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND deleting_at IS NULL',
           [input.attachmentIds, ownerId],
         );
         if (stored.rowCount !== input.attachmentIds.length)
