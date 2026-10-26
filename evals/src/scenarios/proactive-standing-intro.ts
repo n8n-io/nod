@@ -124,8 +124,8 @@ export default scenario({
       check('second-result-is-prepared', async (run) => {
         const issues = (await run.proactivity.view()).issues;
         return {
-          pass: issues.some((issue: { draft: string; summary: string }) =>
-            /Priya|review/i.test(issue.draft + ' ' + issue.summary),
+          pass: issues.some((issue) =>
+            issue.sources.some((source) => source.id === 'priya-review'),
           ),
         };
       }),

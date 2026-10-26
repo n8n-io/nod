@@ -84,7 +84,7 @@ test(
     let methodBindings = 0;
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
-    let sourceRevision = 'v1';
+    const sourceRevision = 'v1';
     let sourceReads = 0;
     let appOutage = false;
     let appResult: unknown;
@@ -744,48 +744,45 @@ test(
         },
       );
 
-      await t.test('a source approval cannot read a reconnected source', async () => {
-        const previous = await application.triage.getPreferences();
-        const previousCheckCost = checkCost;
-        const previousDecisionCost = decisionCost;
-        checkCost = 0;
-        decisionCost = 0;
-        const prompt = 'Synthetic source revision check ' + randomUUID();
-        plans.set(prompt, {
-          tool: 'read_source',
-          action: 'read',
-          args: { sourceId: 'fixture:notes', ids: ['record/1'] },
-        });
-        try {
-          await application.triage.updatePreferences({
-            notificationRule: 'Read synthetic notes and prepare private work.',
-            rules: '',
+      await t.test(
+        'a proactive read the checker would hold asks nobody and reads nothing',
+        async () => {
+          const previous = await application.triage.getPreferences();
+          const previousCheckCost = checkCost;
+          const previousDecisionCost = decisionCost;
+          checkCost = 0;
+          decisionCost = 0;
+          const prompt = 'Synthetic source read check ' + randomUUID();
+          plans.set(prompt, {
+            tool: 'read_source',
+            action: 'read',
+            args: { sourceId: 'fixture:notes', ids: ['record/1'] },
           });
-          const turnId = await enqueueTurn(prompt, {
-            source: 'event',
-            background: true,
-            proactive: true,
-          });
-          await waitFor(turnId, 'waiting');
-          const [card] = await approvalsFor(turnId);
-          assert.equal(sourceReads, 0);
-          sourceRevision = 'v2';
-          const approved = await request('POST', '/api/messages', {
-            text: 'Yes',
-            replyToMessageId: card.confirmation_message_id,
-            clientMessageId: randomUUID(),
-          });
-          assert.equal(approved.statusCode, 200, approved.body);
-          await waitFor(approved.json().turnId, 'succeeded');
-          assert.equal(sourceReads, 0);
-          assert.equal((await approvalsFor(turnId))[0].status, 'expired');
-        } finally {
-          sourceRevision = 'v1';
-          checkCost = previousCheckCost;
-          decisionCost = previousDecisionCost;
-          await application.triage.updatePreferences(previous);
-        }
-      });
+          try {
+            await application.triage.updatePreferences({
+              notificationRule: 'Read synthetic notes and prepare private work.',
+              rules: '',
+            });
+            const turnId = await enqueueTurn(prompt, {
+              source: 'event',
+              background: true,
+              proactive: true,
+            });
+            for (let attempt = 0; attempt < 300; attempt++) {
+              const status = (await pool.query('SELECT status FROM turns WHERE id=$1', [turnId]))
+                .rows[0].status;
+              if (status === 'succeeded' || status === 'failed') break;
+              await delay(20);
+            }
+            assert.deepEqual(await approvalsFor(turnId), []);
+            assert.equal(sourceReads, 0);
+          } finally {
+            checkCost = previousCheckCost;
+            decisionCost = previousDecisionCost;
+            await application.triage.updatePreferences(previous);
+          }
+        },
+      );
       await t.test('an old proactive approval cannot enable a connected write', async () => {
         const before = integrationFixture.writes.length;
         const held = await propose(

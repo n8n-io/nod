@@ -7,6 +7,7 @@ import type { PoolClient } from 'pg';
 import type { WorkConsumers } from './work-admission.ts';
 import type { ConnectedApp } from '../ports/integrations.ts';
 import { refresh } from './events.ts';
+import { logFailure } from './failure-log.ts';
 
 import { createPreferencesStore, defaultPreferences } from './preferences.ts';
 
@@ -39,7 +40,7 @@ export function createTriage(
   }
   async function heartbeat() {
     await options.sweep?.();
-    await options.due?.();
+    await options.due?.().catch((error: unknown) => logFailure('proactive_due', error));
     const prefs = await getPreferences();
     if (!prefs.notificationRule.trim()) return;
     for (const app of await checkable())

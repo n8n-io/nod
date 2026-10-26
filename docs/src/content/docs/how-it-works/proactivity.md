@@ -63,7 +63,7 @@ The model judges usefulness. The server enforces permission, source freshness, a
 | Is the prepared work usable?       | The model checks its draft against the sources, keeps needed references, and states material unknowns.           |
 | Can nod read this source?          | Trust checks the read arguments and any owner instructions or restrictions.                                      |
 | Are the facts still current?       | The server reads the referenced records again and compares their versions.                                       |
-| Can a nudge go out now?            | The server checks repeat delivery, snooze, quiet hours, message limits, and recorded model spend.                |
+| Can a nudge go out now?            | The server checks repeat delivery, snooze, quiet hours, message limits, and the pause switch.                    |
 
 Memory can explain why an opportunity matters. It cannot prove that a source fact is current or grant permission.
 
@@ -77,7 +77,7 @@ flowchart TD
   review -- new request --> task[Ordinary task through Trust]:::go
 ```
 
-Reads and private preparation need no standing instruction. Trust still checks each source read. Your rules can still require a confirmation. These confirmations follow your security rules, separately from the prepared-update message allowance.
+Reads and private preparation need no standing instruction. Trust still checks each source read. Private preparation never asks you about a read. If Trust would ask, it skips that source: a rule that says to ask first blocks it until your rules change, and any other refusal retries later.
 
 A later request, such as asking nod to send a reviewed reply, starts ordinary work. A standing instruction cannot give the restricted private worker a send or delete tool. Explicit standing automations use the separate ordinary path.
 
@@ -150,7 +150,7 @@ Each page has a shared data limit. An exact ID read can recover more of a shorte
 
 Source metadata uses an explicit field list. Known secrets are removed from labels, credential-bearing links are omitted, and private identifiers are refused.
 
-A read confirmation includes the source revision. If its principal or access revision changes before approval, the old confirmation does not run. A new login for the same verified principal can keep that revision. The adapter checks the binding again before it calls the provider.
+The adapter checks the source revision again before it calls the provider. A new login for the same verified principal can keep that revision.
 
 All returned content reaches the worker as data, never instructions or permission.
 
@@ -178,11 +178,11 @@ A repeated event or a reworded title does not create another open instance of th
 
 Duplicate references are removed before the evidence check. Reference order does not change the notification version. It uses a stable ordering of complete source-version keys, including opaque IDs with punctuation.
 
-A resolved matter stays closed. A genuinely new condition can start a new matter from changed source evidence. A dismissed matter stays closed for unchanged conditions. Changed checked evidence and a stated new condition can start a new instance. Gmail content versions exclude read and archive labels. New messages change the version. The model still supplies the matter key and decides whether a condition is new. Code cannot prove semantic identity across different keys. Dismissal closes a matter, not all future work from a record. A snooze holds delivery until the time you choose. **Useful** and **Not useful** feedback help later assessments; silence does not count as feedback.
+A resolved matter stays closed. A genuinely new condition can start a new matter from changed source evidence. A dismissed matter stays closed for unchanged conditions. Changed checked evidence and a stated new condition can start a new instance. Gmail content versions exclude read and archive labels. New messages change the version. The model still supplies the matter key and decides whether a condition is new. Code cannot prove semantic identity across different keys. Dismissal closes a matter, not all future work from a record. A snooze holds delivery until the time you choose. Telling nod a nudge was useful or not useful helps later assessments. Silence does not count as feedback.
 
 The new matter's key includes all cited source versions in a stable order. A change in a secondary source can start new work after resolution. It cannot reuse an earlier matter's key merely because the primary record did not change.
 
-Each read also returns bounded `ownerDismissedMatters` hints. Each hint binds a hashed matter key, its primary record, and the checked source versions. It does not mute every cited record. The server checks the owner and source revision. **Not useful** records feedback only. It does not close or mute the matter.
+Each read also returns bounded `ownerDismissedMatters` hints. Each hint binds a hashed matter key, its primary record, and the checked source versions. It does not mute every cited record. The server checks the owner and source revision. Not useful feedback does not close or mute the matter.
 
 Before save or resolve, the server reads the exact source IDs again. A changed version returns new observations for another assessment. Missing records cannot support a new result. Resolution must match the stored source revision. It saves the fresh versions for the records it checked and keeps the other source references. The same evidence cannot then count as a new condition. A record from a reconnected account cannot close work from the old account, even when the record ID is the same.
 
@@ -217,7 +217,7 @@ The restricted Pi session has only three tools:
 
 The session loads no sandbox tools, web extension, or code extension. A second runtime guard rejects native, nested, and deferred write routes. Final model text and progress stay private.
 
-The heartbeat checks cheap source metadata before it starts model work. Healthy native Gmail cursors, Calendar collection versions, and saved-work change tokens suppress unchanged checks. A failed native inbox feed uses bounded polling while direct reads remain available. A stopped app watch cannot start private reads. Sources without such signals use their declared interval. A provider can supply `activityChangeToken` and declare its supported services. The server polls this metadata method every 30 minutes, outside model turns. A failure marks the source unavailable and retries after five minutes. A 15-second deadline and an account-bound claim contain slow or stale results. The inventory reads only the saved token. The shared worker has no Calendar-specific rule.
+The heartbeat checks cheap source metadata before it starts model work. Calendar collection versions and saved-work change tokens suppress unchanged checks. Gmail starts work from new-mail events, not from every mailbox change. A failed native inbox feed uses bounded polling while direct reads remain available. A stopped app watch cannot start private reads. Sources without such signals use their declared interval. A provider can supply `activityChangeToken` and declare its supported services. The server polls this metadata method every 30 minutes, outside model turns. A failure marks the source unavailable and retries after five minutes. A 15-second deadline and an account-bound claim contain slow or stale results. The inventory reads only the saved token. The shared worker has no Calendar-specific rule.
 
 The Calendar adapter reads only the event collection ETag with a fixed GET request. It adds the UTC date to the token so the moving read window gets a daily assessment. The first scan on a new UTC date includes unchanged events in the new window. Later same-day scans use the update-time filter. The bounds stay fixed from yesterday through the next 30 full UTC dates. All pages use the saved scan time. This uses the documented [event collection version](https://developers.google.com/workspace/calendar/api/v3/reference/events/list). Contract tests do not establish live connector reliability. Events mark durable pending source changes. A burst shares one active private job per owner. A signal that arrives during a scan remains pending. The scan keeps its starting token and signal count across pages. Completion acknowledges only those starting values. Its checkpoint also restores them after a failed turn.
 
@@ -225,7 +225,7 @@ Private preparation has no budget of its own. Its model use counts toward the ow
 
 Page progress survives a restart and uses a stable scan time. An ordinary failed page keeps its cursor and last complete watermark. Only an explicit expired-cursor result restarts that scan. Failed assessments restore their tentative scan checkpoint.
 
-One failed record is unknown, not deleted or handled. The page keeps its good records and next cursor. Failed records get bounded retries with increasing delays. Gmail list reads use bounded recent metadata. Exact reads load up to eight full messages. Record reads and privacy checks have separate time bounds. One slow check cannot hold the whole page indefinitely. Claiming a due check clears its due time; successful work can set the next one. Failed or interrupted turns do not retry automatically.
+One failed record is unknown, not deleted or handled. The page keeps its good records and next cursor. Failed records get bounded retries with increasing delays. Gmail list reads use bounded recent metadata. Exact reads load up to eight full messages. Record reads and privacy checks have separate time bounds. One slow check cannot hold the whole page indefinitely. Claiming a due check moves it 30 minutes later, so a failed run gets another chance. Successful work sets the next check. Failed or interrupted turns do not retry automatically.
 
 Engine tables start in one transaction under the existing setup lock. Concurrent workers cannot race to create the same tables. Source inventory calls have a 45-second bound. Setup and preparation also use the turn's cancellation signal. A late inventory result cannot continue a cancelled save. Stop also closes an active proactive database transaction. Pending work rolls back and releases its locks. The transaction enables PostgreSQL's 100 ms closed-connection check. A database or proxy must pass client disconnects through for this bound to apply.
 
@@ -267,13 +267,13 @@ See [Capability evals](/contribute/evals/) for the manual model test process.
 Synthetic evals do not measure long-term usefulness, missed opportunities, or interruption cost for real owners. A measured state-of-the-art claim needs a field study and a relevant comparison.
 :::
 
+## Evidence and research
+
+[Proactivity evidence](/how-it-works/proactivity-evidence/) explains the controlled tests, stress cases, comparison prompt and remaining need for real owner outcomes. It keeps draft quality, timing, permitted effects and owner value as separate measures.
+
 ## Related resources
 
 - [Architecture](/how-it-works/architecture/)
 - [Nudges](/use/nudges/)
 - [Approvals and the trust check](/trust/approvals/)
 - [Memory](/how-it-works/memory/)
-
-## Evidence and research
-
-[Proactivity evidence](/how-it-works/proactivity-evidence/) explains the controlled tests, stress cases, comparison prompt and remaining need for real owner outcomes. It keeps draft quality, timing, permitted effects and owner value as separate measures.

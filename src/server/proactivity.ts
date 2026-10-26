@@ -4,7 +4,6 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { ObservationCursorExpired, type ObservationSource } from '../ports/proactivity.ts';
 import type { RuntimeContext } from '../ports/agent.ts';
-import { appConfirmation } from '../ports/agent.ts';
 import type { ProactiveEvidence, ProactiveIssue, ProactivityView } from '../shared/proactivity.ts';
 import { sourceVersions } from '../shared/proactivity.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
@@ -134,7 +133,7 @@ const matterKey = (value = 'legacy') =>
     : createHash('sha256').update(value.trim().toLowerCase()).digest('hex');
 const clean = (value: string) =>
   publicText(value).replace(/(?:https?:\/\/|www\.|mailto:)[^\s<>]+/gi, '[source link]');
-const messageText = (value: string) => value.replace(/[\\`*_[\]{}()#+.!|>~<-]/g, '\\$&');
+const messageText = (value: string) => value.replace(/[\\`*_[\]{}()#+.!-]/g, '\\$&');
 type Row = {
   id: string;
   acknowledged_at: Date | null;
@@ -285,14 +284,6 @@ export function createProactivity(options: {
     ALTER TABLE proactive_evidence ADD COLUMN IF NOT EXISTS retry_after timestamptz;
     ALTER TABLE proactive_evidence ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0;
     ALTER TABLE proactive_evidence ADD COLUMN IF NOT EXISTS source_revision text NOT NULL DEFAULT '';`);
-      await client.query(
-        "UPDATE proactive_issues SET state=CASE WHEN notified_at IS NULL THEN 'open' ELSE 'offered' END WHERE owner_id=$1 AND feedback='not_useful' AND state='dismissed'",
-        [ownerId],
-      );
-      await client.query(
-        'UPDATE proactive_issues SET acknowledged_at=updated_at WHERE owner_id=$1 AND acknowledged_at IS NULL AND (feedback IS NOT NULL OR snoozed_until IS NOT NULL)',
-        [ownerId],
-      );
     }, pool);
   }
   async function sourceCatalog(signal = AbortSignal.timeout(45000), client?: PoolClient) {
@@ -389,14 +380,14 @@ export function createProactivity(options: {
   }
 
   async function ownerStarted(client: PoolClient, turn: TurnRef) {
-    const owned = await client.query(
+    const root = await client.query<{ source: string; message_id: string | null }>(
       `WITH RECURSIVE lineage AS (
-        SELECT id,parent_turn_id,source,message_id FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
-        UNION ALL SELECT p.id,p.parent_turn_id,p.source,p.message_id FROM turns p JOIN lineage c ON c.parent_turn_id=p.id AND c.source='resume' WHERE p.owner_id=$2
-      ) SELECT 1 FROM lineage u JOIN messages m ON m.id=u.message_id AND m.owner_id=$2 WHERE m.role='user' LIMIT 1`,
+        SELECT id,parent_turn_id,source,message_id,0 AS depth FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
+        UNION ALL SELECT p.id,p.parent_turn_id,p.source,p.message_id,c.depth+1 FROM turns p JOIN lineage c ON c.parent_turn_id=p.id WHERE p.owner_id=$2 AND c.depth<100
+      ) SELECT source,message_id FROM lineage ORDER BY depth DESC LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
     );
-    return Boolean(owned.rowCount);
+    return root.rows[0]?.source === 'user' && Boolean(root.rows[0].message_id);
   }
 
   async function acknowledge(client: PoolClient, ids: string[]) {
@@ -412,7 +403,7 @@ export function createProactivity(options: {
   async function recheckHeld(client: PoolClient, ids: string[]) {
     await client.query(
       `UPDATE proactive_issues SET next_check=LEAST(next_check,clock_timestamp()+interval '5 minutes')
-      WHERE owner_id=$1 AND NOT(id=ANY($2::uuid[])) AND state IN ('open','offered') AND acknowledged_at IS NULL AND snoozed_until IS NULL`,
+      WHERE owner_id=$1 AND NOT(id=ANY($2::uuid[])) AND state IN ('open','offered') AND acknowledged_at IS NULL AND (snoozed_until IS NULL OR snoozed_until<=now())`,
       [ownerId, ids],
     );
   }
@@ -532,15 +523,13 @@ export function createProactivity(options: {
             [ownerId, descriptor.id, descriptor.revision],
           ),
         );
-      await markCoverage('unavailable').catch(() => {});
+      await markCoverage(
+        (error as { blocked?: boolean } | undefined)?.blocked ? 'blocked' : 'unavailable',
+      ).catch(() => {});
       throw error;
     }
     const parsed = snapshot.safeParse(result);
     if (!parsed.success) {
-      if (result && typeof result === 'object' && appConfirmation in result) {
-        await markCoverage('blocked');
-        return result;
-      }
       await markCoverage('unavailable');
       throw new Error('The source returned an invalid observation result. Its state is unknown.');
     }
@@ -821,6 +810,7 @@ export function createProactivity(options: {
             ],
           )
         ).rows[0];
+        if (row) await recheckHeld(client, [row.id]);
         return row ? { status: 'resolved', issue: publicIssue(row) } : { status: 'unchanged' };
       }
       const primary = input.primary
@@ -892,13 +882,11 @@ export function createProactivity(options: {
       if (requested !== null && (requested <= now || requested > now + 30 * 86400000))
         throw new Error('The next check must be within the next 30 days.');
       const nextCheck =
-        requested === null
-          ? deadline === null
-            ? null
-            : previous?.notified_at
-              ? null
-              : new Date(Math.min(deadline, Math.max(now + 5 * 60000, deadline - 2 * 3600000)))
-          : new Date(Math.min(requested, deadline ?? requested));
+        requested !== null
+          ? new Date(Math.min(Math.max(requested, now + 15 * 60000), deadline ?? Infinity))
+          : deadline !== null && !previous?.notified_at && deadline - 2 * 3600000 > now + 15 * 60000
+            ? new Date(deadline - 2 * 3600000)
+            : null;
       const prepared = {
         ...input,
         matterKey: key,
@@ -956,6 +944,7 @@ export function createProactivity(options: {
             `SELECT count(*) FROM proactive_issues i JOIN messages m ON m.id=i.message_id AND m.owner_id=i.owner_id
         WHERE i.owner_id=$1 AND i.state IN ('open','offered') AND i.acknowledged_at IS NULL AND i.snoozed_until IS NULL
           AND NOT starts_with(m.stream_id,'proactive:urgent:') AND starts_with(m.stream_id,'proactive:important:')=$2
+          AND (i.proposal->>'deadline' IS NULL OR (i.proposal->>'deadline')::timestamptz>now())
           AND NOT EXISTS(SELECT 1 FROM messages r WHERE r.owner_id=i.owner_id AND r.role='user' AND r.reply_to_message_id=i.message_id)
           AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(i.sources) s WHERE NOT EXISTS(
             SELECT 1 FROM jsonb_array_elements($3::jsonb) a WHERE a->>'id'=s->>'sourceId' AND a->>'revision'=s->>'revision'))`,
@@ -1034,12 +1023,8 @@ export function createProactivity(options: {
         );
       } else if (!waitingForScan && (((!alreadyShown || changed) && ready) || paused)) {
         await client.query(
-          `UPDATE proactive_issues SET next_check=CASE WHEN snoozed_until>now() THEN snoozed_until ELSE LEAST(next_check,$3::timestamptz) END WHERE id=$1 AND owner_id=$2`,
-          [
-            id,
-            ownerId,
-            delivery && (!deadline || delivery.getTime() < deadline) ? delivery : nextCheck,
-          ],
+          `UPDATE proactive_issues SET next_check=CASE WHEN snoozed_until>now() THEN snoozed_until ELSE $3::timestamptz END WHERE id=$1 AND owner_id=$2`,
+          [id, ownerId, delivery && (!deadline || delivery.getTime() < deadline) ? delivery : null],
         );
       }
       const row = (
@@ -1070,7 +1055,7 @@ export function createProactivity(options: {
       await pool.query(
         `WITH RECURSIVE lineage AS (
       SELECT id,parent_turn_id,source,proactive FROM turns WHERE id=$1 AND owner_id=$2
-      UNION ALL SELECT p.id,p.parent_turn_id,p.source,p.proactive FROM turns p JOIN lineage c ON c.parent_turn_id=p.id AND c.source='resume' WHERE p.owner_id=$2
+      UNION ALL SELECT p.id,p.parent_turn_id,p.source,p.proactive FROM turns p JOIN lineage c ON c.parent_turn_id=p.id WHERE p.owner_id=$2
       ) SELECT bool_or(proactive) AS proactive FROM lineage`,
         [turn.turnId, ownerId],
       )
@@ -1239,7 +1224,19 @@ export function createProactivity(options: {
         })
         .slice(0, 10);
       if (!issues.length && !pending.length) return;
-      const prompt = `Assess the due sources and unresolved matters with fresh source reads. Resolve handled matters. Prepare useful private work, and let server policy decide delivery.\n${untrustedBlock('due source IDs and issue index', JSON.stringify({ sources: pending.map(({ revision: _, changeToken: _token, ...source }) => ({ ...source, retryIds: retries.get(source.id) ?? [] })), issues: issues.map(publicIssue) }))}`;
+      const prompt = `Assess the due sources and unresolved matters with fresh source reads. Resolve handled matters. Prepare useful private work, and let server policy decide delivery.\n${untrustedBlock(
+        'due source IDs and issue index',
+        JSON.stringify({
+          sources: pending.map(({ revision: _, changeToken: _token, ...source }) => ({
+            ...source,
+            retryIds: retries.get(source.id) ?? [],
+          })),
+          issues: issues.map((row) => {
+            const { draft: _draft, ...issue } = publicIssue(row);
+            return issue;
+          }),
+        }),
+      )}`;
       for (const source of pending)
         await client.query(
           `INSERT INTO proactive_sources(owner_id,source_id,label,status,revision,next_poll,claimed_token,claimed_policy) VALUES($1,$2,$3,'pending',$4,$5,$6,$7) ON CONFLICT(owner_id,source_id) DO UPDATE SET next_poll=EXCLUDED.next_poll,claimed_token=EXCLUDED.claimed_token,claimed_policy=EXCLUDED.claimed_policy,claimed_signal=proactive_sources.signal_version`,
@@ -1267,7 +1264,7 @@ export function createProactivity(options: {
         client,
       });
       await client.query(
-        'UPDATE proactive_issues SET next_check=NULL WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+        "UPDATE proactive_issues SET next_check=clock_timestamp()+interval '30 minutes' WHERE owner_id=$1 AND id=ANY($2::uuid[])",
         [ownerId, issues.map(({ id }) => id)],
       );
       return turnId;

@@ -109,7 +109,7 @@ import { createNotificationRouting } from './notification-routing.ts';
 import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { createProactivity, sourceRead } from './proactivity.ts';
+import { createProactivity } from './proactivity.ts';
 import { createObservationSources } from './observation-sources.ts';
 import { createTaskObservations } from './task-observations.ts';
 import type { TrustBasis } from './trust-basis.ts';
@@ -459,7 +459,12 @@ export function createDefaultAdapters(
 
 export async function createApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
+  options: {
+    workers?: boolean;
+    channels?: boolean;
+    heartbeat?: boolean;
+    runtimeReady?: Promise<void>;
+  } = {},
 ) {
   const diagnostics: {
     log?: Awaited<ReturnType<typeof createFeedbackLog>>;
@@ -486,7 +491,12 @@ export async function createApplication(
 
 async function initializeApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
+  options: {
+    workers?: boolean;
+    channels?: boolean;
+    heartbeat?: boolean;
+    runtimeReady?: Promise<void>;
+  },
   diagnostics: { log?: Awaited<ReturnType<typeof createFeedbackLog>>; failure: FailureLogSink },
 ) {
   const analytics = await createAnalytics({
@@ -998,74 +1008,45 @@ async function initializeApplication(
         );
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
-        : action === 'NOD_read_source'
-          ? (async () => {
-              const result = await ledger.withTurn(provenance.turnId, () =>
-                observations.read(sourceRead.parse(args), AbortSignal.timeout(45000)),
-              );
-              await ledger.action(provenance.turnId, action, { kind: 'approved' });
-              return result;
-            })()
-          : action === 'NOD_vault_allow'
-            ? vaultAccess.allow(args)
-            : action === 'NOD_limits_update'
-              ? ledger.setLimits(args)
-              : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
-                ? withTurnLock(provenance.turnId, () =>
-                    personal.manage(action.slice('NOD_'.length), args, provenance),
-                  )
-                : action.startsWith('NOD_')
-                  ? personal.manage(action.slice('NOD_'.length), args, provenance)
-                  : (async () => {
-                      const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                      const ready = hasWorkspaceFiles(args)
-                        ? await integrations
-                            .prepare(ownerId, action, args, turn)
-                            .catch((error: unknown) => {
-                              throw Object.assign(
-                                error instanceof Error ? error : new Error(String(error)),
-                                { notRun: true },
-                              );
-                            })
-                        : args;
-                      const result = await integrations.executeApproved(
-                        ownerId,
-                        action,
-                        ready,
-                        turn,
-                      );
-                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
-                      return privateEmailResult(
-                        (
-                          await saveIntegrationFiles(result, async (file) => {
-                            const name = `${randomUUID()}-${basename(file.name)}`;
-                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                            return name;
+        : action === 'NOD_vault_allow'
+          ? vaultAccess.allow(args)
+          : action === 'NOD_limits_update'
+            ? ledger.setLimits(args)
+            : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
+              ? withTurnLock(provenance.turnId, () =>
+                  personal.manage(action.slice('NOD_'.length), args, provenance),
+                )
+              : action.startsWith('NOD_')
+                ? personal.manage(action.slice('NOD_'.length), args, provenance)
+                : (async () => {
+                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                    const ready = hasWorkspaceFiles(args)
+                      ? await integrations
+                          .prepare(ownerId, action, args, turn)
+                          .catch((error: unknown) => {
+                            throw Object.assign(
+                              error instanceof Error ? error : new Error(String(error)),
+                              { notRun: true },
+                            );
                           })
-                        ).value,
-                        mailCheck,
-                      );
-                    })());
+                      : args;
+                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
+                    await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                    return privateEmailResult(
+                      (
+                        await saveIntegrationFiles(result, async (file) => {
+                          const name = `${randomUUID()}-${basename(file.name)}`;
+                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                          return name;
+                        })
+                      ).value,
+                      mailCheck,
+                    );
+                  })());
       analytics.actionExecuted(ownerId, action);
       return result;
     },
     async (action, args, expectedRevision) => {
-      if (action === 'NOD_read_source') {
-        const input = sourceRead.parse(args);
-        if (!(await proactivity.canRun()))
-          throw Object.assign(
-            new Error('Proactive work is paused or at its daily spending limit.'),
-            { notRun: true },
-          );
-        if (
-          !(await observations.sources()).some(
-            (item) =>
-              item.id === input.sourceId && item.readable && input.revision === item.revision,
-          )
-        )
-          throw Object.assign(new Error('This source is no longer available.'), { notRun: true });
-        return;
-      }
       if (['NOD_browser', 'NOD_vault_allow'].includes(action)) return;
       if (action === 'NOD_limits_update') limitsInput.parse(args);
       else if (action.startsWith('NOD_')) {
@@ -1346,24 +1327,18 @@ async function initializeApplication(
         description: source.description,
         operation: 'Read current records from this registered read-only source.',
       });
-      return approvals.request(turn, 'NOD_read_source', bound, {
-        allowed: !verdict.confirm,
-        signal,
-        details: {
-          source: source.label,
-          description: source.description,
-          ...(verdict.confirm ? { reason: verdict.reason } : {}),
-        },
-        run: async () => {
-          const result = await observations.read(bound, signal);
-          await ledger.action(
-            turn.turnId,
-            'NOD_read_source',
-            verdict.confirm ? { kind: 'approved' } : verdict.basis,
-          );
-          return result;
-        },
-      });
+      if (verdict.confirm)
+        throw Object.assign(
+          new Error(
+            verdict.reason === 'rule'
+              ? "The owner's rules ask before reading this source, so private preparation skips it."
+              : 'The trust check did not allow this read. Private preparation will try again later.',
+          ),
+          { blocked: verdict.reason === 'rule' },
+        );
+      const result = await observations.read(bound, signal);
+      await ledger.action(turn.turnId, 'NOD_read_source', verdict.basis);
+      return result;
     },
   });
   await proactivity.initialize();
@@ -1399,7 +1374,7 @@ async function initializeApplication(
     },
   };
   if (options.workers !== false) {
-    await triage.initializeHeartbeat();
+    if (options.heartbeat !== false) await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
       present: communication.present,

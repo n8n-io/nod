@@ -203,8 +203,6 @@ export const toolDefinitions = {
           maxItems: 10,
         }),
       ),
-      since: Type.Optional(Type.String()),
-      cursor: Type.Optional(Type.String({ maxLength: 2048 })),
     }),
   ),
   proactive_issue: defineTool(

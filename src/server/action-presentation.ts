@@ -22,8 +22,6 @@ export function actionTitle(action: string) {
 }
 
 const tools: Record<string, string> = {
-  'read activity': 'Checked connected activity',
-  'proactive issue': 'Prepared an update',
   bash: 'Ran a command',
   read: 'Read a file',
   write: 'Wrote a file',

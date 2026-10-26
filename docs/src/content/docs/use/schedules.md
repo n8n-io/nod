@@ -51,17 +51,19 @@ Each run appears in **Tasks → Previous**. A run that messages you ends with a 
 
 ## Work nod starts on its own
 
-nod keeps an eye on your connected apps only after you say so. Connecting an app doesn't start it.
+nod prepares useful work from your connected sources on its own and messages you only when it's worth it. See [Nudges](/use/nudges/).
 
-- **nod offers once.** After a task that connects or uses an app like Gmail or Slack, nod asks in one line whether to flag what needs you there. Say yes and it starts. Ignore or decline it, and nod doesn't ask again for that app.
-- **Or just tell it.** At any time, say what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
+- **Preparation starts automatically** for Gmail, Google Calendar and the work nod saved for you. Tell nod "Pause preparation" to stop it.
+- **Tell it what matters**, such as "prioritize travel problems" or "keep routine updates private". This standing instruction guides preparation.
+- **Or ask it to act on its own**, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". That runs through the trust check, as described in [Standing instructions](/trust/approvals/#standing-instructions).
 
 How nod checks:
 
-- **Gmail.** nod checks for new inbox mail every five minutes. After you ask for updates, new activity starts a quiet assessment.
-- **Other sources.** Registered read-only sources declare their own periodic interval. The engine checks them under the same scope, attention limits, and spending limit. Sources can include saved work or custom providers, as well as connected accounts.
+- **Gmail.** nod checks for new inbox mail every five minutes, and new mail starts a quiet assessment.
+- **Google Calendar.** nod checks for changed events every 30 minutes without a model call.
+- **Other sources.** Registered read-only sources declare their own periodic interval. Apps without a reader, such as Slack, are watched only when your standing instruction covers them.
 
-Proactive work can read, prepare private work, and notify you. It cannot send, delete, submit, book, buy, or change connected apps, even when the standing instruction asks for a change. It nudges you in chat, and you answer in words. See [Nudges](/use/nudges/). A later owner request starts ordinary work through Trust.
+The private worker can only read, prepare private work and nudge you. It cannot send, delete, submit, book, buy or change connected apps. Anything more starts from your request or an explicit standing instruction, through the trust check.
 
 A schedule remains a separate request. Its saved instruction can cover app actions, subject to Trust and payment approval.
 

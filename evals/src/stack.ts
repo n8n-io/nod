@@ -327,86 +327,89 @@ export async function startStack(options: {
     });
     const capture = createCapture(options.proactiveBaseline);
     const { observations, prompts } = capture;
-    application = await createApplication({
-      observations: options.observations,
-      observe: capture.observe,
-      agent: capture.agent(
-        createPiAgent({
+    application = await createApplication(
+      {
+        observations: options.observations,
+        observe: capture.observe,
+        agent: capture.agent(
+          createPiAgent({
+            provider: model.provider,
+            model: model.name,
+            apiKey: model.apiKey,
+            sessionRoot,
+          }),
+        ),
+        computer,
+        workspace: createDockerWorkspace({ container, workspaceRoot }),
+        integrations: options.integrations,
+        messagingSetup: {
+          verifier: {
+            verify: async () => {
+              throw new ChannelSetupFailure('invalid_input');
+            },
+          },
+          create: () => ({
+            channels: (['telegram', 'whatsapp'] as const).map((id) => ({
+              id,
+              status: 'disabled' as const,
+              missing: [],
+              accountId: '',
+              allowedSenderIds: [],
+            })),
+            receive: async () => ({ status: 404, body: { error: 'Channels are disabled.' } }),
+            post: async () => {
+              throw new Error('Channels are disabled.');
+            },
+            close: async () => {},
+          }),
+        },
+        speech: {
+          id: 'disabled',
+          configured: false,
+          synthesize: async () => {
+            throw new Error('Speech is disabled in the evaluation.');
+          },
+        },
+        keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
+        ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
+          ? {
+              relevance: (
+                await load<{
+                  createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
+                }>('src/providers/openai/relevance.ts')
+              ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+            }
+          : {}),
+        ...((typesafe || model.provider !== 'anthropic') &&
+        existsSync(join(appSource, 'src/providers/decisions.ts'))
+          ? {
+              decisions: (
+                await load<typeof import('../../src/providers/decisions.ts')>(
+                  'src/providers/decisions.ts',
+                )
+              ).createDecisionModel({
+                resolve: async () =>
+                  typesafe
+                    ? { provider: 'typesafe', key: typesafe }
+                    : {
+                        provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
+                        key: model.apiKey,
+                      },
+              }),
+            }
+          : {}),
+        memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
+        onboardingCurator: createPiMemoryCurator({
           provider: model.provider,
-          model: model.name,
           apiKey: model.apiKey,
-          sessionRoot,
+          model: model.name,
+          lightest: true,
         }),
-      ),
-      computer,
-      workspace: createDockerWorkspace({ container, workspaceRoot }),
-      integrations: options.integrations,
-      messagingSetup: {
-        verifier: {
-          verify: async () => {
-            throw new ChannelSetupFailure('invalid_input');
-          },
-        },
-        create: () => ({
-          channels: (['telegram', 'whatsapp'] as const).map((id) => ({
-            id,
-            status: 'disabled' as const,
-            missing: [],
-            accountId: '',
-            allowedSenderIds: [],
-          })),
-          receive: async () => ({ status: 404, body: { error: 'Channels are disabled.' } }),
-          post: async () => {
-            throw new Error('Channels are disabled.');
-          },
-          close: async () => {},
-        }),
+        linkPreviews: createPublicLinkPreviewProvider(),
+        model: { provider: model.provider, name: model.name, configured: true },
       },
-      speech: {
-        id: 'disabled',
-        configured: false,
-        synthesize: async () => {
-          throw new Error('Speech is disabled in the evaluation.');
-        },
-      },
-      keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-      ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
-        ? {
-            relevance: (
-              await load<{
-                createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
-              }>('src/providers/openai/relevance.ts')
-            ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
-          }
-        : {}),
-      ...((typesafe || model.provider !== 'anthropic') &&
-      existsSync(join(appSource, 'src/providers/decisions.ts'))
-        ? {
-            decisions: (
-              await load<typeof import('../../src/providers/decisions.ts')>(
-                'src/providers/decisions.ts',
-              )
-            ).createDecisionModel({
-              resolve: async () =>
-                typesafe
-                  ? { provider: 'typesafe', key: typesafe }
-                  : {
-                      provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
-                      key: model.apiKey,
-                    },
-            }),
-          }
-        : {}),
-      memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
-      onboardingCurator: createPiMemoryCurator({
-        provider: model.provider,
-        apiKey: model.apiKey,
-        model: model.name,
-        lightest: true,
-      }),
-      linkPreviews: createPublicLinkPreviewProvider(),
-      model: { provider: model.provider, name: model.name, configured: true },
-    });
+      { heartbeat: false },
+    );
     await application.app.listen({ host: '127.0.0.1', port });
     const baseUrl = `http://localhost:${port}`;
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;

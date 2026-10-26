@@ -59,9 +59,9 @@ nod saves useful work privately first, then checks whether a message is allowed 
 
 Urgent matters, with high impact and a checked deadline, skip the daily limit and the wait. Quiet hours always hold: an urgent nudge that comes up at night goes out when they end. Each matter nudges you once, however often its source repeats. Set quiet hours in **Settings → General**, or tell nod. A zero message limit keeps everything quiet.
 
-To stop preparation itself, tell nod "Pause preparation", and "Resume preparation" to turn it back on. Preparation runs only when a source changes, and its cost counts toward your monthly limit in **Usage**, like everything else nod does.
+To stop preparation itself, tell nod "Pause preparation", and "Resume preparation" to turn it back on. Preparation runs when a source changes or a saved matter is due, and its cost counts toward your monthly limit in **Usage**, like everything else nod does.
 
-If routine nudges pile up unanswered, new routine ones wait until you reply to one or ask to see a draft. Urgent ones can still reach you.
+If routine nudges pile up unanswered, new routine ones wait until you answer one. Urgent ones can still reach you.
 
 ## What nod reads
 

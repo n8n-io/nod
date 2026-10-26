@@ -13,7 +13,7 @@ export function createTaskObservations(
     sources: async () => {
       const change = (
         await pool.query(
-          'SELECT max(updated_at)::text AS updated,count(*)::text AS count FROM tasks WHERE owner_id=$1',
+          "SELECT string_agg(id::text||':'||state||':'||COALESCE(next_check::text,'')||':'||COALESCE(waiting_for::text,''),',' ORDER BY id) AS state FROM tasks WHERE owner_id=$1",
           [ownerId],
         )
       ).rows[0];

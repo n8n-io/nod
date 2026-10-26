@@ -1290,6 +1290,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   async function disconnect(slug: Slug, connectionId: string) {
     let row = await selectConnection(configuredOwner, slug, connectionId, true);
     await transaction(async (client) => {
+      await options.removeActivity?.(row.id, client);
       const current = await client.query<ConnectionRow>(
         'SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 FOR UPDATE',
         [row.id, configuredOwner, row.provider_id],
@@ -1308,7 +1309,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         "UPDATE integration_events SET state='discarded' WHERE poll_connection_id=$1 AND owner_id=$2 AND state IN ('queued','processing')",
         [row.id, configuredOwner],
       );
-      await options.removeActivity?.(row.id, client);
     }, pool);
     if (!row.revoked) track(row.slug, 'disconnected');
     const sdk = rowProvider(row);
@@ -1814,13 +1814,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           service: row.slug,
           revision: activityRevision(row),
           active: row.account_active && row.watch_requested && (!checked || !row.activity_failed),
-          changeToken: checked
-            ? (row.activity_token ?? 'initial')
-            : native
-              ? createHash('sha256')
-                  .update(row.inbox_cursor ?? 'initial')
-                  .digest('hex')
-              : undefined,
+          changeToken: checked ? (row.activity_token ?? 'initial') : undefined,
           eventDriven: Boolean(
             row.watch_requested && (checked || native || (row.triggers_enabled && row.trigger_id)),
           ),

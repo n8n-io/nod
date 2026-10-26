@@ -36,6 +36,8 @@ export function summarizePopulation(attempts: AttemptResult[]) {
         grounded: a.checks.find((c) => c.id === 'complete-grounded-work')?.pass ?? null,
       };
     });
+  const cohortOf = (r: { scenario: string; metrics?: PopulationMetrics | null }) =>
+    r.metrics?.cohort ?? Number(/population-(\d+)-/.exec(r.scenario)?.[1] ?? 0);
   const arms = (['engine', 'baseline'] as const).map((arm) => {
     const all = rows.filter((r) => r.scenario.endsWith(`-${arm}`));
     const measured = all.flatMap((r) => (r.metrics ? [r.metrics] : []));
@@ -73,8 +75,8 @@ export function summarizePopulation(attempts: AttemptResult[]) {
             durations[Math.floor(durations.length / 2)]) /
           2
         : null,
-      populations: [...new Set(measured.map((m) => m.cohort))].map((cohort) => {
-        const cluster = all.filter((r) => r.metrics?.cohort === cohort);
+      populations: [...new Set(all.map(cohortOf))].map((cohort) => {
+        const cluster = all.filter((r) => cohortOf(r) === cohort);
         return {
           cohort,
           attempts: cluster.length,

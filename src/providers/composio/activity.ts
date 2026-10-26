@@ -36,7 +36,10 @@ export async function readActivity(
     limit = 1_000_000,
   ) => {
     while (active >= 4) await new Promise<void>((resolve) => waiting.push(resolve));
-    operation.throwIfAborted();
+    if (operation.aborted) {
+      waiting.shift()?.();
+      throw operation.reason;
+    }
     active++;
     const deadline = new AbortController();
     const timer = setTimeout(

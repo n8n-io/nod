@@ -3456,11 +3456,12 @@ test(
                 const urgent = {
                   impact: 'high',
                   urgency: 'time_sensitive',
-                  deadline: new Date(Date.now() + 3 * 3600000).toISOString(),
+                  deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
                 };
                 assert.equal(((await save(urgent)) as { status: string }).status, 'prepared');
                 const held = (await engine.view()).issues[0];
-                assert.ok(held.nextCheck && Date.parse(held.nextCheck) > Date.now() + 50 * 60000);
+                const wake = Date.parse(held.nextCheck ?? '') - Date.now();
+                assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
                 await preferences.update({ quietHoursEnabled: false });
                 assert.equal(((await save(urgent)) as { status: string }).status, 'notified');
                 assert.equal(
@@ -4116,6 +4117,131 @@ test(
             );
           } finally {
             quietBackgroundWork = false;
+            await preferences.update(original);
+          }
+        },
+      );
+      await t.test(
+        'the heartbeat queues one quiet check per pollable account and never stacks them',
+        async () => {
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const original = await preferences.get();
+          const triage = createTriage({
+            connectedApps: readConnectedApps,
+            preparation: async () => false,
+          });
+          const app: ConnectedApp & { accountId: string } = {
+            slug: 'notion',
+            name: 'Notion',
+            status: 'connected',
+            connectionId: randomUUID(),
+            accountId: 'account-1',
+            access: ['api'],
+            supportsTriggers: false,
+            triggersEnabled: false,
+          };
+          const other = { ...app, connectionId: randomUUID(), access: ['mcp' as const] };
+          const ignored: ConnectedApp[] = [
+            { ...app, connectionId: randomUUID(), access: ['browser'] },
+            { ...app, connectionId: randomUUID(), status: 'disconnected' },
+            {
+              ...app,
+              connectionId: randomUUID(),
+              supportsTriggers: true,
+              triggersEnabled: true,
+              triggerStatus: 'active',
+            },
+          ];
+          const checks = async (connectionId = '') =>
+            (
+              await db.pool.query(
+                "SELECT id,source,source_id,background,prompt,started_at FROM turns WHERE owner_id=$1 AND starts_with(source_id,'activity-check:'||$2) ORDER BY created_at,id",
+                [ownerId, connectionId],
+              )
+            ).rows;
+          const stale = async (sourceId: string) => {
+            const turnId = await thread.enqueueTurn('Synthetic stale check', {
+              source: 'event',
+              sourceId,
+              background: true,
+            });
+            await waitFor(settled(turnId));
+            assert.equal(await turnStatus(turnId), 'cancelled');
+            assert.equal(ran(turnId), undefined);
+          };
+          try {
+            quietBackgroundWork = true;
+            dependencies.skipTurn = triage.staleCheck;
+            await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
+            currentApps = [app, other];
+            await triage.heartbeat();
+            assert.deepEqual(await checks(), []);
+            assert.equal(
+              await triage.triageEvent('Synthetic event before a rule', randomUUID()),
+              undefined,
+            );
+            await preferences.update({ notificationRule: 'Tell me about new requests.' });
+            currentApps = [app, other, ...ignored];
+            await Promise.all([triage.heartbeat(), triage.heartbeat()]);
+            const [first] = await checks(app.connectionId);
+            assert.equal((await checks(app.connectionId)).length, 1);
+            assert.equal((await checks(other.connectionId)).length, 1);
+            for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
+            assert.equal(first.source, 'event');
+            assert.equal(first.background, true);
+            for (const check of await checks()) await waitFor(settled(check.id));
+            assert.ok(
+              ran(first.id),
+              `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
+            );
+            const { started_at: since } = (await checks(app.connectionId))[0];
+            await triage.heartbeat();
+            assert.equal((await checks()).length, 2);
+            const continuation = randomUUID();
+            await db.pool.query(
+              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE id=$1",
+              [first.id],
+            );
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,parent_turn_id)
+               SELECT $1,owner_id,thread_id,'resume','Synthetic continuation','running',true,id,id FROM turns WHERE id=$2`,
+              [continuation, first.id],
+            );
+            await triage.heartbeat();
+            assert.equal((await checks()).length, 2);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
+            await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [first.id]);
+            await triage.heartbeat();
+            const [, second] = await checks(app.connectionId);
+            assert.ok(second.prompt.includes(since.toISOString()));
+            assert.equal((await checks()).length, 3);
+            await waitFor(settled(second.id));
+            const replaced = { ...app, accountId: 'account-2' };
+            currentApps = [replaced, other, ...ignored];
+            await triage.heartbeat();
+            const third = (await checks(app.connectionId)).at(-1);
+            assert.equal(third.source_id, `activity-check:${app.connectionId}:account-2:first`);
+            assert.ok(!third.prompt.includes(since.toISOString()));
+            assert.equal((await checks()).length, 4);
+            await waitFor(settled(third.id));
+            await preferences.update({ notificationRule: '' });
+            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
+            await preferences.update({ notificationRule: 'Tell me about new requests.' });
+            currentApps = [other];
+            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
+            await db.pool.query(
+              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE starts_with(source_id,'activity-check:')",
+            );
+            currentApps = [replaced, other];
+            await preferences.update({ notificationRule: '' });
+            const count = (await checks()).length;
+            await triage.heartbeat();
+            assert.equal((await checks()).length, count);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
+          } finally {
+            quietBackgroundWork = false;
+            dependencies.skipTurn = undefined;
+            currentApps = [];
             await preferences.update(original);
           }
         },
@@ -6931,3 +7057,26 @@ test(
     );
   },
 );
+
+test('the dispatch classifier keeps ordinary work when unclear or failing and never sees events', async () => {
+  const { createNotificationRouting } = await import('../src/server/notification-routing.ts');
+  const inputs: unknown[] = [];
+  const route = (answer: unknown) =>
+    createNotificationRouting(async (_instructions, input) => {
+      inputs.push(input);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
+  const rule = 'Prepare replies to contract requests.';
+  const rules = 'Ask before replying to Ana.';
+  assert.equal(await route({ automation: false })('', ''), true);
+  assert.equal(inputs.length, 0);
+  assert.equal(await route({})(rule, rules), false);
+  assert.equal(await route(new Error('timeout'))(rule, rules), false);
+  assert.equal(await route({ automation: true })(rule, rules), false);
+  const prepare = route({ automation: false });
+  assert.equal(await prepare(rule, rules), true);
+  assert.equal(await prepare(rule, rules), true);
+  assert.equal(inputs.length, 4);
+  assert.deepEqual(inputs.at(-1), { notificationRule: rule, rules });
+});

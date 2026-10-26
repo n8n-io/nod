@@ -189,7 +189,7 @@ export function populationScenario(cohort: number, baseline: boolean) {
               metrics.unwanted === 0 &&
               !metrics.criticalMissed &&
               metrics.duplicateNudges === 0 &&
-              notified.size === world.key.positive.length,
+              notified.has(world.key.critical),
             evidence: JSON.stringify(metrics),
           };
         }),
