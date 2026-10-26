@@ -933,6 +933,7 @@ test('a subagent cannot hand over its browser to the owner', async () => {
 });
 
 test('proactive work has no write routes and cannot send model text', async () => {
+  let handoffs = 0;
   let forbidden = 0;
   let reads = 0;
   let prepared = 0;
@@ -940,9 +941,11 @@ test('proactive work has no write routes and cannot send model text', async () =
     async (tools, emit, options) => {
       assert.equal(options.restricted, true);
       assert.deepEqual([...tools.keys()].sort(), [
+        'ask_user',
         'manage_personal_context',
         'proactive_issue',
         'read_source',
+        'task',
       ]);
       const reads = [
         'memory_read',
@@ -965,7 +968,7 @@ test('proactive work has no write routes and cannot send model text', async () =
       ]);
       for (const nested of [false, true]) {
         for (const name of names) {
-          if (['read_source', 'proactive_issue', 'manage_personal_context'].includes(name))
+          if (['read_source', 'proactive_issue', 'manage_personal_context', 'task'].includes(name))
             continue;
           await assert.rejects(
             options.runTool(
@@ -1001,6 +1004,15 @@ test('proactive work has no write routes and cannot send model text', async () =
             args: { path: 'preferences', query: 'Synthetic preference' },
           });
       }
+      await call(tools, 'task', {
+        action: 'start',
+        key: 'synthetic-source:change',
+        title: 'Synthetic action',
+        doneWhen: 'Synthetic action is complete',
+        brief: 'Use the owned rule',
+        now: 'Check the synthetic action',
+        message: 'Synthetic work is ready.',
+      });
       const source = await call(tools, 'read_source', { sourceId: randomUUID() });
       const serialized = JSON.stringify(source);
       assert.ok(serialized.includes('<untrusted_tool_result'));
@@ -1010,6 +1022,10 @@ test('proactive work has no write routes and cannot send model text', async () =
     },
     {
       background: false,
+      task: async () => {
+        handoffs++;
+        return { id: randomUUID() };
+      },
       proactivity: {
         instructions: 'Prepare private work.',
         issues: [],
@@ -1033,8 +1049,46 @@ test('proactive work has no write routes and cannot send model text', async () =
       },
     },
   );
+  assert.equal(handoffs, 1);
   assert.equal(forbidden, 0);
   assert.equal(reads, 1);
   assert.equal(prepared, 1);
   assert.deepEqual(result.replies, []);
+});
+
+test('a spending check-in stops the observer from starting more tasks', async () => {
+  let started = 0;
+  const result = await fixture(
+    async (tools) => {
+      await assert.rejects(
+        call(tools, 'task', {
+          action: 'start',
+          key: 'synthetic-record:change',
+          title: 'Synthetic action',
+          doneWhen: 'Synthetic action is complete',
+          now: 'Check the source',
+          message: 'Synthetic work is ready.',
+        }),
+        /check-in/,
+      );
+      await call(tools, 'ask_user', { question: 'Continue the synthetic observer?' });
+    },
+    {
+      background: true,
+      checkIn: { budgetUsd: 5, spentUsd: 5 },
+      task: async () => {
+        started++;
+        return {};
+      },
+      proactivity: {
+        instructions: 'Read synthetic sources.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+      },
+    },
+  );
+  assert.equal(started, 0);
+  assert.equal(result.result.status, 'waiting_user');
 });

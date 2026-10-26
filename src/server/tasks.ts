@@ -33,6 +33,7 @@ const input = z.discriminatedUnion('action', [
     .object({
       action: z.literal('start'),
       title: z.string().trim().min(1),
+      key: z.string().trim().min(1).max(200).optional(),
       message: z.string().trim().min(1),
       doneWhen: z.string().trim().min(1),
       now,
@@ -326,14 +327,37 @@ export function createTasks(options: {
     let id: string;
     if (request.action === 'start') {
       if (current.task_id) throw failure('This session already has a task. Use update.');
+      if (current.proactive) {
+        if (!request.key)
+          throw failure('Use a stable source record and change as the key for this work.');
+        if (
+          (
+            await client.query('SELECT proactive_paused FROM preferences WHERE owner_id=$1', [
+              ownerId,
+            ])
+          ).rows[0]?.proactive_paused
+        )
+          throw failure('Private preparation is paused.');
+        const existing = (
+          await client.query<{ id: string }>(
+            `SELECT t.id FROM tasks t JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
+           WHERE t.owner_id=$1 AND u.thread_id=$2 AND t.activity_key=$3`,
+            [ownerId, turn.threadId, `${turn.threadId}:${request.key}`],
+          )
+        ).rows[0];
+        if (existing) return (await read(client, { id: existing.id, closed: true }))[0];
+      }
       id = randomUUID();
-      const independent = current.session_id === turn.threadId;
-      if (independent && !sourceMessageId) throw failure('A new task needs an owner request.');
-      const messageId = await insertAssistantMessage(client, turn, request.message);
+      const independent = current.proactive || current.session_id === turn.threadId;
+      if (independent && !current.proactive && !sourceMessageId)
+        throw failure('A new task needs an owner request.');
+      const messageId = current.proactive
+        ? null
+        : await insertAssistantMessage(client, turn, request.message);
       const sessionId = independent ? id : current.session_id;
       await client.query(
-        `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check,applied_revision)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check,applied_revision,activity_key)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           id,
           ownerId,
@@ -349,6 +373,7 @@ export function createTasks(options: {
           JSON.stringify(request.waitingFor ?? []),
           request.nextCheck ?? null,
           independent ? 0 : 1,
+          current.proactive ? `${turn.threadId}:${request.key}` : null,
         ],
       );
       if (independent) {
@@ -358,16 +383,20 @@ export function createTasks(options: {
             [sourceMessageId, ownerId],
           )
         ).rows[0];
-        if (!source) throw failure('Owner request not found.');
-        const child = await enqueueTurn(source.text, {
-          source: 'task',
-          sessionId: id,
-          parentTurnId: turn.turnId,
-          channel: current.channel,
-          channelSourceId: current.channel_source_id,
-          background: true,
-          client,
-        });
+        if (!source && !current.proactive) throw failure('Owner request not found.');
+        const child = await enqueueTurn(
+          current.proactive ? (request.brief ?? request.doneWhen) : source!.text,
+          {
+            source: current.proactive ? 'event' : 'task',
+            proactive: false,
+            sessionId: id,
+            parentTurnId: turn.turnId,
+            channel: current.channel,
+            channelSourceId: current.channel_source_id,
+            background: true,
+            client,
+          },
+        );
         await client.query('UPDATE turns SET message_id=$1,task_revision=1 WHERE id=$2', [
           sourceMessageId,
           child,
@@ -475,6 +504,8 @@ export function createTasks(options: {
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source_message_id uuid REFERENCES messages(id);
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS message_id uuid REFERENCES messages(id);
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS brief text NOT NULL DEFAULT '';
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS activity_key text;
+      CREATE UNIQUE INDEX IF NOT EXISTS tasks_activity ON tasks(owner_id,activity_key) WHERE activity_key IS NOT NULL;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS steps jsonb NOT NULL DEFAULT '[]';
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;

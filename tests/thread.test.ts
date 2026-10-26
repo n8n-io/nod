@@ -19,7 +19,7 @@ import {
   type FeedbackReceipt,
   type FeedbackSubmission,
 } from '../src/shared/feedback.ts';
-import type { RuntimeContext } from '../src/ports/agent.ts';
+import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
 import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
@@ -177,6 +177,37 @@ test(
         await db.pool.query('DELETE FROM artifacts WHERE id=ANY($1::uuid[])', [ids]);
         await db.pool.query('DELETE FROM messages WHERE thread_id=$1', [legacyThread]);
         await db.pool.query('DELETE FROM threads WHERE id=$1', [legacyThread]);
+      },
+    );
+    await t.test(
+      'upgrade cancels old account checks without cancelling other queued work',
+      async () => {
+        const currentThread = (await thread.activeThread()).id;
+        const ids = Array.from({ length: 3 }, () => randomUUID());
+        try {
+          for (const [index, id] of ids.entries())
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt)
+             VALUES($1,$2,$3,'event',$4,'Synthetic queued work')`,
+              [
+                id,
+                index === 2 ? 'synthetic-other-owner' : ownerId,
+                currentThread,
+                index === 1 ? `event:${id}` : `activity-check:${id}`,
+              ],
+            );
+          await db.initializeDatabase();
+          const states = await db.pool.query(
+            'SELECT id,status FROM turns WHERE id=ANY($1::uuid[])',
+            [ids],
+          );
+          assert.deepEqual(
+            ids.map((id) => states.rows.find((row) => row.id === id)?.status),
+            ['cancelled', 'queued', 'queued'],
+          );
+        } finally {
+          await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
+        }
       },
     );
     await thread.initializeThreads();
@@ -385,6 +416,8 @@ test(
       workspace: fakeWorkspace(),
     });
     let quietBackgroundWork = false;
+    let inspectObserver:
+      ((context: RuntimeContext) => Promise<RuntimeResult | undefined>) | undefined;
     let currentApps: Array<ConnectedApp & { accountId?: string }> = [];
     const readConnectedApps = async () => structuredClone(currentApps);
 
@@ -456,6 +489,8 @@ test(
       artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
+        const observerResult = await inspectObserver?.(context);
+        if (observerResult) return observerResult;
         if (inspectAudioContext && context.audioCaption !== undefined)
           await inspectAudioContext(context);
         if (
@@ -4179,11 +4214,343 @@ test(
               assert.equal(await delivered(), 2);
             });
             await t.test(
+              'observer nudges reach the message API and desktop listener once across repeated events',
+              async () => {
+                await reset();
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                await waitFor(
+                  async () =>
+                    !(
+                      await db.pool.query(
+                        "SELECT 1 FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status IN ('queued','running')",
+                        [ownerId, currentThread],
+                      )
+                    ).rowCount,
+                );
+                const notificationsModule = '../desktop/main/notifications.mjs';
+                const { watchAssistantMessages } = await import(notificationsModule);
+                const notifications: string[] = [];
+                let snapshots = 0;
+                let materialChange = 'none';
+                const stop = watchAssistantMessages({
+                  onMessage: (message: { id: string }) => notifications.push(message.id),
+                  request: async (path: string, input: { signal: AbortSignal }) => {
+                    if (path === '/api/state') {
+                      const response = await request('GET', path);
+                      assert.equal(response.statusCode, 200);
+                      snapshots++;
+                      return Response.json(response.json());
+                    }
+                    assert.equal(path, '/api/events');
+                    let remove = () => {};
+                    return new Response(
+                      new ReadableStream({
+                        start(controller) {
+                          const listener = (event: { type: string }) => {
+                            if (event.type === 'refresh')
+                              controller.enqueue(
+                                new TextEncoder().encode('data: {"type":"refresh"}\n\n'),
+                              );
+                          };
+                          remove = () => events.off('event', listener);
+                          events.on('event', listener);
+                          input.signal.addEventListener(
+                            'abort',
+                            () => {
+                              remove();
+                              controller.error(input.signal.reason);
+                            },
+                            { once: true },
+                          );
+                        },
+                        cancel: () => remove(),
+                      }),
+                    );
+                  },
+                });
+                inspectObserver = async (context) => {
+                  if (!context.prompt.startsWith('Assess the due sources')) return;
+                  const active = { turnId: context.turnId, threadId: context.threadId };
+                  await engine.read(active, { sourceId }, context.signal);
+                  await Promise.all(
+                    Array.from({ length: 8 }, () =>
+                      createProactivity(options).save(
+                        active,
+                        proposal({ materialChange }),
+                        undefined,
+                        context.signal,
+                      ),
+                    ),
+                  );
+                  return { status: 'succeeded' };
+                };
+                try {
+                  await waitFor(async () => snapshots > 0);
+                  events.emit('event', { type: 'refresh' });
+                  await waitFor(async () => snapshots > 1);
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic first source change'),
+                    db.pool,
+                  );
+                  const first = await engine.due();
+                  assert.ok(first);
+                  await waitFor(settled(first));
+                  await waitFor(async () => notifications.length === 1);
+                  await transaction(
+                    (client) =>
+                      engine.signal(sourceId, client, 'Another report of the same source change'),
+                    db.pool,
+                  );
+                  const second = await engine.due();
+                  assert.ok(second && second !== first);
+                  await waitFor(settled(second));
+                  assert.equal(ran(first)!.sessionId, ran(second)!.sessionId);
+                  assert.notEqual(ran(first)!.sessionId, currentThread);
+                  assert.ok(ran(second)!.history.some((message) => message.turnId === first));
+                  const saved = await db.pool.query(
+                    "SELECT id FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND starts_with(stream_id,'proactive:')",
+                    [ownerId, [first, second]],
+                  );
+                  assert.deepEqual(
+                    saved.rows.map(({ id }) => id),
+                    notifications,
+                  );
+                  assert.equal(notifications.length, 1);
+                  version = 'v2';
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic evidence changed'),
+                    db.pool,
+                  );
+                  const third = await engine.due();
+                  assert.ok(third);
+                  await waitFor(settled(third));
+                  const before = snapshots;
+                  events.emit('event', { type: 'refresh' });
+                  events.emit('event', { type: 'refresh' });
+                  await waitFor(async () => snapshots >= before + 2);
+                  assert.equal(notifications.length, 1);
+                  version = 'v3';
+                  materialChange = 'condition_changed';
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic condition changed'),
+                    db.pool,
+                  );
+                  const fourth = await engine.due();
+                  assert.ok(fourth);
+                  await waitFor(settled(fourth));
+                  await waitFor(async () => notifications.length === 2);
+                  assert.equal(new Set(notifications).size, 2);
+                  const visible = (await request('GET', '/api/state')).json().messages;
+                  for (const id of notifications)
+                    assert.equal(
+                      visible.filter((message: { id: string }) => message.id === id).length,
+                      1,
+                    );
+                } finally {
+                  inspectObserver = undefined;
+                  stop();
+                }
+              },
+            );
+            await t.test(
+              'a spending wait holds the observer after a separate child task starts',
+              async () => {
+                await reset();
+                const originalContext = dependencies.proactivity;
+                const originalCheckIn = dependencies.checkIn;
+                dependencies.proactivity = engine.context;
+                dependencies.checkIn = ledger.checkIn;
+                let child: RuntimeContext | undefined;
+                const runtime = createAgentRuntime({
+                  agent: ledger.agent({
+                    open: async (input) => ({
+                      resumed: false,
+                      abort() {},
+                      dispose() {},
+                      async prompt() {
+                        const tool = (name: string) =>
+                          input.tools.find((tool) => tool.name === name)!;
+                        await tool('task').execute({
+                          action: 'start',
+                          key: randomUUID(),
+                          title: 'Synthetic independent action',
+                          message: 'Synthetic action prepared.',
+                          doneWhen: 'The synthetic action is complete.',
+                          brief: 'Synthetic child work',
+                          now: 'Check the synthetic target.',
+                        });
+                        input.onEvent({
+                          type: 'model_usage',
+                          id: randomUUID(),
+                          provider: 'fixture',
+                          model: 'fixture',
+                          inputTokens: 1,
+                          outputTokens: 1,
+                          cacheReadTokens: 0,
+                          cacheWriteTokens: 0,
+                          totalTokens: 2,
+                          costUsd: 6,
+                          costSource: 'sdk_estimate',
+                          createdAt: new Date().toISOString(),
+                        });
+                        await assert.rejects(tool('read_source').execute({ sourceId }), /check-in/);
+                        await tool('ask_user').execute({
+                          question: 'The synthetic check used six dollars. Continue?',
+                        });
+                      },
+                    }),
+                    dispose() {},
+                  }),
+                  computer: fakeComputer(),
+                  workspace: fakeWorkspace(),
+                });
+                inspectObserver = async (context) => {
+                  if (context.taskContext?.title === 'Synthetic independent action') {
+                    child = context;
+                    return { status: 'succeeded' };
+                  }
+                  if (context.prompt === 'Synthetic observer check-in') {
+                    assert.deepEqual(context.checkIn, { budgetUsd: 5, spentUsd: 0 });
+                    return runtime.runTurn(context);
+                  }
+                };
+                try {
+                  await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                  const paused = await thread.enqueueTurn('Synthetic observer check-in', {
+                    source: 'event',
+                    background: true,
+                    proactive: true,
+                  });
+                  await waitFor(settled(paused));
+                  await waitFor(() => Boolean(child));
+                  await waitFor(settled(child!.turnId));
+                  assert.notEqual(child!.sessionId, ran(paused)!.sessionId);
+                  assert.equal(await turnStatus(paused), 'waiting');
+                  assert.equal((await ledger.checkIn(ran(paused)!.sessionId, paused))?.spentUsd, 6);
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic later activity'),
+                    db.pool,
+                  );
+                  assert.equal(await engine.due(), paused);
+                  const question = (
+                    await db.pool.query(
+                      "SELECT id FROM messages WHERE turn_id=$1 AND owner_id=$2 AND role='assistant'",
+                      [paused, ownerId],
+                    )
+                  ).rows[0];
+                  const answer = await userMessages.submit('Continue the synthetic observer.', [], {
+                    replyToMessageId: question.id,
+                  });
+                  await waitFor(settled(answer.turnId));
+                  assert.equal(ran(answer.turnId)!.sessionId, ran(paused)!.sessionId);
+                  assert.ok(ran(answer.turnId)!.proactivity);
+                  assert.equal(ran(answer.turnId)!.checkIn?.spentUsd, 0);
+                  const next = await engine.due();
+                  assert.ok(next && next !== paused);
+                  await waitFor(settled(next));
+                  assert.equal(ran(next)!.sessionId, ran(paused)!.sessionId);
+                } finally {
+                  inspectObserver = undefined;
+                  dependencies.proactivity = originalContext;
+                  dependencies.checkIn = originalCheckIn;
+                  await runtime.dispose();
+                }
+              },
+            );
+            await t.test(
+              'observer tasks keep event authority and approval waits leave the observer free',
+              async () => {
+                await reset();
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                const key = randomUUID();
+                let child: RuntimeContext | undefined;
+                let action: Task | undefined;
+                inspectObserver = async (context) => {
+                  if (context.taskContext?.title === 'Synthetic observer action') {
+                    child = context;
+                    await approvals.request(
+                      { turnId: context.turnId, threadId: context.threadId },
+                      'NOD_synthetic_action',
+                      { target: key },
+                    );
+                    return { status: 'waiting_user', waitingFor: 'approval' };
+                  }
+                  if (context.prompt !== 'Synthetic observer task handoff') return;
+                  const request = {
+                    action: 'start',
+                    key,
+                    title: 'Synthetic observer action',
+                    message: 'Synthetic work is ready for review.',
+                    doneWhen: 'The synthetic work is complete',
+                    brief: 'Synthetic background action',
+                    now: 'Check the synthetic target',
+                  };
+                  action = (await context.task!(request)) as Task;
+                  const repeated = (await context.task!({
+                    ...request,
+                    title: 'Synthetic changed wording',
+                  })) as Task;
+                  assert.equal(repeated.id, action.id);
+                  return { status: 'succeeded' };
+                };
+                try {
+                  const observer = await thread.enqueueTurn('Synthetic observer task handoff', {
+                    source: 'event',
+                    background: true,
+                    proactive: true,
+                  });
+                  await waitFor(() => Boolean(child));
+                  await waitFor(settled(child!.turnId));
+                  await waitFor(settled(observer));
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT id FROM messages WHERE owner_id=$1 AND turn_id=$2',
+                        [ownerId, observer],
+                      )
+                    ).rowCount,
+                    0,
+                  );
+                  assert.notEqual(child!.sessionId, ran(observer)!.sessionId);
+                  assert.equal(
+                    await engine.context({ turnId: child!.turnId, threadId: currentThread }),
+                    undefined,
+                  );
+                  const { turnOrigin } = await import('../src/server/approvals.ts');
+                  const origin = await turnOrigin(child!.turnId);
+                  assert.equal(origin?.source, 'event');
+                  assert.deepEqual(origin?.messageIds, []);
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic later source change'),
+                    db.pool,
+                  );
+                  const next = await engine.due();
+                  assert.ok(next && next !== child!.turnId);
+                  await waitFor(settled(next));
+                  assert.equal(await turnStatus(child!.turnId), 'waiting');
+                } finally {
+                  inspectObserver = undefined;
+                  if (child)
+                    await db.pool.query(
+                      "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1",
+                      [child.turnId],
+                    );
+                  if (action)
+                    await db.pool.query(
+                      "UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1",
+                      [action.id],
+                    );
+                }
+              },
+            );
+            await t.test(
               'managed event bursts keep one owner job and retain later signals',
               async () => {
                 await reset();
+                await preferences.update({
+                  notificationRule: 'Forward synthetic invoices to the owned fixture target.',
+                });
                 const routed = createTriage({
-                  preparation: async () => true,
                   signal: (id, client, summary) => engine.signal(id, client, summary),
                   due: engine.due,
                 });
@@ -4238,7 +4605,6 @@ test(
                   ['Later synthetic signal'],
                 );
                 const failing = createTriage({
-                  preparation: async () => true,
                   signal: (id, client) => engine.signal(id, client),
                   due: async () => {
                     throw new Error('Synthetic dispatcher failure');
@@ -4667,324 +5033,6 @@ test(
           } finally {
             await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
             await preferences.update(previous);
-          }
-        },
-      );
-      await t.test(
-        'standing automations and unsupported watches retain ordinary event turns',
-        async () => {
-          const preferences = createPreferencesStore(db.pool, ownerId);
-          const original = await preferences.get();
-          const legacy = createTriage({ preparation: async () => false });
-          try {
-            quietBackgroundWork = true;
-            await preferences.update({
-              notificationRule: 'Forward the synthetic invoices to the owned test target.',
-              proactivePaused: true,
-            });
-            const turnId = await legacy.triageEvent(
-              'Synthetic owned automation event',
-              randomUUID(),
-              async () => true,
-              'synthetic-account',
-            );
-            assert.ok(turnId);
-            const row = (
-              await db.pool.query(
-                'SELECT proactive,source_id FROM turns WHERE id=$1 AND owner_id=$2',
-                [turnId, ownerId],
-              )
-            ).rows[0];
-            assert.equal(row.proactive, false);
-            assert.ok(row.source_id.startsWith('notification:'));
-            await waitFor(async () => runs.some((run) => run.turnId === turnId));
-            const run = runs.find((run) => run.turnId === turnId)!;
-            assert.equal(run.proactivity, undefined);
-            assert.equal(
-              run.notificationRule,
-              'Forward the synthetic invoices to the owned test target.',
-            );
-            let account = 'first-account';
-            const connectionId = randomUUID();
-            const polling = createTriage({
-              preparation: async () => false,
-              connectedApps: async () => [
-                {
-                  slug: 'synthetic-records',
-                  name: 'Synthetic records',
-                  status: 'connected',
-                  connectionId,
-                  accountId: account,
-                  access: ['mcp'],
-                  triggersEnabled: false,
-                  supportsTriggers: false,
-                },
-              ],
-            });
-            await polling.heartbeat();
-            await polling.heartbeat();
-            const checks = (
-              await db.pool.query(
-                'SELECT id,proactive,source_id FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2)',
-                [ownerId, `activity-check:${connectionId}:`],
-              )
-            ).rows;
-            assert.equal(checks.length, 1);
-            assert.equal(checks[0].proactive, false);
-            assert.equal(await polling.staleCheck(checks[0].source_id), false);
-            await waitFor(settled(checks[0].id));
-            await db.pool.query(
-              "UPDATE turns SET created_at=now()-interval '31 minutes' WHERE id=$1",
-              [checks[0].id],
-            );
-            await polling.heartbeat();
-            const repeated = (
-              await db.pool.query(
-                'SELECT id FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2) ORDER BY created_at DESC',
-                [ownerId, `activity-check:${connectionId}:`],
-              )
-            ).rows;
-            assert.equal(repeated.length, 2);
-            await waitFor(settled(repeated[0].id));
-
-            account = 'new-account';
-            assert.equal(await polling.staleCheck(checks[0].source_id), true);
-            await preferences.update({ notificationRule: '' });
-            await polling.heartbeat();
-            assert.equal(
-              (
-                await db.pool.query(
-                  'SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2)',
-                  [ownerId, `activity-check:${connectionId}:`],
-                )
-              ).rows[0].count,
-              '2',
-            );
-          } finally {
-            quietBackgroundWork = false;
-            await preferences.update(original);
-          }
-        },
-      );
-      await t.test(
-        'every app event wakes one quiet turn under a notification rule, and none without one',
-        async () => {
-          const threadId = (await thread.activeThread()).id;
-          await waitFor(
-            async () =>
-              !(
-                await db.pool.query(
-                  "SELECT id FROM turns WHERE thread_id=$1 AND status IN ('queued','running')",
-                  [threadId],
-                )
-              ).rowCount,
-          );
-          const preferences = createPreferencesStore(db.pool, ownerId);
-          const original = await preferences.get();
-          const triage = createTriage({ connectedApps: readConnectedApps });
-          const ids = Array.from({ length: 3 }, () => randomUUID());
-          const eventTurns = async (eventIds: string[]) =>
-            (
-              await db.pool.query(
-                'SELECT id,background,source,thread_id,session_id FROM turns WHERE owner_id=$1 AND source_id=ANY($2::text[])',
-                [ownerId, eventIds.map((id) => `notification:${id}`)],
-              )
-            ).rows;
-          const rule = 'Tell me about new requests.';
-          try {
-            quietBackgroundWork = true;
-            await preferences.update({ quietHoursEnabled: false, notificationRule: rule });
-            const revokedEvent = randomUUID();
-            assert.equal(
-              await triage.triageEvent(
-                'Synthetic event disconnected during triage',
-                revokedEvent,
-                async () => false,
-              ),
-              undefined,
-            );
-            assert.deepEqual(await eventTurns([revokedEvent]), []);
-            const clearedEvent = randomUUID();
-            assert.equal(
-              await triage.triageEvent(
-                'Synthetic event as the rule is cleared',
-                clearedEvent,
-                async () => {
-                  await preferences.update({ notificationRule: '' });
-                  return true;
-                },
-              ),
-              undefined,
-            );
-            assert.deepEqual(await eventTurns([clearedEvent]), []);
-            await preferences.update({ notificationRule: rule });
-            const queued = await Promise.all(
-              [...ids, ids[0], ids[0]].map((id) =>
-                triage.triageEvent(`Synthetic app event ${id}`, id),
-              ),
-            );
-            const dispatched = await eventTurns(ids);
-            assert.equal(dispatched.length, 3);
-            const turnIds = dispatched.map((row) => row.id);
-            assert.deepEqual(new Set(queued), new Set(turnIds));
-            for (const row of dispatched) {
-              assert.equal(row.background, true);
-              assert.equal(row.source, 'event');
-              assert.equal(row.thread_id, threadId);
-              assert.equal(row.session_id, row.id);
-              await waitFor(settled(row.id));
-              assert.equal(await turnStatus(row.id), 'succeeded');
-            }
-            assert.equal(await triage.triageEvent('Synthetic duplicate', ids[0]), queued[0]);
-            assert.equal(runs.filter((run) => turnIds.includes(run.turnId)).length, 3);
-            assert.equal(
-              (
-                await db.pool.query('SELECT id FROM messages WHERE turn_id=ANY($1::uuid[])', [
-                  turnIds,
-                ])
-              ).rowCount,
-              0,
-            );
-            assert.equal(deltas.filter((event) => turnIds.includes(event.turnId)).length, 0);
-            await preferences.update({ notificationRule: '' });
-            const disabledId = randomUUID();
-            assert.equal(
-              await triage.triageEvent('Synthetic event without a rule', disabledId),
-              undefined,
-            );
-            assert.deepEqual(await eventTurns([disabledId]), []);
-          } finally {
-            quietBackgroundWork = false;
-            await preferences.update(original);
-          }
-        },
-      );
-      await t.test(
-        'the heartbeat queues one quiet check per pollable account and never stacks them',
-        async () => {
-          const preferences = createPreferencesStore(db.pool, ownerId);
-          const original = await preferences.get();
-          const triage = createTriage({
-            connectedApps: readConnectedApps,
-            preparation: async () => false,
-          });
-          const app: ConnectedApp & { accountId: string } = {
-            slug: 'notion',
-            name: 'Notion',
-            status: 'connected',
-            connectionId: randomUUID(),
-            accountId: 'account-1',
-            access: ['api'],
-            supportsTriggers: false,
-            triggersEnabled: false,
-          };
-          const other = { ...app, connectionId: randomUUID(), access: ['mcp' as const] };
-          const ignored: ConnectedApp[] = [
-            { ...app, connectionId: randomUUID(), access: ['browser'] },
-            { ...app, connectionId: randomUUID(), status: 'disconnected' },
-            {
-              ...app,
-              connectionId: randomUUID(),
-              supportsTriggers: true,
-              triggersEnabled: true,
-              triggerStatus: 'active',
-            },
-          ];
-          const checks = async (connectionId = '') =>
-            (
-              await db.pool.query(
-                "SELECT id,source,source_id,background,prompt,started_at FROM turns WHERE owner_id=$1 AND starts_with(source_id,'activity-check:'||$2) ORDER BY created_at,id",
-                [ownerId, connectionId],
-              )
-            ).rows;
-          const mine = async () => [
-            ...(await checks(app.connectionId)),
-            ...(await checks(other.connectionId)),
-          ];
-          const stale = async (sourceId: string) => {
-            const turnId = await thread.enqueueTurn('Synthetic stale check', {
-              source: 'event',
-              sourceId,
-              background: true,
-            });
-            await waitFor(settled(turnId));
-            assert.equal(await turnStatus(turnId), 'cancelled');
-            assert.equal(ran(turnId), undefined);
-          };
-          try {
-            quietBackgroundWork = true;
-            dependencies.skipTurn = triage.staleCheck;
-            await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
-            currentApps = [app, other];
-            await triage.heartbeat();
-            assert.deepEqual(await mine(), []);
-            assert.equal(
-              await triage.triageEvent('Synthetic event before a rule', randomUUID()),
-              undefined,
-            );
-            await preferences.update({ notificationRule: 'Tell me about new requests.' });
-            currentApps = [app, other, ...ignored];
-            await Promise.all([triage.heartbeat(), triage.heartbeat()]);
-            const [first] = await checks(app.connectionId);
-            assert.equal((await checks(app.connectionId)).length, 1);
-            assert.equal((await checks(other.connectionId)).length, 1);
-            for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
-            assert.equal(first.source, 'event');
-            assert.equal(first.background, true);
-            for (const check of await mine()) await waitFor(settled(check.id));
-            assert.ok(
-              ran(first.id),
-              `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
-            );
-            const { started_at: since } = (await checks(app.connectionId))[0];
-            await triage.heartbeat();
-            assert.equal((await mine()).length, 2);
-            const continuation = randomUUID();
-            await db.pool.query(
-              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE id=$1",
-              [first.id],
-            );
-            await db.pool.query(
-              `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,parent_turn_id)
-               SELECT $1,owner_id,thread_id,'resume','Synthetic continuation','running',true,id,id FROM turns WHERE id=$2`,
-              [continuation, first.id],
-            );
-            await triage.heartbeat();
-            assert.equal((await mine()).length, 2);
-            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
-            await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [first.id]);
-            await triage.heartbeat();
-            const [, second] = await checks(app.connectionId);
-            assert.ok(second.prompt.includes(since.toISOString()));
-            assert.equal((await mine()).length, 3);
-            await waitFor(settled(second.id));
-            const replaced = { ...app, accountId: 'account-2' };
-            currentApps = [replaced, other, ...ignored];
-            await triage.heartbeat();
-            const third = (await checks(app.connectionId)).at(-1);
-            assert.equal(third.source_id, `activity-check:${app.connectionId}:account-2:first`);
-            assert.ok(!third.prompt.includes(since.toISOString()));
-            assert.equal((await mine()).length, 4);
-            await waitFor(settled(third.id));
-            await preferences.update({ notificationRule: '' });
-            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
-            await preferences.update({ notificationRule: 'Tell me about new requests.' });
-            currentApps = [other];
-            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
-            await db.pool.query(
-              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE starts_with(source_id,'activity-check:')",
-            );
-            currentApps = [replaced, other];
-            await preferences.update({ notificationRule: '' });
-            const count = (await mine()).length;
-            await triage.heartbeat();
-            assert.equal((await mine()).length, count);
-            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
-          } finally {
-            quietBackgroundWork = false;
-            dependencies.skipTurn = undefined;
-            currentApps = [];
-            await preferences.update(original);
           }
         },
       );
@@ -7151,29 +7199,6 @@ test(
     );
   },
 );
-
-test('the dispatch classifier keeps ordinary work when unclear or failing and never sees events', async () => {
-  const { createNotificationRouting } = await import('../src/server/notification-routing.ts');
-  const inputs: unknown[] = [];
-  const route = (answer: unknown) =>
-    createNotificationRouting(async (_instructions, input) => {
-      inputs.push(input);
-      if (answer instanceof Error) throw answer;
-      return answer;
-    });
-  const rule = 'Prepare replies to contract requests.';
-  const rules = 'Ask before replying to Ana.';
-  assert.equal(await route({ automation: false })('', ''), true);
-  assert.equal(inputs.length, 0);
-  assert.equal(await route({})(rule, rules), false);
-  assert.equal(await route(new Error('timeout'))(rule, rules), false);
-  assert.equal(await route({ automation: true })(rule, rules), false);
-  const prepare = route({ automation: false });
-  assert.equal(await prepare(rule, rules), true);
-  assert.equal(await prepare(rule, rules), true);
-  assert.equal(inputs.length, 4);
-  assert.deepEqual(inputs.at(-1), { notificationRule: rule, rules });
-});
 
 test(
   'a cancelled transaction stops waiting for a database connection and releases a late client',

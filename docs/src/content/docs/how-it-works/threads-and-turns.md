@@ -7,7 +7,7 @@ sidebar:
 
 This page explains how Nod turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, each saved task has one, and every schedule fire and app event starts another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat has one, each saved task has one, and each schedule fire has one. App events and source checks share one persistent observer session. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -19,13 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/ma
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                                      |
-| ---------- | ------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| `user`     | A message from you                                                                         | The chat, or the session selected by a reply |
-| `task`     | Chat dispatch or an addressed owner update                                                 | The saved task session                       |
-| `schedule` | A schedule firing                                                                          | A new session                                |
-| `event`    | A connected-app event, a check of an app without events, or a reaction to a Nod message    | A new session                                |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                       |
+| `source`   | Created by                                                                                 | Session                                           |
+| ---------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `user`     | A message from you                                                                         | The chat, or the session selected by a reply      |
+| `task`     | Chat dispatch or an addressed owner update                                                 | The saved task session                            |
+| `schedule` | A schedule firing                                                                          | A new session                                     |
+| `event`    | A source batch, observer task, or reaction to a Nod message                                | The observer, the task, or a new reaction session |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                            |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -63,6 +63,20 @@ stateDiagram-v2
 
 `withTurnLock(turnId, op)` fences every database write a turn makes. The write runs only if the turn is still `running` on the active thread. A stopped, finished or reset turn can't write anything late, but an outside action that already started can still finish.
 
+## One background observer
+
+App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. Later turns keep the same Pi history. A turn runs alone in that session. New signals received during work wait for its next turn.
+
+```mermaid
+flowchart TD
+  events[App events and source checks] --> inbox[Saved source queue]
+  inbox --> observer[One persistent observer]
+  observer --> saved[Prepared work and nudge receipt]
+  observer --> task[Separate action or question task]
+```
+
+A task that needs an action, question, or approval uses its own session. It keeps the event's authority and the normal Trust check. Its wait leaves the observer free. A spending check-in pauses the observer until you answer; source signals remain saved. Explicit schedules keep their own timing and instructions.
+
 ## Messages you send while Nod works
 
 The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close. The next line Nod writes after taking them is posted as a message, so an answer to them never shows only as live status.
@@ -79,11 +93,12 @@ A secure form closes when a newer turn starts in its session, and a payment requ
 
 ## Sessions
 
-| Session                | Key                                                             | Reports to the conversation                                                                                                                                                                                                                       |
-| ---------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main chat              | The thread ID.                                                  | Streams its opening line, shows the text it writes between tool calls as live status, then posts its final reply. That text is posted only when a turn ends without a reply. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). |
-| Task started from chat | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.                                                                                                                                                                                 |
-| Schedule or event      | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                                                                                                                                        |
+| Session                                | Key                                                             | Reports to the conversation                                                                                                                                                                                                                       |
+| -------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main chat                              | The thread ID.                                                  | Streams its opening line, shows the text it writes between tool calls as live status, then posts its final reply. That text is posted only when a turn ends without a reply. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). |
+| Task started from chat                 | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.                                                                                                                                                                                 |
+| Background observer                    | A saved session ID on the active thread.                        | Saves qualified nudges and starts separate tasks for outside actions or waits.                                                                                                                                                                    |
+| Schedule or event outside the observer | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                                                                                                                                        |
 
 Every session saves its Pi history and opens its own browser on first use. Each runs one turn at a time; different sessions run in parallel.
 

@@ -3389,7 +3389,7 @@ test(
     let imageFailure: 'rejected' | 'network' | 'missing-id' | 'server' | undefined;
     let providerCalls = 0;
     let failSend = false;
-    let rejectRichText = false;
+    const telegramMethods: string[] = [];
     let rejectMarkdown = false;
     const rejectedFormatting: string[] = [];
     let failSubmit = false;
@@ -3420,13 +3420,7 @@ test(
             init?.body instanceof FormData
               ? Object.fromEntries([...init.body].filter((entry) => typeof entry[1] === 'string'))
               : body;
-          if (rejectRichText && url.endsWith('/sendRichMessage')) {
-            rejectedFormatting.push('rich');
-            return Response.json(
-              { ok: false, error_code: 404, description: 'Method not found' },
-              { status: 404 },
-            );
-          }
+          telegramMethods.push(url.split('/').at(-1)!);
           if (rejectMarkdown && wire.parse_mode === 'MarkdownV2') {
             rejectedFormatting.push('markdown');
             return Response.json(
@@ -3857,13 +3851,7 @@ test(
       );
       await addReply('channel:telegram:987:123456:10', paragraphs.join('\n\n'));
       await channels.drain();
-      const parts = sent
-        .slice(5)
-        .map((message) =>
-          String(
-            (message.body.rich_message as { markdown?: string })?.markdown ?? message.body.text,
-          ),
-        );
+      const parts = sent.slice(5).map((message) => String(message.body.text));
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
 
@@ -3883,9 +3871,7 @@ test(
         captionDelivery.map((_, index) => `123456:${beforeCaption + index + 101}`),
       );
       const readable = (body: Record<string, unknown>) =>
-        String(
-          (body.rich_message as { markdown?: string })?.markdown ?? body.text ?? body.caption ?? '',
-        ).replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+        String(body.text ?? body.caption ?? '').replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
       assert.ok(
         captionDelivery.some(({ body }) =>
           readable(body).includes('Final cancellation deadline: 2026-10-31.'),
@@ -3900,7 +3886,6 @@ test(
         30,
       );
       assert.ok(captionDelivery.every(({ body }) => String(body.caption ?? '').length <= 1024));
-      rejectRichText = true;
       const conditions = Array.from(
         { length: 100 },
         (_, index) =>
@@ -3934,7 +3919,6 @@ test(
           },
         );
       }
-      assert.ok(rejectedFormatting.includes('rich'));
       assert.ok(rejectedFormatting.includes('markdown'));
       rejectMarkdown = false;
       const family = '👩‍👩‍👧‍👦';
@@ -3955,7 +3939,38 @@ test(
       assert.ok(unicodeParts.every((part) => Buffer.from(part).toString() === part));
       assert.ok(unicodeParts.at(-1)!.includes('Final Unicode deadline: 2026-10-31.'));
 
+      const formatted = [
+        '**Call:** today at 17:30. [Join call](https://meet.example.com/a).',
+        'Goal first.\nThen details.',
+        '- **Integration:** approval\n- **Pilot:** a date',
+        '1. Ask\n2. Decide',
+        '| Flight | Price |\n| --- | --- |\n| LH 1 | €120.50 |',
+        'Saved to outputs/report.md. Type \\*text\\* to bold, 5*3*2 stays.',
+      ].join('\n\n');
+      const beforeFormatted = sent.length;
+      await addReply('channel:telegram:987:123456:10', formatted);
+      await channels.drain();
+      assert.deepEqual(
+        sent.slice(beforeFormatted).map(({ body }) => [body.parse_mode, body.text]),
+        [
+          [
+            'MarkdownV2',
+            '*Call:* today at 17:30\\. [Join call](https://meet.example.com/a)\\.\n\nGoal first\\.\nThen details\\.\n\n• *Integration:* approval\n• *Pilot:* a date\n\n1\\. Ask\n2\\. Decide\n\n*LH 1*\n• Price: €120\\.50\n\nSaved to `outputs/report.md`\\. Type \\*text\\* to bold, 5\\*3\\*2 stays\\.',
+          ],
+        ],
+      );
+      assert.ok(!telegramMethods.includes('sendRichMessage'));
+
       await pool.query("UPDATE channel_inbox SET received_at=now() WHERE provider='whatsapp'");
+      const beforeFormattedWhatsApp = sent.length;
+      await addReply('channel:whatsapp:555000:wamid.good', formatted);
+      await channels.drain();
+      assert.deepEqual(
+        sent.slice(beforeFormattedWhatsApp).map(({ body }) => (body.text as { body: string }).body),
+        [
+          '*Call:* today at 17:30. Join call (https://meet.example.com/a).\n\nGoal first.\nThen details.\n\n- *Integration:* approval\n- *Pilot:* a date\n\n1. Ask\n2. Decide\n\n*LH 1*\n- Price: €120.50\n\nSaved to outputs/report.md. Type `*text*` to bold, 5*3*2 stays.',
+        ],
+      );
       const beforeWhatsApp = sent.length;
       const flightRows = Array.from(
         { length: 24 },

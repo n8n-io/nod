@@ -112,7 +112,6 @@ import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
-import { createNotificationRouting } from './notification-routing.ts';
 import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
@@ -906,16 +905,10 @@ async function initializeApplication(
     catalog.find((source) => source.id === `${connectionSources}:${id}`);
   let proactivity!: ReturnType<typeof createProactivity>;
   let privateReady = false;
-  const preparationRule = createNotificationRouting(review);
   const triage = createTriage({
     consumers,
-    connectedApps: () => integrations.connectedApps(ownerId, true),
-    preparation: async (rule, rules, sourceId) => {
-      if (!privateReady) throw new Error('Background sources are starting.');
-      const source = observedSource(await observations.sources(), sourceId);
-      return Boolean(source?.readable) && (await preparationRule(rule, rules));
-    },
     signal: async (sourceId, client, summary) => {
+      if (!privateReady) throw new Error('Background sources are starting.');
       const source = observedSource(await observations.sources(client), sourceId);
       if (source) await proactivity.signal(source.id, client, summary);
     },
@@ -1439,23 +1432,7 @@ async function initializeApplication(
     pool,
     ownerId,
     redact: createTextRedactor(secrets),
-    sources: async (client) => {
-      const catalog = await observations.sources(client);
-      const prefs = await triage.getPreferences();
-      const preparing =
-        !prefs.notificationRule.trim() ||
-        (await preparationRule(prefs.notificationRule, prefs.rules));
-      return catalog.map((source) =>
-        !preparing || source.mode === 'classic'
-          ? {
-              ...source,
-              mode: 'classic' as const,
-              pollIntervalMs: undefined,
-              changeToken: undefined,
-            }
-          : { ...source, mode: 'prepare' as const },
-      );
-    },
+    sources: (client) => observations.sources(client),
     read: async (turn, input, signal) => {
       const source = (await observations.sources()).find(
         (item) => item.id === input.sourceId && item.readable,
@@ -1548,8 +1525,7 @@ async function initializeApplication(
       spendingLimitReached: ledger.limitReached,
       checkIn: ledger.checkIn,
       skipTurn: async (sourceId) =>
-        (await triage.staleCheck(sourceId)) ||
-        (sourceId.startsWith('proactivity:') && !(await proactivity.canRun())),
+        sourceId.startsWith('proactivity:') && !(await proactivity.canRun()),
       accountProfile,
       connectedApps: integrations.connectedApps,
       mcpServers: discovered.servers,
