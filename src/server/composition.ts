@@ -572,6 +572,20 @@ async function initializeApplication(
   await adapters.initialize?.();
   await initializeThreads();
   const artifacts = localArtifacts;
+  async function sweepArtifacts() {
+    try {
+      const result = await artifacts.sweep();
+      if (result.removed || result.orphans || result.failed)
+        console.info(JSON.stringify({ event: 'artifact_cleanup', ...result }));
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code;
+      logFailure('artifact_cleanup', {
+        name: 'ArtifactCleanupError',
+        code: typeof code === 'string' && /^[A-Z0-9_]{1,32}$/.test(code) ? code : 'UNKNOWN',
+      });
+    }
+  }
+  await sweepArtifacts();
   const secrets = environmentSecrets(process.env);
   adapters.models?.onSecrets((values) => {
     for (const value of values) if (!secrets.includes(value)) secrets.push(value);
@@ -786,7 +800,10 @@ async function initializeApplication(
       const source = observedSource(await observations.sources(client), sourceId);
       if (source) await proactivity.signal(source.id, client, summary);
     },
-    sweep: () => vault.forgetExpiredHolds(),
+    sweep: async () => {
+      await sweepArtifacts();
+      await vault.forgetExpiredHolds().catch((error) => logFailure('vault_expiry', error));
+    },
     due: () => proactivity.due(),
   });
   const grantVault = await createAppGrantVault(pool, {
@@ -2050,6 +2067,7 @@ async function initializeApplication(
       () => conversationAnalytics.close(),
       finishWork,
       () => runtime.dispose(),
+      () => artifacts.close(),
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
       () => diagnostics.log?.close(),

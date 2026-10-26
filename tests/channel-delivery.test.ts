@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -1702,6 +1702,11 @@ test(
     });
     channels.registerRoutes(app);
     const filePaths: string[] = [];
+    const artifactRoot = join(
+      dataRoot,
+      'artifacts',
+      createHash('sha256').update(ownerId).digest('hex'),
+    );
     const addReply = async (turnId: string, attachments: unknown[], text = 'Here is the file.') => {
       const id = randomUUID();
       await pool.query(
@@ -1749,10 +1754,7 @@ test(
       const fileBytes = Buffer.from('completed document fixture');
       const image = await storeArtifact(imageBytes, 'screenshot.png', 'image/png', threadId);
       const document = await storeArtifact(fileBytes, 'result.txt', 'text/plain', threadId);
-      filePaths.push(
-        join(dataRoot, 'artifacts', image.id),
-        join(dataRoot, 'artifacts', document.id),
-      );
+      filePaths.push(join(artifactRoot, image.id), join(artifactRoot, document.id));
       const reply = await addReply(
         turnId,
         [{ ...image, url: 'https://attacker.invalid/ignored', name: 'spoof.png' }, document],
@@ -1781,7 +1783,7 @@ test(
 
       const voiceBytes = Buffer.from('synthetic Ogg voice fixture');
       const voice = await storeArtifact(voiceBytes, 'reply.ogg', 'audio/ogg', threadId);
-      filePaths.push(join(dataRoot, 'artifacts', voice.id));
+      filePaths.push(join(artifactRoot, voice.id));
       const voiceReply = await addReply(turnId, [voice]);
       await channels.drain();
       assert.equal(sent.at(-1)!.method, 'sendVoice');
@@ -1804,7 +1806,7 @@ test(
         ['location.json', 'application/json', JSON.stringify({ latitude: 41.4, longitude: 2.17 })],
       ]) {
         const artifact = await storeArtifact(Buffer.from(text), name, mimeType, threadId);
-        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        filePaths.push(join(artifactRoot, artifact.id));
         const reply = await addReply(turnId, [artifact]);
         await channels.drain();
         assert.equal((await state(reply)).state, 'sent');
@@ -1826,7 +1828,7 @@ test(
           'application/json',
           threadId,
         );
-        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        filePaths.push(join(artifactRoot, artifact.id));
         const reply = await addReply(turnId, [artifact]);
         await channels.drain();
         assert.equal((await state(reply)).state, 'sent');
@@ -1840,7 +1842,7 @@ test(
         'text/vcard',
         threadId,
       );
-      filePaths.push(join(dataRoot, 'artifacts', grouped.id));
+      filePaths.push(join(artifactRoot, grouped.id));
       const groupedReply = await addReply(turnId, [grouped]);
       await channels.drain();
       assert.equal((await state(groupedReply)).state, 'sent');
@@ -1862,7 +1864,7 @@ test(
       ] as const) {
         const bytes = Buffer.from(text);
         const artifact = await storeArtifact(bytes, name, 'text/vcard', threadId);
-        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        filePaths.push(join(artifactRoot, artifact.id));
         const beforeNative: number = native.length;
         const beforeFiles: number = sent.length;
         const reply = await addReply(turnId, [artifact]);
@@ -1951,7 +1953,7 @@ test(
       await writeFile(outside, 'private host data');
       await pool.query('UPDATE artifacts SET storage_path=$2 WHERE id=$1', [image.id, outside]);
       await assert.rejects(readThreadArtifacts(threadId, [image.id]), /unavailable/);
-      const imagePath = join(dataRoot, 'artifacts', image.id);
+      const imagePath = join(artifactRoot, image.id);
       await pool.query('UPDATE artifacts SET storage_path=$2 WHERE id=$1', [image.id, imagePath]);
       await rm(imagePath);
       await symlink(outside, imagePath);

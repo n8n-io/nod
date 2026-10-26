@@ -464,6 +464,10 @@ export async function submitUserMessage(
       answer,
     });
     if (confirmed && 'turnId' in confirmed) return confirmed;
+    await localArtifacts.retainArtifacts(
+      attachments.map((attachment) => attachment.id),
+      client,
+    );
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
     const taskTarget =

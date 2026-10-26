@@ -25,7 +25,7 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/objec
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
-import type { Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
+import type { Artifact, Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
@@ -86,7 +86,84 @@ test(
     const { createOnboardingSuggestions } = await import('../src/server/onboarding-suggestions.ts');
     assert.equal(dataRoot, root);
 
-    await db.initializeDatabase();
+    await t.test(
+      'legacy upload retention is migrated once with a fresh owned grace period',
+      async () => {
+        const legacyThread = randomUUID();
+        const ids = Array.from({ length: 4 }, () => randomUUID());
+        await db.pool.query(`
+        CREATE TABLE threads (
+          id uuid PRIMARY KEY, owner_id text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+          archived_at timestamptz
+        );
+        CREATE TABLE messages (
+          id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
+          thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),
+          attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now(),
+          stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
+          reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
+        );
+        CREATE TABLE artifacts (
+          id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,
+          mime_type text NOT NULL, size integer NOT NULL, storage_path text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+        await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+          legacyThread,
+          ownerId,
+        ]);
+        for (const [index, id] of ids.entries())
+          await db.pool.query(
+            `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,created_at)
+           VALUES($1,$2,$3,'legacy.txt','text/plain',1,$4,now()-interval '60 days')`,
+            [
+              id,
+              index === 3 ? 'foreign-owner' : ownerId,
+              index === 2 ? legacyThread : null,
+              join(root, 'artifacts', id),
+            ],
+          );
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'user','Legacy sent file',$3,$4)",
+          [randomUUID(), ownerId, legacyThread, JSON.stringify([{ id: ids[1] }])],
+        );
+        const started = Date.now();
+        await db.initializeDatabase();
+        const migrated = (await db.pool.query('SELECT id,expires_at,deleting_at FROM artifacts'))
+          .rows;
+        const pending = migrated.find((row) => row.id === ids[0]);
+        assert.ok(pending.expires_at.getTime() >= started + 24 * 60 * 60_000);
+        assert.ok(pending.expires_at.getTime() <= Date.now() + 24 * 60 * 60_000);
+        for (const row of migrated) {
+          assert.equal(row.deleting_at, null);
+          if (row.id !== ids[0]) assert.equal(row.expires_at, null);
+        }
+        const retained = await storeArtifact(Buffer.from('retained'), 'retained.txt', 'text/plain');
+        await db.pool.query("UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1", [
+          ids[0],
+        ]);
+        const expired = (
+          await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])
+        ).rows[0].expires_at;
+        await db.initializeDatabase();
+        assert.deepEqual(
+          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])).rows[0]
+            .expires_at,
+          expired,
+        );
+        assert.equal(
+          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [retained.id]))
+            .rows[0].expires_at,
+          null,
+        );
+        assert.equal((await localArtifacts.readArtifact(retained.id)).toString(), 'retained');
+        await db.pool.query('DELETE FROM artifacts WHERE id=ANY($1::uuid[])', [ids]);
+        await db.pool.query('DELETE FROM messages WHERE thread_id=$1', [legacyThread]);
+        await db.pool.query('DELETE FROM threads WHERE id=$1', [legacyThread]);
+      },
+    );
     await thread.initializeThreads();
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -780,15 +857,62 @@ test(
       await t.test(
         'an uploaded attachment stays in the thread workspace for later turns',
         async () => {
-          const artifact = await storeArtifact(
-            Buffer.from('synthetic attachment bytes'),
-            'notes.txt',
-            'text/plain',
+          const form = new FormData();
+          form.append(
+            'file',
+            new File(['synthetic attachment bytes'], 'notes.txt', { type: 'text/plain' }),
           );
-          const first = await thread.submitUserMessage('read attachment', [artifact], {
-            channel: 'web',
+          const uploadRequest = new Request('http://localhost/api/uploads', {
+            method: 'POST',
+            body: form,
           });
+          const upload = await app.inject({
+            method: 'POST',
+            url: '/api/uploads',
+            headers: { ...headers, 'content-type': uploadRequest.headers.get('content-type')! },
+            payload: Buffer.from(await uploadRequest.arrayBuffer()),
+          });
+          assert.equal(upload.statusCode, 200, upload.body);
+          const artifact = upload.json<Artifact>();
+          assert.ok(
+            (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id]))
+              .rows[0].expires_at > new Date(),
+          );
+          await db.pool.query(
+            "UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1",
+            [artifact.id],
+          );
+          const renewed = await request('POST', '/api/uploads/renew', {
+            ids: [artifact.id, artifact.id, randomUUID()],
+          });
+          assert.equal(renewed.statusCode, 200, renewed.body);
+          assert.deepEqual(renewed.json(), [artifact]);
+          assert.ok(
+            (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id]))
+              .rows[0].expires_at > new Date(),
+          );
+          const sent = await sendJson({ text: 'read attachment', attachmentIds: [artifact.id] });
+          assert.equal(sent.statusCode, 200, sent.body);
+          const first = sent.json<SubmitMessageResponse>();
           await waitFor(settled(first.turnId));
+          const retained = (
+            await db.pool.query('SELECT thread_id,expires_at FROM artifacts WHERE id=$1', [
+              artifact.id,
+            ])
+          ).rows[0];
+          assert.deepEqual(retained, { thread_id: null, expires_at: null });
+          await db.pool.query(
+            "UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1",
+            [artifact.id],
+          );
+          await localArtifacts.sweep();
+          assert.equal(
+            (await localArtifacts.readArtifact(artifact.id)).toString(),
+            'synthetic attachment bytes',
+          );
+          const reused = await thread.submitUserMessage('read reused attachment', [artifact]);
+          await waitFor(settled(reused.turnId));
+          assert.equal(stagedReads.get('read reused attachment'), 'synthetic attachment bytes');
           const staged = `${artifact.id}-notes.txt`;
           const workspace = join(root, 'workspaces', first.threadId);
           assert.equal(ran(first.turnId)?.workspacePath, workspace);
@@ -832,6 +956,218 @@ test(
             await readFile(join(workspace, staged), 'utf8'),
             'synthetic attachment bytes',
           );
+        },
+      );
+
+      await t.test(
+        'upload retention rolls back with a failed message and deduplicates retries',
+        async () => {
+          const artifact = await localArtifacts.storeUpload(
+            Buffer.from('transaction fixture'),
+            'transaction.txt',
+            'text/plain',
+          );
+          const expiry = (
+            await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id])
+          ).rows[0].expires_at;
+          const clientMessageId = randomUUID();
+          await db.pool.query(
+            `ALTER TABLE messages ADD CONSTRAINT reject_upload_message CHECK(id<>'${clientMessageId}')`,
+          );
+          try {
+            await assert.rejects(
+              thread.submitUserMessage('transaction attachment', [artifact, artifact], {
+                clientMessageId,
+              }),
+              { code: '23514', constraint: 'reject_upload_message' },
+            );
+          } finally {
+            await db.pool.query('ALTER TABLE messages DROP CONSTRAINT reject_upload_message');
+          }
+          assert.deepEqual(
+            (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id]))
+              .rows[0].expires_at,
+            expiry,
+          );
+          assert.equal(
+            (await db.pool.query('SELECT id FROM messages WHERE id=$1', [clientMessageId]))
+              .rowCount,
+            0,
+          );
+          assert.equal(
+            (await db.pool.query('SELECT id FROM turns WHERE message_id=$1', [clientMessageId]))
+              .rowCount,
+            0,
+          );
+          const submitted = await thread.submitUserMessage(
+            'transaction attachment',
+            [artifact, artifact],
+            { clientMessageId },
+          );
+          await waitFor(settled(submitted.turnId));
+          assert.equal(
+            (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id]))
+              .rows[0].expires_at,
+            null,
+          );
+          await db.pool.query('UPDATE artifacts SET deleting_at=now() WHERE id=$1', [artifact.id]);
+          try {
+            assert.equal((await request('GET', `${artifact.url}/metadata`)).statusCode, 404);
+            assert.equal((await request('GET', artifact.url)).statusCode, 404);
+            assert.deepEqual(
+              (await request('POST', '/api/uploads/renew', { ids: [artifact.id] })).json(),
+              [],
+            );
+            assert.equal(
+              (await sendJson({ text: 'Unavailable upload', attachmentIds: [artifact.id] }))
+                .statusCode,
+              400,
+            );
+            assert.deepEqual(
+              await thread.submitUserMessage('transaction attachment', [artifact, artifact], {
+                clientMessageId,
+              }),
+              submitted,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE id=$1', [clientMessageId]))
+                .rowCount,
+              1,
+            );
+            await assert.rejects(
+              thread.submitUserMessage('new attachment message', [artifact]),
+              /unavailable/,
+            );
+          } finally {
+            await db.pool.query('UPDATE artifacts SET deleting_at=NULL WHERE id=$1', [artifact.id]);
+          }
+        },
+      );
+
+      await t.test(
+        'a sending transaction keeps its upload safe from concurrent cleanup',
+        async () => {
+          const artifact = await localArtifacts.storeUpload(
+            Buffer.from('send wins'),
+            'send.txt',
+            'text/plain',
+          );
+          await db.pool.query(
+            "UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1",
+            [artifact.id],
+          );
+          const client = await db.pool.connect();
+          try {
+            await client.query('BEGIN');
+            const submitted = await thread.submitUserMessage('send wins cleanup race', [artifact], {
+              client,
+            });
+            await localArtifacts.sweep();
+            assert.equal((await localArtifacts.readArtifact(artifact.id)).toString(), 'send wins');
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE id=$1', [submitted.messageId]))
+                .rowCount,
+              0,
+            );
+            await client.query('COMMIT');
+            await waitFor(settled(submitted.turnId));
+            await localArtifacts.sweep();
+            assert.equal((await localArtifacts.readArtifact(artifact.id)).toString(), 'send wins');
+            assert.equal(
+              (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [artifact.id]))
+                .rows[0].expires_at,
+              null,
+            );
+          } finally {
+            await client.query('ROLLBACK');
+            client.release();
+          }
+        },
+      );
+
+      await t.test(
+        'cleanup that locks an upload first rejects a concurrent send without a message',
+        async () => {
+          const artifact = await localArtifacts.storeUpload(
+            Buffer.from('cleanup wins'),
+            'cleanup.txt',
+            'text/plain',
+          );
+          await db.pool.query(
+            "UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1",
+            [artifact.id],
+          );
+          const gate = await db.pool.connect();
+          const sender = await db.pool.connect();
+          const lock = randomBytes(4).readUInt32BE() >>> 1;
+          const clientMessageId = randomUUID();
+          let sweep: Promise<unknown> | undefined;
+          let rejected: Promise<void> | undefined;
+          try {
+            await gate.query('SELECT pg_advisory_lock($1)', [lock]);
+            await db.pool.query(`
+            CREATE FUNCTION hold_upload_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+              IF NEW.id='${artifact.id}' AND NEW.deleting_at IS NOT NULL THEN
+                PERFORM pg_advisory_xact_lock(${lock});
+              END IF;
+              RETURN NEW;
+            END $$;
+            CREATE TRIGGER hold_upload_cleanup BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION hold_upload_cleanup()
+          `);
+            sweep = localArtifacts.sweep();
+            await waitFor(async () =>
+              Boolean(
+                (
+                  await db.pool.query(
+                    "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted",
+                    [lock],
+                  )
+                ).rowCount,
+              ),
+            );
+            await sender.query('BEGIN');
+            const pid = (await sender.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+            rejected = assert.rejects(
+              thread.submitUserMessage('cleanup wins race', [artifact], {
+                client: sender,
+                clientMessageId,
+              }),
+              /unavailable/,
+            );
+            await waitFor(
+              async () =>
+                (
+                  await db.pool.query('SELECT cardinality(pg_blocking_pids($1))>0 AS blocked', [
+                    pid,
+                  ])
+                ).rows[0].blocked,
+            );
+            await gate.query('SELECT pg_advisory_unlock($1)', [lock]);
+            await rejected;
+            await sender.query('ROLLBACK');
+            await sweep;
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE id=$1', [clientMessageId]))
+                .rowCount,
+              0,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT id FROM turns WHERE message_id=$1', [clientMessageId]))
+                .rowCount,
+              0,
+            );
+            await assert.rejects(localArtifacts.readArtifact(artifact.id), /unavailable/);
+          } finally {
+            await gate.query('SELECT pg_advisory_unlock_all()');
+            await Promise.allSettled([rejected]);
+            await sender.query('ROLLBACK');
+            await Promise.allSettled([sweep]);
+            sender.release();
+            gate.release();
+            await db.pool.query(
+              'DROP TRIGGER IF EXISTS hold_upload_cleanup ON artifacts; DROP FUNCTION IF EXISTS hold_upload_cleanup()',
+            );
+          }
         },
       );
 
@@ -3319,6 +3655,7 @@ test(
       await thread.stopThreadWorkers();
       await quietRuntime.dispose();
       await app.close();
+      await localArtifacts.close();
       await db.pool.end();
       await admin.query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE`);
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

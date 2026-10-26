@@ -312,7 +312,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         { statusCode: 503 },
       );
     const result = await pool.query(
-      'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2',
+      'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND deleting_at IS NULL',
       [input.attachmentIds, ownerId],
     );
     if (result.rowCount !== input.attachmentIds.length)
@@ -379,21 +379,28 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.post('/api/uploads', async (request) => {
     const file = await request.file();
     if (!file) throw Object.assign(new Error('Choose a file to upload.'), { statusCode: 400 });
-    return artifacts.storeArtifact(await file.toBuffer(), file.filename, file.mimetype);
+    return artifacts.storeUpload(await file.toBuffer(), file.filename, file.mimetype);
+  });
+  app.post('/api/uploads/renew', async (request) => {
+    const { ids } = z
+      .object({ ids: z.array(z.uuid()).max(100) })
+      .strict()
+      .parse(request.body);
+    return artifacts.renewUploads(ids);
   });
   app.get<{ Params: { id: string } }>('/api/artifacts/:id/metadata', async (request, reply) => {
-    const { rows } = await pool.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2', [
-      z.uuid().parse(request.params.id),
-      ownerId,
-    ]);
+    const { rows } = await pool.query(
+      'SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2 AND deleting_at IS NULL',
+      [z.uuid().parse(request.params.id), ownerId],
+    );
     if (!rows[0]) return reply.code(404).send({ error: 'File not found.' });
     return artifactView(rows[0]);
   });
   app.get<{ Params: { id: string } }>('/api/artifacts/:id', async (request, reply) => {
-    const result = await pool.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2', [
-      z.uuid().parse(request.params.id),
-      ownerId,
-    ]);
+    const result = await pool.query(
+      'SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2 AND deleting_at IS NULL',
+      [z.uuid().parse(request.params.id), ownerId],
+    );
     const file = result.rows[0];
     if (!file) return reply.code(404).send({ error: 'File not found.' });
     const inline =

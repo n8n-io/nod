@@ -85,6 +85,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
   const uploads = useRef(new Set<AbortController>());
+  const renewal = useRef<AbortController | null>(null);
   const uploadQueue = useRef(Promise.resolve());
   const previewUrls = useRef(new Set<string>());
   const lastText = useRef(text);
@@ -141,15 +142,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (!text) setText(saved.text);
       if (!replyTo) restoreReply?.(saved.reply);
       if (saved.missing.length) setError(`Attach these files again: ${saved.missing.join(', ')}`);
-      void (async () => {
-        for (let start = 0; start < saved.attachments.length && mounted.current; start += 4)
-          await Promise.all(
-            saved.attachments
-              .slice(start, start + 4)
-              .filter((item) => attachmentValues.current.some((value) => value.id === item.id))
-              .map(checkArtifact),
-          );
-      })();
+      void renewAttachments(saved.attachments.map((item) => item.id));
     }
   }, [editor]);
   useEffect(() => {
@@ -176,7 +169,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         )
       )
         return;
-      updateAttachments([...attachmentValues.current, { ...artifact, artifact, state: 'ready' }]);
+      updateAttachments([
+        ...attachmentValues.current,
+        { ...artifact, artifact, state: 'checking' },
+      ]);
+      void renewAttachments([artifact.id]);
       focus();
     };
     window.addEventListener('nod:attach-artifact', receive);
@@ -184,8 +181,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [editor]);
   useEffect(() => {
     mounted.current = true;
+    const refresh = () => void renewAttachments();
+    const visible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const interval = window.setInterval(refresh, 5 * 60 * 1000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', visible);
+    refresh();
     return () => {
       mounted.current = false;
+      renewal.current?.abort();
+      renewal.current = null;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', visible);
       for (const controller of uploads.current) controller.abort();
       uploads.current.clear();
       for (const url of previewUrls.current) URL.revokeObjectURL(url);
@@ -202,29 +212,63 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     attachmentValues.current = values;
     setAttachments(values);
   }
-  async function checkArtifact(item: Artifact) {
-    updateAttachments(
-      attachmentValues.current.map((value) =>
-        value.id === item.id ? { ...value, state: 'checking', error: undefined } : value,
+  async function renewAttachments(checkIds: string[] = []) {
+    if (!mounted.current || (renewal.current && !checkIds.length)) return;
+    const checking = new Set(checkIds);
+    const requested = new Map(
+      attachmentValues.current.flatMap((item) =>
+        item.artifact &&
+        (item.state === 'ready' || item.state === 'checking' || checking.has(item.id))
+          ? [[item.id, item.artifact.id] as const]
+          : [],
       ),
     );
+    if (!requested.size) return;
+    renewal.current?.abort();
+    const controller = new AbortController();
+    renewal.current = controller;
+    updateAttachments(
+      attachmentValues.current.map((value) =>
+        checking.has(value.id) ? { ...value, state: 'checking', error: undefined } : value,
+      ),
+    );
+    const current = () =>
+      mounted.current && !controller.signal.aborted && renewal.current === controller;
+    const included = (item: DraftAttachment) =>
+      requested.get(item.id) === item.artifact?.id &&
+      (item.state === 'ready' || item.state === 'checking');
     try {
-      const artifact = await api<Artifact>(`${item.url}/metadata`);
-      if (mounted.current)
+      const ids = [...new Set(requested.values())];
+      const available = new Map<string, Artifact>();
+      for (let start = 0; start < ids.length && current(); start += 100) {
+        const artifacts = await api<Artifact[]>('/api/uploads/renew', {
+          method: 'POST',
+          body: JSON.stringify({ ids: ids.slice(start, start + 100) }),
+          signal: controller.signal,
+        });
+        for (const artifact of artifacts) available.set(artifact.id, artifact);
+      }
+      if (current())
         updateAttachments(
-          attachmentValues.current.map((value) =>
-            value.id === item.id ? { ...value, artifact, state: 'ready' } : value,
-          ),
+          attachmentValues.current.map((value) => {
+            if (!included(value)) return value;
+            const artifact = available.get(value.artifact!.id);
+            return artifact
+              ? { ...value, artifact, state: 'ready', error: undefined }
+              : { ...value, state: 'failed', error: 'An attachment is unavailable.' };
+          }),
         );
     } catch (cause) {
-      if (mounted.current)
+      if (current())
         updateAttachments(
           attachmentValues.current.map((value) =>
-            value.id === item.id
+            included(value) && value.state === 'checking'
               ? { ...value, state: 'failed', error: errorMessage(cause) }
               : value,
           ),
         );
+    } finally {
+      if (renewal.current === controller) renewal.current = null;
     }
   }
   function releasePreview(item: DraftAttachment) {
@@ -292,7 +336,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function retryAttachment(item: DraftAttachment) {
     if (attachmentValues.current.find((value) => value.id === item.id)?.state !== 'failed') return;
     if (item.artifact && !item.file) {
-      void checkArtifact(item.artifact);
+      void renewAttachments([item.id]);
       return;
     }
     const controller = new AbortController();
@@ -363,6 +407,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ),
     );
     updateAttachments([...items.flatMap((item) => item.attachments), ...attachmentValues.current]);
+    void renewAttachments(
+      items.flatMap((item) => item.attachments.map((attachment) => attachment.id)),
+    );
     restoreFocus();
   }
   async function submit() {
@@ -475,11 +522,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             variant="ghost"
             size="sm"
             onClick={() => {
-              if (!attachmentValues.current.some((item) => item.id === removed.id))
+              if (
+                !attachmentValues.current.some(
+                  (item) =>
+                    item.id === removed.id ||
+                    (removed.artifact && item.artifact?.id === removed.artifact.id),
+                )
+              ) {
                 updateAttachments([
                   ...attachmentValues.current,
-                  { ...removed, previewUrl: undefined },
+                  { ...removed, state: 'checking', previewUrl: undefined },
                 ]);
+                void renewAttachments([removed.id]);
+              }
               setRemoved(null);
               focus();
             }}

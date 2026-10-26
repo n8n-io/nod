@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { PassThrough } from 'node:stream';
@@ -1336,7 +1336,7 @@ test(
     const owner = 'fixture-owner';
     const threadId = await createFixtureTables(pool, owner);
     await pool.query(
-      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text)',
+      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text,expires_at timestamptz,deleting_at timestamptz)',
     );
     const artifacts = createArtifactService({ database: pool, ownerId: owner, localRoot: root });
     let reads = 0;
@@ -1560,7 +1560,11 @@ test(
     const stored = (
       await pool.query('SELECT count(*)::int AS count FROM artifacts WHERE owner_id=$1', [owner])
     ).rows[0].count;
-    assert.equal((await readdir(join(root, 'artifacts'))).length, stored);
+    assert.equal(
+      (await readdir(join(root, 'artifacts', createHash('sha256').update(owner).digest('hex'))))
+        .length,
+      stored,
+    );
     message = {
       ...message,
       messageId: 'sticker-message',
