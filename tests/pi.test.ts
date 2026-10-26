@@ -1,3 +1,4 @@
+import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1176,7 +1177,7 @@ test('follow-up offers require a completed explicit result in the current turn',
       input.onEvent({ type: 'text_delta', text: opening });
       input.onEvent({ type: 'message_end', status: 'succeeded' });
       await refuse(input);
-      await call(input, 'send_message', { text: '   ' });
+      await assert.rejects(call(input, 'send_message', { text: '   ' }));
       await refuse(input);
       await call(input, 'send_message', { text: opening });
       await refuse(input);
@@ -1700,6 +1701,78 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
         await rm(directory, { recursive: true, force: true });
       }
     });
+});
+
+test('send_message validates structured visuals and delivers each distinct presentation once', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-presentations-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const presentation: Presentation = {
+    version: 1,
+    type: 'diagram',
+    title: 'Synthetic delivery',
+    sources: [],
+    nodes: [
+      { id: 'request', label: 'Request' },
+      { id: 'answer', label: 'Answer' },
+    ],
+    edges: [{ from: 'request', to: 'answer' }],
+  };
+  const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+  const replyTo = randomUUID();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const send = input.tools.find((tool) => tool.name === 'send_message')!;
+          for (const value of [
+            { text: 'Answer', presentation: { ...presentation, version: 2 } },
+            {
+              text: 'Answer',
+              presentation: { ...presentation, edges: [{ from: 'missing', to: 'answer' }] },
+            },
+            { text: ' ', presentation },
+          ])
+            await assert.rejects(send.execute(value));
+          assert.equal(replies.length, 0);
+          const value = {
+            text: 'The request reaches the answer.',
+            replyToMessageId: replyTo,
+            presentation,
+          };
+          await send.execute(value);
+          await send.execute(value);
+          await send.execute({
+            ...value,
+            presentation: { ...presentation, title: 'Updated synthetic delivery' },
+          });
+          input.onEvent({ type: 'final', text: value.text });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const result = await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    reply: async (...args) => {
+      replies.push(args);
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(replies.length, 2);
+  assert.deepEqual(replies[0], [
+    'The request reaches the answer.',
+    undefined,
+    replyTo,
+    presentation,
+  ]);
+  assert.equal(replies[1][3]?.title, 'Updated synthetic delivery');
 });
 
 const chatgptHostId = '6f1c2f4e-3b8a-4d2e-9c51-0a7e2b9d4f10';

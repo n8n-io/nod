@@ -1,4 +1,13 @@
-import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
+import {
+  Kind,
+  Type,
+  TypeRegistry,
+  type Static,
+  type TLiteral,
+  type TSchema,
+} from '@sinclair/typebox';
+import { z } from 'zod';
+import { presentationSchema, type Presentation } from '../shared/presentation.ts';
 import { Value } from '@sinclair/typebox/value';
 import {
   appConfirmation,
@@ -150,6 +159,19 @@ const taskNextCheck = Type.String({
   description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
 });
 
+TypeRegistry.Set(
+  'NodPresentation',
+  (_schema, value) => presentationSchema.safeParse(value).success,
+);
+const { $schema, ...presentationJsonSchema } = z.toJSONSchema(presentationSchema, {
+  target: 'draft-7',
+  io: 'input',
+});
+const presentation = Type.Unsafe<Presentation>({
+  ...presentationJsonSchema,
+  [Kind]: 'NodPresentation',
+});
+
 export const toolDefinitions = {
   skills: defineTool(
     'skills',
@@ -186,9 +208,10 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. In a conversation or task, deliver a useful, verified partial result as soon as it is ready during longer work. Say what you found or completed and what remains. Also use it for an important change, a blocker, a decision, a reply to a specific earlier message, or a separate part of an answer when each message has a clear purpose. Keep related details together. Skip routine tool narration, repeated waiting updates and rapid series of small messages. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
+    'Send a message to the user now. In a conversation or task, deliver a useful, verified partial result as soon as it is ready during longer work. Say what you found or completed and what remains. Also use it for an important change, a blocker, a decision, a reply to a specific earlier message, or a separate part of an answer when each message has a clear purpose. Keep related details together. Skip routine tool narration, repeated waiting updates and rapid series of small messages. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer. Optionally include a presentation when an image, map, flight comparison, seat plan, booking, diagram or chart makes the answer easier to understand. Read the visual-replies skill for selection and examples. Text must remain a complete useful answer on its own. Present only source-supported facts, use unknown for unverified seat availability, and never imply a booking or selection took an outside action.',
     Type.Object({
-      text: Type.String(),
+      text: Type.String({ minLength: 1 }),
+      presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
   ),
@@ -302,7 +325,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. handoff {text} gives the user control of the current page and pauses this task. text states what the page shows and what the user needs to do, in their language. Use this action whenever the user needs to act in your browser; never send a /browser link. Wait for handback, then inspect the page before continuing. Subagents return browser blockers to their parent. waitMs waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (capture and stage a page image for your next send_message or turn completion; use its returned id in an image or booking presentation); download {url? | selector?, name?} (copy a file into the workspace; foreground images attach to your next send_message or turn completion, other foreground downloads deliver immediately, and background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. handoff {text} gives the user control of the current page and pauses this task. text states what the page shows and what the user needs to do, in their language. Use this action whenever the user needs to act in your browser; never send a /browser link. Wait for handback, then inspect the page before continuing. Subagents return browser blockers to their parent. waitMs waits for slow pages.',
     Type.Object({
       action: literals([
         'handoff',
@@ -798,11 +821,14 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       const { action, ...args } = p;
       return context.manage(`skill_${action}`, { action, ...args });
     }),
-    bind(
-      toolDefinitions.send_message,
-      async (p) =>
-        (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
-    ),
+    bind(toolDefinitions.send_message, async (p) => {
+      if (!p.text.trim()) throw new Error('A complete text answer is required.');
+      const visual =
+        p.presentation === undefined ? undefined : presentationSchema.parse(p.presentation);
+      return (
+        (await turn.reply(p.text, undefined, p.replyToMessageId, visual)) ?? 'Message delivered.'
+      );
+    }),
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
       : []),
@@ -851,7 +877,11 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         if (!context.publishScreenshot) throw new Error('Screenshot publishing is unavailable.');
         const bytes = await screenshot();
         if (!bytes) throw new Error('The browser does not have an available screenshot.');
-        return context.publishScreenshot(bytes, name);
+        return {
+          ...(await context.publishScreenshot(bytes, name)),
+          delivery:
+            'Captured and staged for your next message or turn completion. Use this id in an image or booking presentation; do not share the file again.',
+        };
       }
       if (action === 'download') {
         if (!context.publishBrowserFile) throw new Error('Browser file delivery is unavailable.');

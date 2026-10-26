@@ -837,6 +837,108 @@ test(
             assert.equal(sent.at(-1)!.content.caption, '*Image result*');
             assert.equal(sent.at(-1)!.content.text, undefined);
             assert.deepEqual(imageReply.ids, [sent.at(-1)!.id]);
+            for (const failure of ['oversized', 'unreadable', 'changed'] as const) {
+              const before = sent.length;
+              const answer =
+                '**Seat layout**\n12A is available for EUR 25. Availability checked 2026-10-26.\nSource: https://example.com/seats';
+              const file = attachment(`${failure}.png`, 'image/png', 'synthetic image');
+              let reads = 0;
+              let notices = 0;
+              const result = await transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: answer,
+                replyToMessageId: 'task-prompt',
+                replyToText: 'Fixture seat question',
+                attachments: [
+                  {
+                    ...file,
+                    size: failure === 'oversized' ? 50 * 1024 * 1024 + 1 : file.size,
+                    async read() {
+                      reads++;
+                      if (failure === 'unreadable')
+                        throw new Error('The owned file is unavailable.');
+                      return Buffer.from('changed');
+                    },
+                  },
+                ],
+                async attachmentFailure(names) {
+                  notices++;
+                  assert.deepEqual(names, [file.name]);
+                  return `The file ${file.name} is available in Nod.`;
+                },
+              });
+              const delivered = sent.slice(before);
+              assert.equal(reads, failure === 'oversized' ? 0 : 1);
+              assert.equal(notices, 1);
+              assert.equal(delivered.length, 2);
+              const fallback = delivered[0].content.text as string;
+              for (const line of answer.replaceAll('**', '').split('\n'))
+                assert.ok(fallback.includes(line));
+              assert.equal(delivered[1].content.text, `The file ${file.name} is available in Nod.`);
+              assert.ok(delivered.every((message) => !message.content.image));
+              assert.deepEqual(
+                result.ids,
+                delivered.map((message) => message.id),
+              );
+              assert.ok(
+                delivered.every(
+                  (message) => (message.quoted as { key: { id: string } }).key.id === 'task-prompt',
+                ),
+              );
+            }
+            const beforeMixed = sent.length;
+            const mixed = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: 'Both layouts use rows 1–20.',
+              attachments: [
+                {
+                  ...attachment('missing.png', 'image/png', 'missing image'),
+                  async read() {
+                    throw new Error('The owned file is unavailable.');
+                  },
+                },
+                attachment('available.png', 'image/png', 'available image'),
+              ],
+              async attachmentFailure(names) {
+                assert.deepEqual(names, ['missing.png']);
+                return 'The missing.png file is available in Nod.';
+              },
+            });
+            assert.equal(sent.length, beforeMixed + 3);
+            assert.equal(sent[beforeMixed].content.text, 'Both layouts use rows 1–20.');
+            assert.deepEqual(sent[beforeMixed + 1].content.image, Buffer.from('available image'));
+            assert.equal(
+              sent[beforeMixed + 2].content.text,
+              'The missing.png file is available in Nod.',
+            );
+            assert.deepEqual(
+              mixed.ids,
+              sent.slice(beforeMixed).map((message) => message.id),
+            );
+            const beforeUncertainImage = sent.length;
+            let uncertainImageNotices = 0;
+            failSend = true;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'This layout may already have arrived.',
+                attachments: [attachment('uncertain.png', 'image/png', 'uncertain image')],
+                async attachmentFailure() {
+                  uncertainImageNotices++;
+                  return 'The image is available in Nod.';
+                },
+              }),
+              /may have accepted/,
+            );
+            failSend = false;
+            assert.equal(sent.length, beforeUncertainImage + 1);
+            assert.equal(uncertainImageNotices, 0);
             await transport.post({
               channelId: 'whatsapp',
               accountId,
@@ -1673,7 +1775,7 @@ async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};
     CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -2245,13 +2347,50 @@ test(
     const threadId = await createFixtureTables(pool, 'local-development');
     const sent: { provider: string; body: Record<string, unknown> }[] = [];
     const handoffPresentations: unknown[] = [];
+    const unavailableFiles: string[][] = [];
     const whatsappFileId = randomUUID();
+    const pngId = randomUUID();
+    const jpegId = randomUUID();
+    const largeImageId = randomUUID();
+    const brokenImageId = randomUUID();
+    const wrongSizeImageId = randomUUID();
+    const images = new Map<string, ReturnType<typeof attachment>>([
+      [pngId, attachment('page.png', 'image/png', 'synthetic screenshot pixels')],
+      [jpegId, attachment('venue.jpg', 'image/jpeg', 'synthetic venue pixels')],
+      [
+        largeImageId,
+        {
+          ...attachment('large.png', 'image/png', ''),
+          size: 5 * 1024 * 1024 + 1,
+          read: async () => {
+            throw new Error('Oversized media must not be read.');
+          },
+        },
+      ],
+      [
+        brokenImageId,
+        {
+          ...attachment('missing.png', 'image/png', 'missing'),
+          read: async () => {
+            throw new Error('Missing artifact.');
+          },
+        },
+      ],
+      [wrongSizeImageId, { ...attachment('changed.png', 'image/png', 'changed bytes'), size: 1 }],
+    ]);
+    const uploaded: Array<{ name: string; mimeType: string; bytes: Buffer }> = [];
+    let uploadFailure: 'rejected' | 'network' | 'missing-id' | undefined;
+    let imageFailure: 'rejected' | 'network' | 'missing-id' | 'server' | undefined;
     let providerCalls = 0;
     let failSend = false;
+    let rejectRichText = false;
+    let rejectMarkdown = false;
+    const rejectedFormatting: string[] = [];
     let failSubmit = false;
     let failReaction = false;
     const reacting: { provider: string; body: Record<string, unknown> }[] = [];
     const reactedTo: [string, string | null][] = [];
+    const replyTargets: { sourceId: string; messageId: string | undefined }[] = [];
     t.mock.method(
       globalThis,
       'fetch',
@@ -2271,7 +2410,25 @@ test(
           return Response.json({ ok: true, result: true });
         }
         if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/send')) {
-          sent.push({ provider: 'telegram', body });
+          const wire =
+            init?.body instanceof FormData
+              ? Object.fromEntries([...init.body].filter((entry) => typeof entry[1] === 'string'))
+              : body;
+          if (rejectRichText && url.endsWith('/sendRichMessage')) {
+            rejectedFormatting.push('rich');
+            return Response.json(
+              { ok: false, error_code: 404, description: 'Method not found' },
+              { status: 404 },
+            );
+          }
+          if (rejectMarkdown && wire.parse_mode === 'MarkdownV2') {
+            rejectedFormatting.push('markdown');
+            return Response.json(
+              { ok: false, error_code: 400, description: "Bad Request: can't parse entities" },
+              { status: 400 },
+            );
+          }
+          sent.push({ provider: 'telegram', body: wire });
           if (failSend) throw new Error('Fixture transport interrupted after possible acceptance.');
           return Response.json({
             ok: true,
@@ -2283,6 +2440,27 @@ test(
             },
           });
         }
+        if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/media$/.test(url)) {
+          assert.ok(init?.body instanceof FormData);
+          assert.equal(init.body.get('messaging_product'), 'whatsapp');
+          const image = init.body.get('file');
+          assert.ok(image instanceof File);
+          uploaded.push({
+            name: image.name,
+            mimeType: image.type,
+            bytes: Buffer.from(await image.arrayBuffer()),
+          });
+          const failure = uploadFailure;
+          uploadFailure = undefined;
+          if (failure === 'network') throw new Error('Upload response unavailable.');
+          if (failure === 'missing-id') return Response.json({});
+          if (failure === 'rejected')
+            return Response.json(
+              { error: { code: 131053, message: 'Image upload rejected.' } },
+              { status: 400 },
+            );
+          return Response.json({ id: `fixture-media-${uploaded.length}` });
+        }
         if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url)) {
           if (body.type === 'reaction') {
             reacting.push({ provider: 'whatsapp', body });
@@ -2291,32 +2469,50 @@ test(
             });
           }
           sent.push({ provider: 'whatsapp', body });
+          if (body.type === 'image') {
+            const failure = imageFailure;
+            imageFailure = undefined;
+            if (failure === 'network') throw new Error('Possible image acceptance.');
+            if (failure === 'missing-id') return Response.json({ messages: [] });
+            if (failure === 'rejected' || failure === 'server')
+              return Response.json(
+                { error: { code: 131000, message: 'Image was not delivered.' } },
+                { status: failure === 'rejected' ? 400 : 500 },
+              );
+          }
           return Response.json({ messages: [{ id: `wamid.fixture-out-${sent.length}` }] });
         }
         throw new Error('Unexpected fixture provider call.');
       },
     );
     const app = Fastify();
+    const transport = createChatSdkTransport(pool, fixtureEnv);
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
         if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
+        if (input.kind === 'delivery' && input.files) unavailableFiles.push(input.files);
         return 'Continua na aplicação Nod.';
       },
-      transport: createChatSdkTransport(pool, fixtureEnv),
+      transport,
       resolveAttachments: async (resolvedThreadId, ids) => {
         assert.equal(resolvedThreadId, threadId);
-        if (ids.length !== 1 || ids[0] !== whatsappFileId)
+        if (ids.some((id) => id !== whatsappFileId && !images.has(id)))
           throw new Error('Attachment unavailable.');
-        return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
+        return ids.map((id) =>
+          id === whatsappFileId
+            ? attachment('research.csv', 'text/csv', 'A,B\n1,2\n')
+            : images.get(id)!,
+        );
       },
       subscribe: () => () => {},
       intervalMs: 600000,
       reacted: async (messageId, reaction) => {
         reactedTo.push([messageId, reaction]);
       },
-      submit: async (_text, sourceId, client, channel) => {
+      submit: async (_text, sourceId, client, channel, _messageId, _answer, replyToMessageId) => {
+        replyTargets.push({ sourceId, messageId: replyToMessageId });
         const turnId = await fixtureTurn(client, threadId, 'local-development', channel, sourceId);
         if (failSubmit) throw new Error('Fixture turn queue unavailable.');
         return turnId;
@@ -2455,7 +2651,7 @@ test(
         [{ id: whatsappFileId }],
       );
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
       const fileText = JSON.stringify(sent[2].body);
       assert.doesNotMatch(fileText, /api\/artifacts/);
       assert.equal(
@@ -2468,7 +2664,7 @@ test(
         { id: randomUUID() },
       ]);
       await channels.drain();
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
       assert.deepEqual(
         (
           await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
@@ -2486,7 +2682,7 @@ test(
       assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
 
       const idOf = async (query: string) => (await pool.query(query)).rows[0].message_id;
       const ownerMessage = await idOf(
@@ -2648,7 +2844,7 @@ test(
         ).rows[0],
         { state: 'blocked', reason: 'reply_window_closed' },
       );
-      assert.equal(sent.length, 4);
+      assert.equal(sent.length, 5);
 
       const paragraphs = Array.from({ length: 30 }, (_, index) =>
         `Paragraph ${index} ${'detail '.repeat(40)}`.trim(),
@@ -2656,7 +2852,7 @@ test(
       await addReply('channel:telegram:987:123456:10', paragraphs.join('\n\n'));
       await channels.drain();
       const parts = sent
-        .slice(4)
+        .slice(5)
         .map((message) =>
           String(
             (message.body.rich_message as { markdown?: string })?.markdown ?? message.body.text,
@@ -2664,6 +2860,292 @@ test(
         );
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
+
+      const captionText =
+        'Flight (economy) - 123.45 EUR. '.repeat(30) + '\nFinal cancellation deadline: 2026-10-31.';
+      const beforeCaption = sent.length;
+      const captionSent = await transport.post({
+        channelId: 'telegram',
+        accountId: '987',
+        threadId: 'telegram:123456',
+        text: captionText,
+        attachments: [images.get(pngId)!],
+      });
+      const captionDelivery = sent.slice(beforeCaption);
+      assert.deepEqual(
+        captionSent.ids,
+        captionDelivery.map((_, index) => `123456:${beforeCaption + index + 101}`),
+      );
+      const readable = (body: Record<string, unknown>) =>
+        String(
+          (body.rich_message as { markdown?: string })?.markdown ?? body.text ?? body.caption ?? '',
+        ).replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+      assert.ok(
+        captionDelivery.some(({ body }) =>
+          readable(body).includes('Final cancellation deadline: 2026-10-31.'),
+        ),
+        JSON.stringify(captionDelivery),
+      );
+      assert.equal(
+        captionDelivery
+          .map(({ body }) => readable(body))
+          .join('\n')
+          .match(/Flight \(economy\) - 123\.45 EUR\./g)?.length,
+        30,
+      );
+      assert.ok(captionDelivery.every(({ body }) => String(body.caption ?? '').length <= 1024));
+      rejectRichText = true;
+      const conditions = Array.from(
+        { length: 100 },
+        (_, index) =>
+          `Condition ${index}: flight (economy) - EUR ${100 + index}. Changes (+10.00) / refunds (-20.00) / seats (+5.00). Deadline 2026-10-31!`,
+      );
+      for (const reject of [false, true]) {
+        rejectMarkdown = reject;
+        const beforeConditions: number = sent.length;
+        const conditionsReply = await addReply(
+          'channel:telegram:987:123456:10',
+          conditions.join('\n\n'),
+        );
+        await channels.drain();
+        const delivered = sent.slice(beforeConditions);
+        assert.ok(delivered.length > 1);
+        assert.ok(delivered.every(({ body }) => String(body.text).length <= 4096));
+        const complete = delivered.map(({ body }) => readable(body)).join('\n\n');
+        for (const condition of conditions) assert.ok(complete.includes(condition), condition);
+        assert.deepEqual(
+          (
+            await pool.query(
+              'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+              [conditionsReply],
+            )
+          ).rows[0],
+          {
+            state: 'sent',
+            provider_message_ids: delivered.map(
+              (_, index) => `123456:${beforeConditions + index + 101}`,
+            ),
+          },
+        );
+      }
+      assert.ok(rejectedFormatting.includes('rich'));
+      assert.ok(rejectedFormatting.includes('markdown'));
+      rejectMarkdown = false;
+      const family = '👩‍👩‍👧‍👦';
+      const accented = 'e\u0301';
+      const beforeUnicode = sent.length;
+      await addReply(
+        'channel:telegram:987:123456:10',
+        `${family}${accented}`.repeat(400) + '\nFinal Unicode deadline: 2026-10-31.',
+      );
+      await channels.drain();
+      const unicodeParts = sent.slice(beforeUnicode).map(({ body }) => readable(body));
+      assert.ok(unicodeParts.length > 1);
+      for (const grapheme of [family, accented])
+        assert.equal(
+          unicodeParts.reduce((count, part) => count + part.split(grapheme).length - 1, 0),
+          400,
+        );
+      assert.ok(unicodeParts.every((part) => Buffer.from(part).toString() === part));
+      assert.ok(unicodeParts.at(-1)!.includes('Final Unicode deadline: 2026-10-31.'));
+
+      await pool.query("UPDATE channel_inbox SET received_at=now() WHERE provider='whatsapp'");
+      const beforeWhatsApp = sent.length;
+      const flightRows = Array.from(
+        { length: 24 },
+        (_, index) =>
+          `| ${index === 0 ? 'Fare conditions '.repeat(70) : `Flight ${index}`} | EUR ${100 + index} |`,
+      );
+      const multipart = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        `${paragraphs.join('\n\n')}\n\n| Flight | Price |\n| --- | --- |\n${flightRows.join('\n')}\n\n[Source](https://example.com/flights)`,
+      );
+      await channels.drain();
+      const whatsappParts = sent.slice(beforeWhatsApp);
+      const bodies = whatsappParts.map(({ body }) => (body.text as { body: string }).body);
+      assert.ok(whatsappParts.every(({ provider }) => provider === 'whatsapp'));
+      assert.ok(bodies.length > 2 && bodies.every((body) => body.length <= 4096));
+      assert.ok(paragraphs.every((paragraph) => bodies.some((body) => body.includes(paragraph))));
+      assert.match(bodies.join('\n'), /Flight 23/);
+      assert.match(bodies.at(-1)!, /https:\/\/example.com\/flights/);
+      const providerIds = whatsappParts.map(
+        (_, index) => `wamid.fixture-out-${beforeWhatsApp + index + 1}`,
+      );
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            multipart,
+          ])
+        ).rows[0].provider_message_ids,
+        providerIds,
+      );
+      for (const index of [0, Math.floor(providerIds.length / 2), providerIds.length - 1]) {
+        const nativeId = providerIds[index];
+        await sendWhatsApp(whatsappReaction(nativeId, '👍'));
+        assert.deepEqual(reactedTo.at(-1), [multipart, '👍']);
+        const reply = whatsappPayload(`wamid.chunk-reply-${index}`);
+        const value = reply.entry[0].changes[0].value;
+        Object.assign(value.messages[0], { context: { id: nativeId } });
+        assert.equal((await sendWhatsApp(reply)).statusCode, 200);
+        await channels.drain();
+        assert.deepEqual(replyTargets.at(-1), {
+          sourceId: `channel:whatsapp:555000:wamid.chunk-reply-${index}`,
+          messageId: multipart,
+        });
+      }
+
+      const imageReply = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'Here are the page and venue images.',
+        [{ id: pngId }, { id: jpegId }],
+      );
+      await pool.query('UPDATE messages SET reply_to_message_id=$2 WHERE id=$1', [
+        imageReply,
+        whatsappReply,
+      ]);
+      const beforeImages = sent.length;
+      await channels.drain();
+      assert.deepEqual(uploaded, [
+        {
+          name: 'page.png',
+          mimeType: 'image/png',
+          bytes: Buffer.from('synthetic screenshot pixels'),
+        },
+        { name: 'venue.jpg', mimeType: 'image/jpeg', bytes: Buffer.from('synthetic venue pixels') },
+      ]);
+      const mediaMessages = sent.slice(beforeImages);
+      assert.deepEqual(
+        mediaMessages.map(({ body }) => body.type),
+        ['text', 'image', 'image'],
+      );
+      assert.deepEqual(
+        mediaMessages.slice(1).map(({ body }) => body.image),
+        [{ id: 'fixture-media-1' }, { id: 'fixture-media-2' }],
+      );
+      assert.ok(
+        mediaMessages.every(
+          ({ body }) =>
+            (body.context as { message_id: string }).message_id === 'wamid.fixture-out-2',
+        ),
+      );
+      assert.doesNotMatch(JSON.stringify(mediaMessages), /api\/artifacts|https?:|"link"/);
+      const imageProviderIds = mediaMessages.map(
+        (_, index) => `wamid.fixture-out-${beforeImages + index + 1}`,
+      );
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+            [imageReply],
+          )
+        ).rows[0],
+        { state: 'sent', provider_message_ids: imageProviderIds },
+      );
+      for (const nativeId of imageProviderIds.slice(1)) {
+        await sendWhatsApp(whatsappReaction(nativeId, '👍'));
+        assert.deepEqual(reactedTo.at(-1), [imageReply, '👍']);
+        const inbound = whatsappPayload(`wamid.media-reply-${nativeId}`);
+        Object.assign(inbound.entry[0].changes[0].value.messages[0], { context: { id: nativeId } });
+        await sendWhatsApp(inbound);
+        await channels.drain();
+        assert.equal(replyTargets.at(-1)?.messageId, imageReply);
+      }
+      const rejectedImages = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'These files remain in Nod.',
+        [
+          { id: largeImageId },
+          { id: brokenImageId },
+          { id: wrongSizeImageId },
+          { id: whatsappFileId },
+        ],
+      );
+      const beforeRejected = sent.length;
+      await channels.drain();
+      assert.equal(uploaded.length, 2);
+      assert.equal(sent.length, beforeRejected + 2);
+      assert.ok(sent.slice(beforeRejected).every(({ body }) => body.type === 'text'));
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [rejectedImages]))
+          .rows[0].state,
+        'sent',
+      );
+      for (const failure of [
+        'upload-rejected',
+        'upload-network',
+        'upload-missing-id',
+        'rejected',
+      ]) {
+        uploadFailure =
+          failure === 'upload-rejected'
+            ? 'rejected'
+            : failure === 'upload-network'
+              ? 'network'
+              : failure === 'upload-missing-id'
+                ? 'missing-id'
+                : undefined;
+        imageFailure = failure === 'rejected' ? 'rejected' : undefined;
+        const failedImage = await addReply(
+          'channel:whatsapp:555000:wamid.good',
+          'The second image should still arrive.',
+          [{ id: pngId }, { id: jpegId }],
+        );
+        const beforeFailure: number = sent.length;
+        const beforeUpload: number = uploaded.length;
+        const beforeNotice = unavailableFiles.length;
+        await channels.drain();
+        assert.equal(uploaded.length, beforeUpload + 2);
+        assert.deepEqual(unavailableFiles.slice(beforeNotice), [['page.png']]);
+        const delivered = sent.slice(beforeFailure);
+        assert.deepEqual(
+          delivered.map(({ body }) => body.type),
+          failure === 'rejected' ? ['text', 'image', 'image', 'text'] : ['text', 'image', 'text'],
+        );
+        assert.deepEqual(delivered.at(-2)!.body.image, { id: `fixture-media-${uploaded.length}` });
+        assert.match(JSON.stringify(delivered.at(-1)!.body), /Continua na aplicação Nod/);
+        const acceptedIds: string[] = delivered.flatMap((_, index) =>
+          failure === 'rejected' && index === 1
+            ? []
+            : [`wamid.fixture-out-${beforeFailure + index + 1}`],
+        );
+        assert.deepEqual(
+          (
+            await pool.query(
+              'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+              [failedImage],
+            )
+          ).rows[0],
+          { state: 'sent', provider_message_ids: acceptedIds },
+        );
+        await channels.drain();
+        assert.equal(sent.length, beforeFailure + delivered.length);
+        assert.equal(uploaded.length, beforeUpload + 2);
+      }
+      for (const failure of ['network', 'missing-id', 'server'] as const) {
+        imageFailure = failure;
+        const uncertainImage = await addReply(
+          'channel:whatsapp:555000:wamid.good',
+          'Sending the screenshot.',
+          [{ id: pngId }, { id: jpegId }],
+        );
+        const beforeUpload: number = uploaded.length;
+        const beforeNotice = unavailableFiles.length;
+        await channels.drain();
+        assert.equal(
+          (
+            await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+              uncertainImage,
+            ])
+          ).rows[0].state,
+          'uncertain',
+        );
+        assert.equal(uploaded.length, beforeUpload + 1);
+        assert.equal(unavailableFiles.length, beforeNotice);
+        const attemptedImages: number = sent.length;
+        await channels.drain();
+        assert.equal(sent.length, attemptedImages);
+        assert.equal(uploaded.length, beforeUpload + 1);
+      }
 
       for (const [sourceId, provider] of [
         ['channel:telegram:987:123456:10', 'telegram'],
@@ -2687,7 +3169,10 @@ test(
         assert.equal(sent.length, before + 2);
         assert.equal(sent.at(-1)?.provider, provider);
         assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação Nod/);
-        assert.match(JSON.stringify(sent.at(-2)?.body), /The website needs sign-in/);
+        assert.match(
+          provider === 'telegram' ? readable(sent.at(-2)!.body) : JSON.stringify(sent.at(-2)?.body),
+          /The website needs sign-in/,
+        );
         assert.equal(handoffPresentations.length, presented + 1);
         assert.doesNotMatch(
           JSON.stringify(sent.slice(before)),
@@ -2760,7 +3245,7 @@ test(
           { id: whatsappFileId },
         ]);
         await restarted.drain();
-        assert.equal(sent.length, attempts + 1);
+        assert.equal(sent.length, attempts + 2);
         assert.doesNotMatch(JSON.stringify(sent.at(-1)?.body), /api\/artifacts/);
       } finally {
         await restarted.close();

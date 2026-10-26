@@ -1,3 +1,4 @@
+import { presentationSchema } from '../shared/presentation.ts';
 import Fastify, { type FastifyReply } from 'fastify';
 import multipart from '@fastify/multipart';
 import { randomUUID } from 'node:crypto';
@@ -45,16 +46,19 @@ import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
-const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
+const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(target.text,1000))) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
   receipt?: MessageReceipt,
   questionState?: Message['questionState'],
 ): Message {
-  const { assistantReaction, ...message } = row;
+  const { assistantReaction, presentation, ...message } = row;
+  const visual =
+    message.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
   return {
     ...message,
+    ...(visual?.success ? { presentation: visual.data } : {}),
     ...(receipt ? { receipt } : {}),
     ...(questionState ? { questionState } : {}),
     reactions: [

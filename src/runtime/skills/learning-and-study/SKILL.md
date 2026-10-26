@@ -11,6 +11,8 @@ Start from a small piece of due work or a brief diagnostic when the level is unk
 
 Correct the specific error and give one clear example. Distinguish an error that changes meaning from a stylistic alternative. For a language exercise, retain the target language's correct accents, grammar and pronunciation guidance; use the user's chosen explanation language.
 
+When an image, diagram or chart would clarify the concept, read visual-replies with skills before presenting it.
+
 For practice selection, revisit demonstrated weak points while continuing the course. Do not make every session a fresh explanation of already mastered material. Keep exercise IDs and attempts so that due work and review intervals remain consistent.
 
 For exams, use the current official syllabus and permitted materials. Separate preparation from doing a live graded assessment on the learner's behalf. Cite sources for factual study material where mistakes would change the answer.

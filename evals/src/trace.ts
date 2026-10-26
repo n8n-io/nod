@@ -23,6 +23,7 @@ export interface ChatMessage {
   text: string;
   at: number;
   turnId: string | null;
+  presentation?: unknown;
 }
 
 export interface Run {
@@ -51,6 +52,7 @@ export interface Run {
   userMessages: Array<{ at: number; text: string }>;
   writes: Write[];
   files: string[];
+  artifacts: Array<{ id: string; threadId: string | null }>;
   schedules: Array<{
     title: string;
     prompt: string;
@@ -249,14 +251,18 @@ export async function collect(options: {
   const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
   const messages = (
     await stack.pool.query(
-      'SELECT role,text,turn_id,created_at FROM messages ORDER BY created_at, id',
+      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
+    ...(row.presentation ? { presentation: row.presentation } : {}),
   }));
+  const artifacts = (
+    await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
+  ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
   const turns = (
     await stack.pool.query(
       `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting,
@@ -362,6 +368,7 @@ export async function collect(options: {
     userMessages: session.userMessages,
     writes: world.apps?.writes ?? [],
     files,
+    artifacts,
     schedules,
     scheduleRuns,
     memory,
@@ -387,7 +394,7 @@ export async function collect(options: {
             .filter((m) => m.text.trim())
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
             })),
           ...tools.map((call) => ({
             at: call.at,

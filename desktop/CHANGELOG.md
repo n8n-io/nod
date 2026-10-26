@@ -2,6 +2,71 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.6 - 2026-10-26
+
+### Features
+
+- **proactivity:** Add a proactivity engine. [#479](https://github.com/n8n-io/nod/pull/479) (1289bf7)
+- Make nod easy to self-host with secure remote app access. [#452](https://github.com/n8n-io/nod/pull/452) (474f36b)
+- **onboarding:** Streamline setup and first-chat suggestions. [#461](https://github.com/n8n-io/nod/pull/461) (d1c0e15)
+- **chat:** Add real audio waveforms and playback controls. [#464](https://github.com/n8n-io/nod/pull/464) (e58d570)
+- **models:** Add native model providers and Google Gemini setup. [#451](https://github.com/n8n-io/nod/pull/451) (75c5959)
+- **feedback:** Include redacted messages, tool details and rotating logs. [#453](https://github.com/n8n-io/nod/pull/453) (6799703)
+- **ux:** Add native chat and file interactions. [commit](https://github.com/n8n-io/nod/commit/87b728f7dcc00f72bfca994afa196d421326dd8c) (87b728f)
+- **tasks:** Stop all background work when the owner asks in chat. [#444](https://github.com/n8n-io/nod/pull/444) (f4b6e81)
+- **onboarding:** Redesign model selection as one provider card. [commit](https://github.com/n8n-io/nod/commit/f27fa1ce4be8b1ab1345bf68e19d8447af8aee9d) (f27fa1c)
+
+### Fixes
+
+- **runtime:** Deliver results before follow-up offers. [#482](https://github.com/n8n-io/nod/pull/482) (bc2fefa)
+- **agent:** Translate source wording instead of mixing languages. [#480](https://github.com/n8n-io/nod/pull/480) (4da6f52)
+- **chat:** Restore attachment picker without send mode control. [#463](https://github.com/n8n-io/nod/pull/463) (e35d872)
+- **apps:** Polish OAuth recovery for Gmail and MCP. [#458](https://github.com/n8n-io/nod/pull/458) (755fd00)
+- **chat:** Remove composer mode and attachment buttons. [#462](https://github.com/n8n-io/nod/pull/462) (c9f1502)
+- **chat:** Preserve identifying context in source references. [#460](https://github.com/n8n-io/nod/pull/460) (f5e5b14)
+- **chat:** Preserve page labels in link previews. [#459](https://github.com/n8n-io/nod/pull/459) (21f4f64)
+- **chat:** Preserve Shift+Return in task and schedule requests. [#456](https://github.com/n8n-io/nod/pull/456) (9ac3386)
+- **apps:** Preserve missing-scope recovery for connected accounts. [#455](https://github.com/n8n-io/nod/pull/455) (e64122c)
+- **apps:** Preserve icons on expired connection cards. [#454](https://github.com/n8n-io/nod/pull/454) (a3294d5)
+- **feedback:** Include content-free bug diagnostics by default. [#450](https://github.com/n8n-io/nod/pull/450) (4d10edd)
+- **chat:** Preserve links and keep replies readable. [commit](https://github.com/n8n-io/nod/commit/4014d5e879ace35b2f9bef7785254f1a3874a2b0) (4014d5e)
+- **channels:** Remove stale WhatsApp QR codes. [commit](https://github.com/n8n-io/nod/commit/55b8a2ff325d52539c9e7b88915ffefc6a521f0d) (55b8a2f)
+- **onboarding:** Address review feedback and leave out the playground. [commit](https://github.com/n8n-io/nod/commit/263eaa157a012bc124a1f53257707c5cf5f03ec4) (263eaa1)
+- **browser:** Make handoff explicit and show who has control. [commit](https://github.com/n8n-io/nod/commit/e85795732057dcdef93921043a7e0f53be0845a5) (e857957)
+- **models:** Repair the same account on sign-in and show connections that need reconnecting. [#442](https://github.com/n8n-io/nod/pull/442) (879a2cb)
+- **ci:** Mount desktop preload files in integration tests. [#441](https://github.com/n8n-io/nod/pull/441) (05d0ce9)
+- **feedback:** Keep reports sendable when diagnostics are incomplete. [#436](https://github.com/n8n-io/nod/pull/436) (6869b0f)
+
+<details>
+<summary>Maintenance (14 changes)</summary>
+
+- Capitalise Nod in prose, UI text and docs. [#481](https://github.com/n8n-io/nod/pull/481) (1906cb1)
+- **deps:** Bump the chat-sdk group across 1 directory with 4 updates. [commit](https://github.com/n8n-io/nod/commit/e92b463ab1e1c6c28c25b1287676e4cba6b34077) (e92b463)
+- **deps-dev:** Bump lucide-react from 1.58.0 to 1.61.0. [commit](https://github.com/n8n-io/nod/commit/14af35dc9cc9b429ac2180d76153c2bd27291749) (14af35d)
+- **deps:** Bump agent-browser from 0.39.1 to 0.39.2. [commit](https://github.com/n8n-io/nod/commit/31a6fb2f61ba502c14e873e728f740c0ccb1f5ca) (31a6fb2)
+- **deps:** Bump undici from 8.12.2 to 8.12.3. [commit](https://github.com/n8n-io/nod/commit/abab9e858cdf1c96f153fc144ccaadb4fc1014eb) (abab9e8)
+- **deps:** Bump jose from 6.2.12 to 6.2.13. [#471](https://github.com/n8n-io/nod/pull/471) (141aebe)
+- **deps:** Bump the docs group across 1 directory with 2 updates. [commit](https://github.com/n8n-io/nod/commit/14d0ad3d4cc0783ef4ddb2e7b43938fc91750e0d) (14d0ad3)
+- Remove tests that add no coverage and the web UI tests in JSDOM. [#478](https://github.com/n8n-io/nod/pull/478) (bff8856)
+- **deps:** Bump tldts from 7.4.18 to 7.4.19. [#472](https://github.com/n8n-io/nod/pull/472) (ce02429)
+- **deps:** Bump @fastify/static from 10.1.5 to 10.1.7. [#475](https://github.com/n8n-io/nod/pull/475) (78bf585)
+- **deps:** Bump posthog-node from 5.56.1 to 5.57.0. [#476](https://github.com/n8n-io/nod/pull/476) (880089f)
+- **deps:** Bump dotenv from 18.0.8 to 18.0.9. [#469](https://github.com/n8n-io/nod/pull/469) (a360aa3)
+- **deps:** Bump the pi group across 1 directory with 2 updates. [#467](https://github.com/n8n-io/nod/pull/467) (17df0fb)
+- Remove internal review artifacts. [#457](https://github.com/n8n-io/nod/pull/457) (a4a9537)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.4...bc2fefae795ae60e94bdc72a17c515d46f479220)
+
+<details>
+<summary>Build details</summary>
+
+Source: `bc2fefae795ae60e94bdc72a17c515d46f479220`
+Previous release: `nod-v0.2.4`
+
+</details>
+
 ## 0.2.5 - 2026-10-23
 
 ### Features

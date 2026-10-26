@@ -1,3 +1,4 @@
+import type { Presentation } from '../shared/presentation.ts';
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
@@ -155,7 +156,12 @@ export interface RuntimeContext {
     source?: Artifact['source'];
   }>;
   emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
-  reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
+  reply(
+    text: string,
+    streamId?: string,
+    replyToMessageId?: string,
+    presentation?: Presentation,
+  ): Promise<void>;
   reactToMessage?(
     messageId: string,
     reaction: MessageReaction | null,

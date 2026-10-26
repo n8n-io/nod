@@ -1911,18 +1911,21 @@ test('persisted background sessions and child captures count each request and to
                     role: 'assistant',
                     text: 'The call has ended.',
                     created_at: '2026-10-22T21:41:00Z',
+                    presentation: { type: 'booking', title: 'Synthetic booking' },
                   },
                 ]
-              : sql.includes('FROM approvals')
-                ? [
-                    {
-                      turn_id: 'background',
-                      action: 'GMAIL_SEND_EMAIL',
-                      status: 'expired',
-                      args: {},
-                    },
-                  ]
-                : [],
+              : sql.includes('FROM artifacts')
+                ? [{ id: 'original-image', thread_id: 'chat' }]
+                : sql.includes('FROM approvals')
+                  ? [
+                      {
+                        turn_id: 'background',
+                        action: 'GMAIL_SEND_EMAIL',
+                        status: 'expired',
+                        args: {},
+                      },
+                    ]
+                  : [],
       }),
     },
     request: async () => Response.json({ notes: [], archive: [] }),
@@ -1939,6 +1942,12 @@ test('persisted background sessions and child captures count each request and to
     [Date.parse('2026-10-22T21:40:00Z'), Date.parse('2026-10-22T21:41:00Z')],
   );
   assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.deepEqual(run.messages.at(-1)?.presentation, {
+    type: 'booking',
+    title: 'Synthetic booking',
+  });
+  assert.match(run.transcript(), /PRESENTATION:.*Synthetic booking/);
+  assert.deepEqual(run.artifacts, [{ id: 'original-image', threadId: 'chat' }]);
   assert.deepEqual(run.approvals, [
     { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },
   ]);
@@ -2242,6 +2251,7 @@ function quietRun(world: ReturnType<Scenario['world']>): Run {
     userMessages: [],
     writes: world.apps?.writes ?? [],
     files: [],
+    artifacts: [],
     schedules: [],
     scheduleRuns: [],
     memory: JSON.stringify({ notes: [], archive: [] }),
@@ -2296,6 +2306,129 @@ test('every release scenario fails a required code check when Nod does nothing, 
       await served.close();
     }
   }
+});
+
+test('visual evals require matching persisted and delivered data, not a presentation tool call', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-seats')!;
+  const world = definition.world({ now: Date.now });
+  const expectation = definition
+    .expect(world)
+    .find((item) => item.id === 'delivers-the-visual-in-chat');
+  assert.equal(expectation?.kind, 'check');
+  if (expectation?.kind !== 'check') throw new Error('Missing delivery check');
+  const presentation = { version: 1, type: 'seats', title: 'AV204' };
+  for (const { saved, shown, different, pass } of [
+    { saved: false, shown: false, pass: false },
+    { saved: true, shown: false, pass: false },
+    { saved: false, shown: true, pass: false },
+    { saved: true, shown: true, pass: true },
+    { saved: true, shown: true, different: true, pass: false },
+  ]) {
+    const run = quietRun(world);
+    run.tools.push({
+      name: 'send_message',
+      input: { text: 'Choose 12A.', presentation },
+      output: 'ok',
+      isError: false,
+      at: 0,
+      lead: '',
+    });
+    run.messages = saved
+      ? [{ role: 'assistant', text: 'Choose 12A.', at: 0, turnId: null, presentation }]
+      : [];
+    run.api = async () => ({
+      status: 200,
+      body: {
+        messages: shown
+          ? [{ presentation: { title: different ? 'AV205' : 'AV204', type: 'seats', version: 1 } }]
+          : [],
+      },
+    });
+    assert.equal((await expectation.check(run)).pass, pass);
+  }
+});
+
+test('the arithmetic eval rejects a correct amount embedded in a different number', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-text-only')!;
+  const world = definition.world({ now: Date.now });
+  const expectation = definition.expect(world).find((item) => item.id === 'answers-the-question');
+  if (expectation?.kind !== 'check') throw new Error('Missing arithmetic check');
+  const run = quietRun(world);
+  for (const [answer, pass] of [
+    ['€43.20', true],
+    ['43,20 EUR', true],
+    ['€43.2', true],
+    ['€143.20', false],
+    ['€43.201', false],
+    ['€243.2', false],
+    ['€43.25', false],
+  ] as const) {
+    run.final = answer;
+    assert.equal((await expectation.check(run)).pass, pass, answer);
+  }
+});
+
+test('the chart eval rejects writes even when the report was read and cited', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-chart')!;
+  const world = definition.world({ now: Date.now });
+  const expectation = definition
+    .expect(world)
+    .find((item) => item.id === 'reads-and-cites-the-source');
+  if (expectation?.kind !== 'check') throw new Error('Missing chart source check');
+  const run = quietRun(world);
+  run.messages.push({
+    role: 'assistant',
+    text: 'Revenue was below target.',
+    at: 0,
+    turnId: null,
+    presentation: {
+      type: 'chart',
+      sources: [{ url: 'https://reports.visual-fixture.example.net/revenue/2026' }],
+    },
+  });
+  const visit = {
+    host: 'reports.visual-fixture.example.net',
+    path: '/revenue/2026',
+    query: '',
+    at: 0,
+    method: 'GET',
+  };
+  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+    run.visits = [visit, { ...visit, method }];
+    assert.equal((await expectation.check(run)).pass, ['GET', 'HEAD'].includes(method), method);
+  }
+  run.visits = [visit];
+  run.writes.push({ at: 0, slug: 'update-report', kind: 'update', args: {} });
+  assert.equal((await expectation.check(run)).pass, false);
+});
+
+test('the image eval rejects owner-readable artifacts outside the current thread', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-seat-image-holdout')!;
+  const world = definition.world({ now: Date.now });
+  const expectation = definition
+    .expect(world)
+    .find((item) => item.id === 'image-is-an-owned-available-file');
+  if (expectation?.kind !== 'check') throw new Error('Missing image ownership check');
+  const run = quietRun(world);
+  run.messages.push({
+    role: 'assistant',
+    text: '18A is a window seat.',
+    at: 0,
+    turnId: null,
+    presentation: { type: 'image', artifactId: 'original-image' },
+  });
+  run.api = async (_method, path) => ({
+    status: 200,
+    body: path === '/api/state' ? { threadId: 'current' } : { mimeType: 'image/png', size: 4359 },
+  });
+  for (const threadId of ['current', 'previous', null]) {
+    run.artifacts = [{ id: 'original-image', threadId }];
+    assert.equal((await expectation.check(run)).pass, threadId === 'current');
+  }
+  run.artifacts = [{ id: 'different-image', threadId: 'current' }];
+  assert.equal((await expectation.check(run)).pass, false);
+  run.artifacts = [];
+  assert.equal((await expectation.check(run)).pass, false);
 });
 
 test('fake remote MCP servers sign in and answer through Nod’s own MCP client', async () => {

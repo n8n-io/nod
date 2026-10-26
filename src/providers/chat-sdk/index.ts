@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Chat, ConsoleLogger } from 'chat';
+import { Chat, ConsoleLogger, convertEmojiPlaceholders } from 'chat';
 import { TelegramAdapter } from '@chat-adapter/telegram';
-import { WhatsAppAdapter } from '@chat-adapter/whatsapp';
+import { WhatsAppAdapter, WhatsAppApiError, splitMessage } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -20,6 +20,7 @@ type Environment = Record<string, string | undefined>;
 
 const logger = new ConsoleLogger('silent');
 const telegramFileBytes = 50 * 1024 * 1024;
+const whatsappImageBytes = 5 * 1024 * 1024;
 const telegramTextLimit = 3500;
 const telegramReaction = z.object({
   message_id: z.number().int().nonnegative(),
@@ -36,6 +37,20 @@ const telegramReaction = z.object({
     .max(10),
 });
 class Telegram extends TelegramAdapter {
+  fits(text: string, limit: number) {
+    return [
+      text,
+      this.formatConverter.fromMarkdown(text),
+      this.renderPlainTextMessage({ markdown: text }, null),
+    ].every((value) => convertEmojiPlaceholders(value, 'gchat').length <= limit);
+  }
+
+  chunks(text: string): string[] {
+    const fit = (part: string): string[] =>
+      this.fits(part, 4096) ? [part] : chunks(part, Math.floor(part.length / 2)).flatMap(fit);
+    return chunks(text).flatMap(fit);
+  }
+
   draft(threadId: string, text: string) {
     return this.telegramFetch('sendMessageDraft', {
       chat_id: this.decodeThreadId(threadId).chatId,
@@ -45,7 +60,23 @@ class Telegram extends TelegramAdapter {
   }
 }
 
+class WhatsAppUploadError extends Error {}
+
 class WhatsApp extends WhatsAppAdapter {
+  protected override async uploadMedia(file: { data: Buffer; filename: string; mimeType: string }) {
+    try {
+      return await super.uploadMedia(file);
+    } catch (cause) {
+      throw new WhatsAppUploadError('The image could not be uploaded.', { cause });
+    }
+  }
+
+  chunks(text: string) {
+    return splitMessage(
+      convertEmojiPlaceholders(this.formatConverter.fromMarkdown(text), 'whatsapp'),
+    );
+  }
+
   async typing(messageId: string) {
     const result = await this.graphApiRequest<{ success?: boolean }>(
       `/${this.phoneNumberId}/messages`,
@@ -99,14 +130,23 @@ const whatsappEnvelope = z.object({
   ),
 });
 
-function chunks(text: string) {
+function chunks(text: string, limit = telegramTextLimit) {
   const parts: string[] = [];
   let rest = text;
-  while (rest.length > telegramTextLimit) {
-    const slice = rest.slice(0, telegramTextLimit);
+  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  while (rest.length > limit) {
+    const slice = rest.slice(0, limit);
     let cut = slice.lastIndexOf('\n\n');
-    if (cut < telegramTextLimit / 2) cut = slice.lastIndexOf('\n');
-    if (cut < telegramTextLimit / 2) cut = telegramTextLimit;
+    if (cut < limit / 2) cut = slice.lastIndexOf('\n');
+    if (cut < limit / 2) cut = limit;
+    let boundary = 0;
+    for (const { index, segment } of graphemes.segment(rest)) {
+      if (index + segment.length > cut) break;
+      boundary = index + segment.length;
+    }
+    cut = boundary || cut;
+    const last = rest.charCodeAt(cut - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut--;
     parts.push(rest.slice(0, cut).trimEnd());
     rest = rest.slice(cut).trimStart();
   }
@@ -213,7 +253,7 @@ export function createChatSdkTransport(
       channel.provider === 'telegram' ? env.TELEGRAM_ALLOWED_USER_ID : env.WHATSAPP_ALLOWED_NUMBER,
     ].filter((value): value is string => Boolean(value)),
     ...(channel.provider === 'whatsapp'
-      ? { replyWindowMs: 86400000, presenceMs: 20000 }
+      ? { supportsAttachments: true, replyWindowMs: 86400000, presenceMs: 20000 }
       : { supportsAttachments: true, presenceMs: 4000 }),
   }));
   const error = (status: number, message: string): MessagingWebhookResult => ({
@@ -525,11 +565,15 @@ export function createChatSdkTransport(
       )
         throw new Error('Channel is not configured.');
       const attachments = input.attachments ?? [];
-      if (attachments.length && input.channelId !== 'telegram')
-        throw new Error('This channel does not support attachment delivery.');
       await bot.initialize();
       const thread = bot.thread(input.threadId);
-      const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
+      const unsent = attachments.filter((file) =>
+        input.channelId === 'whatsapp'
+          ? !['image/png', 'image/jpeg'].includes(file.mimeType) ||
+            !file.size ||
+            file.size > whatsappImageBytes
+          : !file.size || file.size > telegramFileBytes,
+      );
       const caption =
         input.channelId === 'telegram' &&
         attachments.length === 1 &&
@@ -538,7 +582,7 @@ export function createChatSdkTransport(
         !/^(?:text\/(?:x-)?vcard)$/.test(attachments[0].mimeType) &&
         attachments[0].name !== 'location.json' &&
         input.text.trim() &&
-        input.text.length <= 1024
+        telegram!.fits(input.text, 1024)
           ? input.text
           : '';
       let id = '';
@@ -547,10 +591,12 @@ export function createChatSdkTransport(
         input.replyToMessageId
           ? thread.reply(input.replyToMessageId, message)
           : thread.post(message);
-      for (const part of input.channelId === 'telegram'
-        ? chunks(caption ? '' : input.text)
-        : [input.text]) {
-        const sent = await post({ markdown: part });
+      const messages =
+        input.channelId === 'telegram'
+          ? telegram!.chunks(caption ? '' : input.text).map((markdown) => ({ markdown }))
+          : whatsapp!.chunks(input.text).map((raw) => ({ raw }));
+      for (const message of messages) {
+        const sent = await post(message);
         id ||= sent.id;
         ids.push(sent.id);
       }
@@ -596,12 +642,49 @@ export function createChatSdkTransport(
           bytes = await file.read();
         } catch {
           if (caption)
-            for (const part of chunks(input.text)) {
+            for (const part of telegram!.chunks(input.text)) {
               const sent = await post({ markdown: part });
               id ||= sent.id;
               ids.push(sent.id);
             }
           unsent.push(file);
+          continue;
+        }
+        if (input.channelId === 'whatsapp') {
+          if (bytes.length !== file.size || bytes.length > whatsappImageBytes) {
+            unsent.push(file);
+            continue;
+          }
+          try {
+            const sent = await post({
+              markdown: '',
+              attachments: [
+                {
+                  type: 'image',
+                  data: Buffer.from(bytes),
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  size: file.size,
+                },
+              ],
+            });
+            id ||= sent.id;
+            ids.push(sent.id);
+          } catch (cause) {
+            if (
+              cause instanceof WhatsAppUploadError ||
+              (cause instanceof WhatsAppApiError &&
+                cause.errorCode !== undefined &&
+                cause.status >= 400 &&
+                cause.status < 500 &&
+                cause.status !== 408 &&
+                cause.status !== 499)
+            ) {
+              unsent.push(file);
+              continue;
+            }
+            throw cause;
+          }
           continue;
         }
         if (
@@ -720,8 +803,12 @@ export function createChatSdkTransport(
         const notice = await input
           .attachmentFailure?.(unsent.map((file) => file.name))
           .catch(() => undefined);
-        for (const part of chunks(notice ?? '')) {
-          const sent = await post({ markdown: part }).catch(() => undefined);
+        const notices =
+          input.channelId === 'telegram'
+            ? telegram!.chunks(notice ?? '').map((markdown) => ({ markdown }))
+            : whatsapp!.chunks(notice ?? '').map((raw) => ({ raw }));
+        for (const notice of notices) {
+          const sent = await post(notice).catch(() => undefined);
           if (sent) {
             id ||= sent.id;
             ids.push(sent.id);
