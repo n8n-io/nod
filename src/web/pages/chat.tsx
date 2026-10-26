@@ -682,6 +682,7 @@ export function Chat({
         };
       }
       const replaySession = analyticsReplaySession();
+      const repliedMessage = replyId ? allMessages.find((item) => item.id === replyId) : null;
       const messageBody = JSON.stringify({
         threadId: sentThread,
         clientMessageId: id,
@@ -690,7 +691,7 @@ export function Chat({
         ...(replyId
           ? {
               replyToMessageId: replyId,
-              ...(reply && allMessages.find((item) => item.id === replyId)?.text !== reply.text
+              ...(reply && (repliedMessage?.audioCaption ?? repliedMessage?.text) !== reply.text
                 ? { replyQuote: reply.text.slice(0, 4000) }
                 : {}),
             }
@@ -751,6 +752,9 @@ export function Chat({
                   ...item.message,
                   turnId,
                   text: messageText,
+                  ...(typeof result.audioCaption === 'string'
+                    ? { audioCaption: result.audioCaption }
+                    : {}),
                   ...(result.attachments ? { attachments: result.attachments } : {}),
                 },
               }
@@ -1184,7 +1188,12 @@ export function Chat({
                         message.turnId || persistedIds.has(message.id)
                           ? (quote?: string) => {
                               taskReply.current = null;
-                              setReplyTo(quote?.trim() ? { ...message, text: quote } : message);
+                              setReplyTo({
+                                ...message,
+                                text: quote?.trim()
+                                  ? quote
+                                  : (message.audioCaption ?? message.text),
+                              });
                               composer.current?.focus();
                             }
                           : undefined

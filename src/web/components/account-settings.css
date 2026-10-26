@@ -648,28 +648,28 @@
   }
 }
 
-.voice-provider-select {
-  position: relative;
+.voice-settings-choice > .connection-menu {
   flex: 1;
   min-width: 0;
 }
-.voice-provider-select .input {
-  appearance: none;
+.voice-provider-trigger {
   width: 100%;
-  padding-inline: 40px 32px;
-  cursor: pointer;
+  min-height: var(--control-height);
+  gap: 8px;
+  padding-inline: 12px;
+  font-weight: 400;
 }
-.voice-provider-select > svg,
-.voice-provider-select > .model-provider-logo {
-  position: absolute;
-  top: 50%;
-  left: 12px;
-  transform: translateY(-50%);
-  pointer-events: none;
+.voice-provider-name {
+  flex: 1;
+  text-align: left;
 }
-.voice-provider-select > svg:last-child {
-  right: 12px;
-  left: auto;
+.voice-settings-choice .connection-menu-options {
+  width: 100%;
+  min-width: 220px;
+}
+.voice-settings-choice .connection-menu-options > [aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .voice-provider-setup {
   margin: 0 0 8px;

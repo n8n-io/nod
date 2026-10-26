@@ -351,8 +351,8 @@
   .button:not(:disabled) {
   color: var(--foreground);
 }
-.composer-microphone .button:hover:not(:disabled) {
-  background: transparent;
+.composer-microphone .button:not(:disabled):is(:hover, :focus-visible, [data-state='open']) {
+  background: color-mix(in srgb, var(--hover), var(--foreground) 8%);
 }
 .microphone-picker-trigger {
   width: 24px;
@@ -967,6 +967,26 @@
 }
 .chat-page .message-attachments {
   margin-bottom: 4px;
+}
+.chat-page .message-body .audio-player {
+  width: 300px;
+  padding: 4px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+.chat-page .message-body .audio-player[aria-current='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--card-radius);
+}
+.chat-page .message-user .audio-player-play {
+  background: var(--accent);
+  color: var(--accent-soft);
+}
+.chat-page .message-user .audio-player-play:hover:not(:disabled) {
+  background: var(--link-hover);
 }
 .chat-page .message-attachments:last-child,
 .chat-page .attachment-cards:last-child {

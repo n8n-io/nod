@@ -4,19 +4,33 @@ import type { SpeechVoice } from '../../shared/speech';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage } from '../lib/api';
 import { savePreferences } from '../lib/preferences';
-import { Check, ChevronDown, Download, LoaderCircle } from './icons';
+import { Check, ChevronDown, Download, LoaderCircle, Mic, Sparkles } from './icons';
+import { ConnectionMenu } from './connection-menu';
 import { ModelProviderLogo } from './models';
 import { VoiceConnections } from './voice-connections';
 import { VoicePicker, VoiceSample, voiceProvider } from './voice-picker';
 import { Button, Notice } from './ui';
 
 const providerNames = {
+  auto: 'Automatic',
   local: 'Free voices',
   elevenlabs: 'ElevenLabs',
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
 } as const;
 type VoiceProvider = keyof typeof providerNames;
+
+function VoiceProviderIcon({ provider }: { provider: VoiceProvider }) {
+  return provider === 'auto' ? (
+    <Sparkles size={18} aria-hidden="true" />
+  ) : provider === 'local' ? (
+    <Download size={18} aria-hidden="true" />
+  ) : provider === 'elevenlabs' ? (
+    <Mic size={18} aria-hidden="true" />
+  ) : (
+    <ModelProviderLogo provider={provider} size={18} />
+  );
+}
 
 interface SpeechSettings {
   transcription: boolean;
@@ -185,7 +199,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
   useEffect(() => {
     stop();
     setProviderChoice(null);
-  }, [selected]);
+  }, [selected, data?.speechVoice]);
   async function preview(voiceId: string) {
     if (!data?.synthesis) return;
     if (previewing === voiceId || playing === voiceId) {
@@ -233,8 +247,16 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       }
     }
   }
+  const providerSelection =
+    providerChoice ?? (data?.speechVoice ? voiceProvider(data.speechVoice) : 'auto');
   const provider =
-    providerChoice ?? (voice ? voiceProvider(voice) : selected ? voiceProvider(selected) : 'local');
+    providerSelection === 'auto'
+      ? voice
+        ? voiceProvider(voice)
+        : selected
+          ? voiceProvider(selected)
+          : 'local'
+      : providerSelection;
   const providerVoices = data?.voices.filter((item) => voiceProvider(item) === provider) ?? [];
   const selectedVoice = providerVoices.find((item) => item.id === selected);
   const providerVoiceId = selected && voiceProvider(selected) === provider ? selected : null;
@@ -245,6 +267,11 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
     setError('');
     setCatalogError(false);
     setProviderChoice(next);
+    if (next === 'auto') {
+      setManaging(false);
+      if (!(await save({ speechVoice: null }))) setProviderChoice(null);
+      return;
+    }
     const available = settings.voices.filter((item) => voiceProvider(item) === next);
     const preferred =
       available.find((item) => item.id === (settings.speechVoice ?? settings.defaultVoice)) ??
@@ -260,29 +287,40 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       {data ? (
         <>
           <div className="account-preference-row account-picker-row">
-            <label htmlFor={`${id}-provider`}>Voice provider</label>
+            <span>Voice provider</span>
             <div className="voice-settings-choice">
-              <div className="voice-provider-select">
-                {provider === 'local' ? (
-                  <Download size={18} aria-hidden="true" />
-                ) : (
-                  <ModelProviderLogo provider={provider} size={18} />
-                )}
-                <select
-                  id={`${id}-provider`}
-                  className="input"
-                  value={provider}
-                  disabled={saving || setupBusy || catalogRefreshing}
-                  onChange={(event) => void chooseProvider(event.target.value as VoiceProvider)}
-                >
-                  {Object.entries(providerNames).map(([value, name]) => (
-                    <option key={value} value={value}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={16} aria-hidden="true" />
-              </div>
+              <ConnectionMenu
+                label={`Voice provider, ${providerNames[providerSelection]}`}
+                triggerClassName="input select-trigger voice-provider-trigger"
+                disabled={saving || setupBusy || catalogRefreshing}
+                trigger={
+                  <>
+                    <VoiceProviderIcon provider={providerSelection} />
+                    <span className="voice-provider-name">{providerNames[providerSelection]}</span>
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </>
+                }
+              >
+                {(close) =>
+                  Object.entries(providerNames).map(([value, name]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="menuitemradio"
+                      aria-label={name}
+                      aria-checked={value === providerSelection}
+                      onClick={() => {
+                        close();
+                        void chooseProvider(value as VoiceProvider);
+                      }}
+                    >
+                      <VoiceProviderIcon provider={value as VoiceProvider} />
+                      <span className="voice-provider-name">{name}</span>
+                      {value === providerSelection && <Check size={14} aria-hidden="true" />}
+                    </button>
+                  ))
+                }
+              </ConnectionMenu>
               <Button
                 type="button"
                 variant="ghost"

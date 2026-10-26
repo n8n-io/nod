@@ -335,7 +335,68 @@ test('audio waveform reads refuse foreign URLs, oversized streams, redirects and
     );
 });
 
-test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering the native decoder', async (t) => {
+test('audio waveform decoding bounds browser recordings and encoded samples before entering the native decoder', async (t) => {
+  const webm = ({
+    timestamp = 0,
+    codec = 'A_OPUS',
+    channels = 1,
+    flags = 0x80,
+    tracks = 1,
+    packets = 2,
+    declaredDuration = 0,
+    group = false,
+    padding = 0,
+  } = {}) => {
+    const element = (id: string, bytes: Buffer) => {
+      let width = 1;
+      while (bytes.length >= 2 ** (width * 7) - 1) width++;
+      const length = Buffer.alloc(width);
+      length.writeUIntBE(bytes.length, 0, width);
+      length[0] |= 1 << (8 - width);
+      return Buffer.concat([Buffer.from(id, 'hex'), length, bytes]);
+    };
+    const uint = (value: number) => {
+      const bytes = Buffer.alloc(4);
+      bytes.writeUInt32BE(value);
+      return bytes;
+    };
+    const duration = Buffer.alloc(8);
+    duration.writeDoubleBE(declaredDuration);
+    const head = Buffer.alloc(19);
+    head.write('OpusHead');
+    head[8] = 1;
+    head[9] = channels;
+    const track = element(
+      'ae',
+      Buffer.concat([
+        element('d7', Buffer.from([1])),
+        element('83', Buffer.from([2])),
+        element('86', Buffer.from(codec)),
+        element('63a2', head),
+        element('e1', element('9f', Buffer.from([channels]))),
+      ]),
+    );
+    return Buffer.concat([
+      element('1a45dfa3', element('4282', Buffer.from('webm'))),
+      Buffer.from('1853806701ffffffffffffff', 'hex'),
+      element(
+        '1549a966',
+        Buffer.concat([
+          element('2ad7b1', uint(1_000_000)),
+          ...(declaredDuration ? [element('4489', duration)] : []),
+        ]),
+      ),
+      element('1654ae6b', Buffer.concat(Array.from({ length: tracks }, () => track))),
+      Buffer.from('1f43b67501ffffffffffffff', 'hex'),
+      element('e7', uint(timestamp)),
+      ...Array.from({ length: packets }, () => {
+        const block = Buffer.from([0x81, 0, 0, flags, 0xf8, 0xff, 0xfe]);
+        return group
+          ? element('a0', Buffer.concat([element('a1', block), element('75a2', uint(padding))]))
+          : element('a3', block);
+      }),
+    ]);
+  };
   const wav = (samples: number) => {
     const bytes = Buffer.alloc(44 + samples * 2);
     bytes.write('RIFF');
@@ -421,6 +482,9 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
     extensibleWav(32, 3),
     paddedPcm,
     unspecifiedSpeakers,
+    webm(),
+    webm({ group: true, padding: 13_500_000 }),
+    webm({ declaredDuration: 40 }),
   ];
   const files = [
     ...accepted,
@@ -439,6 +503,17 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
     ...invalidExtensibleWav,
     reservedSpeaker,
     invalidFloatPrecision,
+    webm({ timestamp: 600_001 }),
+    webm({ codec: 'A_VORBIS' }),
+    webm({ channels: 3 }),
+    webm({ flags: 0x82 }),
+    webm({ tracks: 2 }),
+    webm({ packets: 30_001 }),
+    webm({ declaredDuration: 600_001 }),
+    webm({ declaredDuration: Infinity }),
+    webm({ declaredDuration: -1 }),
+    webm({ group: true, padding: 120_000_001 }),
+    webm().subarray(0, webm().length - 1),
   ];
   const ids: string[] = files.map(() => randomUUID());
   const server = createServer((request, response) => {
@@ -475,7 +550,7 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
       loadAudioWaveform(
         `/api/artifacts/${ids[index]}`,
         file.length,
-        1,
+        0,
         new AbortController().signal,
       ),
       index < accepted.length ? /Native decoding unavailable/ : /Waveform unavailable/,

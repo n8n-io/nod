@@ -87,6 +87,7 @@ export interface SubmitUserMessageOptions {
   replyQuote?: string;
   seenMessageId?: string;
   clientMessageId?: string;
+  audioCaption?: string;
   prompt?: string;
   answer?: ChatConfirmationInput['answer'];
   prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
@@ -482,7 +483,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -492,6 +493,7 @@ export async function submitUserMessage(
           previous.role !== 'user' ||
           previous.thread_id !== thread.id ||
           previous.text !== text ||
+          previous.audio_caption !== (options.audioCaption ?? null) ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
           previous.reply_quote !== (options.replyQuote ?? null) ||
           JSON.stringify((previous.attachments as Artifact[]).map((item) => item.id)) !==
@@ -560,7 +562,7 @@ export async function submitUserMessage(
     if (taskTarget) await taskTarget.record(turnId);
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8)",
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9)",
       [
         messageId,
         ownerId,
@@ -570,6 +572,7 @@ export async function submitUserMessage(
         JSON.stringify([...attachments, ...prepared]),
         options.replyToMessageId ?? null,
         options.replyQuote ?? null,
+        options.audioCaption ?? null,
       ],
     );
     await sendDrain(client, thread.id);

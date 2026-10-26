@@ -935,6 +935,11 @@ test(
           const accepted = await sendAudio(message);
           assert.equal(accepted.statusCode, 200, accepted.body);
           const receipt = accepted.json<SubmitMessageResponse>();
+          assert.equal(receipt.audioCaption, message.text);
+          const visible = (await request('GET', '/api/state'))
+            .json()
+            .messages.find((entry: { id: string }) => entry.id === receipt.messageId);
+          assert.equal(visible.audioCaption, message.text);
           const stored = (
             await db.pool.query('SELECT text,attachments FROM messages WHERE id=$1', [
               receipt.messageId,
@@ -1036,6 +1041,11 @@ test(
           }
           const finished = await pending;
           assert.equal(finished.statusCode, 200, finished.body);
+          assert.equal(finished.json().audioCaption, '');
+          const recordingOnly = (await request('GET', '/api/state'))
+            .json()
+            .messages.find((entry: { id: string }) => entry.id === finished.json().messageId);
+          assert.equal(recordingOnly.audioCaption, '');
           assert.deepEqual((await sendAudio(concurrent)).json(), finished.json());
           assert.equal(transcriptions.length, before + 3);
         },

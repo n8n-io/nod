@@ -231,6 +231,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
         accepted.attachments,
         {
           ...input,
+          audioCaption: input.text,
           channel: 'web',
           prepareAttachments: async (client, threadId) => {
             signal.throwIfAborted();
@@ -245,13 +246,14 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
             signal.throwIfAborted();
             return [clip];
           },
-          persistSubmission: (client, result) => persist(client, { ...result, messageText: text }),
+          persistSubmission: (client, result) =>
+            persist(client, { ...result, messageText: text, audioCaption: input.text }),
         },
       );
       refresh();
       const replaySession = z.uuid().safeParse(request.headers['x-nod-replay-session']).data;
       if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
-      return { ...submitted, messageText: text };
+      return { ...submitted, messageText: text, audioCaption: input.text };
     } catch (error) {
       if (!submitting && !signal.aborted && error instanceof Error && !('retryable' in error))
         Object.assign(error, { retryable: true });

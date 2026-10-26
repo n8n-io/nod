@@ -429,9 +429,8 @@ export function MessageBubble({
     setPanel(null);
     try {
       const visual = presentationSchema.safeParse(message.presentation);
-      const text = visual.success
-        ? `${message.text}\n\n${presentationText(visual.data)}`
-        : message.text;
+      const content = message.audioCaption ?? message.text;
+      const text = visual.success ? `${content}\n\n${presentationText(visual.data)}` : content;
       if (markdown) await navigator.clipboard.writeText(text);
       else
         await copyContent(
@@ -534,9 +533,9 @@ export function MessageBubble({
               {message.role === 'user' && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
-              {message.text && (
+              {(message.audioCaption ?? message.text) && (
                 <MessageText
-                  text={message.text}
+                  text={message.audioCaption ?? message.text}
                   previews={!streaming}
                   connectedAppIds={connectedAppIds}
                   handoff={!streaming && handoff}

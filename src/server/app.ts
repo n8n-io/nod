@@ -49,18 +49,19 @@ import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
-const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
- CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(target.text,1000))) END AS "replyTo"`;
+const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
+ CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(COALESCE(target.audio_caption,target.text),1000))) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
   receipt?: MessageReceipt,
   questionState?: Message['questionState'],
 ): Message {
-  const { assistantReaction, presentation, ...message } = row;
+  const { assistantReaction, presentation, audioCaption, ...message } = row;
   const visual =
     message.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
   return {
     ...message,
+    ...(typeof audioCaption === 'string' ? { audioCaption } : {}),
     ...(visual?.success ? { presentation: visual.data } : {}),
     ...(receipt ? { receipt } : {}),
     ...(questionState ? { questionState } : {}),

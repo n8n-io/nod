@@ -36,11 +36,13 @@ Select **Record an audio message** beside the send button and allow microphone a
 
 Use the arrow beside the microphone to choose an input. Nod remembers your choice in this browser. If that microphone is disconnected, Nod uses your system default.
 
-Nod transcribes the recording and uses it as your message. The transcript and recording stay together in the conversation. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
+Your message shows the recording and any caption you typed. Nod transcribes it internally so your selected model can understand it; the generated transcript is not shown in the message. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
 
 With **Auto**, Nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.
 
 In **Settings → General → Voice**, choose a **Voice provider**, then open **Assistant voice** to compare samples and choose a voice. Set **Spoken replies** to **Auto**, **When I send audio**, **Always**, or **Off**. Auto is the default for new settings; existing choices stay unchanged. Off stops automatic spoken replies, but you can still explicitly request an audio file.
+
+Choose **Automatic** to use an available speech connection, or downloaded free voices when no cloud speech service is connected. Nod shows the voice it will use, and you can play its sample. Choosing a provider and voice overrides Automatic without changing your chat model. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
 
 Existing API connections make their voices available automatically. Select a provider and use **Connect** or **Manage** beside it. Sign in to OpenRouter for ElevenLabs and Kokoro voices, or connect ElevenLabs or OpenAI with an API key. OpenRouter doesn't need a separate ElevenLabs key. For local speech, select **Free voices → Set up → Download voices**. Setup stays on this page, and your connected chat model stays selected.
 

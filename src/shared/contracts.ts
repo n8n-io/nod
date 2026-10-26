@@ -21,6 +21,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  audioCaption?: string;
   turnId: string | null;
   createdAt: string;
   attachments: Artifact[];
@@ -45,6 +46,7 @@ export interface SubmitMessageResponse {
   turnId: string;
   messageId: string;
   messageText?: string;
+  audioCaption?: string;
   verificationStatus?: 'pending' | 'submitted' | 'unavailable';
 }
 export interface VerificationRequest {

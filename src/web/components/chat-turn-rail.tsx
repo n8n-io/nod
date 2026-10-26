@@ -54,7 +54,11 @@ export function ChatTurnRail({
     });
   }
   function excerpt(message: Message) {
-    return (message.text || message.attachments.map((item) => item.name).join(', ') || 'Attachment')
+    return (
+      (message.audioCaption ?? message.text) ||
+      message.attachments.map((item) => item.name).join(', ') ||
+      'Attachment'
+    )
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 180);
@@ -163,7 +167,7 @@ export function ChatTurnRail({
                   img: ({ alt }) => <span>{alt || 'Image'}</span>,
                 }}
               >
-                {preview.message.text || excerpt(preview.message)}
+                {(preview.message.audioCaption ?? preview.message.text) || excerpt(preview.message)}
               </Markdown>
             </div>
           </div>,
