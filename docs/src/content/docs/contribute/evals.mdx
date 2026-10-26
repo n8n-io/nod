@@ -235,6 +235,8 @@ Charts calculate cost per success from completed regression attempts, divided by
 
 Human review stays separate from the automatic result. Rebuilding a report doesn't change saved attempts, checks, or the gate's decision rules.
 
+Some scenarios append judge-only evidence and criterion explanations. Their fingerprints change with those additions. `rejudge` refuses older fingerprints for these scenarios because saved ground truth cannot supply the new evidence. Run the scenario again, or record an explicit evaluator migration separately while preserving the original results.
+
 ## What the verdict means
 
 A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides run in one job with the same harness, scenarios, images, model and judge, so only the app code differs.

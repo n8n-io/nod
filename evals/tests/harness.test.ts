@@ -41,12 +41,14 @@ import { summarizePopulation } from '../src/proactivity.ts';
 import { select } from '../src/run.ts';
 import { decide, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
+import { criteria as productCriteria, standard } from '../src/product.ts';
 import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import { cards, comparisonChart } from '../src/chart.ts';
 import { storyCard } from '../src/story.ts';
 import { facts, leaderboard } from '../src/writeup.ts';
 import { meetsMinimumPassRate } from '../src/commands.ts';
+import { rejudge } from '../src/rejudge.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
@@ -1586,6 +1588,96 @@ test('a task-specific completion gate preserves secret checks and default comple
     )?.pass,
     false,
   );
+});
+
+test('scenario product explanations extend one judge criterion without replacing defaults or accepting unknown IDs', async () => {
+  const trace = {
+    turns: [{ id: 'turn', status: 'succeeded', background: false }],
+    interactions: [],
+    final: 'synthetic-fixture-password',
+    messages: [{ role: 'assistant', text: 'synthetic-fixture-password' }],
+    tools: [],
+    world: { logins: [{ password: 'synthetic-fixture-password' }] },
+    acknowledgement: { turnsWithTools: 0, acknowledged: 0 },
+    task: 'Summarize the supplied note.',
+    transcript: () => 'ASSISTANT: synthetic-fixture-password',
+  } as unknown as Run;
+  const requests: Array<{ system: string; input: string; maxTokens?: number }> = [];
+  const judge = {
+    complete: async (system: string, input: string, maxTokens?: number) => {
+      requests.push({ system, input, maxTokens });
+      return JSON.stringify({
+        verdicts: [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => ({
+          id: match[1],
+          reasoning: 'Synthetic request-composition response.',
+          applicable: true,
+          pass: match[1] !== 'honest-completion-claims',
+        })),
+      });
+    },
+  } as never;
+  const original = structuredClone(productCriteria);
+  const criteria = productCriteria.filter((item) => item.kind === 'judge');
+  await judgeCriteria(judge, {
+    standard,
+    task: trace.task,
+    transcript: trace.transcript(),
+    groundTruth: 'Synthetic source evidence.',
+    criteria,
+  });
+  const expected = requests.pop()!;
+  const score = (productCriterionExplanations?: Record<string, string>) =>
+    grade({
+      definition: { expect: () => [], productCriterionExplanations } as unknown as Scenario,
+      world: trace.world,
+      trace,
+      judge,
+      truth: 'Synthetic source evidence.',
+      skipJudges: false,
+    });
+  const plain = await score();
+  assert.deepEqual(requests.pop(), expected);
+  const explanation = 'Use the supplied note as the source for this scenario.';
+  const extended = await score({ 'honest-completion-claims': explanation });
+  const base = criteria.find((item) => item.id === 'honest-completion-claims')!;
+  assert.deepEqual(requests.pop(), {
+    ...expected,
+    input: expected.input.replace(base.criterion, `${base.criterion}\n\n${explanation}`),
+  });
+  assert.deepEqual(
+    extended.checks,
+    plain.checks.map((item) =>
+      item.id === base.id ? { ...item, criterion: `${base.criterion}\n\n${explanation}` } : item,
+    ),
+  );
+  assert.equal(extended.checks.find((item) => item.id === base.id)?.required, true);
+  assert.equal(extended.checks.find((item) => item.id === base.id)?.failure, 'hallucination');
+  assert.equal(extended.checks.find((item) => item.id === 'no-secret-in-output')?.pass, false);
+  await score();
+  assert.deepEqual(requests.pop(), expected);
+  assert.deepEqual(productCriteria, original);
+  await assert.rejects(
+    score({ 'unknown-product-criterion': explanation }),
+    /Unknown product criterion/,
+  );
+  assert.equal(requests.length, 0);
+});
+
+test('rejudging refuses changed scenario evidence before creating a model or altering saved results', async () => {
+  const attempts = [
+    attempt('trust-repair-vague-delegation', 'pass', { fingerprint: 'old-evidence' }),
+  ];
+  const original = structuredClone(attempts);
+  await assert.rejects(
+    rejudge({
+      attempts,
+      reviews: {},
+      judge: { provider: 'anthropic', name: 'fixture-not-in-catalog', apiKey: '' },
+      at: Date.UTC(2026, 9, 26),
+    }),
+    /Scenario trust-repair-vague-delegation changed its judge evidence/,
+  );
+  assert.deepEqual(attempts, original);
 });
 
 test('a missed wording check is decided by the judge, never by a not-applicable verdict', async () => {

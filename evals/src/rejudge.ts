@@ -1,16 +1,17 @@
 import { createLlm, judgeCriteria, withFallback, type Llm } from './judge.ts';
 import { reviewKey } from './review.ts';
-import { criteria as productCriteria, standard } from './product.ts';
+import { standard } from './product.ts';
+import { productExpectations } from './grade.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
 import type { Expectation } from './scenario.ts';
-import { scenarios } from './scenarios/index.ts';
+import { fingerprint, scenarios } from './scenarios/index.ts';
 import type { Model } from './stack.ts';
 
 type Judged = Extract<Expectation, { kind: 'judge' }>;
 
 function current(scenario: string, group: 'task' | 'product', at: number) {
-  if (group === 'product') return productCriteria as Judged[];
   const definition = scenarios.find((item) => item.id === scenario);
+  if (definition && group === 'product') return productExpectations(definition);
   return definition
     ? definition
         .expect(definition.world({ now: () => at }))
@@ -26,6 +27,22 @@ export async function rejudge(options: {
   at: number;
   fallback?: Llm;
 }) {
+  for (const attempt of options.attempts) {
+    if (
+      attempt.status === 'incomplete' ||
+      (options.only && !options.only.includes(attempt.scenario))
+    )
+      continue;
+    const definition = scenarios.find((item) => item.id === attempt.scenario);
+    if (definition?.productCriterionExplanations) productExpectations(definition);
+    if (
+      definition?.productCriterionExplanations &&
+      attempt.fingerprint !== fingerprint(attempt.scenario)
+    )
+      throw new Error(
+        `Scenario ${attempt.scenario} changed its judge evidence. Run the scenario again; rejudge cannot migrate saved ground truth.`,
+      );
+  }
   const llm = withFallback(await createLlm(options.judge), options.fallback);
   const next: AttemptResult[] = [];
   let same = 0;
