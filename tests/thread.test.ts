@@ -389,6 +389,7 @@ test(
     const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
+    let inspectAudioContext: ((context: RuntimeContext) => Promise<void>) | undefined;
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<
       string,
@@ -455,6 +456,8 @@ test(
       artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
+        if (inspectAudioContext && context.audioCaption !== undefined)
+          await inspectAudioContext(context);
         if (
           ['audio-explicit-fixture', 'Answer in audio notes.', 'And the next option?'].includes(
             context.prompt,
@@ -1523,6 +1526,83 @@ test(
             await readFile(join(workspace, staged), 'utf8'),
             'synthetic attachment bytes',
           );
+        },
+      );
+
+      await t.test(
+        'native audio reads only attached recordings in the active owned turn',
+        async () => {
+          const message = {
+            threadId,
+            clientMessageId: randomUUID(),
+            text: 'Context for the recording',
+          };
+          let readOwnedAudio = false;
+          inspectAudioContext = async (context) => {
+            assert.equal(context.audioCaption, message.text);
+            assert.equal(context.prompt, 'Context for the recording\n\nSynthetic spoken request');
+            const file = context.attachments.find((item) => item.mimeType.startsWith('audio/'))!;
+            assert.ok(file.id);
+            const audio = { id: file.id!, mimeType: file.mimeType };
+            assert.deepEqual(
+              await context.readAudio!(audio, context.signal),
+              Buffer.from('Synthetic recording'),
+            );
+            await assert.rejects(
+              context.readAudio!({ ...audio, mimeType: 'audio/wav' }, context.signal),
+            );
+            const otherThread = randomUUID();
+            await db.pool.query(
+              'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())',
+              [otherThread, ownerId],
+            );
+            const other = await localArtifacts.storeArtifact(
+              Buffer.from('Other conversation'),
+              'other.wav',
+              'audio/wav',
+              otherThread,
+            );
+            await assert.rejects(
+              context.readAudio!({ id: other.id, mimeType: other.mimeType }, context.signal),
+            );
+            const foreignAudio = randomUUID();
+            await db.pool.query(
+              "INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path) VALUES($1,'foreign-audio-owner',$2,'foreign.wav','audio/wav',1,'unread')",
+              [foreignAudio, otherThread],
+            );
+            await assert.rejects(
+              context.readAudio!({ id: foreignAudio, mimeType: 'audio/wav' }, context.signal),
+            );
+            await assert.rejects(context.readAudio!(audio, AbortSignal.abort()));
+            await db.pool.query('UPDATE artifacts SET deleting_at=now() WHERE id=$1', [audio.id]);
+            try {
+              await assert.rejects(context.readAudio!(audio, context.signal));
+            } finally {
+              await db.pool.query('UPDATE artifacts SET deleting_at=NULL WHERE id=$1', [audio.id]);
+            }
+            readOwnedAudio = true;
+          };
+          try {
+            const accepted = await sendAudio(message);
+            assert.equal(accepted.statusCode, 200, accepted.body);
+            const receipt = accepted.json<SubmitMessageResponse>();
+            await waitFor(settled(receipt.turnId));
+            inspectAudioContext = undefined;
+            assert.equal(await turnStatus(receipt.turnId), 'succeeded');
+            assert.equal(readOwnedAudio, true);
+            const completedAudio = ran(receipt.turnId)!;
+            await assert.rejects(
+              completedAudio.readAudio!(
+                {
+                  id: completedAudio.attachments[0].id!,
+                  mimeType: completedAudio.attachments[0].mimeType,
+                },
+                new AbortController().signal,
+              ),
+            );
+          } finally {
+            inspectAudioContext = undefined;
+          }
         },
       );
 

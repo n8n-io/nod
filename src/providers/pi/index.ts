@@ -22,6 +22,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime } from './models.ts';
+import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -317,6 +318,7 @@ export function createPiAgent(options: {
                     ),
                   );
               }),
+            input.readAudio,
           )
         : undefined;
       const runtime = connection
@@ -404,6 +406,7 @@ export function createPiAgent(options: {
           ...(input.restricted ? [] : [createCodemodeExtension()]),
           ...(deferred ? [createToolSearchExtension()] : []),
           recentImages,
+          audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),
         ],
@@ -540,8 +543,14 @@ export function createPiAgent(options: {
           result?.action !== 'end' &&
           ['stop', 'toolUse'].includes(turn.message.stopReason)
         )
-          for (const message of await input.nextMessages())
-            await session.steer(message.text, message.images);
+          for (const message of await input.nextMessages()) {
+            if (message.audio && readsNativeAudio(model))
+              await session.sendCustomMessage(
+                audioMessage(message.text, message.images, message.audio),
+                { deliverAs: 'steer' },
+              );
+            else await session.steer(message.text, message.images);
+          }
         return result ?? undefined;
       };
       let textBlock: number | undefined;
@@ -652,7 +661,8 @@ export function createPiAgent(options: {
       return {
         resumed,
         readsImages: model.input.includes('image'),
-        async prompt(text, images) {
+        readsAudio: readsNativeAudio(model) && Boolean(input.readAudio),
+        async prompt(text, images, audio) {
           const owner = input.ownerContext;
           const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
           if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
@@ -660,7 +670,11 @@ export function createPiAgent(options: {
               { customType: ownerContextType, content: owner, display: false },
               { deliverAs: 'nextTurn' },
             );
-          await session.prompt(text, { images, expandPromptTemplates: false });
+          if (audio && readsNativeAudio(model))
+            await session.sendCustomMessage(audioMessage(text, images, audio), {
+              triggerTurn: true,
+            });
+          else await session.prompt(text, { images, expandPromptTemplates: false });
         },
         async abort() {
           await session.abort();

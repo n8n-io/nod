@@ -2899,8 +2899,11 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       const created = [],
         revoked = [],
         requests = [],
+        renewals = [],
+        renewable = [],
         opened = [],
         sends = [];
+      let holdRenewals = false;
       URL.createObjectURL = (file) => {
         const url = 'blob:synthetic-' + created.length;
         created.push({ file, url });
@@ -2910,10 +2913,17 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       fetch = (url, options) => {
         if (url === '/api/speech') return Promise.resolve(Response.json({ transcription: true, transcriptionFormat: speechFormat }));
         return new Promise((resolve, reject) => {
-          assert.ok(url === '/api/uploads' || url.endsWith('/metadata'));
+          assert.ok(url === '/api/uploads' || url === '/api/uploads/renew');
           assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
           const request = { url, options, resolve, reject };
-          requests.push(request);
+          if (url === '/api/uploads/renew') {
+            assert.equal(options.method, 'POST');
+            renewals.push(request);
+            if (!holdRenewals) {
+              const { ids } = JSON.parse(options.body);
+              resolve(Response.json(renewable.filter(artifact => ids.includes(artifact.id))));
+            }
+          } else requests.push(request);
           options.signal?.addEventListener(
             'abort',
             () => reject(new DOMException('Aborted', 'AbortError')),
@@ -3024,6 +3034,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         size: 21,
         url: '/api/artifacts/00000000-0000-4000-8000-000000000001',
       };
+      renewable.push(artifact);
       let closed = false;
       try {
         localStorage.setItem('nod.send-with-enter', 'false');
@@ -3128,6 +3139,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         );
         assert.deepEqual(sends[0].attachments, [artifact]);
         assert.equal(revoked.includes(created[0].url), false);
+        assert.deepEqual(JSON.parse(renewals.at(-1).options.body), { ids: [artifact.id] });
+        await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
         result = { sent: true };
         await submit();
         await settle(() => drafts.length === 0);
@@ -3162,29 +3175,37 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           const id = '00000000-0000-4000-8000-' + String(index + 1).padStart(12, '0');
           return { ...artifact, id, url: '/api/artifacts/' + id, name: index === 0 ? artifact.name : 'Restored-' + index + '.txt' };
         });
+        renewable.splice(0, renewable.length, ...restoredFiles);
+        holdRenewals = true;
+        const beforeRenewal = renewals.length;
         localStorage.setItem('synthetic-owner.thread', JSON.stringify({ version: 1, text: 'Restored synthetic request', reply: null, attachments: restoredFiles, missing: [] }));
         root = createRoot(document.getElementById('root'));
         closed = false;
         await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: 'synthetic-owner.thread' }))));
-        await settle(() => requests.length === 8);
-        assert.equal(requests[4].url, artifact.url + '/metadata');
+        await settle(() => renewals.length > beforeRenewal);
+        const restoredRenewal = renewals.at(-1);
+        assert.equal(restoredRenewal.options.signal.aborted, false);
+        assert.deepEqual(JSON.parse(restoredRenewal.options.body), { ids: restoredFiles.map(file => file.id) });
         assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
         await submit();
         assert.equal(sends.length, 2);
-        assert.equal(requests.length, 8);
-        await act(async () => requests[4].resolve(Response.json({ error: 'Synthetic offline check' }, { status: 503 })));
-        assert.equal(requests.length, 8);
-        await act(async () => {
-          for (let index = 1; index < 4; index++) requests[4 + index].resolve(Response.json(restoredFiles[index]));
-        });
-        await settle(() => requests.length === 9);
-        await act(async () => requests[8].resolve(Response.json(restoredFiles[4])));
+        assert.equal(requests.length, 4);
+        await act(async () => restoredRenewal.resolve(Response.json(restoredFiles.slice(1))));
         await settle(() => document.querySelector('[aria-label="Retry checking Review.txt"]'));
         assert.equal(JSON.parse(localStorage.getItem('synthetic-owner.thread')).attachments[0].id, artifact.id);
         await click('Retry checking Review.txt');
-        await settle(() => requests.length === 10);
-        await act(async () => requests[9].resolve(Response.json(artifact)));
+        const retryRenewal = renewals.at(-1);
+        assert.notEqual(retryRenewal, restoredRenewal);
+        assert.deepEqual(JSON.parse(retryRenewal.options.body), { ids: restoredFiles.map(file => file.id) });
+        await act(async () => retryRenewal.resolve(Response.json({ error: 'Synthetic offline check' }, { status: 503 })));
+        await settle(() => document.querySelector('[aria-label="Retry checking Review.txt"]'));
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
+        await click('Retry checking Review.txt');
+        const recoveredRenewal = renewals.at(-1);
+        assert.notEqual(recoveredRenewal, retryRenewal);
+        await act(async () => recoveredRenewal.resolve(Response.json(restoredFiles)));
         await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
+        holdRenewals = false;
         await submit();
         assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
         assert.equal(microphoneRequests.length, 0);
@@ -3217,7 +3238,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await submit();
         await submit();
         assert.equal(sends.length, 3);
-        assert.equal(requests.length, 10);
+        assert.equal(requests.length, 4);
         assert.equal(recorded.track.stopped, true);
         assert.equal(stoppedRecordings.length, 1);
         await act(async () => stoppedRecordings.shift()());
@@ -3228,7 +3249,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const preview = document.querySelector('audio').src;
         assert.ok(document.querySelector('audio').getAttribute('src')?.startsWith('blob:'));
         assert.equal(revoked.includes(preview), false);
-        assert.equal(requests.length, 10);
+        assert.equal(requests.length, 4);
         assert.equal(sends[3].recording.type, 'audio/mp4');
         assert.equal(sends[3].recording.name, 'Voice message.m4a');
         assert.equal(document.querySelector('audio').src, preview);
@@ -3381,7 +3402,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests.at(-1).resolve(lateDiscovery));
         assert.equal(lateDiscovery.track.stopped, true);
         await settle(() => !document.querySelector('[role="menu"]'));
-        assert.equal(document.activeElement, document.querySelector('[aria-label="Choose microphone"]'));
+        await settle(() => document.activeElement === document.querySelector('[aria-label="Choose microphone"]'));
         await click('Choose microphone');
         await click('Allow microphone access');
         microphones = [
@@ -3421,6 +3442,17 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await settle(() => document.querySelector('audio'));
         assert.equal(document.querySelector('audio').src, priorClip);
         assert.equal(revoked.includes(priorClip), false);
+        assert.equal(currentText, 'Synthetic review request');
+        await click('Record again');
+        await act(async () => changeActive(false));
+        assert.equal(document.querySelector('audio'), null);
+        assert.equal(revoked.includes(priorClip), false);
+        const replacementAfterLeaving = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(replacementAfterLeaving));
+        assert.equal(replacementAfterLeaving.track.stopped, true);
+        await act(async () => changeActive(true));
+        await settle(() => document.querySelector('audio'));
+        assert.equal(document.querySelector('audio').src, priorClip);
         assert.equal(currentText, 'Synthetic review request');
         const priorSends = sends.length;
         speechFormat = 'wav';
@@ -3470,6 +3502,72 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const racedFallback = microphone();
         await act(async () => microphoneRequests.at(-1).resolve(racedFallback));
         assert.equal(racedFallback.track.stopped, true);
+        await act(async () => root.unmount());
+        const { Chat } = await import('./src/web/pages/chat.tsx');
+        const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+        pageDataCache.clear();
+        HTMLElement.prototype.scrollTo = () => {};
+        HTMLElement.prototype.scrollIntoView = () => {};
+        const audioRequests = [];
+        let outcome = 'unknown';
+        fetch = async (url, options = {}) => {
+          if (url === '/api/speech') return Response.json({ transcription: true, transcriptionFormat: speechFormat });
+          if (url === '/api/apps') return Response.json([]);
+          if (url === '/api/trust') return Response.json({});
+          if (url === '/api/onboarding/introduction') return Response.json({ messageId: null });
+          assert.equal(url, '/api/messages/audio');
+          const body = options.body.get('message');
+          const file = options.body.get('file');
+          audioRequests.push({ body, file, bytes: await file.arrayBuffer() });
+          if (outcome === 'unknown') throw new TypeError('Synthetic lost response');
+          if (outcome === 'retryable') return Response.json({ error: 'Synthetic unavailable transcription', retryable: true }, { status: 503 });
+          return Response.json({ messageId: JSON.parse(body).clientMessageId, turnId: 'synthetic-turn', messageText: '', audioCaption: '' });
+        };
+        let chatState = {
+          threadId: 'synthetic-thread', turns: [], activity: [], tasks: [],
+          verificationRequests: [], configuration: { llmReady: true },
+          messages: [{ id: 'synthetic-assistant', role: 'assistant', text: 'Synthetic conversation', attachments: [], turnId: null, createdAt: '2026-10-26T12:00:00Z' }],
+        };
+        const renderChat = () => act(async () => root.render(createElement(Chat, {
+          ownerId: 'synthetic-owner', state: chatState, streams: {}, refresh: async () => {},
+          resetConversation: async () => chatState.threadId,
+        })));
+        root = createRoot(document.getElementById('root'));
+        speechFormat = undefined;
+        await renderChat();
+        await settle(() => document.querySelector('[aria-label="Record an audio message"]:not(:disabled)'));
+        await click('Record an audio message');
+        await act(async () => microphoneRequests.at(-1).resolve(microphone()));
+        await submit();
+        await settle(() => audioRequests.length === 1 && document.querySelector('audio'));
+        const uncertain = audioRequests[0];
+        assert.equal(uncertain.file.type, 'audio/mp4');
+        speechFormat = 'wav';
+        chatState = { ...chatState, messages: [...chatState.messages, { ...chatState.messages[0], id: 'synthetic-later-assistant' }] };
+        await renderChat();
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        outcome = 'success';
+        await submit();
+        await settle(() => audioRequests.length === 2 && !document.querySelector('audio'));
+        assert.equal(created.at(-1).file.type, 'audio/wav');
+        assert.equal(audioRequests[1].body, uncertain.body);
+        assert.equal(audioRequests[1].file.type, uncertain.file.type);
+        assert.equal(audioRequests[1].file.name, uncertain.file.name);
+        assert.deepEqual(audioRequests[1].bytes, uncertain.bytes);
+        speechFormat = undefined;
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await click('Record an audio message');
+        await act(async () => microphoneRequests.at(-1).resolve(microphone()));
+        outcome = 'retryable';
+        await submit();
+        await settle(() => audioRequests.length === 3 && document.querySelector('audio'));
+        speechFormat = 'wav';
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        outcome = 'success';
+        await submit();
+        await settle(() => audioRequests.length === 4 && !document.querySelector('audio'));
+        assert.notEqual(JSON.parse(audioRequests[3].body).clientMessageId, JSON.parse(audioRequests[2].body).clientMessageId);
+        assert.equal(audioRequests[3].file.type, 'audio/wav');
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

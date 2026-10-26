@@ -3,6 +3,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { threadIdentity } from '../../ports/thread-identity.ts';
+import { audioEntries } from './audio.ts';
 
 const maximum = 64 * 1024 * 1024;
 export const rebaseAt = 8 * 1024 * 1024;
@@ -152,6 +153,20 @@ export function rebaseSession(
   secrets = legacySecrets(source.getEntries()),
 ) {
   const context = source.buildContextEntries();
+  const audio = audioEntries(source);
+  const recordings = new Map(audio.map((entry) => [entry.id, entry]));
+  const projected = new Map(
+    source.buildSessionProjection().entries.map((entry) => [entry.sourceEntry.id, entry.messages]),
+  );
+  const current = new Set(context.map((entry) => entry.id));
+  const copyRecording = (entry: (typeof audio)[number]) =>
+    next.appendCustomMessageEntry(
+      entry.customType,
+      scrub(entry.content, secrets),
+      entry.display,
+      scrub(entry.details, secrets),
+    );
+  for (const entry of audio.slice(-2)) if (!current.has(entry.id)) copyRecording(entry);
   let images = context.reduce(
     (count, entry) =>
       entry.type === 'message' && entry.message.role === 'toolResult'
@@ -167,7 +182,17 @@ export function rebaseSession(
         entry.tokensBefore,
         scrub(entry.details, secrets),
       );
-    else if (entry.type === 'message') {
+    else if (entry.type === 'custom_message' && recordings.has(entry.id))
+      copyRecording(recordings.get(entry.id)!);
+    else if (entry.type === 'custom_message' && entry.customType === 'nod-audio-input') {
+      for (const message of projected.get(entry.id) ?? [])
+        if (message.role === 'custom')
+          next.appendMessage({
+            role: 'user',
+            content: scrub(message.content, secrets),
+            timestamp: message.timestamp,
+          });
+    } else if (entry.type === 'message') {
       const message = entry.message;
       next.appendMessage(
         (legacyCredential(message)

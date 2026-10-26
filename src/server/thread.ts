@@ -1061,7 +1061,7 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
+          `SELECT s.attachments,s.audio_caption,r.audio_caption AS reply_audio_caption,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
            s.role='user' AND NOT EXISTS (
              SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
                AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
@@ -1077,15 +1077,22 @@ async function loadMessage(messageId: string | null) {
         id: message.id as string,
         role: message.role as string,
         text: message.text as string,
+        ...(typeof message.reply_audio_caption === 'string'
+          ? { audioCaption: message.reply_audio_caption }
+          : {}),
         attachments: message.reply_attachments,
         presentation: message.presentation,
       }
     : undefined;
   return {
+    ...(typeof message?.audio_caption === 'string'
+      ? { audioCaption: message.audio_caption as string }
+      : {}),
     voice: ((message?.attachments ?? []) as StoredAttachment[]).some((file) =>
       file.mimeType?.startsWith('audio/'),
     ),
     firstConversationTurn: message?.first_conversation_turn === true,
+    inputAttachments: (message?.attachments ?? []) as StoredAttachment[],
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
@@ -1113,8 +1120,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
-       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
+       SELECT role,text,audio_caption AS "audioCaption",created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
+       SELECT m.role,m.text,m.audio_caption,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
@@ -1307,12 +1314,15 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     let voice = loaded.voice;
     let ownerMessage = turn.source === 'user';
     const stagedFiles = new Map<string, string>();
-    const stageUploads = async (items: StoredAttachment[]) => {
+    const stageUploads = async (
+      items: StoredAttachment[],
+      inputAttachments: StoredAttachment[] = [],
+    ) => {
       const ids = items.map((item) => String(item?.id ?? '')).filter(Boolean);
       const uploads = ids.length
         ? (
             await pool.query(
-              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleting_at IS NULL',
               [ownerId, ids],
             )
           ).rows
@@ -1328,6 +1338,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         stagedFiles.set(upload.id, name);
         const source = items.find((item) => item.id === upload.id)?.source;
         staged.push({
+          id: upload.id,
+          input: inputAttachments.some((file) => file.id === upload.id),
           path: join(workspacePath, name),
           mimeType: upload.mime_type,
           workspaceFile: `/workspace/${threadId}/${name}`,
@@ -1336,7 +1348,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       }
       return staged;
     };
-    const attachments = await stageUploads(loaded.uploads);
+    const attachments = await stageUploads(loaded.uploads, loaded.inputAttachments);
     const describe = ({ attachments, presentation, ...row }: Record<string, any>): any => {
       const visual =
         row.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
@@ -1424,11 +1436,36 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       tasks,
       ...(checkIn ? { checkIn } : {}),
       currentMessageId: loaded.sourceMessageId ?? undefined,
+      ...(loaded.audioCaption !== undefined ? { audioCaption: loaded.audioCaption } : {}),
       replyTo: loaded.replyTo && describe(loaded.replyTo),
       history: loaded.history.map(describe),
       workspacePath,
       signal,
       attachments,
+      readAudio: async (audio, requestSignal) => {
+        const operation = AbortSignal.any([signal, requestSignal]);
+        operation.throwIfAborted();
+        await ensureCurrent();
+        const file = (
+          await pool.query(
+            `SELECT a.mime_type,a.size FROM artifacts a WHERE a.id=$1 AND a.owner_id=$2 AND a.deleting_at IS NULL
+           AND EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=$2 AND m.thread_id=$3
+             AND m.attachments @> jsonb_build_array(jsonb_build_object('id',a.id::text)))`,
+            [audio.id, ownerId, threadId],
+          )
+        ).rows[0];
+        if (
+          !file ||
+          file.mime_type !== audio.mimeType ||
+          !file.mime_type.startsWith('audio/') ||
+          file.size > 25 * 1024 * 1024
+        )
+          throw new Error('This recording is unavailable.');
+        const bytes = await artifacts.readArtifact(audio.id);
+        operation.throwIfAborted();
+        await ensureCurrent();
+        return bytes;
+      },
       emit,
       reply: async (text, streamId, replyToMessageId, presentation) => {
         const pending = shared.slice();
@@ -1526,7 +1563,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
                 ownerMessage = true;
                 messages.push({
                   ...message,
-                  attachments: await stageUploads(uploads),
+                  ...(loadedMessage.audioCaption !== undefined
+                    ? { audioCaption: loadedMessage.audioCaption }
+                    : {}),
+                  attachments: await stageUploads(uploads, loadedMessage.inputAttachments),
                   ...(replyTo ? { replyTo: describe(replyTo) } : {}),
                 });
               }

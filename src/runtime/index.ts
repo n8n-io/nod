@@ -728,6 +728,13 @@ export function createAgentRuntime(dependencies: {
         }
         return { images, omitted };
       };
+      const nativeAudio = (attachments: RuntimeContext['attachments'], fallback: string) => {
+        if (!session?.readsAudio || !context.readAudio) return;
+        const files = attachments.flatMap(({ id, mimeType, input }) =>
+          input && id && mimeType.startsWith('audio/') ? [{ id, mimeType }] : [],
+        );
+        return files.length ? { files, fallback } : undefined;
+      };
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
@@ -736,6 +743,7 @@ export function createAgentRuntime(dependencies: {
         ownerContext: ownerContext(context),
         tools,
         workspace,
+        ...(context.readAudio ? { readAudio: context.readAudio } : {}),
         timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => {
@@ -760,9 +768,20 @@ export function createAgentRuntime(dependencies: {
                 message.text,
                 budget,
               );
+              const fallback = instruct(steeredInstruction(message, omitted, analysis));
+              const audio = nativeAudio(message.attachments, fallback);
               messages.push({
-                text: instruct(steeredInstruction(message, omitted, analysis)),
+                text: audio
+                  ? instruct(
+                      steeredInstruction(
+                        { ...message, text: message.audioCaption ?? message.text },
+                        omitted,
+                        analysis,
+                      ),
+                    )
+                  : fallback,
                 images,
+                ...(audio ? { audio } : {}),
               });
             }
             if (messages.length) {
@@ -836,9 +855,18 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const resumed = session.resumed;
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
+      const fallback = instruct(firstInstruction(context, resumed, omitted, analysis));
+      const audio = nativeAudio(context.attachments, fallback);
+      const nativeContext = audio
+        ? {
+            ...context,
+            prompt: context.audioCaption ?? context.prompt,
+          }
+        : context;
       await session!.prompt(
-        instruct(firstInstruction(context, resumed, omitted, analysis)),
+        audio ? instruct(firstInstruction(nativeContext, resumed, omitted, analysis)) : fallback,
         images,
+        audio,
       );
       await pendingReplies;
       signal.throwIfAborted();

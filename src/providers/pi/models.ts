@@ -27,8 +27,11 @@ import {
 } from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
+import type { AgentSessionOptions } from '../../ports/agent.ts';
+import { audioUsage, nativeAudioRequest, readsNativeAudio } from './audio.ts';
 import {
   antLingModel,
+  nativeAudioModel,
   assistantModelId,
   assistantModels,
   cloudflareCredential,
@@ -238,6 +241,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         name: model.name,
         efforts: getSupportedThinkingLevels(model),
         images: model.input.includes('image'),
+        ...(readsNativeAudio(model) ? { audio: true } : {}),
         contextWindow: model.contextWindow,
       },
       spec: JSON.parse(JSON.stringify(model)),
@@ -632,6 +636,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       const local = assistantModels(
         provider === 'ant-ling' ? [antLingModel] : (await runtime()).getModels(provider),
       );
+      if (provider === 'openai' && method === 'api_key') local.push(nativeAudioModel);
       if (!credential) return local.map(definition);
       if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
       if (provider === 'google-vertex') return vertexCatalog(local, credential);
@@ -872,6 +877,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
 export async function createPiModelRuntime(
   access: ModelAccess,
   trace?: (call: PiModelCall) => void,
+  readAudio?: AgentSessionOptions['readAudio'],
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
@@ -950,7 +956,9 @@ export async function createPiModelRuntime(
   await runtime.refresh({ allowNetwork: false });
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, options) => {
-    const events = stream(model, context, {
+    const audio = readsNativeAudio(model) ? nativeAudioRequest(context, readAudio) : undefined;
+    const usage = audio?.active ? audioUsage() : undefined;
+    const events = stream(model, audio?.context ?? context, {
       ...options,
       maxRetries: 0,
       ...(access.provider === 'compatible' ||
@@ -977,17 +985,27 @@ export async function createPiModelRuntime(
             },
           }
         : {}),
+      ...(usage
+        ? {
+            fetch: async (input: string | URL | Request, init?: RequestInit) =>
+              usage.response(await (options?.fetch ?? fetch)(input, init)),
+          }
+        : {}),
       onPayload: async (payload, target) => {
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;
         if (access.provider === 'openrouter')
           body.provider = { require_parameters: true, allow_fallbacks: false };
 
-        return body;
+        return audio?.active
+          ? audio.payload(body, options?.signal ?? AbortSignal.timeout(120000))
+          : body;
       },
     });
     const push = events.push.bind(events);
     events.push = (event) => {
+      if (usage && (event.type === 'done' || event.type === 'error'))
+        usage.apply(event.type === 'done' ? event.message.usage : event.error.usage);
       if (event.type === 'error')
         Object.assign(
           event.error,

@@ -282,7 +282,8 @@
 
 .audio-player-play:focus-visible,
 .audio-player-track:has(:focus-visible),
-.audio-player-rate:focus-visible {
+.audio-player-rate:focus-visible,
+.audio-player-download.button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 3px;
 }
@@ -351,7 +352,7 @@
   height: 36px;
   padding: 0 6px;
   border: 0;
-  border-radius: var(--control-radius);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
@@ -360,8 +361,20 @@
   cursor: pointer;
 }
 
-.audio-player-rate:hover:not(:disabled) {
-  background: var(--control);
+.audio-player-download.button {
+  width: 36px;
+  height: 36px;
+}
+
+.audio-player-rate:hover:not(:disabled),
+.audio-player-download.button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.audio-player-rate:active:not(:disabled),
+.audio-player-download.button:active {
+  background: var(--accent-border);
 }
 
 .audio-player button:disabled {

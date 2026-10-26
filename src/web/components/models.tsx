@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  FileAudio,
   FileImage,
   KeyRound,
   Plus,
@@ -943,6 +944,12 @@ export function ModelPicker({
                         <span className="model-option-capability">
                           <FileImage size={14} />
                           Reads images
+                        </span>
+                      )}
+                      {item.audio && (
+                        <span className="model-option-capability">
+                          <FileAudio size={14} />
+                          Audio input
                         </span>
                       )}
                       {!sharedThinking && item.efforts.some((effort) => effort !== 'off') && (

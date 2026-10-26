@@ -968,8 +968,25 @@
 .chat-page .message-attachments {
   margin-bottom: 4px;
 }
+.chat-page .message-bubble:has(.audio-player) {
+  min-width: min(350px, calc(100% - 40px));
+}
+.chat-page .message .message-bubble > .message-body:has(.audio-player) {
+  width: 100%;
+  padding-right: 14px;
+}
+.chat-page .message-body:has(.audio-player) > .message-time {
+  min-height: 30px;
+  margin-right: 30px;
+  line-height: 30px;
+}
+.chat-page .message-bubble:has(.audio-player) > .message-menu-trigger {
+  top: auto;
+  right: 7px;
+  bottom: 5px;
+}
 .chat-page .message-body .audio-player {
-  width: 300px;
+  width: 100%;
   padding: 4px 0 0;
   border: 0;
   border-radius: 0;

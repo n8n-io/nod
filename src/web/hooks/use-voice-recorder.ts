@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { requestAccountVersion } from '../lib/api';
+import { preserveRecordingSource } from '../lib/recording';
 
 type RecordingPhase = 'idle' | 'requesting' | 'recording' | 'finishing' | 'preview';
 
@@ -252,6 +253,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       conversionContext.current = context;
       const file = await waveRecording(value.file, context);
       if (operation !== generation.current || account !== requestAccountVersion()) return null;
+      preserveRecordingSource(file, value.file);
       const url = URL.createObjectURL(file);
       URL.revokeObjectURL(value.url);
       previewUrl.current = url;
@@ -473,7 +475,10 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     if (enabled) return;
     cancelMicrophoneDiscovery();
     if (phaseRef.current === 'recording') stop();
-    else if (phaseRef.current === 'requesting') discard();
+    else if (phaseRef.current === 'requesting') {
+      generation.current++;
+      changePhase(recordingValue.current ? 'preview' : 'idle');
+    }
   }, [enabled]);
 
   useEffect(() => {

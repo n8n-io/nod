@@ -410,13 +410,19 @@ export function createDefaultAdapters(
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
     localSpeech,
-    speechInputFormat: (voice) =>
-      voice?.startsWith('local:') ||
-      (!openAISpeech.configured &&
-        !openRouterTranscription.configured &&
-        !elevenLabsSpeech.configured)
+    speechInputFormat: (voice) => {
+      const { connections, selection } = models.view();
+      const selected = connections
+        .find((connection) => connection.id === selection?.connectionId)
+        ?.models.find((model) => model.id === selection?.modelId);
+      return selected?.audio ||
+        voice?.startsWith('local:') ||
+        (!openAISpeech.configured &&
+          !openRouterTranscription.configured &&
+          !elevenLabsSpeech.configured)
         ? 'wav'
-        : undefined,
+        : undefined;
+    },
     speech: {
       ...openAISpeech,
       get defaultVoice() {

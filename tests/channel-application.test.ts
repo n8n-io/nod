@@ -744,6 +744,19 @@ test(
         assert.equal(requests.length, beforeLocal + 1);
         assert.equal(requests.at(-1)?.url, 'https://api.openai.com/v1/audio/transcriptions');
         assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, undefined);
+        const models = localChoice.models!.view();
+        const audioConnection = models.connections.find((connection) =>
+          connection.models.some((model) => model.audio),
+        )!;
+        const audioModel = audioConnection.models.find((model) => model.audio)!;
+        await localChoice.models!.select({
+          connectionId: audioConnection.id,
+          modelId: audioModel.id,
+          effort: audioModel.efforts[0],
+        });
+        assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, 'wav');
+        await localChoice.models!.select(models.selection!);
+        assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, undefined);
       } finally {
         localTranscribe.mock.restore();
         await preferences.update({ speechVoice: null });

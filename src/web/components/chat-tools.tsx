@@ -194,7 +194,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
                   const match = text.toLocaleLowerCase().indexOf(query.trim().toLocaleLowerCase());
                   const start = Math.max(0, match - 60);
                   const snippet =
-                    match < 0 && message.snippet && message.audioCaption === undefined
+                    match < 0 && message.snippet
                       ? message.snippet
                       : text
                         ? `${start > 0 ? '…' : ''}${text.slice(start, start + 220)}${text.length > start + 220 ? '…' : ''}`
