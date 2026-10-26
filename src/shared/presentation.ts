@@ -358,8 +358,10 @@ export function presentationText(value: Presentation) {
   if (value.type === 'flights') {
     for (const [index, option] of value.options.entries()) {
       lines.push(
+        '',
         [
-          option.label || `Option ${index + 1}`,
+          `Option ${index + 1}`,
+          option.label,
           option.price,
           option.baggage,
           option.recommended ? 'Recommended' : undefined,

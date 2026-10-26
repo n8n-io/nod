@@ -1990,6 +1990,7 @@ test(
         options: [
           {
             id: 'connecting',
+            label: 'Flexible fare',
             journeys: [
               {
                 id: 'outbound',
@@ -2056,7 +2057,42 @@ test(
             price: 'EUR 124 return',
             baggage: 'One cabin bag',
             recommended: true,
-            url: 'https://example.com/fares/direct',
+            url: 'https://example.com/fares/connection',
+          },
+          {
+            id: 'nonstop',
+            label: 'Flexible fare',
+            journeys: [
+              {
+                id: 'outbound',
+                label: 'Outbound',
+                duration: '13h 45m',
+                segments: [
+                  {
+                    airline: 'Synthetic Air',
+                    flightNumber: 'ND789',
+                    aircraft: 'Synthetic long-range aircraft',
+                    cabin: 'Business',
+                    departure: {
+                      airport: 'LIS',
+                      date: '2026-11-04',
+                      time: '10:00',
+                      timeZone: 'Europe/Lisbon',
+                    },
+                    arrival: {
+                      airport: 'SIN',
+                      date: '2026-11-05',
+                      time: '07:45',
+                      timeZone: 'Asia/Singapore',
+                    },
+                    technicalStops: [],
+                  },
+                ],
+              },
+            ],
+            price: 'EUR 219 return',
+            baggage: 'Two checked bags',
+            url: 'https://example.com/fares/nonstop',
           },
         ],
       };
@@ -2066,9 +2102,10 @@ test(
         'Review the synthetic connecting itinerary.',
         flight,
       );
+      const beforeVisual = texts.length;
       await channels.drain();
       assert.equal((await state(visualReply)).state, 'sent');
-      const deliveredVisual = texts.at(-1)!;
+      const deliveredVisual = texts.slice(beforeVisual).join('\n\n');
       for (const detail of [
         'Review the synthetic',
         'LIS',
@@ -2110,6 +2147,39 @@ test(
         'https://example.com/fares',
       ])
         assert.ok(deliveredVisual.includes(detail), detail);
+      const alternatives = deliveredVisual.split(/\n\n(?=Option \d+ ·)/).slice(1);
+      assert.equal(alternatives.length, 2);
+      assert.match(alternatives[0]!, /^Option 1 · Flexible fare/);
+      assert.match(alternatives[1]!, /^Option 2 · Flexible fare/);
+      const distinctFacts = [
+        [
+          'ND123',
+          'ND456',
+          'BKK',
+          'EUR 124 return',
+          'One cabin bag',
+          'Airport change: yes',
+          'Ground transfer not included',
+          'https://example.com/fares/connection',
+        ],
+        [
+          'ND789',
+          '13h 45m',
+          'Business',
+          'EUR 219 return',
+          'Two checked bags',
+          '2026-11-04',
+          '2026-11-05',
+          '10:00',
+          '07:45',
+          'https://example.com/fares/nonstop',
+        ],
+      ];
+      for (const [index, alternative] of alternatives.entries()) {
+        assert.ok(alternative.includes('Synthetic Air'));
+        for (const fact of distinctFacts[index]!) assert.ok(alternative.includes(fact), fact);
+        for (const fact of distinctFacts[1 - index]!) assert.ok(!alternative.includes(fact), fact);
+      }
       assert.doesNotMatch(deliveredVisual, /artifactId|"version"|"options"|api\/artifacts/);
       assert.equal(
         (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,

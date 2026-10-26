@@ -61,7 +61,7 @@ function JourneyStops({ journey }: { journey: Journey }) {
 export function Flights({ visual }: { visual: FlightsVisual }) {
   return (
     <div className="flight-options">
-      {visual.options.map((flight) => {
+      {visual.options.map((flight, optionIndex) => {
         const airlines = [
           ...new Set(
             flight.journeys.flatMap((journey) =>
@@ -107,17 +107,25 @@ export function Flights({ visual }: { visual: FlightsVisual }) {
           ),
         );
         return (
-          <details className="flight-option" key={flight.id}>
+          <details
+            className={`flight-option${flight.recommended ? ' is-recommended' : ''}`}
+            key={flight.id}
+          >
             <summary>
               <div className="flight-overview">
                 <div className="flight-topline">
-                  <span className="flight-airline">
-                    <Plane size={18} aria-hidden="true" />
-                    {flight.label || airlines.join(' + ')}
-                  </span>
+                  <div className="flight-identity">
+                    <div className="flight-option-label">
+                      <span>Option {optionIndex + 1}</span>
+                      {flight.recommended && <span className="presentation-tag">Recommended</span>}
+                    </div>
+                    <span className="flight-airline">
+                      <Plane size={18} aria-hidden="true" />
+                      <span>{flight.label || airlines.join(' + ')}</span>
+                    </span>
+                  </div>
                   <strong className="flight-price">{flight.price}</strong>
                 </div>
-                {flight.recommended && <span className="presentation-tag">Recommended</span>}
                 {flight.journeys.map((journey) => (
                   <div className="flight-summary-journey" key={journey.id}>
                     <div className="flight-journey-heading">
@@ -149,8 +157,8 @@ export function Flights({ visual }: { visual: FlightsVisual }) {
                 )}
               </div>
               <span className="flight-details-toggle">
-                <span className="flight-toggle-closed">View full journey</span>
-                <span className="flight-toggle-open">Hide full journey</span>
+                <span className="flight-toggle-closed">View option {optionIndex + 1} details</span>
+                <span className="flight-toggle-open">Hide option {optionIndex + 1} details</span>
                 <ChevronDown size={18} aria-hidden="true" />
               </span>
             </summary>
@@ -242,7 +250,7 @@ export function Flights({ visual }: { visual: FlightsVisual }) {
                     rel="noopener noreferrer"
                     referrerPolicy="no-referrer"
                   >
-                    View option <ExternalLink size={14} aria-hidden="true" />
+                    View option {optionIndex + 1} <ExternalLink size={14} aria-hidden="true" />
                   </a>
                 )}
               </div>
