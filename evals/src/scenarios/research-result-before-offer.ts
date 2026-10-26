@@ -51,7 +51,7 @@ export default scenario({
       ),
       judge(
         'findings-precede-any-recurring-offer',
-        'The complete requested Cedar findings reach the user before any optional offer to monitor, repeat or schedule this research. If a follow_up tool call successfully queues such an offer, a substantive answer with those findings must already have been delivered in the conversation before that successful call. A rejected premature call is allowed if the assistant recovers and delivers the findings before any successful offer. Acknowledgements, tool reads, task creation, file publication, empty sends and task completion alone are not delivery of the findings. Any equivalent answer route is valid. No offer is required, and omitting it passes only when the findings were delivered. This requirement is always applicable.',
+        'The complete requested Cedar findings reach the user before any optional offer to monitor, repeat or schedule this research appears in the conversation. Judge the order of user-visible messages, not the order in which tools queue them. A queued offer or rejected premature call is allowed if the requested findings are delivered before the user sees an offer. Acknowledgements, tool reads, task creation, file publication, empty sends and task completion alone are not delivery of the findings. Any equivalent answer route is valid. No offer is required, and omitting it passes only when the findings were delivered. This requirement is always applicable.',
         { aspect: 'process', failure: 'incomplete' },
       ),
       check(
