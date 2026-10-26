@@ -709,6 +709,46 @@ test(
         },
       );
 
+      await t.test('a stopped authorization review cannot start another term review', async () => {
+        for (const status of ['cancelled', 'succeeded']) {
+          const turn = await begin('Send the agreed invoice to ana@example.test.');
+          const entered = deferred();
+          const release = deferred();
+          let comparisons = 0;
+          const checking = createTrust({
+            pool: db.pool,
+            ownerId,
+            review: async (instructions, input) => {
+              if (instructions === termsInstructions) {
+                comparisons++;
+                return compatible();
+              }
+              entered.resolve();
+              await release.promise;
+              return { run: true, because: cite(input) };
+            },
+          });
+          const args = email('ana@example.test');
+          const before = calls.length;
+          const outcome = checking
+            .check(turn, 'GMAIL_SEND_EMAIL', args)
+            .then((verdict) =>
+              approved.request(turn, 'GMAIL_SEND_EMAIL', args, { allowed: !verdict.confirm }),
+            )
+            .then(
+              () => undefined,
+              (error: unknown) => error,
+            );
+          await entered.promise;
+          await finish(turn.turnId, status);
+          release.resolve();
+          assert.ok((await outcome) instanceof Error);
+          assert.equal(comparisons, 0);
+          assert.equal(calls.length, before);
+          assert.equal(await proposal(turn.turnId), undefined);
+        }
+      });
+
       await t.test(
         'a stopped or completed turn cannot execute after an awaited term comparison',
         async () => {

@@ -1,7 +1,7 @@
 import { logFailure } from './failure-log.ts';
 import type { Pool } from 'pg';
 import type { ModelReview } from '../ports/decisions.ts';
-import type { TurnRef } from './thread.ts';
+import { withTurnLock, type TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
 import { trustBasis, type TrustBasis, type TrustWords } from './trust-basis.ts';
 import { preservesTerms, termsInstructions } from './trust-terms.ts';
@@ -156,6 +156,7 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
     const basis = trustBasis(answer, words, ids);
     if (basis?.kind === 'read') return { confirm: false, basis };
     if (basis) {
+      await withTurnLock(turn.turnId, async () => undefined);
       const terms = await options.review(termsInstructions, input()).catch((error: unknown) => {
         logFailure('trust_terms_failed', error);
         return undefined;
