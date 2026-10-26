@@ -749,7 +749,7 @@ if (args[1] === 'create') {
     mkdirSync(flag('--dir'), { recursive: true });
     for (const name of args.filter((value, index) => args[index - 1] === '--pattern')) {
       if (!state.contents[tag + '/' + name]) missing();
-      writeFileSync(join(flag('--dir'), name), (state.corruptDmg && name.endsWith('.dmg')) || (state.corruptZip && name.endsWith('.zip')) ? 'Corrupted application' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
+      writeFileSync(join(flag('--dir'), name), state.corruptDownload === name || (state.corruptDmg && name.endsWith('.dmg')) || (state.corruptZip && name.endsWith('.zip')) ? 'Corrupted application' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
     }
   } else throw new Error('Unexpected release operation');
 }
@@ -1222,6 +1222,7 @@ test('all three checked bundles publish together as one regular Nod release', as
   await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
   await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
   await assert.rejects(f.invoke('draft-all'));
+  assert.equal((await f.readState()).created, 0);
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
   await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
   await writeFile(
@@ -1233,6 +1234,19 @@ test('all three checked bundles publish together as one regular Nod release', as
   );
   await assert.rejects(f.invoke('draft-all'), /Windows runtime does not match/);
   await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
+  for (const name of [
+    'nod-arm64.dmg',
+    'nod-arm64.zip',
+    'nod-x64.dmg',
+    'nod-x64.zip',
+    win.installer.file,
+    win.runtime.file,
+  ]) {
+    await f.writeState({ ...(await f.readState()), corruptDownload: name });
+    await assert.rejects(f.invoke('draft-all'), /failed its checksum/);
+    assert.equal((await f.readState()).releases[f.appTag].draft, true);
+  }
+  await f.writeState({ ...(await f.readState()), corruptDownload: undefined });
   for (const hidden of [runtime.archive.file, win.runtime.file]) {
     await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
     await assert.rejects(f.invoke('draft-all'));
@@ -2856,7 +2870,11 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
     await writeFile(file, source);
   }
-  for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
+  for (const path of [
+    'src/server/index.ts',
+    'src/web/pages/chat.tsx',
+    '.github/workflows/desktop-release.yml',
+  ]) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), 'export const syntheticAppChange = true;\n');
   }

@@ -274,6 +274,7 @@ export async function signRuntimeTools(assets, configuration) {
 }
 
 export async function signApplication(application, electronVersion, configuration) {
+  console.time('Sign and verify the application');
   await verifyIdentity(configuration);
   const files = await nativeFiles(application);
   await verifyCompatibility(files);
@@ -314,6 +315,7 @@ export async function signApplication(application, electronVersion, configuratio
       preAutoEntitlements: false,
       gatekeeperAssess: false,
       identityValidation: false,
+      batchCodesignCalls: true,
       binaries: files,
       optionsForFile: (path) => ({
         hardenedRuntime: true,
@@ -343,6 +345,7 @@ export async function signApplication(application, electronVersion, configuratio
   }
   await verifySignature(application, configuration, { executable: true });
   for (const file of files) await verifySignature(file, configuration, { executable: true });
+  console.timeEnd('Sign and verify the application');
   return files.length;
 }
 
@@ -375,6 +378,8 @@ console.log('Nod engine imports verified.');`;
 export async function notarize(artifact, configuration, evidencePath) {
   if (configuration.mode !== 'developer-id')
     throw new Error('Notarization requires developer-id signing mode.');
+  const timing = `Notarize ${basename(artifact)}`;
+  console.time(timing);
   const output = await run(
     '/usr/bin/xcrun',
     [
@@ -403,6 +408,7 @@ export async function notarize(artifact, configuration, evidencePath) {
     throw new Error('Apple did not accept the notarization submission.');
   const evidence = { status: 'Accepted', id: result.id, teamId: configuration.team };
   await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+  console.timeEnd(timing);
   return evidence;
 }
 

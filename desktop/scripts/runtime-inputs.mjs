@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const inputs = [
   '.dockerignore',
-  '.github/workflows/desktop-release.yml',
   'Dockerfile.workspace',
   'Dockerfile.browser',
   'package.json',
