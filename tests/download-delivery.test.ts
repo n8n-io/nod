@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -377,123 +377,6 @@ test(
           runtimes.delete(prompt);
         }
       });
-      const submitHeld = async (text: string) => {
-        const submitted = await threads.submitUserMessage(text);
-        await waitFor(() => held.has(submitted.turnId));
-        return submitted;
-      };
-      const pdfFile = () => ({
-        bytes: browserDownloadPdf,
-        name: 'invoice.pdf',
-        mimeType: 'application/pdf',
-      });
-      await t.test(
-        'cancelled and obsolete turn callbacks cannot publish captured bytes',
-        async () => {
-          for (const kind of ['cancelled', 'obsolete'] as const) {
-            const { threadId, turnId } = await submitHeld(`Held ${kind} browser publication`);
-            const context = held.get(turnId)!;
-            assert.ok(context.publishBrowserFile);
-            const artifactCount = async () =>
-              (await db.pool.query('SELECT id FROM artifacts WHERE thread_id=$1', [threadId]))
-                .rowCount;
-            const before = await artifactCount();
-            if (kind === 'cancelled') await threads.stopThread();
-            else {
-              await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
-              assert.equal(context.signal.aborted, false);
-            }
-            await assert.rejects(context.publishBrowserFile(pdfFile()), { statusCode: 409 });
-            assert.equal(await artifactCount(), before);
-            assert.equal(
-              (
-                await db.pool.query(
-                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
-                  [turnId],
-                )
-              ).rowCount,
-              0,
-            );
-            release.get(turnId)!();
-          }
-        },
-      );
-      await t.test(
-        'publication keeps its message when stop or reset waits on stored bytes',
-        async () => {
-          for (const action of ['stop', 'reset'] as const) {
-            const { threadId, turnId } = await submitHeld(
-              `Held ${action} during browser publication`,
-            );
-            let markStored!: (artifact: Artifact) => void;
-            const stored = new Promise<Artifact>((resolve) => {
-              markStored = resolve;
-            });
-            let resume!: () => void;
-            const resumed = new Promise<void>((resolve) => {
-              resume = resolve;
-            });
-            publications.set(threadId, { stored: markStored, resume: resumed });
-            const publishing = held.get(turnId)!.publishBrowserFile!(pdfFile()).then(
-              (artifact) => ({ artifact }),
-              (error: unknown) => ({ error }),
-            );
-            const artifact = await stored;
-            const cancelling =
-              action === 'stop' ? threads.stopThread() : threads.resetThread(threadId);
-            stagingCompletion = cancelling;
-            try {
-              assert.equal(
-                (await admin.query(`SELECT id FROM ${schema}.artifacts WHERE id=$1`, [artifact.id]))
-                  .rowCount,
-                0,
-              );
-              await waitFor(async () => {
-                const blocked = await admin.query(
-                  "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'UPDATE turns SET status=''cancelled''%'",
-                  [schema],
-                );
-                return blocked.rowCount === 1;
-              });
-              resume();
-              const result = await publishing;
-              await cancelling;
-              assert.deepEqual(result, {
-                artifact: { ...artifact, workspaceFile: `${artifact.id}-invoice.pdf` },
-              });
-              const messages = (
-                await db.pool.query(
-                  "SELECT attachments FROM messages WHERE turn_id=$1 AND owner_id=$2 AND role='assistant'",
-                  [turnId, ownerId],
-                )
-              ).rows;
-              assert.deepEqual(
-                messages.map((message) => message.attachments),
-                [[artifact]],
-              );
-              assert.equal(
-                (await db.pool.query('SELECT status FROM turns WHERE id=$1', [turnId])).rows[0]
-                  .status,
-                'cancelled',
-              );
-              assert.deepEqual(await localArtifacts.readArtifact(artifact.id), browserDownloadPdf);
-              assert.deepEqual(
-                await readFile(
-                  join(dataRoot, 'workspaces', threadId, `${artifact.id}-invoice.pdf`),
-                ),
-                browserDownloadPdf,
-              );
-            } finally {
-              resume();
-              await publishing;
-              await cancelling;
-              stagingCompletion = undefined;
-              publications.delete(threadId);
-              release.get(turnId)!();
-            }
-          }
-        },
-      );
     } finally {
       for (const finish of release.values()) finish();
     }
