@@ -2692,6 +2692,25 @@ test(
           assert.equal(instance.statusCode, 200, instance.body);
           await complete(instance.json().attempt, returnTo, 'n8n');
         }
+        const cancelled = await post('/api/apps/notion/connect', { returnTo: 'desktop' });
+        assert.equal(cancelled.statusCode, 200, cancelled.body);
+        const cancelledHash = createHash('sha256')
+          .update(new URL(cancelled.json().url).href)
+          .digest('hex');
+        assert.equal(
+          (await post('/api/apps/setup-cancel', { hash: cancelledHash })).statusCode,
+          200,
+        );
+        assert.equal(
+          (await post('/api/apps/setup-status', { hashes: [cancelledHash] })).json().apps[0]
+            ?.available,
+          false,
+        );
+        const late = await app.inject({
+          url: `/api/apps/callback?state=${cancelled.json().attempt}&code=synthetic-code`,
+          headers: { host: headers.host },
+        });
+        assert.equal(new URL(late.headers.location!).searchParams.get('connection'), 'expired');
         const turn = { threadId: randomUUID(), turnId: randomUUID() };
         const chat = (await service.manageConnections(
           'connect',

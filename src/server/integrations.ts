@@ -984,7 +984,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
        AND callback_hash IS NOT NULL AND callback_claim_id IS NULL`,
       [configuredOwner, linkHash],
     );
-    let abandoned = false;
+    let abandoned = (await options.discovered?.abandonSetup(linkHash, reason)) ?? false;
     for (const row of rows)
       if ((await clearReconnect(row.id, row.callback_hash!)) !== undefined) {
         track(row.slug, 'failed', reason);
