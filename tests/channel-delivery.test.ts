@@ -2187,6 +2187,42 @@ test(
         (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
         'Review the synthetic connecting itinerary.',
       );
+      const map: Presentation = {
+        version: 1,
+        type: 'map',
+        title: 'Synthetic workspaces',
+        sources: [],
+        places: [
+          {
+            id: 'harbour',
+            name: 'Harbour workspace',
+            latitude: -33.865,
+            longitude: 151.209,
+            url: 'https://example.com/harbour',
+          },
+          { id: 'annex', name: 'Island annex', latitude: 0, longitude: -179.98 },
+        ],
+      };
+      const mapReply = await addReply(turnId, [], 'Compare these two workspaces.', map);
+      const beforeMap = texts.length;
+      await channels.drain();
+      assert.equal((await state(mapReply)).state, 'sent');
+      const deliveredMap = texts
+        .slice(beforeMap)
+        .join('\n')
+        .replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+      for (const place of map.places) {
+        const line = deliveredMap.split('\n').find((line) => line.includes(place.name));
+        assert.ok(line, place.name);
+        const links = [...line.matchAll(/https:\/\/[^\s)>]+/g)].map(([url]) => new URL(url));
+        const locations = links.filter((url) => url.hostname === 'www.openstreetmap.org');
+        assert.equal(locations.length, 1);
+        assert.equal(locations[0]!.searchParams.get('mlat'), String(place.latitude));
+        assert.equal(locations[0]!.searchParams.get('mlon'), String(place.longitude));
+        assert.equal(locations[0]!.hash, `#map=15/${place.latitude}/${place.longitude}`);
+        assert.equal(links.length, place.url ? 2 : 1);
+        if (place.url) assert.ok(links.some((url) => url.href === place.url));
+      }
       const venue: Presentation = {
         version: 1,
         type: 'booking',

@@ -343,6 +343,10 @@ export function flightJourneySummary(journey: FlightJourney) {
     .join(' · ');
 }
 
+export function mapLocationUrl(place: { latitude: number; longitude: number }) {
+  return `https://www.openstreetmap.org/?mlat=${place.latitude}&mlon=${place.longitude}#map=15/${place.latitude}/${place.longitude}`;
+}
+
 export function presentationText(value: Presentation) {
   const lines = [value.title];
   if (value.caption) lines.push(value.caption);
@@ -351,7 +355,13 @@ export function presentationText(value: Presentation) {
   if (value.type === 'map')
     for (const place of value.places)
       lines.push(
-        [place.name, `${place.latitude}, ${place.longitude}`, place.description, place.url]
+        [
+          place.name,
+          `${place.latitude}, ${place.longitude}`,
+          place.description,
+          mapLocationUrl(place),
+          place.url,
+        ]
           .filter(Boolean)
           .join(' · '),
       );

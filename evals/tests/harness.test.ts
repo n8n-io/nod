@@ -55,6 +55,55 @@ import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 
+test('map evidence accepts annotated labels and split maps but rejects wrong or missing locations', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-map')!;
+  const locations = definition
+    .expect(definition.world({ now: Date.now }))
+    .find((item) => item.id === 'preserves-the-sourced-locations');
+  assert.equal(locations?.kind, 'check');
+  if (locations?.kind !== 'check') throw new Error('Missing sourced-location check');
+  const places = [
+    { name: 'Studio Aurora (meeting)', latitude: 38.714, longitude: -9.14 },
+    { name: 'Café Lume (recommended)', latitude: 38.7152, longitude: -9.1414 },
+    { name: 'Pátio Azul', latitude: 38.7126, longitude: -9.1378 },
+    { name: 'Mesa Clara', latitude: 38.7163, longitude: -9.1359 },
+  ];
+  const score = async (groups: (typeof places)[]) =>
+    (
+      await locations.check({
+        messages: groups.map((places) => ({
+          role: 'assistant',
+          presentation: { type: 'map', places },
+        })),
+      } as Run)
+    ).pass;
+  assert.equal(await score([places]), true);
+  assert.equal(await score([places.slice(0, 2), places.slice(2)]), true);
+  assert.equal(
+    await score([[{ ...places[1]!, name: '1. CAFE LUME — recommended' }, ...places]]),
+    true,
+  );
+  for (const [reason, groups] of [
+    ['wrong coordinate', [[{ ...places[0]!, latitude: 38.715 }, ...places.slice(1)]]],
+    ['missing place', [places.slice(1)]],
+    ['duplicate replacing missing place', [[places[1]!, ...places.slice(1)]]],
+    ['unsupported extra place', [[...places, { ...places[1]!, name: 'Unknown café' }]]],
+    ['partial name match', [[{ ...places[0]!, name: 'Studio Auroral' }, ...places.slice(1)]]],
+    [
+      'swapped place coordinates',
+      [
+        [
+          { ...places[0]!, latitude: places[1]!.latitude, longitude: places[1]!.longitude },
+          { ...places[1]!, latitude: places[0]!.latitude, longitude: places[0]!.longitude },
+          ...places.slice(2),
+        ],
+      ],
+    ],
+    ['incorrect extra map', [places, [{ ...places[1]!, longitude: 9.1414 }]]],
+  ] as const)
+    assert.equal(await score(groups.map((group) => [...group])), false, reason);
+});
+
 test(
   'the onboarding eval saves its answers through the real interview routes with a reply or fallback',
   { skip: !process.env.TEST_DATABASE_URL },
