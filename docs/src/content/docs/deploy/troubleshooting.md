@@ -69,7 +69,11 @@ On Windows, the message reads "Nod needs more free disk space to prepare its pri
 
 ### Setup fails or stops partway
 
-Retry first. Don't delete the profile, VM, database or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send a screenshot of the setup error instead. When a setup command exits with an error, the message ends with the last lines it printed, which show the cause. When Nod can't connect to its local storage, the message names the connection error.
+Retry first. Do not delete the profile, VM, database, or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat cannot open, select **Show startup log** on the error screen. Send that log with a screenshot of the error. When a setup command fails, the message includes the last lines of its output.
+
+On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+
+Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 

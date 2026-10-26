@@ -819,6 +819,9 @@ test('the normal engine uses the release boundary for analytics during first set
 });
 
 test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+  const revealed = [];
+  const cause = `Synthetic WSL missing: ${'x'.repeat(450)} HCS_E_HYPERV_NOT_INSTALLED`;
+  const details = `Error: ${cause}\n${'Synthetic WSL output\n'.repeat(200)}End of native error`;
   const f = await runningDesktop(
     t,
     async () => assert.fail('No backend can run without storage.'),
@@ -826,8 +829,9 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
       initialState: 'fresh',
       platform: 'win32',
       allowStart: true,
+      reveal: (path) => revealed.push(path),
       prepareRuntime: async () => {
-        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'NOD_WSL_REQUIRED' });
+        throw Object.assign(new Error(cause), { code: 'NOD_WSL_REQUIRED', details });
       },
     },
   );
@@ -839,6 +843,18 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.equal(f.children.length, 0);
     assert.equal(f.status().needsWsl, true);
     assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
+    const window = f.windows.find((window) => window.isVisible());
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const showLog = f.handlers.get('nod:startup-log:show');
+    await assert.rejects(showLog({ ...event, senderFrame: { url: event.senderFrame.url } }));
+    assert.equal(revealed.length, 0);
+    await showLog(event);
+    assert.deepEqual(revealed, [join(f.profileRoot, 'logs', 'startup.log')]);
+    const log = await readFile(revealed[0], 'utf8');
+    assert.ok(log.includes(cause));
+    assert.ok(log.includes(details));
+    assert.equal(f.status().error, cause);
+    assert.equal(f.status().details, details);
   } finally {
     await f.close();
   }

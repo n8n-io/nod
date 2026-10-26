@@ -2008,8 +2008,16 @@ test('a failed runtime command names its cause from the end of its output, inclu
       '-e',
       'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
-    {
-      message: /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+    (error) => {
+      assert.match(
+        error.message,
+        /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+      );
+      assert.equal(
+        error.details,
+        `started\n${'x'.repeat(400)}\nError response from daemon: Pool overlaps`,
+      );
+      return true;
     },
   );
   await assert.rejects(
@@ -2326,7 +2334,14 @@ test('Windows storage starts on a free port, and a readiness failure names its c
   const taken = createServer();
   await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
   t.after(() => taken.close());
-  for (const failure of ['pg_isready', 'connect', 'query']) {
+  for (const [failure, expectedCode] of [
+    ['pg_isready', 'NOD_DATABASE_NOT_READY'],
+    ['connect', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['query', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['stopped', 'NOD_DATABASE_STOPPED'],
+    ['memory', 'NOD_DATABASE_OUT_OF_MEMORY'],
+    ['wsl', 'NOD_DATABASE_NOT_READY'],
+  ]) {
     const containers = new Map();
     const commands = [];
     const connections = [];
@@ -2353,7 +2368,11 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               connections.push(new URL(connectionString).port);
             }
             async connect() {
-              if (fault === 'connect') throw new Error('Synthetic connect failure');
+              if (['connect', 'stopped', 'memory', 'wsl'].includes(fault))
+                throw Object.assign(
+                  new Error(`Synthetic ${fault} failure: synthetic-fixture-password`),
+                  { code: 'ECONNRESET' },
+                );
             }
             async query() {
               if (fault === 'query') throw new Error('Synthetic query failure');
@@ -2383,8 +2402,13 @@ test('Windows storage starts on a free port, and a readiness failure names its c
             prepareImage: async (name) => {
               if (name === fault) throw new Error(`Synthetic ${name} startup failure`);
             },
-            runDocker: async (args) => {
+            runDocker: async (args, options) => {
               commands.push(args);
+              if (options?.timeout === 10_000) {
+                assert.ok(['inspect', 'exec'].includes(args[0]));
+                if (fault === 'wsl')
+                  throw new Error('Synthetic WSL check failure: synthetic-fixture-password');
+              }
               if (args[0] === 'container' && args[1] === 'inspect') {
                 if (!containers.has(args[2])) throw new Error('Absent synthetic container');
                 return JSON.stringify([containers.get(args[2])]);
@@ -2405,6 +2429,15 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               }
               if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
                 throw new Error('Synthetic pg_isready failure');
+              if (
+                args[0] === 'inspect' &&
+                args.includes('{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}')
+              )
+                return fault === 'memory'
+                  ? 'exited 137 true'
+                  : fault === 'stopped'
+                    ? 'exited 1 false'
+                    : 'running 0 false';
               if (args[0] === 'inspect') return 'true';
               return '';
             },
@@ -2431,10 +2464,12 @@ test('Windows storage starts on a free port, and a readiness failure names its c
       await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
       assert.equal(postgres(), original);
       fault = failure;
-      await assert.rejects(
-        lifecycle.start({ retry: true }),
-        new RegExp(`Synthetic ${failure} failure`),
-      );
+      await assert.rejects(lifecycle.start({ retry: true }), (error) => {
+        assert.equal(error.code, expectedCode);
+        assert.match(error.details, new RegExp(`Synthetic ${failure} failure`));
+        assert.ok(!JSON.stringify(error).includes('synthetic-fixture-password'));
+        return true;
+      });
       assert.equal(postgres(), original);
       assert.equal(stopped, 0);
       const attempted = commands.length;
