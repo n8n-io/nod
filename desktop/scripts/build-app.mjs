@@ -269,65 +269,81 @@ const updateArchive = join(
   output,
   full ? `nod-full-${process.arch}.zip` : `nod-${process.arch}.zip`,
 );
-await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
-  timeout: 10 * 60_000,
-});
-await run('/usr/bin/unzip', ['-tq', updateArchive], { timeout: 10 * 60_000 });
-if ((await stat(updateArchive)).size >= 2 * 1024 ** 3)
-  throw new Error('The application ZIP exceeds GitHub’s per-asset release limit.');
-const update = {
-  file: basename(updateArchive),
-  bytes: (await stat(updateArchive)).size,
-  sha256: await assetHash(updateArchive),
-};
-const diskStage = join(stage, 'disk');
-await mkdir(diskStage, { recursive: true });
-await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
-await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
 const diskImage = join(output, full ? `nod-full-${process.arch}.dmg` : `nod-${process.arch}.dmg`);
-const writableImage = join(stage, 'disk.dmg');
-await run(
-  '/usr/bin/hdiutil',
-  [
-    'create',
-    '-volname',
-    configuration.productName,
-    '-srcfolder',
-    diskStage,
-    '-ov',
-    '-format',
-    'UDRW',
-    writableImage,
-  ],
-  { timeout: 15 * 60_000 },
-);
-await run(
-  '/usr/bin/hdiutil',
-  ['convert', writableImage, '-format', 'ULFO', '-ov', '-o', diskImage],
-  {
-    timeout: 15 * 60_000,
-  },
-);
-await rm(writableImage, { force: true });
-let diskNotarization;
-if (signing) {
-  await run('/usr/bin/codesign', [...signingArguments(signing), diskImage]);
-  await verifySignature(diskImage, signing);
-  if (signing.mode === 'developer-id') {
-    diskNotarization = await notarize(diskImage, signing, join(output, 'disk-notarization.json'));
-    await staple(diskImage);
-    await verifySignature(diskImage, signing);
-    await assess(diskImage, 'open');
-  }
-}
-await run('/usr/bin/hdiutil', ['verify', diskImage], { timeout: 10 * 60_000 });
-if ((await stat(diskImage)).size >= 2 * 1024 ** 3)
-  throw new Error('The disk image exceeds GitHub’s per-asset release limit.');
-const disk = {
-  file: basename(diskImage),
-  bytes: (await stat(diskImage)).size,
-  sha256: await assetHash(diskImage),
-};
+const [update, { disk, diskNotarization }] = await Promise.all([
+  (async () => {
+    console.time('Create and verify the application ZIP');
+    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
+      timeout: 10 * 60_000,
+    });
+    await run('/usr/bin/unzip', ['-tq', updateArchive], { timeout: 10 * 60_000 });
+    if ((await stat(updateArchive)).size >= 2 * 1024 ** 3)
+      throw new Error('The application ZIP exceeds GitHub’s per-asset release limit.');
+    const update = {
+      file: basename(updateArchive),
+      bytes: (await stat(updateArchive)).size,
+      sha256: await assetHash(updateArchive),
+    };
+    console.timeEnd('Create and verify the application ZIP');
+    return update;
+  })(),
+  (async () => {
+    console.time('Create the disk image');
+    const diskStage = join(stage, 'disk');
+    await mkdir(diskStage, { recursive: true });
+    await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
+    await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
+    const writableImage = join(stage, 'disk.dmg');
+    await run(
+      '/usr/bin/hdiutil',
+      [
+        'create',
+        '-volname',
+        configuration.productName,
+        '-srcfolder',
+        diskStage,
+        '-ov',
+        '-format',
+        'UDRW',
+        writableImage,
+      ],
+      { timeout: 15 * 60_000 },
+    );
+    await run(
+      '/usr/bin/hdiutil',
+      ['convert', writableImage, '-format', 'ULFO', '-ov', '-o', diskImage],
+      { timeout: 15 * 60_000 },
+    );
+    await rm(writableImage, { force: true });
+    console.timeEnd('Create the disk image');
+    let diskNotarization;
+    if (signing) {
+      await run('/usr/bin/codesign', [...signingArguments(signing), diskImage]);
+      await verifySignature(diskImage, signing);
+      if (signing.mode === 'developer-id') {
+        diskNotarization = await notarize(
+          diskImage,
+          signing,
+          join(output, 'disk-notarization.json'),
+        );
+        await staple(diskImage);
+        await verifySignature(diskImage, signing);
+        await assess(diskImage, 'open');
+      }
+    }
+    await run('/usr/bin/hdiutil', ['verify', diskImage], { timeout: 10 * 60_000 });
+    if ((await stat(diskImage)).size >= 2 * 1024 ** 3)
+      throw new Error('The disk image exceeds GitHub’s per-asset release limit.');
+    return {
+      disk: {
+        file: basename(diskImage),
+        bytes: (await stat(diskImage)).size,
+        sha256: await assetHash(diskImage),
+      },
+      diskNotarization,
+    };
+  })(),
+]);
 await writeFile(`${diskImage}.sha256`, `${disk.sha256}  ${disk.file}\n`);
 await writeFile(
   join(output, 'SHA256SUMS'),

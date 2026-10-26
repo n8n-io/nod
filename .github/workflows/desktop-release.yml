@@ -141,7 +141,9 @@ jobs:
       - name: Install validation dependencies
         run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
+        with:
+          cache-key: n8n-io/nod/desktop-images-${{ matrix.arch }}
       - name: Build the workspace image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
@@ -151,8 +153,6 @@ jobs:
           load: true
           build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
-          cache-from: type=gha,scope=desktop-workspace-${{ matrix.arch }}
-          cache-to: type=gha,scope=desktop-workspace-${{ matrix.arch }},mode=max
       - name: Build the browser image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
@@ -162,8 +162,6 @@ jobs:
           load: true
           build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
-          cache-from: type=gha,scope=desktop-browser-${{ matrix.arch }}
-          cache-to: type=gha,scope=desktop-browser-${{ matrix.arch }},mode=max
       - name: Verify and export the native images
         run: node desktop/scripts/prepare-runtime.mjs --images-only --prebuilt-images
       - name: Transfer compressed image archives
@@ -244,8 +242,8 @@ jobs:
 
   mac:
     name: Package the ${{ matrix.arch }} Mac app
-    needs: [plan, images]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.release_needed == 'true' && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.mac_matrix) }}
@@ -254,6 +252,9 @@ jobs:
     environment:
       name: release
       deployment: false
+    permissions:
+      actions: read
+      contents: read
     env:
       NOD_DESKTOP_TARGET: ${{ matrix.platform }}
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
@@ -295,6 +296,19 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           pnpm run build
+      - name: Wait for this Mac's runtime images
+        if: matrix.runtime_reused != 'true'
+        timeout-minutes: 40
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOD_IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          runs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          until [ "$(gh api "$runs/artifacts?name=desktop-runtime-images-$NOD_IMAGE_ARCH" --jq .total_count)" = 1 ]; do
+            result=$(gh api "$runs/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq ".jobs[] | select(.name == \"Build $NOD_IMAGE_ARCH Mac runtime images\") | .conclusion // empty")
+            if [ -n "$result" ] && [ "$result" != success ]; then echo "The $NOD_IMAGE_ARCH image build ended with $result." >&2; exit 1; fi
+            sleep 10
+          done
       - name: Download image archives
         if: matrix.runtime_reused != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -422,40 +436,29 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
         if: env.NOD_WINDOWS_RUNTIME_TAG == ''
-        id: buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
-          use: false
+          cache-key: n8n-io/nod/desktop-images-win32-x64
       - name: Build the workspace image
         if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
-          builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: Dockerfile.workspace
           platforms: linux/amd64
           load: true
           build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
-          cache-from: |
-            type=gha,scope=desktop-workspace-x64
-            type=gha,scope=desktop-workspace-win32
-          cache-to: type=gha,scope=desktop-workspace-win32,mode=max
       - name: Build the browser image
         if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
-          builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: Dockerfile.browser
           platforms: linux/amd64
           load: true
           build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
-          cache-from: |
-            type=gha,scope=desktop-browser-x64
-            type=gha,scope=desktop-browser-win32
-          cache-to: type=gha,scope=desktop-browser-win32,mode=max
       - name: Verify and export the native images
         if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         env:
@@ -594,8 +597,8 @@ jobs:
 
   release:
     name: Verify uploaded assets and prepare the release
-    needs: [plan, mac, mac-checks, windows, windows-checks]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' && needs.windows-checks.result == 'success' }}
+    needs: [plan, images, mac, mac-checks, windows, windows-checks]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped') && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' && needs.windows-checks.result == 'success' }}
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 30
     environment: release
@@ -621,40 +624,29 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
-      - name: Download the Apple Silicon app assets
+      - name: Download the release assets in parallel
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: desktop-macos-arm64
-          path: dist/desktop/arm64
-      - name: Download the Intel app assets
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-macos-x64
-          path: dist/desktop/x64
-      - name: Download the new Apple Silicon runtime pack
-        if: fromJSON(needs.plan.outputs.mac_matrix).include[0].runtime_reused != 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-runtime-pack-arm64
-          path: .local/desktop-runtime-release/arm64
-      - name: Download the new Intel runtime pack
-        if: fromJSON(needs.plan.outputs.mac_matrix).include[1].runtime_reused != 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-runtime-pack-x64
-          path: .local/desktop-runtime-release/x64
-      - name: Download the Windows app assets
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-windows-x64
-          path: dist/desktop/win32-x64
+          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64)
+          path: .local/desktop-release-artifacts
+      - name: Place the release assets in their platform directories
+        run: |
+          mkdir -p dist/desktop .local/desktop-runtime-release
+          mv .local/desktop-release-artifacts/desktop-macos-arm64 dist/desktop/arm64
+          mv .local/desktop-release-artifacts/desktop-macos-x64 dist/desktop/x64
+          mv .local/desktop-release-artifacts/desktop-windows-x64 dist/desktop/win32-x64
+          for arch in arm64 x64; do
+            if [ -d ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ]; then
+              mv ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ".local/desktop-runtime-release/$arch"
+            fi
+          done
       - name: Download source-bound release metadata
         if: needs.plan.outputs.metadata_sha256 != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-release-plan
           path: .local
-      - name: Verify GitHub asset digests and download the DMG and ZIP again
+      - name: Verify GitHub asset digests and downloaded release files
         env:
           GH_TOKEN: ${{ github.token }}
           NOD_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}

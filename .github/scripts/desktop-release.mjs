@@ -94,6 +94,28 @@ async function hash(path) {
   return value.digest('hex');
 }
 
+async function verifyDownloads(tag, assets) {
+  const directory = join(process.env.RUNNER_TEMP || root, `nod-download-check-${tag}`);
+  await mkdir(directory, { recursive: true });
+  gh([
+    'release',
+    'download',
+    tag,
+    '--repo',
+    releaseRepository,
+    ...assets.flatMap((asset) => ['--pattern', asset.file]),
+    '--dir',
+    directory,
+    '--clobber',
+  ]);
+  for (const asset of assets) {
+    const path = join(directory, asset.file);
+    if ((await stat(path)).size !== asset.bytes || (await hash(path)) !== asset.sha256)
+      throw new Error(`Downloaded release asset failed its checksum: ${asset.file}`);
+    await rm(path);
+  }
+}
+
 async function outputValues(values) {
   if (process.env.GITHUB_OUTPUT)
     await appendFile(
@@ -729,31 +751,7 @@ async function draftApp({ stageOnly = false } = {}) {
     notes: releaseNotes(),
     files,
   });
-  const downloadDirectory = join(process.env.RUNNER_TEMP || root, `nod-download-check-${version}`);
-  await mkdir(downloadDirectory, { recursive: true });
-  for (const file of [disk, zip]) {
-    gh(
-      [
-        'release',
-        'download',
-        tag,
-        '--repo',
-        releaseRepository,
-        '--pattern',
-        file,
-        '--dir',
-        downloadDirectory,
-        '--clobber',
-      ],
-      releaseRepository,
-    );
-    if (
-      (await hash(join(downloadDirectory, file))) !== (await hash(join(output, file))) ||
-      (await stat(join(downloadDirectory, file))).size !== (await stat(join(output, file))).size
-    )
-      throw new Error(`Downloaded release ${file === disk ? 'DMG' : 'ZIP'} failed its checksum.`);
-    await rm(join(downloadDirectory, file));
-  }
+  if (!stageOnly) await verifyDownloads(tag, [metadata.disk, metadata.update]);
   if (publish && !stageOnly) {
     await uploadDraft({
       repository: releaseRepository,
@@ -882,6 +880,7 @@ async function draftAll() {
     JSON.parse(await readFile(windowsManifest, 'utf8')),
     join(windows, windowsRuntimeArchive),
   );
+  const appAssets = [];
   for (const target of ['arm64', 'x64']) {
     const environment = {
       ...process.env,
@@ -894,6 +893,10 @@ async function draftAll() {
     );
     environment.NOD_EXPECTED_RUNTIME_FINGERPRINT = inputs.fingerprint;
     run(process.execPath, [fileURLToPath(import.meta.url), 'stage'], { env: environment });
+    const app = JSON.parse(
+      await readFile(join(environment.NOD_DESKTOP_OUTPUT, 'release.json'), 'utf8'),
+    );
+    appAssets.push(app.disk, app.update);
   }
   const tag = `nod-v${version}`;
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
@@ -930,28 +933,7 @@ async function draftAll() {
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
     throw new Error('All three platform bundles are required before publication.');
-  const directory = join(process.env.RUNNER_TEMP || root, `nod-windows-download-check-${version}`);
-  await mkdir(directory, { recursive: true });
-  for (const entry of [metadata.installer, metadata.runtime]) {
-    gh([
-      'release',
-      'download',
-      tag,
-      '--repo',
-      releaseRepository,
-      '--pattern',
-      entry.file,
-      '--dir',
-      directory,
-      '--clobber',
-    ]);
-    if (
-      (await stat(join(directory, entry.file))).size !== entry.bytes ||
-      (await hash(join(directory, entry.file))) !== entry.sha256
-    )
-      throw new Error('The downloaded Windows release failed verification.');
-    await rm(join(directory, entry.file));
-  }
+  await verifyDownloads(tag, [...appAssets, metadata.installer, metadata.runtime]);
   if (process.env.NOD_PUBLISH_RELEASE === 'true') {
     publishRelease(releaseRepository, tag);
     await verifyDelivery(tag, version);
