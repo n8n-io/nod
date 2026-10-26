@@ -136,6 +136,11 @@ export async function initializeDatabase() {
     DROP TABLE IF EXISTS inspector_records;
     DROP TABLE IF EXISTS inspector_prompts;
   `);
+  await pool.query(
+    `UPDATE turns SET status='cancelled',finished_at=now()
+     WHERE owner_id=$1 AND source='event' AND starts_with(source_id,'activity-check:') AND status='queued'`,
+    [ownerId],
+  );
   await transaction(async (artifacts) => {
     await artifacts.query('LOCK TABLE artifacts IN ACCESS EXCLUSIVE MODE');
     const existing = await artifacts.query(

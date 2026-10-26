@@ -1062,7 +1062,7 @@ export function createProactivity(options: {
         await client.query<{ id: string }>(
           `SELECT u.id FROM turns u WHERE u.owner_id=$1 AND (u.proactive OR u.session_id=(SELECT observer_session_id FROM threads WHERE id=$2 AND owner_id=$1))
             AND (u.status IN ('queued','running') OR (u.status='waiting' AND NOT EXISTS
-              (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.parent_turn_id=u.id AND n.started_at IS NOT NULL))) LIMIT 1`,
+              (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.parent_turn_id=u.id AND n.session_id=u.session_id AND n.started_at IS NOT NULL))) LIMIT 1`,
           [ownerId, thread.id],
         )
       ).rows[0];

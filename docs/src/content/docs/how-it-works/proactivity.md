@@ -42,6 +42,8 @@ For an app without its own reader, the worker searches that account's tools, pic
 
 All sources use the same observer. An instruction such as "forward Ana's invoices to accounting" starts a separate task for that action. The task uses the normal tools and Trust check. Its question or approval wait leaves the observer free to process later activity.
 
+An upgrade cancels queued account checks from the old event path. The observer reads current sources through its own queue.
+
 ## Keep judgment and permission apart
 
 The model judges usefulness. The server enforces permission, freshness and delivery.

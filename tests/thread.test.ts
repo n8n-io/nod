@@ -179,6 +179,37 @@ test(
         await db.pool.query('DELETE FROM threads WHERE id=$1', [legacyThread]);
       },
     );
+    await t.test(
+      'upgrade cancels old account checks without cancelling other queued work',
+      async () => {
+        const currentThread = (await thread.activeThread()).id;
+        const ids = Array.from({ length: 3 }, () => randomUUID());
+        try {
+          for (const [index, id] of ids.entries())
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt)
+             VALUES($1,$2,$3,'event',$4,'Synthetic queued work')`,
+              [
+                id,
+                index === 2 ? 'synthetic-other-owner' : ownerId,
+                currentThread,
+                index === 1 ? `event:${id}` : `activity-check:${id}`,
+              ],
+            );
+          await db.initializeDatabase();
+          const states = await db.pool.query(
+            'SELECT id,status FROM turns WHERE id=ANY($1::uuid[])',
+            [ids],
+          );
+          assert.deepEqual(
+            ids.map((id) => states.rows.find((row) => row.id === id)?.status),
+            ['cancelled', 'queued', 'queued'],
+          );
+        } finally {
+          await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
+        }
+      },
+    );
     await thread.initializeThreads();
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -4187,6 +4218,15 @@ test(
               async () => {
                 await reset();
                 await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                await waitFor(
+                  async () =>
+                    !(
+                      await db.pool.query(
+                        "SELECT 1 FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status IN ('queued','running')",
+                        [ownerId, currentThread],
+                      )
+                    ).rowCount,
+                );
                 const notificationsModule = '../desktop/main/notifications.mjs';
                 const { watchAssistantMessages } = await import(notificationsModule);
                 const notifications: string[] = [];
@@ -4246,6 +4286,8 @@ test(
                 };
                 try {
                   await waitFor(async () => snapshots > 0);
+                  events.emit('event', { type: 'refresh' });
+                  await waitFor(async () => snapshots > 1);
                   await transaction(
                     (client) => engine.signal(sourceId, client, 'Synthetic first source change'),
                     db.pool,
@@ -4311,11 +4353,28 @@ test(
               },
             );
             await t.test(
-              'a spending wait holds the observer while new source signals stay saved',
+              'a spending wait holds the observer after a separate child task starts',
               async () => {
                 await reset();
                 const originalContext = dependencies.proactivity;
                 dependencies.proactivity = engine.context;
+                let child: RuntimeContext | undefined;
+                inspectObserver = async (context) => {
+                  if (context.taskContext?.title === 'Synthetic independent action') {
+                    child = context;
+                    return { status: 'succeeded' };
+                  }
+                  if (context.prompt === 'ask-question')
+                    await context.task!({
+                      action: 'start',
+                      key: randomUUID(),
+                      title: 'Synthetic independent action',
+                      message: 'Synthetic action prepared.',
+                      doneWhen: 'The synthetic action is complete.',
+                      brief: 'Synthetic child work',
+                      now: 'Check the synthetic target.',
+                    });
+                };
                 try {
                   await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
                   const paused = await thread.enqueueTurn('ask-question', {
@@ -4324,6 +4383,9 @@ test(
                     proactive: true,
                   });
                   await waitFor(settled(paused));
+                  await waitFor(() => Boolean(child));
+                  await waitFor(settled(child!.turnId));
+                  assert.notEqual(child!.sessionId, ran(paused)!.sessionId);
                   assert.equal(await turnStatus(paused), 'waiting');
                   await transaction(
                     (client) => engine.signal(sourceId, client, 'Synthetic later activity'),
@@ -4347,6 +4409,7 @@ test(
                   await waitFor(settled(next));
                   assert.equal(ran(next)!.sessionId, ran(paused)!.sessionId);
                 } finally {
+                  inspectObserver = undefined;
                   dependencies.proactivity = originalContext;
                 }
               },
