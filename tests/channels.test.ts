@@ -837,6 +837,108 @@ test(
             assert.equal(sent.at(-1)!.content.caption, '*Image result*');
             assert.equal(sent.at(-1)!.content.text, undefined);
             assert.deepEqual(imageReply.ids, [sent.at(-1)!.id]);
+            for (const failure of ['oversized', 'unreadable', 'changed'] as const) {
+              const before = sent.length;
+              const answer =
+                '**Seat layout**\n12A is available for EUR 25. Availability checked 2026-10-26.\nSource: https://example.com/seats';
+              const file = attachment(`${failure}.png`, 'image/png', 'synthetic image');
+              let reads = 0;
+              let notices = 0;
+              const result = await transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: answer,
+                replyToMessageId: 'task-prompt',
+                replyToText: 'Fixture seat question',
+                attachments: [
+                  {
+                    ...file,
+                    size: failure === 'oversized' ? 50 * 1024 * 1024 + 1 : file.size,
+                    async read() {
+                      reads++;
+                      if (failure === 'unreadable')
+                        throw new Error('The owned file is unavailable.');
+                      return Buffer.from('changed');
+                    },
+                  },
+                ],
+                async attachmentFailure(names) {
+                  notices++;
+                  assert.deepEqual(names, [file.name]);
+                  return `The file ${file.name} is available in nod.`;
+                },
+              });
+              const delivered = sent.slice(before);
+              assert.equal(reads, failure === 'oversized' ? 0 : 1);
+              assert.equal(notices, 1);
+              assert.equal(delivered.length, 2);
+              const fallback = delivered[0].content.text as string;
+              for (const line of answer.replaceAll('**', '').split('\n'))
+                assert.ok(fallback.includes(line));
+              assert.equal(delivered[1].content.text, `The file ${file.name} is available in nod.`);
+              assert.ok(delivered.every((message) => !message.content.image));
+              assert.deepEqual(
+                result.ids,
+                delivered.map((message) => message.id),
+              );
+              assert.ok(
+                delivered.every(
+                  (message) => (message.quoted as { key: { id: string } }).key.id === 'task-prompt',
+                ),
+              );
+            }
+            const beforeMixed = sent.length;
+            const mixed = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: 'Both layouts use rows 1–20.',
+              attachments: [
+                {
+                  ...attachment('missing.png', 'image/png', 'missing image'),
+                  async read() {
+                    throw new Error('The owned file is unavailable.');
+                  },
+                },
+                attachment('available.png', 'image/png', 'available image'),
+              ],
+              async attachmentFailure(names) {
+                assert.deepEqual(names, ['missing.png']);
+                return 'The missing.png file is available in nod.';
+              },
+            });
+            assert.equal(sent.length, beforeMixed + 3);
+            assert.equal(sent[beforeMixed].content.text, 'Both layouts use rows 1–20.');
+            assert.deepEqual(sent[beforeMixed + 1].content.image, Buffer.from('available image'));
+            assert.equal(
+              sent[beforeMixed + 2].content.text,
+              'The missing.png file is available in nod.',
+            );
+            assert.deepEqual(
+              mixed.ids,
+              sent.slice(beforeMixed).map((message) => message.id),
+            );
+            const beforeUncertainImage = sent.length;
+            let uncertainImageNotices = 0;
+            failSend = true;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'This layout may already have arrived.',
+                attachments: [attachment('uncertain.png', 'image/png', 'uncertain image')],
+                async attachmentFailure() {
+                  uncertainImageNotices++;
+                  return 'The image is available in nod.';
+                },
+              }),
+              /may have accepted/,
+            );
+            failSend = false;
+            assert.equal(sent.length, beforeUncertainImage + 1);
+            assert.equal(uncertainImageNotices, 0);
             await transport.post({
               channelId: 'whatsapp',
               accountId,
@@ -2277,6 +2379,9 @@ test(
     let imageFailure: 'rejected' | 'network' | 'missing-id' | 'server' | undefined;
     let providerCalls = 0;
     let failSend = false;
+    let rejectRichText = false;
+    let rejectMarkdown = false;
+    const rejectedFormatting: string[] = [];
     let failSubmit = false;
     let failReaction = false;
     const reacting: { provider: string; body: Record<string, unknown> }[] = [];
@@ -2301,7 +2406,25 @@ test(
           return Response.json({ ok: true, result: true });
         }
         if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/send')) {
-          sent.push({ provider: 'telegram', body });
+          const wire =
+            init?.body instanceof FormData
+              ? Object.fromEntries([...init.body].filter((entry) => typeof entry[1] === 'string'))
+              : body;
+          if (rejectRichText && url.endsWith('/sendRichMessage')) {
+            rejectedFormatting.push('rich');
+            return Response.json(
+              { ok: false, error_code: 404, description: 'Method not found' },
+              { status: 404 },
+            );
+          }
+          if (rejectMarkdown && wire.parse_mode === 'MarkdownV2') {
+            rejectedFormatting.push('markdown');
+            return Response.json(
+              { ok: false, error_code: 400, description: "Bad Request: can't parse entities" },
+              { status: 400 },
+            );
+          }
+          sent.push({ provider: 'telegram', body: wire });
           if (failSend) throw new Error('Fixture transport interrupted after possible acceptance.');
           return Response.json({
             ok: true,
@@ -2359,6 +2482,7 @@ test(
       },
     );
     const app = Fastify();
+    const transport = createChatSdkTransport(pool, fixtureEnv);
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
       present: async (_thread, input) => {
@@ -2367,7 +2491,7 @@ test(
         if (input.kind === 'delivery' && input.files) unavailableFiles.push(input.files);
         return 'Continua na aplicação nod.';
       },
-      transport: createChatSdkTransport(pool, fixtureEnv),
+      transport,
       resolveAttachments: async (resolvedThreadId, ids) => {
         assert.equal(resolvedThreadId, threadId);
         if (ids.some((id) => id !== whatsappFileId && !images.has(id)))
@@ -2733,6 +2857,94 @@ test(
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
 
+      const captionText =
+        'Flight (economy) - 123.45 EUR. '.repeat(30) + '\nFinal cancellation deadline: 2026-10-31.';
+      const beforeCaption = sent.length;
+      const captionSent = await transport.post({
+        channelId: 'telegram',
+        accountId: '987',
+        threadId: 'telegram:123456',
+        text: captionText,
+        attachments: [images.get(pngId)!],
+      });
+      const captionDelivery = sent.slice(beforeCaption);
+      assert.deepEqual(
+        captionSent.ids,
+        captionDelivery.map((_, index) => `123456:${beforeCaption + index + 101}`),
+      );
+      const readable = (body: Record<string, unknown>) =>
+        String(
+          (body.rich_message as { markdown?: string })?.markdown ?? body.text ?? body.caption ?? '',
+        ).replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+      assert.ok(
+        captionDelivery.some(({ body }) =>
+          readable(body).includes('Final cancellation deadline: 2026-10-31.'),
+        ),
+        JSON.stringify(captionDelivery),
+      );
+      assert.equal(
+        captionDelivery
+          .map(({ body }) => readable(body))
+          .join('\n')
+          .match(/Flight \(economy\) - 123\.45 EUR\./g)?.length,
+        30,
+      );
+      assert.ok(captionDelivery.every(({ body }) => String(body.caption ?? '').length <= 1024));
+      rejectRichText = true;
+      const conditions = Array.from(
+        { length: 100 },
+        (_, index) =>
+          `Condition ${index}: flight (economy) - EUR ${100 + index}. Changes (+10.00) / refunds (-20.00) / seats (+5.00). Deadline 2026-10-31!`,
+      );
+      for (const reject of [false, true]) {
+        rejectMarkdown = reject;
+        const beforeConditions: number = sent.length;
+        const conditionsReply = await addReply(
+          'channel:telegram:987:123456:10',
+          conditions.join('\n\n'),
+        );
+        await channels.drain();
+        const delivered = sent.slice(beforeConditions);
+        assert.ok(delivered.length > 1);
+        assert.ok(delivered.every(({ body }) => String(body.text).length <= 4096));
+        const complete = delivered.map(({ body }) => readable(body)).join('\n\n');
+        for (const condition of conditions) assert.ok(complete.includes(condition), condition);
+        assert.deepEqual(
+          (
+            await pool.query(
+              'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+              [conditionsReply],
+            )
+          ).rows[0],
+          {
+            state: 'sent',
+            provider_message_ids: delivered.map(
+              (_, index) => `123456:${beforeConditions + index + 101}`,
+            ),
+          },
+        );
+      }
+      assert.ok(rejectedFormatting.includes('rich'));
+      assert.ok(rejectedFormatting.includes('markdown'));
+      rejectMarkdown = false;
+      const family = '👩‍👩‍👧‍👦';
+      const accented = 'e\u0301';
+      const beforeUnicode = sent.length;
+      await addReply(
+        'channel:telegram:987:123456:10',
+        `${family}${accented}`.repeat(400) + '\nFinal Unicode deadline: 2026-10-31.',
+      );
+      await channels.drain();
+      const unicodeParts = sent.slice(beforeUnicode).map(({ body }) => readable(body));
+      assert.ok(unicodeParts.length > 1);
+      for (const grapheme of [family, accented])
+        assert.equal(
+          unicodeParts.reduce((count, part) => count + part.split(grapheme).length - 1, 0),
+          400,
+        );
+      assert.ok(unicodeParts.every((part) => Buffer.from(part).toString() === part));
+      assert.ok(unicodeParts.at(-1)!.includes('Final Unicode deadline: 2026-10-31.'));
+
       await pool.query("UPDATE channel_inbox SET received_at=now() WHERE provider='whatsapp'");
       const beforeWhatsApp = sent.length;
       const flightRows = Array.from(
@@ -2953,7 +3165,10 @@ test(
         assert.equal(sent.length, before + 2);
         assert.equal(sent.at(-1)?.provider, provider);
         assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação nod/);
-        assert.match(JSON.stringify(sent.at(-2)?.body), /The website needs sign-in/);
+        assert.match(
+          provider === 'telegram' ? readable(sent.at(-2)!.body) : JSON.stringify(sent.at(-2)?.body),
+          /The website needs sign-in/,
+        );
         assert.equal(handoffPresentations.length, presented + 1);
         assert.doesNotMatch(
           JSON.stringify(sent.slice(before)),

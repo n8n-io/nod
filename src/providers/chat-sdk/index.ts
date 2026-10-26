@@ -37,6 +37,20 @@ const telegramReaction = z.object({
     .max(10),
 });
 class Telegram extends TelegramAdapter {
+  fits(text: string, limit: number) {
+    return [
+      text,
+      this.formatConverter.fromMarkdown(text),
+      this.renderPlainTextMessage({ markdown: text }, null),
+    ].every((value) => convertEmojiPlaceholders(value, 'gchat').length <= limit);
+  }
+
+  chunks(text: string): string[] {
+    const fit = (part: string): string[] =>
+      this.fits(part, 4096) ? [part] : chunks(part, Math.floor(part.length / 2)).flatMap(fit);
+    return chunks(text).flatMap(fit);
+  }
+
   draft(threadId: string, text: string) {
     return this.telegramFetch('sendMessageDraft', {
       chat_id: this.decodeThreadId(threadId).chatId,
@@ -116,14 +130,23 @@ const whatsappEnvelope = z.object({
   ),
 });
 
-function chunks(text: string) {
+function chunks(text: string, limit = telegramTextLimit) {
   const parts: string[] = [];
   let rest = text;
-  while (rest.length > telegramTextLimit) {
-    const slice = rest.slice(0, telegramTextLimit);
+  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  while (rest.length > limit) {
+    const slice = rest.slice(0, limit);
     let cut = slice.lastIndexOf('\n\n');
-    if (cut < telegramTextLimit / 2) cut = slice.lastIndexOf('\n');
-    if (cut < telegramTextLimit / 2) cut = telegramTextLimit;
+    if (cut < limit / 2) cut = slice.lastIndexOf('\n');
+    if (cut < limit / 2) cut = limit;
+    let boundary = 0;
+    for (const { index, segment } of graphemes.segment(rest)) {
+      if (index + segment.length > cut) break;
+      boundary = index + segment.length;
+    }
+    cut = boundary || cut;
+    const last = rest.charCodeAt(cut - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut--;
     parts.push(rest.slice(0, cut).trimEnd());
     rest = rest.slice(cut).trimStart();
   }
@@ -559,7 +582,7 @@ export function createChatSdkTransport(
         !/^(?:text\/(?:x-)?vcard)$/.test(attachments[0].mimeType) &&
         attachments[0].name !== 'location.json' &&
         input.text.trim() &&
-        input.text.length <= 1024
+        telegram!.fits(input.text, 1024)
           ? input.text
           : '';
       let id = '';
@@ -570,7 +593,7 @@ export function createChatSdkTransport(
           : thread.post(message);
       const messages =
         input.channelId === 'telegram'
-          ? chunks(caption ? '' : input.text).map((markdown) => ({ markdown }))
+          ? telegram!.chunks(caption ? '' : input.text).map((markdown) => ({ markdown }))
           : whatsapp!.chunks(input.text).map((raw) => ({ raw }));
       for (const message of messages) {
         const sent = await post(message);
@@ -619,7 +642,7 @@ export function createChatSdkTransport(
           bytes = await file.read();
         } catch {
           if (caption)
-            for (const part of chunks(input.text)) {
+            for (const part of telegram!.chunks(input.text)) {
               const sent = await post({ markdown: part });
               id ||= sent.id;
               ids.push(sent.id);
@@ -782,7 +805,7 @@ export function createChatSdkTransport(
           .catch(() => undefined);
         const notices =
           input.channelId === 'telegram'
-            ? chunks(notice ?? '').map((markdown) => ({ markdown }))
+            ? telegram!.chunks(notice ?? '').map((markdown) => ({ markdown }))
             : whatsapp!.chunks(notice ?? '').map((raw) => ({ raw }));
         for (const notice of notices) {
           const sent = await post(notice).catch(() => undefined);
