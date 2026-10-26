@@ -64,28 +64,28 @@ When a loaded session ends with tool calls that have no result, each call gets t
 
 Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/tools.ts).
 
-| Tool                                                                | What it does                                                                                                                                 |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                  |
-| `skills`                                                            | Reads a [guide](/how-it-works/skills/) or [learned skill](/how-it-works/memory/#learned-skills); only owner-started work writes one.         |
-| `send_message`                                                      | Sends a message now. Schedule and event runs use explicit delivery; saved tasks also deliver their final reply.                              |
-| `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
-| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                              |
-| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                    |
-| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and handoff.                                                     |
-| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                  |
-| `pay`                                                               | Submits a Vault card at checkout after your approval. Submission does not establish that payment succeeded.                                  |
-| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                             |
-| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                |
-| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
-| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
-| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops one task or all background work. It grants no permission.        |
-| `share_file`                                                        | Attaches a workspace file to Nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
-| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
-| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
-| `mcp__<server>__<tool>`                                             | One tool for each tool of a connected MCP server, such as `mcp__n8n__validate_workflow`. Each call runs like `apps`, after the trust check.  |
-| `tool_search`                                                       | Finds connected MCP server tools by meaning and loads the matches for the next model call.                                                   |
-| `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                        |
+| Tool                                                                | What it does                                                                                                                                |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                 |
+| `skills`                                                            | Reads a [guide](/how-it-works/skills/) or [learned skill](/how-it-works/memory/#learned-skills); only owner-started work writes one.        |
+| `send_message`                                                      | Sends a message now. Schedule and event runs use explicit delivery; saved tasks also deliver their final reply.                             |
+| `follow_up`                                                         | Queues one short offer after a successful, nonempty `send_message` in that turn. Streamed progress and queued files do not qualify.         |
+| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                             |
+| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                   |
+| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and handoff.                                                    |
+| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                 |
+| `pay`                                                               | Submits a Vault card at checkout after your approval. Submission does not establish that payment succeeded.                                 |
+| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                            |
+| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                               |
+| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                     |
+| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                             |
+| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops one task or all background work. It grants no permission.       |
+| `share_file`                                                        | Attaches a workspace file to Nod's next reply or question, or sends it alone when a turn finishes or fails without one.                     |
+| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                 |
+| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                         |
+| `mcp__<server>__<tool>`                                             | One tool for each tool of a connected MCP server, such as `mcp__n8n__validate_workflow`. Each call runs like `apps`, after the trust check. |
+| `tool_search`                                                       | Finds connected MCP server tools by meaning and loads the matches for the next model call.                                                  |
+| `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                       |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
 

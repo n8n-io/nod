@@ -17,7 +17,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import type { RuntimeContext } from '../src/ports/agent.ts';
+import type { AgentSessionOptions, RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import { openLocalSession, readPiSessionEntries } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
@@ -1033,6 +1033,306 @@ test('a turn posts its opening line and final reply, shows the lines between as 
   } finally {
     await runtime.dispose();
   }
+});
+
+test('real Pi delivers the result before offering recurring work, including an empty final reply', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  const resultText =
+    'Cedar 3.2 adds parallel tasks and schema-checked tool inputs. Use scoped credentials and verify tool outputs.';
+  const offer = 'Want a summary of Cedar changes every Monday?';
+  const posted: string[] = [];
+  const attempts: boolean[] = [];
+  let requests = 0;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture',
+    sessionRoot: join(f.directory, 'sessions'),
+    createSession: async (options) => {
+      const value = await createAgentSession(options);
+      value.session.agent.streamFunction = (model, request) => {
+        const previous = request.messages.findLast((message) => message.role === 'toolResult');
+        const first = requests++ === 0;
+        if (previous?.role === 'toolResult' && previous.toolName === 'follow_up')
+          attempts.push(previous.isError);
+        const calls = first
+          ? [
+              {
+                type: 'toolCall' as const,
+                id: 'early-offer',
+                name: 'follow_up',
+                arguments: { text: offer },
+              },
+            ]
+          : previous?.role === 'toolResult' && previous.isError
+            ? [
+                {
+                  type: 'toolCall' as const,
+                  id: 'deliver-result',
+                  name: 'send_message',
+                  arguments: { text: resultText },
+                },
+                {
+                  type: 'toolCall' as const,
+                  id: 'later-offer',
+                  name: 'follow_up',
+                  arguments: { text: offer },
+                },
+              ]
+            : [];
+        assert.ok(requests <= 3);
+        const message = {
+          ...fauxAssistantMessage(calls, { stopReason: calls.length ? 'toolUse' : 'stop' }),
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'start', partial: message });
+        stream.push({ type: 'done', reason: calls.length ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return value;
+    },
+  });
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(f.directory),
+      threadId: f.threadId,
+      sessionId: f.threadId,
+      turnId: randomUUID(),
+      prompt:
+        'Research the latest Cedar automation features and best practices from the supplied release notes.',
+      reply: async (text) => {
+        posted.push(text);
+      },
+    });
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(attempts, [true, false]);
+    assert.deepEqual(posted, [resultText, offer]);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test('follow-up offers require a completed explicit result in the current turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-follow-up-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const resultText = 'The synthetic report found two overdue invoices.';
+  const offer = 'Want me to check these each week?';
+  const run = async (
+    act: (input: AgentSessionOptions, turn: number) => Promise<void>,
+    overrides: Partial<RuntimeContext> = {},
+    turns = 1,
+  ) => {
+    const posted: string[] = [];
+    let opened = 0;
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async (input) => {
+          const turn = opened++;
+          return { resumed: false, abort() {}, dispose() {}, prompt: () => act(input, turn) };
+        },
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    try {
+      for (let turn = 0; turn < turns; turn++)
+        await runtime.runTurn({
+          ...context(directory),
+          ...overrides,
+          turnId: randomUUID(),
+          reply: async (text, streamId, replyTo) => {
+            await overrides.reply?.(text, streamId, replyTo);
+            posted.push(text);
+          },
+        });
+      return posted;
+    } finally {
+      await runtime.dispose();
+    }
+  };
+  const call = (input: AgentSessionOptions, name: string, args: Record<string, unknown>) =>
+    input.tools.find((tool) => tool.name === name)!.execute(args);
+  const refuse = (input: AgentSessionOptions) =>
+    assert.rejects(call(input, 'follow_up', { text: offer }));
+  const final = (input: AgentSessionOptions, text = '') => {
+    input.onEvent({ type: 'message_start' });
+    input.onEvent({ type: 'final', text });
+    input.onEvent({ type: 'message_end', status: 'succeeded' });
+  };
+
+  await t.test('opening narration, empty sends and duplicate sends do not count', async () => {
+    const opening = 'Checking the synthetic invoices.';
+    const posted = await run(async (input) => {
+      input.onEvent({ type: 'message_start' });
+      input.onEvent({ type: 'text_delta', text: opening });
+      input.onEvent({ type: 'message_end', status: 'succeeded' });
+      await refuse(input);
+      await call(input, 'send_message', { text: '   ' });
+      await refuse(input);
+      await call(input, 'send_message', { text: opening });
+      await refuse(input);
+      final(input, resultText);
+    });
+    assert.deepEqual(posted, [opening, resultText]);
+  });
+
+  await t.test('a failed result does not unlock the offer', async () => {
+    let attempts = 0;
+    const posted = await run(
+      async (input) => {
+        await assert.rejects(call(input, 'send_message', { text: resultText }));
+        await refuse(input);
+        await call(input, 'send_message', { text: resultText });
+        await call(input, 'follow_up', { text: offer });
+        await call(input, 'follow_up', { text: 'A duplicate offer.' });
+        final(input);
+      },
+      {
+        reply: async () => {
+          if (attempts++ === 0) throw new Error('Synthetic delivery failed.');
+        },
+      },
+    );
+    assert.deepEqual(posted, [resultText, offer]);
+  });
+
+  await t.test('a pending result does not unlock the offer', async () => {
+    let release!: () => void;
+    let delivering!: () => void;
+    const started = new Promise<void>((resolve) => {
+      delivering = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posted = await run(
+      async (input) => {
+        const send = call(input, 'send_message', { text: resultText });
+        await started;
+        try {
+          await refuse(input);
+        } finally {
+          release();
+        }
+        await send;
+        await call(input, 'follow_up', { text: offer });
+        final(input);
+      },
+      {
+        reply: async () => {
+          delivering();
+          await pending;
+        },
+      },
+    );
+    assert.deepEqual(posted, [resultText, offer]);
+  });
+
+  await t.test('a task-start acknowledgement does not count as a result', async () => {
+    await run(
+      async (input) => {
+        await call(input, 'task', {
+          action: 'start',
+          title: 'Synthetic report',
+          doneWhen: 'Report delivered',
+          now: 'Read the supplied invoices',
+          message: 'Preparing the report.',
+        });
+        await refuse(input);
+        final(input);
+      },
+      { task: async () => ({}) },
+    );
+  });
+
+  await t.test(
+    'saved-task state and a queued file do not count as a delivered result',
+    async () => {
+      const taskId = randomUUID();
+      const actions: string[] = [];
+      const published: string[] = [];
+      const posted = await run(
+        async (input) => {
+          await call(input, 'share_file', { path: 'outputs/invoices.md' });
+          await refuse(input);
+          await call(input, 'task', {
+            action: 'finish',
+            id: taskId,
+            status: 'done',
+            result: resultText,
+          });
+          await refuse(input);
+          await call(input, 'send_message', { text: resultText });
+          await call(input, 'follow_up', { text: offer });
+          final(input);
+        },
+        {
+          background: true,
+          taskContext: {
+            id: taskId,
+            title: 'Invoices',
+            brief: '',
+            doneWhen: 'Report delivered',
+            revision: 1,
+          },
+          task: async (input) => {
+            actions.push((input as { action: string }).action);
+            return {};
+          },
+          publish: async (path) => {
+            published.push(path);
+            return context(directory).publish(path);
+          },
+        },
+      );
+      assert.deepEqual(actions, ['finish']);
+      assert.deepEqual(published, ['outputs/invoices.md']);
+      assert.deepEqual(posted, [resultText, offer]);
+    },
+  );
+
+  await t.test('a new turn cannot reuse an earlier result', async () => {
+    const posted = await run(
+      async (input, turn) => {
+        await refuse(input);
+        if (turn === 0) await call(input, 'send_message', { text: resultText });
+        final(input, turn === 0 ? '' : 'A separate direct answer.');
+      },
+      {},
+      2,
+    );
+    assert.deepEqual(posted, [resultText, 'A separate direct answer.']);
+  });
+
+  await t.test('stopping during delivery never releases a queued offer', async () => {
+    const stop = new AbortController();
+    let replies = 0;
+    await assert.rejects(
+      run(
+        async (input) => {
+          await assert.rejects(call(input, 'send_message', { text: resultText }));
+          await refuse(input);
+        },
+        {
+          signal: stop.signal,
+          reply: async () => {
+            replies++;
+            stop.abort();
+          },
+        },
+      ),
+    );
+    assert.equal(replies, 1);
+  });
 });
 
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
