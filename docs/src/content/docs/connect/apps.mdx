@@ -48,6 +48,10 @@ Expired chat cards keep the app's name and icon, but their connection button is 
 
 Open an app in **Apps** to see its connected accounts, add another account, reconnect or disconnect an account. Disconnecting removes Nod's access through that connection. You can also review or revoke access in the provider's settings.
 
+If an account needs sign-in, select **Reconnect** when offered. It keeps the saved account and its settings. Otherwise, if **Add account** is available, use it to create an additional connection without removing the old account. Nod starts an additional connection only when you ask. **Sign-in unavailable** means the provider is not configured or does not support that app. Ask your server operator to check the [connection-service setup](/deploy/configuration/#apps-and-composio).
+
+When access is blocked, Nod is instructed to identify the account and unavailable coverage, deliver completed work and explain the supported next step.
+
 ## Automatic app updates
 
 Nod checks Gmail for new mail while it's running. The connection service doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Nod automatically. You can still ask Nod to work with them.
