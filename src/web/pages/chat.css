@@ -373,7 +373,8 @@
   color: var(--accent);
 }
 .voice-recorder-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 32px 112px;
   align-items: center;
   flex: none;
   margin-left: auto;
@@ -412,6 +413,7 @@
 }
 .voice-recorder-bar {
   min-width: 0;
+  min-height: 36px;
 }
 .voice-recorder-status {
   flex: 1;
@@ -432,7 +434,6 @@
 .voice-recorder-input {
   flex: 1;
   min-width: 0;
-  min-height: 36px;
 }
 .voice-recorder-dot {
   flex-shrink: 0;
@@ -465,6 +466,7 @@
   background: var(--accent);
 }
 .voice-recorder-preview {
+  width: 112px;
   flex-shrink: 0;
 }
 .recording-preview {
@@ -552,6 +554,9 @@
   accent-color: var(--accent);
 }
 @media (max-width: 480px) {
+  .voice-recorder-actions {
+    grid-template-columns: 32px 32px;
+  }
   .voice-recorder-preview {
     width: 32px;
     padding: 0;

@@ -247,7 +247,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
           </div>
           {data.speechReply === 'auto' && (
             <p className="field-hint voice-reply-hint">
-              nod chooses when to speak. You can ask for audio notes anytime.
+              Nod chooses when to speak. You can ask for audio notes anytime.
             </p>
           )}
           <div className="account-preference-row account-picker-row">

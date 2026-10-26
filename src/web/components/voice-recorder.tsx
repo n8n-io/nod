@@ -324,12 +324,14 @@ export function VoiceRecorder({
             <Button
               type="button"
               variant="ghost"
-              size="icon"
+              size="sm"
+              className="voice-recorder-preview"
               aria-label="Record again"
               title="Record again"
               onClick={() => void recorder.start()}
             >
-              <RotateCcw size={16} />
+              <RotateCcw size={14} />
+              <span>Record again</span>
             </Button>
           ) : phase === 'recording' ? (
             <Button
@@ -403,7 +405,7 @@ export function VoiceSetup({
               ? 'Your microphone will only turn on when you start recording.'
               : failed
                 ? 'Audio setup did not finish. Try again when you are connected.'
-                : 'Downloads speech models once to the computer running nod.'}
+                : 'Downloads speech models once to the computer running Nod.'}
           </p>
           <Button type="button" size="sm" onClick={ready ? onRecord : onPrepare}>
             {ready ? 'Record audio' : failed ? 'Try again' : 'Enable local audio'}
