@@ -720,6 +720,7 @@ async function runningDesktop(
       showConnectionSettings,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
+      installRuntime: (installer) => lifecycle.install(installer, { warmup: false }),
       close: async () => { quitting = true; await lifecycle.close(); },
       profileRoot,
       profileOwner,
@@ -854,7 +855,27 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.ok(log.includes(cause));
     assert.ok(log.includes(details));
     assert.equal(f.status().error, cause);
-    assert.equal(f.status().details, details);
+    assert.ok(f.status().details.includes(details));
+    assert.ok(f.status().details.includes('NOD_WSL_REQUIRED'));
+    assert.ok(f.status().details.includes(`Error: ${cause}`));
+    const installation = Object.assign(new Error('Synthetic WSL install failure'), {
+      code: 'EACCES',
+      details: 'Installer native output\nInstaller native tail',
+    });
+    await assert.rejects(
+      f.installRuntime(async () => {
+        throw installation;
+      }),
+      (error) => error === installation,
+    );
+    assert.equal(f.status().error, installation.message);
+    assert.ok(f.status().details.includes(installation.stack));
+    assert.ok(f.status().details.includes(installation.code));
+    assert.ok(f.status().details.includes(installation.details));
+    assert.ok(!f.status().details.includes(cause));
+    await showLog(event);
+    const updatedLog = await readFile(revealed.at(-1), 'utf8');
+    assert.ok(updatedLog.lastIndexOf(installation.details) > updatedLog.lastIndexOf(details));
   } finally {
     await f.close();
   }

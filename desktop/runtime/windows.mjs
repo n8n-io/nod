@@ -169,7 +169,12 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       new Error(
         `Nod could not start WSL 2. Select Install WSL, then restart Windows and open Nod. ${error.message}`,
       ),
-      { code: 'NOD_WSL_REQUIRED', details: error.details || error.stack || error.message },
+      {
+        code: 'NOD_WSL_REQUIRED',
+        details: [error.code, error.stack || error.message, error.details]
+          .filter(Boolean)
+          .join('\n'),
+      },
     );
   }
   await protectWindowsProfile(dataRoot, resourcesPath);

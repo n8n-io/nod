@@ -41,13 +41,13 @@ export function SetupProgress({
           <h1>{title}</h1>
           {description && <p>{description}</p>}
           {error && <p data-analytics-private>{error}</p>}
-          {error && details && (
-            <details className="setup-progress-details" open data-analytics-private>
-              <summary>Technical details</summary>
-              <pre>{details}</pre>
-            </details>
-          )}
         </div>
+        {error && details && (
+          <details className="setup-progress-details" open data-analytics-private>
+            <summary>Technical details</summary>
+            <pre>{details}</pre>
+          </details>
+        )}
         {fraction !== undefined && !error && (
           <progress
             className="setup-progress-download"

@@ -59,6 +59,7 @@
   gap: 12px;
 }
 .setup-progress-details {
+  width: 100%;
   min-width: 0;
   text-align: left;
   font-size: 12px;

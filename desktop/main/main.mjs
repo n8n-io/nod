@@ -192,7 +192,11 @@ const lifecycle = createDesktopLifecycle({
         progress: value.progress,
         needsRuntimeArchive: false,
       });
-    else update({ runtime });
+    else
+      update({
+        runtime,
+        ...(runtime.phase === 'error' ? { error: runtime.message, details: runtime.details } : {}),
+      });
   },
 });
 
@@ -254,7 +258,7 @@ function update(value) {
   else if (Object.hasOwn(value, 'error') || (value.phase && value.phase !== 'error'))
     delete status.error;
   if (value.details) status.details = bounded(value.details, 256 * 1024);
-  else if (Object.hasOwn(value, 'details') || (value.phase && value.phase !== 'error'))
+  else if (Object.hasOwn(value, 'details') || Object.hasOwn(value, 'error') || value.phase)
     delete status.details;
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
@@ -1694,7 +1698,9 @@ async function prepare(options = {}) {
         phase: deferred ? 'ready' : 'error',
         message: bounded(error.message),
         error: bounded(error.message),
-        details: error.details || error.stack,
+        details: [error.code, error.stack || error.message, error.details]
+          .filter(Boolean)
+          .join('\n'),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
         needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',
@@ -1965,10 +1971,7 @@ else {
       ipcMain.handle('nod:startup-log:show', async (event) => {
         if (!isSetup(event)) throw new Error('This action is unavailable.');
         await writeDiagnostic(
-          [
-            status.error || status.runtime.message || status.message,
-            status.details || status.runtime.details,
-          ]
+          [status.error || status.runtime.message || status.message, status.details]
             .filter(Boolean)
             .join('\n'),
         );
