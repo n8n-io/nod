@@ -22,7 +22,14 @@ import { appConfirmation, ModelRequestError } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
+import {
+  compactOwnerContext,
+  compactSystemPrompt,
+  firstInstruction,
+  ownerContext,
+  steeredInstruction,
+  systemPrompt,
+} from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
 import { connectedTools, nodTools } from './tools.ts';
@@ -526,6 +533,12 @@ export function createAgentRuntime(dependencies: {
       const system =
         context.proactivity?.instructions ??
         systemPrompt(workspace, dependencies.skills, context.taskContext, context.background);
+      const compactInstructions = {
+        systemPrompt: context.proactivity
+          ? system
+          : compactSystemPrompt(workspace, skills, context.taskContext, context.background),
+        ownerContext: compactOwnerContext(context),
+      };
       const shared = {
         context: {
           ...context,
@@ -578,6 +591,7 @@ export function createAgentRuntime(dependencies: {
             ephemeral: true,
             systemPrompt: system,
             ownerContext: ownerContext(context),
+            compactInstructions,
             tools: bind({ ...shared, execution: source }, async () => {
               browsed = true;
             }).filter((tool) => !parentTools.has(tool.name)),
@@ -731,6 +745,7 @@ export function createAgentRuntime(dependencies: {
         ...(context.proactivity ? { restricted: true } : {}),
         systemPrompt: system,
         ownerContext: ownerContext(context),
+        compactInstructions,
         tools,
         workspace,
         timeZone: context.timeZone,
@@ -834,7 +849,23 @@ export function createAgentRuntime(dependencies: {
       const resumed = session.resumed;
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
       await session!.prompt(
-        instruct(firstInstruction(context, resumed, omitted, analysis)),
+        instruct(
+          firstInstruction(
+            session.contextWindow && session.contextWindow < 65_536
+              ? {
+                  ...context,
+                  history: context.history
+                    .slice(-2)
+                    .filter((message) => message.text.length <= 2000),
+                  relatedConversation: undefined,
+                  tasks: [],
+                }
+              : context,
+            resumed,
+            omitted,
+            analysis,
+          ),
+        ),
         images,
       );
       await pendingReplies;

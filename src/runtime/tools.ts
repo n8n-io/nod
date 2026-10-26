@@ -806,7 +806,10 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     bind(toolDefinitions.skills, async (p) => {
       if (p.action === 'list') return skills?.catalog ?? [];
       if (p.action === 'read') {
-        if (skills?.catalog.some((skill) => skill.name === p.name))
+        if (
+          skills?.core?.includes(p.name) ||
+          skills?.catalog.some((skill) => skill.name === p.name)
+        )
           return skills.read(p.name, p.file);
         if (p.file) throw new Error('A learned skill has no reference files.');
         return untrustedBlock(

@@ -38,6 +38,32 @@ import {
 
 const resource = 'https://api.openai.com/v1';
 const issuer = 'https://auth.openai.com';
+
+export function modelContextBudget(model: {
+  provider: string;
+  id: string;
+  contextWindow: number;
+  maxTokens: number;
+}) {
+  const routed =
+    model.provider === 'openrouter' && ['openrouter/free', 'openrouter/auto'].includes(model.id);
+  const window = routed ? Math.min(8192, model.contextWindow) : model.contextWindow;
+  const compact = window < 65_536;
+  return {
+    window,
+    compact,
+    margin: Math.min(2048, Math.max(128, Math.floor(window / 16))),
+    output: compact ? Math.min(model.maxTokens, Math.floor(window / 4)) : model.maxTokens,
+    reserve: compact ? Math.floor(window / 2) : Math.max(16_384, window - 256_000),
+    recent: compact
+      ? Math.floor(window / 8)
+      : Math.max(0, Math.round(Math.min(256_000, window - 16_384) / 3)),
+  };
+}
+
+function payloadTokens(payload: unknown) {
+  return Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 3);
+}
 const callbackUrl = 'http://127.0.0.1:1455/auth/callback';
 const registration = 'dynamic_agent_client';
 const planScope = 'chatgpt.tokens.use.direct';
@@ -932,7 +958,12 @@ export async function createPiModelRuntime(
     allowModelNetwork: false,
   });
   runtime.registerProvider(provider, {
-    models: [access.definition.spec as unknown as ProviderModelConfig],
+    models: [
+      {
+        ...access.definition.spec,
+        contextWindow: modelContextBudget(access.definition.spec as unknown as Model<Api>).window,
+      } as unknown as ProviderModelConfig,
+    ],
   });
   await runtime.refresh({ allowNetwork: false });
   const stream = runtime.streamSimple.bind(runtime);
@@ -1038,6 +1069,26 @@ export async function createPiModelRuntime(
                   ]
                 : [part],
             );
+        }
+
+        const budget = modelContextBudget(target);
+        if (budget.compact) {
+          const available = budget.window - payloadTokens(body) - budget.margin;
+          if (available < 128)
+            throw new Error(
+              `This request does not fit the model's ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
+            );
+          const output = Math.min(options?.maxTokens ?? budget.output, budget.output, available);
+          for (const field of ['max_tokens', 'max_completion_tokens', 'max_output_tokens'])
+            if (field in body) body[field] = output;
+          for (const [field, key] of [
+            ['generationConfig', 'maxOutputTokens'],
+            ['inferenceConfig', 'maxTokens'],
+          ] as const) {
+            const config = body[field];
+            if (config && typeof config === 'object')
+              (config as Record<string, unknown>)[key] = output;
+          }
         }
 
         return body;

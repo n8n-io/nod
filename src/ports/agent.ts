@@ -260,6 +260,7 @@ export interface AgentTool extends AgentToolMetadata {
 }
 export interface SkillLibrary {
   catalog: Array<{ name: string; description: string }>;
+  core?: readonly string[];
   read(name: string, file?: string): { name: string; file: string; content: string };
 }
 export type AgentEvent =
@@ -276,6 +277,7 @@ export interface AgentSessionOptions extends ExecutionScope {
   ephemeral?: boolean;
   systemPrompt: string;
   ownerContext?: string;
+  compactInstructions?: { systemPrompt: string; ownerContext?: string };
   tools: AgentTool[];
   workspace: WorkspaceSession;
   timeZone?: string;
@@ -292,6 +294,7 @@ export interface AgentSessionOptions extends ExecutionScope {
 export interface AgentSession {
   resumed: boolean;
   readsImages?: boolean;
+  contextWindow?: number;
   prompt(text: string, images: AgentImage[]): Promise<void>;
   abort(): void | Promise<void>;
   dispose(): void | Promise<void>;
