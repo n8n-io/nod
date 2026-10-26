@@ -149,7 +149,11 @@ Each model request includes the active system prompt, tools and session history.
 
 Task IDs stay in the turn message. Pi supplies the workspace path after the shared instructions. These values do not change the shared instruction prefix when a new task starts.
 
-For OpenAI API models that support explicit cache boundaries, Nod marks the end of the shared instructions before the workspace path. This boundary also covers tool definitions that precede the instructions. The request keeps implicit caching for the growing conversation. Nod uses the provider's default cache lifetime. ChatGPT subscriptions and other model APIs keep their existing cache settings.
+For OpenAI API models that support explicit cache boundaries, Nod marks the end of the shared instructions before the workspace path. This boundary also covers tool definitions that precede the instructions. The request keeps implicit caching for the growing conversation and uses the provider's default cache lifetime.
+
+For Anthropic API models, Nod moves the system text's cache marker to that same boundary. The workspace path follows in a second text block. The request keeps the SDK's tool and conversation markers, cache lifetime and total number of markers. Disabled caching stays disabled.
+
+ChatGPT subscriptions and other model APIs keep their existing cache settings.
 
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 

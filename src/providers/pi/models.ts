@@ -1013,6 +1013,33 @@ export async function createPiModelRuntime(
           }
         }
 
+        if (
+          access.provider === 'anthropic' &&
+          !subscription &&
+          hasApi(target, 'anthropic-messages') &&
+          options?.cacheRetention !== 'none' &&
+          Array.isArray(body.system)
+        ) {
+          const initial = context.messages[0];
+          const prefix =
+            initial?.role === 'system'
+              ? (initial.sections?.preamble ?? getSystemMessageText(initial))
+              : context.systemPrompt;
+          if (prefix)
+            body.system = body.system.flatMap((part: Record<string, unknown>) =>
+              part.type === 'text' &&
+              typeof part.text === 'string' &&
+              part.cache_control &&
+              part.text.startsWith(prefix) &&
+              part.text.length > prefix.length
+                ? [
+                    { ...part, text: prefix },
+                    { ...part, text: part.text.slice(prefix.length), cache_control: undefined },
+                  ]
+                : [part],
+            );
+        }
+
         return body;
       },
     });
