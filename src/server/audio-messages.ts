@@ -9,6 +9,7 @@ import { artifactView, localArtifacts } from './artifacts.ts';
 import { lockThread, submitUserMessage } from './thread.ts';
 import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
+import { SpeechSetupError } from './speech.ts';
 import type { SubmitMessageResponse } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 
@@ -156,18 +157,14 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           };
         }
         if (!speech || !speech.transcriptionConfigured)
-          throw Object.assign(
-            new Error('Voice transcription is unavailable. Check Settings → General → Voice.'),
-            { statusCode: 503 },
+          throw new SpeechSetupError(
+            'Set up audio in Settings → General → Voice. Choose free voices or connect a voice service.',
           );
         if (
           !(dependencies.configuration?.() ?? configuration()).llmReady &&
           !verificationRequests.length
         )
-          throw Object.assign(
-            new Error('Configure an agent provider before starting a conversation.'),
-            { statusCode: 503 },
-          );
+          throw invalid('Connect an AI provider in Settings → Models before sending a message.');
         if (
           (await client.query('SELECT 1 FROM messages WHERE id=$1', [input.clientMessageId]))
             .rowCount
@@ -226,10 +223,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       if (verificationRequestId)
         throw privateConflict('This verification request is no longer available.');
       if (!(dependencies.configuration?.() ?? configuration()).llmReady)
-        throw Object.assign(
-          new Error('Configure an agent provider before starting a conversation.'),
-          { statusCode: 503 },
-        );
+        throw invalid('Connect an AI provider in Settings → Models before sending a message.');
       signal.throwIfAborted();
       submitting = true;
       const submitted = await (dependencies.submitMessage ?? submitUserMessage)(

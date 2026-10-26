@@ -337,6 +337,54 @@
 .record-button {
   color: var(--muted-foreground);
 }
+.composer-microphone {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.microphone-picker-trigger {
+  width: 24px;
+  min-width: 24px;
+  margin-left: -4px;
+  color: var(--muted-foreground);
+}
+.microphone-picker {
+  z-index: 55;
+  width: min(280px, calc(100vw - 24px));
+  max-height: min(320px, var(--radix-popover-content-available-height));
+  overflow-y: auto;
+}
+.microphone-picker-heading,
+.microphone-picker > p[role='alert'] {
+  margin: 4px 8px 8px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.microphone-picker .menu-item > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.microphone-picker .menu-item > svg {
+  flex: none;
+}
+.microphone-picker [aria-checked='true'] {
+  color: var(--accent);
+}
+.voice-recorder-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin-left: auto;
+}
+@media (pointer: coarse) {
+  .microphone-picker-trigger {
+    width: 32px;
+    min-width: 32px;
+    min-height: 44px;
+  }
+}
 .composer.has-recording .composer-left {
   flex: 1;
   min-width: 0;
@@ -375,7 +423,7 @@
 .voice-recorder-status svg {
   flex-shrink: 0;
 }
-.voice-recorder-bar > .button-icon {
+.voice-recorder-actions > .button-icon {
   width: 32px;
   height: 32px;
   flex-shrink: 0;

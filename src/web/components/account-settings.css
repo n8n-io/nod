@@ -562,12 +562,6 @@
   line-height: 1.5;
   text-align: center;
 }
-.voice-picker-disclosure {
-  margin: 0;
-  padding: 4px 8px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .voice-preview-loading {
   animation: spin 1s linear infinite;
 }
@@ -649,9 +643,6 @@
   gap: 12px;
   margin-top: 12px;
 }
-.voice-settings-disclosure {
-  text-align: right;
-}
 @container account-settings (max-width: 400px) {
   .voice-settings-choice,
   .voice-reply-options {
@@ -662,7 +653,6 @@
     padding-inline: 8px;
     font-size: 12px;
   }
-  .voice-settings-disclosure,
   .voice-reply-hint {
     text-align: left;
   }

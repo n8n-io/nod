@@ -2,7 +2,7 @@ import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import type { SpeechProvider } from '../../ports/speech.ts';
+import { SpeechProviderError, type SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { speechVoices } from '../../shared/speech.ts';
 import { verifySpeechCache } from './cache.ts';
@@ -74,7 +74,7 @@ export function createLocalSpeechProvider(options: {
     const job = queue.shift();
     if (!job) {
       idle = setTimeout(() => {
-        stop(new Error('Local speech stopped.'));
+        stop(new SpeechProviderError('Local speech stopped.'));
       }, options.idleMs ?? 300_000);
       idle.unref();
       return;
@@ -104,7 +104,7 @@ export function createLocalSpeechProvider(options: {
       const died = () => {
         if (child !== worker) return;
         status = { state: 'failed' };
-        stop(new Error('Local speech stopped. Try again.'));
+        stop(new SpeechProviderError('Local speech stopped. Try again.'));
       };
       worker.on('error', died);
       worker.on('exit', died);
@@ -147,7 +147,7 @@ export function createLocalSpeechProvider(options: {
           finished.resolve({ type: 'text', text: reply.text });
         else
           finished.reject(
-            new Error(
+            new SpeechProviderError(
               reply.reason === 'silence'
                 ? 'No speech was detected. Please record again.'
                 : reply.reason === 'length'
@@ -161,15 +161,16 @@ export function createLocalSpeechProvider(options: {
       });
     }
     child.send({ id: job.id, ...job.request }, (error) => {
-      if (error && active === job) stop(new Error('Local speech stopped. Try again.'));
+      if (error && active === job)
+        stop(new SpeechProviderError('Local speech stopped. Try again.'));
     });
   }
 
   function call(request: Request, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    if (closed) return Promise.reject(new Error('Local speech is closed.'));
+    if (closed) return Promise.reject(new SpeechProviderError('Local speech is closed.'));
     if (queue.length >= 4)
-      return Promise.reject(new Error('Local speech is busy. Try again shortly.'));
+      return Promise.reject(new SpeechProviderError('Local speech is busy. Try again shortly.'));
     return new Promise<Reply>((resolve, reject) => {
       const job: Job = {
         id: ++nextId,
@@ -193,12 +194,13 @@ export function createLocalSpeechProvider(options: {
       };
       const timeout = setTimeout(
         () => {
-          if (active === job) stop(new Error('Local speech took too long. Try a shorter message.'));
+          if (active === job)
+            stop(new SpeechProviderError('Local speech took too long. Try a shorter message.'));
           else {
             const index = queue.indexOf(job);
             if (index >= 0) queue.splice(index, 1);
             job.cleanup();
-            reject(new Error('Local speech is busy. Try again shortly.'));
+            reject(new SpeechProviderError('Local speech is busy. Try again shortly.'));
           }
         },
         request.method === 'prepare' ? 900_000 : (options.requestMs ?? 180_000),
@@ -208,7 +210,7 @@ export function createLocalSpeechProvider(options: {
       try {
         advance();
       } catch {
-        stop(new Error('Local speech could not start.'));
+        stop(new SpeechProviderError('Local speech could not start.'));
       }
     });
   }
@@ -284,7 +286,7 @@ export function createLocalSpeechProvider(options: {
       signal?.throwIfAborted();
       await cached;
       signal?.throwIfAborted();
-      if (closed) throw new Error('Local speech is closed.');
+      if (closed) throw new SpeechProviderError('Local speech is closed.');
       if (status.state === 'ready') return;
       if (preparing) return waitForPreparation(preparing, signal);
       status = { state: 'downloading', progress: 0 };
@@ -311,37 +313,38 @@ export function createLocalSpeechProvider(options: {
     },
     async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
-      if (status.state !== 'ready') throw new Error('Enable local speech first.');
+      if (status.state !== 'ready') throw new SpeechProviderError('Enable local speech first.');
       const voice = synthesis?.voice ?? 'local:af_heart';
       if (!voices.some((choice) => choice.id === voice))
-        throw new Error('That voice is unavailable.');
-      if (!text.trim() || text.length > 4096) throw new Error('The speech text is too long.');
+        throw new SpeechProviderError('That voice is unavailable.');
+      if (!text.trim() || text.length > 4096)
+        throw new SpeechProviderError('The speech text is too long.');
       return measured('synthesize', report, signal, async () => {
         const reply = await call(
           { method: 'synthesize', text, voice: voice.split(':')[1] },
           signal,
         );
-        if (reply.type !== 'audio') throw new Error('Local speech failed.');
+        if (reply.type !== 'audio') throw new SpeechProviderError('Local speech failed.');
         return { bytes: Buffer.from(reply.bytes), mimeType: 'audio/wav', fileName: 'reply.wav' };
       });
     },
     async transcribe(audio, signal, report) {
       signal?.throwIfAborted();
-      if (status.state !== 'ready') throw new Error('Enable local speech first.');
+      if (status.state !== 'ready') throw new SpeechProviderError('Enable local speech first.');
       if (!audio.bytes.length || audio.bytes.length > 25 * 1024 * 1024)
-        throw new Error('The recording is too large.');
+        throw new SpeechProviderError('The recording is too large.');
       return measured('transcribe', report, signal, async () => {
         const reply = await call(
           { method: 'transcribe', bytes: audio.bytes, mimeType: audio.mimeType },
           signal,
         );
-        if (reply.type !== 'text') throw new Error('Local transcription failed.');
+        if (reply.type !== 'text') throw new SpeechProviderError('Local transcription failed.');
         return reply.text;
       });
     },
     async close() {
       closed = true;
-      const process = stop(new Error('Local speech is closed.'));
+      const process = stop(new SpeechProviderError('Local speech is closed.'));
       if (process && process.exitCode === null && process.signalCode === null)
         await new Promise<void>((resolve) => {
           process.once('exit', () => resolve());

@@ -218,7 +218,7 @@ export function createElevenLabsSpeechProvider(options: {
           await response.body?.cancel().catch(() => {});
           throw new Error('Invalid audio response.');
         }
-        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024);
+        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024, 'ElevenLabs');
         if (!bytes.length) throw new Error('Invalid audio response.');
         return { bytes, mimeType: 'audio/mpeg', fileName: 'reply.mp3' };
       });
@@ -246,7 +246,9 @@ export function createElevenLabsSpeechProvider(options: {
         await checkResponse(response, 'transcribe');
         const result = z
           .object({ text: z.string().max(100_000) })
-          .parse(JSON.parse((await readSpeechResponse(response, 1024 * 1024)).toString()));
+          .parse(
+            JSON.parse((await readSpeechResponse(response, 1024 * 1024, 'ElevenLabs')).toString()),
+          );
         return result.text;
       });
     },

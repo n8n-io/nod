@@ -763,7 +763,7 @@ test(
           chatReady = false;
           try {
             const noModel = await sendAudio({ threadId, clientMessageId: randomUUID() });
-            assert.equal(noModel.statusCode, 503);
+            assert.equal(noModel.statusCode, 400);
             assert.equal(noModel.json().retryable, true);
             assert.equal(transcriptions.length, before + 1);
           } finally {
@@ -782,7 +782,7 @@ test(
           const unknown = { threadId, clientMessageId: randomUUID() };
           transcriptionError = new Error('Synthetic uncertain provider failure');
           const failed = await sendAudio(unknown);
-          assert.equal(failed.statusCode, 500);
+          assert.equal(failed.statusCode, 400);
           assert.equal(failed.json().retryable, true);
           transcriptionError = undefined;
           const uncertain = await sendAudio(unknown);

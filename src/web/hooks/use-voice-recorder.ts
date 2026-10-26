@@ -23,6 +23,15 @@ interface Capture {
 
 const durationLimit = 5 * 60_000;
 const byteLimit = 20 * 1024 * 1024;
+const microphonePreference = 'nod.microphone';
+
+function savedMicrophone() {
+  try {
+    return localStorage.getItem(microphonePreference) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 function closeInput(capture: Capture) {
   window.clearInterval(capture.timer);
@@ -99,6 +108,15 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   const [level, setLevel] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneId, setMicrophoneId] = useState(savedMicrophone);
+  const [discovering, setDiscovering] = useState(false);
+  const [microphoneFailure, setMicrophoneFailure] = useState('');
+  const selectedInput = useRef(microphoneId);
+  const discoveryGeneration = useRef(0);
+  const enumerationVersion = useRef(0);
+  const discoveryPending = useRef(false);
+  const discoveryStream = useRef<MediaStream | null>(null);
   const active = useRef<Capture | null>(null);
   const previewUrl = useRef<string | null>(null);
   const recordingValue = useRef<Recording | null>(null);
@@ -122,6 +140,71 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   function changePhase(value: RecordingPhase) {
     phaseRef.current = value;
     setPhase(value);
+  }
+
+  function selectMicrophone(value: string) {
+    selectedInput.current = value;
+    setMicrophoneId(value);
+    try {
+      if (value) localStorage.setItem(microphonePreference, value);
+      else localStorage.removeItem(microphonePreference);
+    } catch {}
+  }
+
+  async function refreshMicrophones() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const operation = discoveryGeneration.current;
+    const enumeration = ++enumerationVersion.current;
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter(
+        (device) => device.kind === 'audioinput',
+      );
+      if (operation !== discoveryGeneration.current || enumeration !== enumerationVersion.current)
+        return;
+      setMicrophones(devices.filter((device) => device.deviceId && device.deviceId !== 'default'));
+      if (
+        selectedInput.current &&
+        devices.some((device) => device.deviceId) &&
+        !devices.some((device) => device.deviceId === selectedInput.current)
+      )
+        selectMicrophone('');
+      setMicrophoneFailure('');
+    } catch {
+      if (operation === discoveryGeneration.current && enumeration === enumerationVersion.current)
+        setMicrophoneFailure('Microphones could not be listed. Try again.');
+    }
+  }
+
+  function cancelMicrophoneDiscovery() {
+    discoveryGeneration.current++;
+    discoveryPending.current = false;
+    discoveryStream.current?.getTracks().forEach((track) => track.stop());
+    discoveryStream.current = null;
+    setDiscovering(false);
+  }
+
+  async function discoverMicrophones() {
+    if (discoveryPending.current || !currentEnabled.current) return;
+    discoveryPending.current = true;
+    const operation = ++discoveryGeneration.current;
+    setDiscovering(true);
+    setMicrophoneFailure('');
+    let stream: MediaStream | undefined;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (operation !== discoveryGeneration.current || !currentEnabled.current) return;
+      discoveryStream.current = stream;
+      await refreshMicrophones();
+    } catch (cause) {
+      if (operation === discoveryGeneration.current) setMicrophoneFailure(microphoneError(cause));
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (operation === discoveryGeneration.current) {
+        discoveryPending.current = false;
+        discoveryStream.current = null;
+        setDiscovering(false);
+      }
+    }
   }
 
   function release() {
@@ -235,16 +318,33 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       setError('This browser cannot record audio. Try another browser.');
       return;
     }
-    discard();
-    const operation = generation.current;
+    const operation = ++generation.current;
     const account = requestAccountVersion();
     const startedScope = currentScope.current;
+    setError('');
     changePhase('requesting');
     let stream: MediaStream | undefined;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      const constraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      await refreshMicrophones();
+      if (operation !== generation.current || !currentEnabled.current) return;
+      const deviceId = selectedInput.current;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { ...constraints, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+        });
+      } catch (cause) {
+        if (
+          !deviceId ||
+          !(cause instanceof DOMException) ||
+          !['NotFoundError', 'OverconstrainedError'].includes(cause.name) ||
+          operation !== generation.current ||
+          !currentEnabled.current
+        )
+          throw cause;
+        selectMicrophone('');
+        stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      }
       if (
         operation !== generation.current ||
         account !== requestAccountVersion() ||
@@ -331,7 +431,14 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
         void capture.context.resume().catch(() => {});
       } catch {}
       recorder.start(250);
+      if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+      previewUrl.current = null;
+      recordingValue.current = null;
+      setRecording(null);
+      setElapsed(0);
+      setNotice('');
       changePhase('recording');
+      void refreshMicrophones();
       for (const track of stream.getAudioTracks()) track.onended = stop;
       capture.timer = window.setInterval(() => {
         if (account !== requestAccountVersion() || startedScope !== currentScope.current) {
@@ -353,21 +460,34 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       }, 100);
     } catch (cause) {
       if (stream) for (const track of stream.getTracks()) track.stop();
-      if (operation === generation.current) fail(microphoneError(cause));
+      if (operation === generation.current) {
+        if (active.current) discardCapture(active.current);
+        active.current = null;
+        changePhase(recordingValue.current ? 'preview' : 'idle');
+        setError(microphoneError(cause));
+      }
     }
   }
 
   useEffect(() => {
     if (enabled) return;
+    cancelMicrophoneDiscovery();
     if (phaseRef.current === 'recording') stop();
     else if (phaseRef.current === 'requesting') discard();
   }, [enabled]);
 
   useEffect(() => {
     discard();
-    const leave = () => discard();
+    const leave = () => {
+      discard();
+      cancelMicrophoneDiscovery();
+    };
+    const changed = () => void refreshMicrophones();
+    navigator.mediaDevices?.addEventListener?.('devicechange', changed);
     window.addEventListener('pagehide', leave);
     return () => {
+      cancelMicrophoneDiscovery();
+      navigator.mediaDevices?.removeEventListener?.('devicechange', changed);
       window.removeEventListener('pagehide', leave);
       release();
     };
@@ -381,6 +501,14 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     error,
     notice,
     supported,
+    microphones,
+    microphoneId,
+    discovering,
+    microphoneFailure,
+    selectMicrophone,
+    refreshMicrophones,
+    discoverMicrophones,
+    cancelMicrophoneDiscovery,
     start,
     stop,
     finish,

@@ -8,8 +8,12 @@ import {
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import { spendingLimitReached } from './ledger.ts';
 
-export class TranscriptionLengthError extends Error {}
-export class SpeechSetupError extends Error {}
+export class TranscriptionLengthError extends SpeechProviderError {
+  constructor() {
+    super('This voice message is too long. Record a shorter message.');
+  }
+}
+export class SpeechSetupError extends SpeechProviderError {}
 
 function cancellable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work;
@@ -29,7 +33,9 @@ export function createSpeech(provider: SpeechProvider) {
         ? (provider.transcriptionConfigured ?? provider.configured)
         : provider.configured)
     )
-      throw Object.assign(new SpeechSetupError('Speech is not configured.'), { statusCode: 503 });
+      throw new SpeechSetupError(
+        'Set up audio in Settings → General → Voice. Choose free voices or connect a voice service.',
+      );
   }
   return {
     get configured() {
@@ -67,8 +73,11 @@ export function createSpeech(provider: SpeechProvider) {
         const text = z
           .string()
           .trim()
-          .min(1)
           .parse(await cancellable(provider.transcribe(audio, signal, report), signal));
+        if (!text)
+          throw new SpeechProviderError(
+            'No speech was detected. Check your microphone and record again.',
+          );
         if (text.length > 100_000) throw new TranscriptionLengthError();
         signal?.throwIfAborted();
         return text;
@@ -80,7 +89,9 @@ export function createSpeech(provider: SpeechProvider) {
           (error instanceof Error && error.message === spendingLimitReached)
         )
           throw error;
-        throw new Error('Voice transcription failed.');
+        throw new SpeechProviderError(
+          'The recording could not be transcribed. Try again or send a text message.',
+        );
       }
     },
     async synthesize(
@@ -113,7 +124,9 @@ export function createSpeech(provider: SpeechProvider) {
           (error instanceof Error && error.message === spendingLimitReached)
         )
           throw error;
-        throw new Error('Speech generation failed.');
+        throw new SpeechProviderError(
+          'Audio could not be generated. Try again or choose another voice.',
+        );
       }
     },
   };

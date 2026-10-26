@@ -1238,6 +1238,56 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
   await assert.rejects(failed.synthesize('Synthetic provider error'));
   assert.equal(cancelled, 2);
+  for (const status of [400, 401, 402, 403, 429, 503]) {
+    for (const engine of ['openai', 'openrouter']) {
+      let discarded = false;
+      const options = {
+        apiKey: async () => 'fixture-never-live',
+        configured: () => true,
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              start(stream) {
+                stream.enqueue(Buffer.from('private upstream diagnostic fixture-never-live'));
+              },
+              cancel() {
+                discarded = true;
+              },
+            }),
+            { status },
+          ),
+      };
+      const provider =
+        engine === 'openai'
+          ? createOpenAISpeechProvider(options)
+          : {
+              ...createOpenRouterSpeechProvider(options),
+              transcribe: createOpenRouterTranscriptionProvider(options).transcribe,
+            };
+      const service = createSpeech(provider);
+      for (const operation of [
+        () => service.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }),
+        () => service.synthesize('Synthetic reply'),
+      ]) {
+        await assert.rejects(operation, (error: Error & { statusCode?: number }) => {
+          assert.equal(error.statusCode, 400);
+          assert.doesNotMatch(error.message, /private upstream|fixture-never-live/);
+          return true;
+        });
+        assert.equal(discarded, true);
+        discarded = false;
+      }
+    }
+  }
+  const silent = createSpeech(
+    createOpenAISpeechProvider({
+      apiKey: 'fixture-never-live',
+      fetch: async () => Response.json({ text: '  ' }),
+    }),
+  );
+  await assert.rejects(silent.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }), {
+    statusCode: 400,
+  });
 });
 
 test('speech honors the selected OpenAI voice and refuses voices from another engine before requesting audio', async () => {
@@ -1817,8 +1867,7 @@ test('ElevenLabs preserves safe setup recovery through the speech service withou
             assert.match(error.message, /ElevenLabs.*limit.*account/i);
             assert.doesNotMatch(error.message, /credits|balance|quota|rate|retry/i);
           }
-          if (status === 503) assert.match(error.message, /failed/);
-          else assert.equal((error as Error & { statusCode?: number }).statusCode, 400);
+          assert.equal((error as Error & { statusCode?: number }).statusCode, 400);
           return true;
         },
       );
@@ -1938,6 +1987,10 @@ test('on-device speech starts only when enabled, isolates the worker environment
     process.on('message', (message) => {
       if (message.method === 'prepare') {
         process.send({ id: message.id, type: 'ready' });
+      } else if (message.method === 'transcribe') {
+        process.send({ id: message.id, type: 'failed', reason: message.mimeType.slice('audio/'.length) });
+      } else if (message.text === 'Synthetic worker exit.') {
+        process.exit(1);
       } else if (message.text !== 'Synthetic delayed reply.') {
         const bytes = new Uint8Array(46);
         process.send({ id: message.id, type: 'audio', bytes });
@@ -1982,6 +2035,27 @@ test('on-device speech starts only when enabled, isolates the worker environment
   await provider.prepare();
   assert.equal(provider.configured, true);
   assert.equal(provider.transcriptionConfigured, true);
+  const service = createSpeech(provider);
+  for (const [reason, expected] of [
+    ['silence', /No speech was detected/],
+    ['length', /under five minutes/],
+    ['format', /supports WebM/],
+    ['private-diagnostic', /Local speech failed/],
+  ] as const) {
+    await assert.rejects(
+      service.transcribe({
+        bytes: Buffer.from('Synthetic recording'),
+        mimeType: `audio/${reason}`,
+        name: 'voice.wav',
+      }),
+      (error: unknown) => {
+        assert.equal((error as { statusCode?: number }).statusCode, 400);
+        assert.match((error as Error).message, expected);
+        assert.doesNotMatch((error as Error).message, /private-diagnostic/);
+        return true;
+      },
+    );
+  }
   await assert.rejects(
     provider.synthesize('Synthetic reply.', undefined, undefined, { voice: 'elevenlabs:sarah' }),
   );
@@ -2000,6 +2074,12 @@ test('on-device speech starts only when enabled, isolates the worker environment
   assert.equal(children.length, 1);
   assert.equal((await provider.synthesize('Synthetic new reply.')).mimeType, 'audio/wav');
   assert.equal(children.length, 2);
+  await assert.rejects(service.synthesize('Synthetic worker exit.'), (error: unknown) => {
+    assert.equal((error as { statusCode?: number }).statusCode, 400);
+    assert.match((error as Error).message, /Local speech stopped/);
+    return true;
+  });
+  assert.equal(provider.status().state, 'failed');
   await provider.close();
   assert.equal(provider.configured, false);
   await assert.rejects(provider.prepare());

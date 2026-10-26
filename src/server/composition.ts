@@ -314,29 +314,23 @@ export function createDefaultAdapters(
   const localSpeech = createLocalSpeechProvider({ cacheDir: join(dataRoot, 'speech') });
   const voicePreferences = createPreferencesStore(pool, ownerId);
   const openAISpeech = createOpenAISpeechProvider({
-    apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
-    configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
+    apiKey: () => models.apiKey('openai'),
+    configured: () => models.hasApiKey('openai'),
     speechModel: env.TTS_MODEL,
     transcriptionModel: env.STT_MODEL,
     voice: env.TTS_VOICE,
   });
   const openRouterSpeech = createOpenRouterSpeechProvider({
-    apiKey: () =>
-      env.OPENROUTER_API_KEY
-        ? Promise.resolve(env.OPENROUTER_API_KEY)
-        : models.apiKey('openrouter'),
-    configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+    apiKey: () => models.apiKey('openrouter'),
+    configured: () => models.hasApiKey('openrouter'),
   });
   const elevenLabsSpeech = createElevenLabsSpeechProvider({
     apiKey: () => models.apiKey('elevenlabs'),
     configured: () => models.hasApiKey('elevenlabs'),
   });
   const openRouterTranscription = createOpenRouterTranscriptionProvider({
-    apiKey: () =>
-      env.OPENROUTER_API_KEY
-        ? Promise.resolve(env.OPENROUTER_API_KEY)
-        : models.apiKey('openrouter'),
-    configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+    apiKey: () => models.apiKey('openrouter'),
+    configured: () => models.hasApiKey('openrouter'),
     model:
       env.STT_MODEL && (env.STT_MODEL.includes('/') ? env.STT_MODEL : `openai/${env.STT_MODEL}`),
   });

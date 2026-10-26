@@ -2801,8 +2801,13 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       const microphoneRequests = [], recorders = [], stoppedRecordings = [];
       let captureType = 'audio/mp4', speechFormat, delayStop = false;
+      let microphones = [];
+      globalThis.NodeFilter = dom.window.NodeFilter;
+      const mediaDevices = new dom.window.EventTarget();
+      mediaDevices.getUserMedia = (constraints) => new Promise((resolve, reject) => microphoneRequests.push({ constraints, resolve, reject }));
+      mediaDevices.enumerateDevices = async () => microphones;
       Object.defineProperty(navigator, 'mediaDevices', {
-        value: { getUserMedia: () => new Promise((resolve, reject) => microphoneRequests.push({ resolve, reject })) },
+        value: mediaDevices,
       });
       globalThis.MediaRecorder = class {
         static isTypeSupported(type) { return type === captureType; }
@@ -3126,6 +3131,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await submit();
         assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
         assert.equal(microphoneRequests.length, 0);
+        assert.ok(document.querySelector('[aria-label="Choose microphone"]'));
         await act(async () => replaceText('Keep this synthetic draft'));
         await click('Record an audio message');
         assert.equal(microphoneRequests.length, 1);
@@ -3300,6 +3306,112 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests.at(-1).resolve(afterUnmount));
         assert.equal(afterUnmount.track.stopped, true);
         assert.equal(recorders.length, 7);
+        speechFormat = undefined;
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
+        await settle(() => document.querySelector('[aria-label="Choose microphone"]'));
+        const beforeDiscovery = microphoneRequests.length;
+        await click('Choose microphone');
+        assert.equal(microphoneRequests.length, beforeDiscovery);
+        await click('Allow microphone access');
+        assert.equal(microphoneRequests.length, beforeDiscovery + 1);
+        await click('Allow microphone access');
+        assert.equal(microphoneRequests.length, beforeDiscovery + 1);
+        assert.equal(recorders.length, 7);
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        const lateDiscovery = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(lateDiscovery));
+        assert.equal(lateDiscovery.track.stopped, true);
+        await settle(() => !document.querySelector('[role="menu"]'));
+        assert.equal(document.activeElement, document.querySelector('[aria-label="Choose microphone"]'));
+        await click('Choose microphone');
+        await click('Allow microphone access');
+        microphones = [
+          { kind: 'audioinput', deviceId: 'default', label: 'Default microphone' },
+          { kind: 'audioinput', deviceId: 'built-in', label: 'Built-in microphone' },
+          { kind: 'audioinput', deviceId: 'usb', label: 'USB microphone' },
+        ];
+        const discovered = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(discovered));
+        assert.equal(discovered.track.stopped, true);
+        assert.equal(recorders.length, 7);
+        await settle(() => document.querySelector('[aria-label="USB microphone"]'));
+        await act(async () => document.querySelector('[role="menu"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })));
+        assert.equal(document.activeElement, document.querySelector('[aria-label="USB microphone"]'));
+        await click('USB microphone');
+        assert.equal(localStorage.getItem('nod.microphone'), 'usb');
+        const enumerations = [];
+        mediaDevices.enumerateDevices = () => new Promise(resolve => enumerations.push(resolve));
+        await act(async () => {
+          mediaDevices.dispatchEvent(new Event('devicechange'));
+          mediaDevices.dispatchEvent(new Event('devicechange'));
+        });
+        assert.equal(enumerations.length, 2);
+        await act(async () => enumerations[1](microphones));
+        await act(async () => enumerations[0](microphones.filter(device => device.deviceId !== 'usb')));
+        assert.equal(localStorage.getItem('nod.microphone'), 'usb');
+        mediaDevices.enumerateDevices = async () => microphones;
+        await click('Record an audio message');
+        assert.deepEqual(microphoneRequests.at(-1).constraints.audio.deviceId, { exact: 'usb' });
+        const chosenMicrophone = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(chosenMicrophone));
+        await click('Stop and preview recording');
+        await settle(() => document.querySelector('audio'));
+        const priorClip = document.querySelector('audio').src;
+        await click('Record again');
+        await act(async () => microphoneRequests.at(-1).reject(new DOMException('Blocked', 'NotAllowedError')));
+        await settle(() => document.querySelector('audio'));
+        assert.equal(document.querySelector('audio').src, priorClip);
+        assert.equal(revoked.includes(priorClip), false);
+        assert.equal(currentText, 'Synthetic review request');
+        const priorSends = sends.length;
+        speechFormat = 'wav';
+        conversionFails = true;
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await submit();
+        await settle(() => document.querySelector('audio') && !document.querySelector('[aria-label="Send audio message"]').disabled);
+        assert.equal(sends.length, priorSends);
+        assert.equal(document.querySelector('audio').src, priorClip);
+        assert.equal(revoked.includes(priorClip), false);
+        assert.equal(currentText, 'Synthetic review request');
+        conversionFails = false;
+        await submit();
+        await settle(() => !document.querySelector('audio'));
+        assert.equal(sends.at(-1).recording.type, 'audio/wav');
+        assert.equal(revoked.filter((url) => url === priorClip).length, 1);
+        await act(async () => root.unmount());
+        root = createRoot(document.getElementById('root'));
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
+        await settle(() => document.querySelector('[aria-label="Record an audio message"]'));
+        await click('Record an audio message');
+        assert.deepEqual(microphoneRequests.at(-1).constraints.audio.deviceId, { exact: 'usb' });
+        await click('Cancel recording');
+        const cancelledChoice = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(cancelledChoice));
+        assert.equal(cancelledChoice.track.stopped, true);
+        microphones = microphones.filter(device => device.deviceId !== 'usb');
+        await act(async () => mediaDevices.dispatchEvent(new Event('devicechange')));
+        assert.equal(localStorage.getItem('nod.microphone'), null);
+        await click('Record an audio message');
+        assert.equal(microphoneRequests.at(-1).constraints.audio.deviceId, undefined);
+        await click('Cancel recording');
+        const fallback = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(fallback));
+        assert.equal(fallback.track.stopped, true);
+        microphones.push({ kind: 'audioinput', deviceId: 'usb', label: 'USB microphone' });
+        await click('Choose microphone');
+        await settle(() => document.querySelector('[aria-label="USB microphone"]'));
+        await click('USB microphone');
+        await click('Record an audio message');
+        const beforeFallback = microphoneRequests.length;
+        await act(async () => microphoneRequests.at(-1).reject(new DOMException('Unplugged', 'OverconstrainedError')));
+        assert.equal(microphoneRequests.length, beforeFallback + 1);
+        assert.equal(microphoneRequests.at(-1).constraints.audio.deviceId, undefined);
+        await click('Cancel recording');
+        const racedFallback = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(racedFallback));
+        assert.equal(racedFallback.track.stopped, true);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

@@ -34,6 +34,8 @@ An action confirmation shows its current state beside the question. **Done** mea
 
 Select **Record an audio message** beside the send button and allow microphone access. Select **Send** when you finish. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
 
+Use the arrow beside the microphone to choose an input. nod remembers your choice in this browser. If that microphone is disconnected, nod uses your system default.
+
 nod transcribes the recording and uses it as your message. The transcript and recording stay together in the conversation. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
 
 With **Auto**, nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.

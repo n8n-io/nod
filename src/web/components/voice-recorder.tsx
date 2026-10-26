@@ -1,7 +1,129 @@
 import { useEffect, useRef, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
 import type { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import { LoaderCircle, Mic, Pause, Play, RotateCcw, Trash2, X } from './icons';
+import { Check, ChevronDown, LoaderCircle, Mic, Pause, Play, RotateCcw, Trash2, X } from './icons';
 import { Button } from './ui';
+
+export function MicrophonePicker({
+  recorder,
+  disabled,
+}: {
+  recorder: ReturnType<typeof useVoiceRecorder>;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const selected = recorder.microphones.find((device) => device.deviceId === recorder.microphoneId);
+  const choices = [
+    { id: '', label: 'System default' },
+    ...recorder.microphones.map((device, index) => ({
+      id: device.deviceId,
+      label: device.label || `Microphone ${index + 1}`,
+    })),
+  ];
+  function changeOpen(value: boolean) {
+    setOpen(value);
+    if (value) void recorder.refreshMicrophones();
+    else recorder.cancelMicrophoneDiscovery();
+  }
+  useEffect(() => {
+    if (disabled) changeOpen(false);
+  }, [disabled]);
+  useEffect(() => () => recorder.cancelMicrophoneDiscovery(), []);
+  return (
+    <Popover.Root open={open} onOpenChange={changeOpen}>
+      <Popover.Trigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="microphone-picker-trigger"
+          data-analytics-private
+          aria-label="Choose microphone"
+          title={selected?.label || 'Choose microphone'}
+          disabled={disabled}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              changeOpen(true);
+            }
+          }}
+        >
+          <ChevronDown size={12} aria-hidden="true" />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          ref={panel}
+          className="microphone-picker menu"
+          data-analytics-private
+          role="menu"
+          aria-label="Microphone"
+          align="end"
+          side="top"
+          sideOffset={8}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            panel.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+          }}
+          onKeyDown={(event) => {
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+            );
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            const next =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? items.length - 1
+                  : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+            items[next]?.focus();
+          }}
+        >
+          <p className="microphone-picker-heading">Microphone</p>
+          {choices.map((choice) => (
+            <button
+              key={choice.id}
+              type="button"
+              className="menu-item"
+              role="menuitemradio"
+              aria-label={choice.label}
+              aria-checked={choice.id === (selected?.deviceId ?? '')}
+              onClick={() => {
+                recorder.selectMicrophone(choice.id);
+                changeOpen(false);
+              }}
+            >
+              <span>{choice.label}</span>
+              {choice.id === (selected?.deviceId ?? '') && <Check size={14} aria-hidden="true" />}
+            </button>
+          ))}
+          {!recorder.microphones.some((device) => device.label) && (
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-item"
+              aria-label="Allow microphone access"
+              aria-disabled={recorder.discovering}
+              onClick={() => void recorder.discoverMicrophones()}
+            >
+              {recorder.discovering ? (
+                <LoaderCircle size={14} className="spin" />
+              ) : (
+                <Mic size={14} />
+              )}
+              {recorder.discovering ? 'Waiting for permission…' : 'Allow microphone access'}
+            </button>
+          )}
+          {recorder.microphoneFailure && <p role="alert">{recorder.microphoneFailure}</p>}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 function recordingTime(milliseconds: number) {
   const seconds = Math.floor(milliseconds / 1000);
@@ -152,18 +274,6 @@ export function VoiceRecorder({
       data-analytics-private
     >
       <div className="voice-recorder-bar">
-        <Button
-          ref={discardButton}
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-          title={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-          onClick={onDiscard}
-          disabled={sending}
-        >
-          <Trash2 size={16} />
-        </Button>
         {preview ? (
           <RecordingPreview key={recording.url} recording={recording} sending={sending} />
         ) : phase === 'recording' ? (
@@ -197,31 +307,45 @@ export function VoiceRecorder({
             </span>
           </div>
         )}
-        {preview ? (
+        <div className="voice-recorder-actions">
           <Button
+            ref={discardButton}
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Record again"
-            title="Record again"
-            onClick={() => void recorder.start()}
+            aria-label={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
+            title={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
+            onClick={onDiscard}
+            disabled={sending}
           >
-            <RotateCcw size={16} />
+            <Trash2 size={16} />
           </Button>
-        ) : phase === 'recording' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="voice-recorder-preview"
-            aria-label="Stop and preview recording"
-            title="Stop and preview recording"
-            onClick={recorder.stop}
-          >
-            <Play size={14} />
-            <span>Preview</span>
-          </Button>
-        ) : null}
+          {preview ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Record again"
+              title="Record again"
+              onClick={() => void recorder.start()}
+            >
+              <RotateCcw size={16} />
+            </Button>
+          ) : phase === 'recording' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="voice-recorder-preview"
+              aria-label="Stop and preview recording"
+              title="Stop and preview recording"
+              onClick={recorder.stop}
+            >
+              <Play size={14} />
+              <span>Preview</span>
+            </Button>
+          ) : null}
+        </div>
       </div>
       {preview && recorder.notice && <p>{recorder.notice}</p>}
     </section>

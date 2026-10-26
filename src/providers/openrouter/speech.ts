@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SpeechProvider } from '../../ports/speech.ts';
+import { SpeechProviderError, type SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { readSpeechResponse } from '../speech.ts';
 import { speechVoices } from '../../shared/speech.ts';
@@ -68,13 +68,14 @@ export function createOpenRouterSpeechProvider(options: {
           await response.body?.cancel().catch(() => {});
           throw new Error('Invalid audio response.');
         }
-        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024);
+        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024, 'OpenRouter');
         if (!bytes.length) throw new Error('Invalid audio response.');
         signal?.throwIfAborted();
         usage.status = 'succeeded';
         return { bytes, mimeType: 'audio/mpeg', fileName: 'reply.mp3' };
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        if (error instanceof SpeechProviderError) throw error;
         throw new Error('Speech generation failed.');
       } finally {
         if (signal?.aborted) usage.status = 'cancelled';
@@ -126,7 +127,9 @@ export function createOpenRouterTranscriptionProvider(options: {
         body,
         signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
       });
-      const result = JSON.parse((await readSpeechResponse(response, 1024 * 1024)).toString()) as {
+      const result = JSON.parse(
+        (await readSpeechResponse(response, 1024 * 1024, 'OpenRouter')).toString(),
+      ) as {
         text?: unknown;
         usage?: { cost?: number; input_tokens?: number; output_tokens?: number };
       };

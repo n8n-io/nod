@@ -18,7 +18,7 @@ import { ownedArtifactUrl as validArtifact } from '../lib/attachment-url';
 import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import { VoiceRecorder, VoiceSetup } from './voice-recorder';
+import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
 
 interface DraftAttachment {
   id: string;
@@ -794,32 +794,38 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
           <div className="composer-right">
             {recorder.phase === 'idle' && !showAudioSetup && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="record-button"
-                aria-label={microphoneTitle}
-                title={microphoneTitle}
-                disabled={
-                  !ready ||
-                  !recorder.supported ||
-                  (!speech && !speechError) ||
-                  (speech?.transcription === false && !speech.local)
-                }
-                onClick={() => {
-                  setError('');
-                  if (speechError) {
-                    void refreshSpeech();
-                    setError(
-                      'Voice messages could not connect. Check your connection and try again.',
-                    );
-                  } else if (!speech?.transcription && speech?.local) setShowAudioSetup(true);
-                  else void recorder.start();
-                }}
-              >
-                <Mic size={18} />
-              </Button>
+              <div className="composer-microphone">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="record-button"
+                  aria-label={microphoneTitle}
+                  title={microphoneTitle}
+                  disabled={
+                    !ready ||
+                    !recorder.supported ||
+                    (!speech && !speechError) ||
+                    (speech?.transcription === false && !speech.local)
+                  }
+                  onClick={() => {
+                    setError('');
+                    if (speechError) {
+                      void refreshSpeech();
+                      setError(
+                        'Voice messages could not connect. Check your connection and try again.',
+                      );
+                    } else if (!speech?.transcription && speech?.local) setShowAudioSetup(true);
+                    else void recorder.start();
+                  }}
+                >
+                  <Mic size={18} />
+                </Button>
+                <MicrophonePicker
+                  recorder={recorder}
+                  disabled={!active || !ready || !recorder.supported}
+                />
+              </div>
             )}
             {onStop && (
               <Button

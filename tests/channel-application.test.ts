@@ -478,20 +478,51 @@ test(
     };
     const { createSpeech } = await import('../src/server/speech.ts');
     let speechFails = false;
+    const rejectedKeys = new Set<string>();
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const openAIModels = await createPiModelBackend().catalog('openai', 'api_key');
     const requests: Array<{ url: string; key: string | null; model: string | null }> = [];
     const speechRequest = t.mock.method(
       globalThis,
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit) => {
-        assert.ok(init?.body instanceof FormData);
+        const url = new URL(String(input));
+        const key = new Headers(init?.headers).get('authorization');
+        if (url.pathname.endsWith('/models') || url.pathname.endsWith('/key')) {
+          if (key && rejectedKeys.has(key)) return new Response(null, { status: 401 });
+          if (url.pathname.endsWith('/key')) return Response.json({ data: {} });
+          return Response.json({
+            data:
+              url.hostname === 'api.openai.com'
+                ? openAIModels.map((model) => ({ id: model.choice.id }))
+                : [
+                    {
+                      id: 'openai/fixture-model',
+                      name: 'Synthetic model',
+                      context_length: 32000,
+                      supported_parameters: ['tools'],
+                      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+                      pricing: { prompt: '0', completion: '0' },
+                    },
+                  ],
+          });
+        }
+        assert.ok(init?.body instanceof FormData || typeof init?.body === 'string');
         assert.equal(init.redirect, 'error');
         requests.push({
           url: String(input),
-          key: new Headers(init.headers).get('authorization'),
-          model: init.body.get('model') as string,
+          key,
+          model:
+            init.body instanceof FormData
+              ? (init.body.get('model') as string)
+              : JSON.parse(init.body).model,
         });
         if (speechFails) throw new Error('Synthetic provider failure.');
-        return Response.json({ text: 'Synthetic transcription' });
+        return url.pathname.endsWith('/speech')
+          ? new Response(Buffer.from('Synthetic spoken reply'), {
+              headers: { 'Content-Type': 'audio/mpeg' },
+            })
+          : Response.json({ text: 'Synthetic transcription' });
       },
     );
     try {
@@ -514,7 +545,11 @@ test(
           'gpt-transcribe',
         ],
       ] as const) {
-        const adapters = createDefaultAdapters(environment);
+        const adapters = createDefaultAdapters({
+          ...environment,
+          NOD_VAULT_KEY: key.toString('base64'),
+        });
+        await adapters.models!.initialize();
         const speech = createSpeech(adapters.speech);
         speechFails = false;
         assert.equal(await speech.transcribe(audio), 'Synthetic transcription');
@@ -536,7 +571,9 @@ test(
       const localChoice = createDefaultAdapters({
         OPENAI_API_KEY: 'fixture-openai',
         OPENROUTER_API_KEY: 'fixture-router',
+        NOD_VAULT_KEY: key.toString('base64'),
       });
+      await localChoice.models!.initialize();
       const { createPreferencesStore } = await import('../src/server/preferences.ts');
       const preferences = createPreferencesStore(pool, ownerId);
       const localProvider = localChoice.localSpeech as typeof localChoice.localSpeech &
@@ -585,6 +622,80 @@ test(
         await settings.close();
         await localChoice.localSpeech!.close();
         await localChoice.models!.close();
+      }
+      speechFails = false;
+      rejectedKeys.add('Bearer fixture-rejected');
+      const reconnect = createDefaultAdapters({
+        OPENAI_API_KEY: 'fixture-rejected',
+        OPENROUTER_API_KEY: 'fixture-router',
+        NOD_VAULT_KEY: key.toString('base64'),
+      });
+      try {
+        await reconnect.models!.initialize();
+        assert.equal(
+          reconnect.models!.view().connections.find((item) => item.provider === 'openai')?.status,
+          'reconnect',
+        );
+        assert.equal(
+          await createSpeech(reconnect.speech).transcribe(audio),
+          'Synthetic transcription',
+        );
+        assert.equal(requests.at(-1)?.key, 'Bearer fixture-router');
+        assert.equal(
+          reconnect.speech.voices?.some((voice) => voice.engine === 'OpenAI'),
+          false,
+        );
+      } finally {
+        await reconnect.localSpeech!.close();
+        await reconnect.models!.close();
+      }
+      for (const provider of ['openai', 'openrouter'] as const) {
+        const environment =
+          provider === 'openai'
+            ? { OPENAI_API_KEY: 'fixture-rejected' }
+            : { OPENROUTER_API_KEY: 'fixture-rejected' };
+        const unavailable = createDefaultAdapters({
+          ...environment,
+          NOD_VAULT_KEY: key.toString('base64'),
+        });
+        try {
+          await unavailable.models!.initialize();
+          assert.equal(unavailable.speech.configured, false);
+          assert.equal(unavailable.speech.transcriptionConfigured, false);
+          const before = requests.length;
+          await assert.rejects(createSpeech(unavailable.speech).transcribe(audio));
+          assert.equal(requests.length, before);
+        } finally {
+          await unavailable.localSpeech!.close();
+          await unavailable.models!.close();
+        }
+        const connected = createDefaultAdapters({
+          ...(provider === 'openai'
+            ? { OPENAI_API_KEY: 'fixture-openai' }
+            : { OPENROUTER_API_KEY: 'fixture-router' }),
+          NOD_VAULT_KEY: key.toString('base64'),
+        });
+        let connection: string | undefined;
+        try {
+          await connected.models!.initialize();
+          connection = await connected.models!.addKey(provider, `fixture-saved-${provider}`);
+          const model = connected.models!.view().connections.find((item) => item.id === connection)!
+            .models[0];
+          await connected.models!.select({
+            connectionId: connection,
+            modelId: model.id,
+            effort: model.efforts[0],
+          });
+          const service = createSpeech(connected.speech);
+          assert.equal(await service.transcribe(audio), 'Synthetic transcription');
+          assert.equal(requests.at(-1)?.key, `Bearer fixture-saved-${provider}`);
+          await service.synthesize('Synthetic spoken reply');
+          assert.equal(requests.at(-1)?.key, `Bearer fixture-saved-${provider}`);
+        } finally {
+          if (connection) await connected.models!.remove(connection);
+          await connected.localSpeech!.close();
+          await connected.models!.close();
+        }
       }
       await assert.rejects(createSpeech(defaults.speech).transcribe(audio));
     } finally {

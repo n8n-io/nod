@@ -93,7 +93,9 @@ export function createOpenAISpeechProvider(options: {
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
-        const result = JSON.parse((await readSpeechResponse(response, 1024 * 1024)).toString()) as {
+        const result = JSON.parse(
+          (await readSpeechResponse(response, 1024 * 1024, 'OpenAI')).toString(),
+        ) as {
           text?: unknown;
           usage?: {
             type?: string;
@@ -161,7 +163,7 @@ export function createOpenAISpeechProvider(options: {
             response_format: 'opus',
           }),
         });
-        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024);
+        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024, 'OpenAI');
         if (model === 'tts-1' || model === 'tts-1-hd') {
           usage.costUsd = (Array.from(text).length * (model === 'tts-1' ? 15 : 30)) / 1e6;
           usage.pricing = 'sdk_estimate';
