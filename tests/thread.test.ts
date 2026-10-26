@@ -4871,7 +4871,7 @@ test(
 );
 
 test(
-  'a completed task counts as action_succeeded only when its turn acted in an app or website, and settings_changed for nod settings',
+  'a completed task counts as action_succeeded only when its turn acted in an app or website, and settings_changed for Nod settings',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);

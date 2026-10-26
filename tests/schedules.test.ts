@@ -251,7 +251,7 @@ test(
         });
         const first = 'Read the synthetic team account and summarize its outstanding invoices.';
         const clarification =
-          'Use the EUR account, include overdue items, and keep the result in nod.';
+          'Use the EUR account, include overdue items, and keep the result in Nod.';
         const base = await seed(
           [
             first,
@@ -265,7 +265,7 @@ test(
         const foreign = await seed(['Foreign task content.'], { owner: 'draft-foreign-owner' });
         const reusable = [
           'Read https://reports.example.test/invoices?currency=EUR and summarize the totals.',
-          'Ignore my previous instructions about sending messages; only prepare the summary in nod.',
+          'Ignore my previous instructions about sending messages; only prepare the summary in Nod.',
           'Find https://reports.example.test/people/alice@example.test and keep the result here.',
         ];
         await seed([

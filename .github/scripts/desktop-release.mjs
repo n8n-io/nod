@@ -519,7 +519,7 @@ async function verifyDelivery(tag, version) {
       const [os, arch] = target.split('-');
       let update;
       for (let attempt = 0; update?.version !== version; attempt++) {
-        if (attempt === 6) throw new Error(`it does not list nod ${version}`);
+        if (attempt === 6) throw new Error(`it does not list Nod ${version}`);
         if (attempt) await new Promise((resolve) => setTimeout(resolve, 10_000));
         update = await createUpdateSource({ sourceUrl, os, arch }).latest('0.0.0');
       }
@@ -549,7 +549,7 @@ async function verifyDelivery(tag, version) {
       releaseRepository,
     );
     throw new Error(
-      `nod ${version} is a draft again because ${sourceUrl} cannot deliver ${target}: ${error.message}`,
+      `Nod ${version} is a draft again because ${sourceUrl} cannot deliver ${target}: ${error.message}`,
     );
   }
 }
@@ -623,7 +623,7 @@ async function draftApp({ stageOnly = false } = {}) {
   const runtime = JSON.parse(await readFile(join(output, 'runtime-release.json'), 'utf8'));
   const runtimeTag = runtime.releaseTag || tag;
   if (!/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtimeTag))
-    throw new Error('The runtime must belong to a nod version release.');
+    throw new Error('The runtime must belong to a Nod version release.');
   const baseUrl = `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}`;
   descriptor(runtime, process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT, baseUrl, !runtimeRepo.private);
   const runtimeFiles = [];
@@ -724,7 +724,7 @@ async function draftApp({ stageOnly = false } = {}) {
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
-    title: `nod v${version}`,
+    title: `Nod v${version}`,
     marker,
     notes: releaseNotes(),
     files,
@@ -758,7 +758,7 @@ async function draftApp({ stageOnly = false } = {}) {
     await uploadDraft({
       repository: releaseRepository,
       tag,
-      title: `nod v${version}`,
+      title: `Nod v${version}`,
       marker,
       notes: releaseNotes(),
       files: [],
@@ -905,7 +905,7 @@ async function draftAll() {
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
-    title: `nod v${version}`,
+    title: `Nod v${version}`,
     notes,
     marker,
     files: ['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json']

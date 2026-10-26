@@ -237,7 +237,7 @@ export async function runWorkspaceCommand(options: {
   drainTimeoutMs?: number;
 }): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }> {
   if (!/^nod-workspace(?:-[a-zA-Z0-9_-]+)?$/.test(options.container))
-    throw new Error('WORKSPACE_CONTAINER must identify a nod workspace.');
+    throw new Error('WORKSPACE_CONTAINER must identify a Nod workspace.');
   const id = threadIdentity(options.threadId);
   return runSupervisedCommand({
     ...options,
@@ -301,7 +301,7 @@ export function runSupervisedCommand(options: {
       return reject(
         new WorkspaceCommandError(
           true,
-          'The workspace is unavailable. Start its container and restart nod.',
+          'The workspace is unavailable. Start its container and restart Nod.',
         ),
       );
     }
@@ -334,7 +334,7 @@ export function runSupervisedCommand(options: {
       reject(
         new WorkspaceCommandError(
           true,
-          'The workspace command did not stop safely. Restart nod before continuing.',
+          'The workspace command did not stop safely. Restart Nod before continuing.',
         ),
       );
     };

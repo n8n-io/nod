@@ -1,11 +1,11 @@
 ---
 title: Proactivity evidence
-description: How nod tests useful preparation, interruption choices, and safe background work.
+description: How Nod tests useful preparation, interruption choices, and safe background work.
 sidebar:
   order: 7
 ---
 
-nod uses controlled evals to test useful preparation and appropriate silence. Real use must establish whether the work helps you.
+Nod uses controlled evals to test useful preparation and appropriate silence. Real use must establish whether the work helps you.
 
 ## What the evals test
 
@@ -13,7 +13,7 @@ Each attempt uses the real server, runtime, selected model, Trust checks, and Po
 
 ```mermaid
 flowchart TD
-  fixture[Synthetic source state] --> agent[Real nod and selected model]
+  fixture[Synthetic source state] --> agent[Real Nod and selected model]
   agent --> effects[Messages, drafts, and effects]
   effects --> check[Code and separate model judge]
   check --> repeat[Repeat with changed context]
@@ -41,7 +41,7 @@ See [Capability evals](/contribute/evals/#stress-proactive-work) for commands. L
 
 ## Compare fairly
 
-The concise baseline uses the same model, memory, sources, tools, and server controls as the full policy. It tests the value of the richer prompt. It does not compare nod with every published assistant.
+The concise baseline uses the same model, memory, sources, tools, and server controls as the full policy. It tests the value of the richer prompt. It does not compare Nod with every published assistant.
 
 An earlier controlled comparison found no quality advantage for the richer prompt and recorded 4.9% more model spend. Research alignment alone does not establish better performance.
 
@@ -51,7 +51,7 @@ Repeated synthetic cases do not establish live connector reliability or sustaine
 
 ## Measure real use
 
-Real use must show whether nudges help. Owner feedback in chat ("that wasn't useful") reaches later assessments, but nod has no built-in field study. Measure usefulness, interruption burden, draft edits, and missed opportunities with owners over repeated use. Results from one owner describe that owner's experience; they do not establish general superiority.
+Real use must show whether nudges help. Owner feedback in chat ("that wasn't useful") reaches later assessments, but Nod has no built-in field study. Measure usefulness, interruption burden, draft edits, and missed opportunities with owners over repeated use. Results from one owner describe that owner's experience; they do not establish general superiority.
 
 ## Related resources
 

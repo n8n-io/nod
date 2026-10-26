@@ -409,7 +409,7 @@ export function createModelService(options: {
       await options.keyStore.getKey();
     } catch (cause) {
       throw new ConnectionError(
-        'nod cannot open its credential storage. Check your server settings, then try again.',
+        'Nod cannot open its credential storage. Check your server settings, then try again.',
         { cause },
       );
     }
@@ -792,12 +792,12 @@ export function createModelService(options: {
         await checkStorage();
         const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
           throw new ConnectionError(
-            'nod couldn’t list this server’s models. Check the address, the API key and that the server is running.',
+            'Nod couldn’t list this server’s models. Check the address, the API key and that the server is running.',
           );
         });
         if (!definitions.length)
           throw new ConnectionError(
-            'This server has no models nod can use. nod needs models with tool support.',
+            'This server has no models Nod can use. Nod needs models with tool support.',
           );
         return save('compatible', 'api_key', value, definitions);
       });

@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
       publish:
-        description: Publish one checked nod release with all three installers
+        description: Publish one checked Nod release with all three installers
         type: boolean
         default: false
 

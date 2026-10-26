@@ -94,7 +94,7 @@ export function TelegramSetup({
   const setupError =
     error ||
     (unavailable && !state.paired && !setup?.managed
-      ? 'Set up nod’s secure key store to connect Telegram.'
+      ? 'Set up Nod’s secure key store to connect Telegram.'
       : '');
 
   function verify(event: React.FormEvent) {
@@ -113,7 +113,7 @@ export function TelegramSetup({
       {setupError && <Notice>{setupError}</Notice>}
       {setup?.managed && (
         <p>
-          Telegram is managed by the server environment. Change its settings there and restart nod.
+          Telegram is managed by the server environment. Change its settings there and restart Nod.
         </p>
       )}
       {state.paired ? (
@@ -126,9 +126,9 @@ export function TelegramSetup({
             <p data-analytics-private>
               Only{' '}
               {telegramIdentity(setup!.allowedUserId!, setup?.pairedUser, setup?.pairedUsername)}{' '}
-              can message nod.
+              can message Nod.
             </p>
-            <p>Keep nod running to receive messages.</p>
+            <p>Keep Nod running to receive messages.</p>
           </div>
         </div>
       ) : setup?.managed ? null : (
@@ -252,7 +252,7 @@ export function TelegramSetup({
                     <div className="telegram-setup-content">
                       {state.needsDelivery ? (
                         <>
-                          <p>Your bot is saved, but nod could not start receiving messages.</p>
+                          <p>Your bot is saved, but Nod could not start receiving messages.</p>
                           <Button
                             size="sm"
                             data-telegram-primary
@@ -283,7 +283,7 @@ export function TelegramSetup({
                           </p>
                           <Field
                             label="Your Telegram user ID"
-                            hint="Only this ID will be able to message nod."
+                            hint="Only this ID will be able to message Nod."
                           >
                             <Input
                               inputMode="numeric"
@@ -396,7 +396,7 @@ export function TelegramSetup({
                       <p className="telegram-setup-identity" role="status" data-analytics-private>
                         {telegramIdentity(candidate.id, candidate.name, candidate.username)}
                       </p>
-                      <p>Only this account will be able to message nod.</p>
+                      <p>Only this account will be able to message Nod.</p>
                       <div className="telegram-setup-actions">
                         <Button
                           size="sm"

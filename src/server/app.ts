@@ -471,7 +471,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
-  const handoffClosed = 'The browser opens here when nod hands it to you.';
+  const handoffClosed = 'The browser opens here when Nod hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);
     const blocked = () => credentialEntryOpen(thread.id);
@@ -549,7 +549,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         return reply.code(409).send({
           error: timedOut
             ? 'The browser view did not start. Try opening it again.'
-            : "nod's browser is not showing a page.",
+            : "Nod's browser is not showing a page.",
         });
       if ((await handoffBrowser(turnId)) !== browserId)
         return reply.code(423).send({ error: handoffClosed });

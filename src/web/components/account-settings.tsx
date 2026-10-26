@@ -645,7 +645,7 @@ export function AccountSettings({
                     />
                   </div>
                   <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                    Help us make nod better by sharing how you use it. Never your messages.{' '}
+                    Help us make Nod better by sharing how you use it. Never your messages.{' '}
                     <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                       What’s shared
                     </a>
@@ -671,8 +671,8 @@ export function AccountSettings({
                         />
                       </div>
                       <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                        Send nod’s conversations, including what it reads and does, to the nod team
-                        at n8n to improve nod. Your name, email addresses, phone numbers, card
+                        Send Nod’s conversations, including what it reads and does, to the Nod team
+                        at n8n to improve Nod. Your name, email addresses, phone numbers, card
                         numbers and IBANs are removed first, and traces carry no account or device
                         ID. Kept for 14 days and never used to train AI models.
                       </p>

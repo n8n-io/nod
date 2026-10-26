@@ -1,17 +1,17 @@
 ---
 title: How memory works
-description: How nod stores memory outside the workspace, how the model reads and saves it, and how the hourly job keeps it accurate.
+description: How Nod stores memory outside the workspace, how the model reads and saves it, and how the hourly job keeps it accurate.
 sidebar:
   order: 5
 ---
 
-nod keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
+Nod keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory notes hold only what the owner said in their messages or wrote in Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. When the owner asks nod to remember something, a separate memory model writes the notes from the owner's own messages only, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures nod writes itself after a task, without personal data.
+The short version: memory notes hold only what the owner said in their messages or wrote in Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. When the owner asks Nod to remember something, a separate memory model writes the notes from the owner's own messages only, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Nod writes itself after a task, without personal data.
 
 ## Where memory lives
 
-Memory is one JSON document, `memory/MEMORY.md`, in nod's private object store in the database. It sits outside the thread workspace, so it survives a thread reset. It holds up to 256 KiB.
+Memory is one JSON document, `memory/MEMORY.md`, in Nod's private object store in the database. It sits outside the thread workspace, so it survives a thread reset. It holds up to 256 KiB.
 
 Each entry has an address, `area/slug`, a text of up to 4,000 characters and an optional one-line abstract. There are five areas:
 
@@ -48,7 +48,7 @@ flowchart TD
 
 ### Earlier conversation
 
-Notes hold what lasts. For everything else, Pi searches the conversation itself with `history_search`, which reads every message of the active thread, the owner's and nod's.
+Notes hold what lasts. For everything else, Pi searches the conversation itself with `history_search`, which reads every message of the active thread, the owner's and Nod's.
 
 - A query matches any of its words, in any word form ("properties" finds "property"), and the best matches come first, each with its date and the message before and after it.
 - `from` and `to` keep matches between two dates in the owner's time zone; alone, they list that period's messages.
@@ -70,8 +70,8 @@ flowchart LR
   check --> save[(Saved as confirmed)]
 ```
 
-1. The server reads the current owner message, the owner's last 10 messages in that conversation and any older owner messages Pi names by ID, such as one it found with `history_search`. It skips task-card titles the owner tapped, which are nod's wording, messages over 4,000 characters and messages with a secret. A message Pi names that isn't one of the owner's own refuses the save.
-2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never nod's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
+1. The server reads the current owner message, the owner's last 10 messages in that conversation and any older owner messages Pi names by ID, such as one it found with `history_search`. It skips task-card titles the owner tapped, which are Nod's wording, messages over 4,000 characters and messages with a secret. A message Pi names that isn't one of the owner's own refuses the save.
+2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never Nod's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
 3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. When the messages make a saved note untrue, the model can archive it; the old version stays in the archive.
 
 This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, made again once if its answer can't be read. If the model is unreachable or its answer still can't be read, nothing is saved and Pi gets the reason.
@@ -79,10 +79,10 @@ This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, ma
 | Action           | What the server requires                                                                                                                                                                        |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory_learn`   | Work the owner started, in chat or a task, with an owner message. Every message it reads is the owner's own, and every note quotes one.                                                         |
-| `memory_forget`  | A turn started by an owner message, and the [trust check](/trust/approvals/): unless the owner's words ask to forget that note, nod asks first. It deletes the entry and its archived versions. |
-| `memory_control` | The complete current owner message, quoted, and the trust check: unless it asks to stop, resume or clear memory, nod asks first. Clearing also needs a turn started by an owner message.        |
+| `memory_forget`  | A turn started by an owner message, and the [trust check](/trust/approvals/): unless the owner's words ask to forget that note, Nod asks first. It deletes the entry and its archived versions. |
+| `memory_control` | The complete current owner message, quoted, and the trust check: unless it asks to stop, resume or clear memory, Nod asks first. Clearing also needs a turn started by an owner message.        |
 
-So a fact from a web page, an email, a tool result or nod's own reply can't be saved, even when it fools Pi, and neither can an event or scheduled run, or a session that started from one.
+So a fact from a web page, an email, a tool result or Nod's own reply can't be saved, even when it fools Pi, and neither can an event or scheduled run, or a session that started from one.
 
 Saves are silent: no notice appears in chat or on Telegram or WhatsApp. A note that repeats an existing one adds the new message as evidence to it, and confirms it if it was only learned in the background.
 
@@ -126,7 +126,7 @@ The archive keeps as many records as fit. When the file reaches 256 KiB, the old
 
 ### Reflect
 
-Reflection reads owner messages written since the last batch, 40 at a time, until it has caught up. It skips assistant text, tool results, attachments, messages over 4,000 characters, messages under 10 minutes old, messages with secrets, and task-card titles the owner tapped, which are nod's wording.
+Reflection reads owner messages written since the last batch, 40 at a time, until it has caught up. It skips assistant text, tool results, attachments, messages over 4,000 characters, messages under 10 minutes old, messages with secrets, and task-card titles the owner tapped, which are Nod's wording.
 
 - A small model from the selected connection proposes operations: add an entry, or archive an inferred one that a newer message replaces or says is wrong. An add that would overflow the file is skipped.
 - It records what the owner says about their life, including what a request reveals: people, places, possessions, events, plans, numbers, interests and preferences, one fact per entry. Each message comes with the time it was sent, so an entry about an event starts with its date, with words like "yesterday" resolved.
@@ -149,11 +149,11 @@ Page changes post nothing to chat and work while saving is off. Rewriting a note
 
 When Gmail connects, a background job reads the owner's recent sent emails, without quoted, forwarded or automated mail. The model describes only the style in at most 500 characters, with no facts, names or quotes.
 
-nod saves it as `preferences/writing-style`, labelled **Learned from your sent email**. A new version archives the old one. It never replaces an entry at that path that came from chat.
+Nod saves it as `preferences/writing-style`, labelled **Learned from your sent email**. A new version archives the old one. It never replaces an entry at that path that came from chat.
 
 ## Learned skills
 
-Learned skills are procedures nod writes for itself after a task, as [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) does. Each one covers one site, app or flow: the steps, the gotchas nod hit and how it got past them, what to verify and what didn't work. They sit in the same memory document as the notes. Built-in [task guides](/how-it-works/skills/) cover kinds of work; a learned skill covers one concrete flow and can point to the guide it extends.
+Learned skills are procedures Nod writes for itself after a task, as [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) does. Each one covers one site, app or flow: the steps, the gotchas Nod hit and how it got past them, what to verify and what didn't work. They sit in the same memory document as the notes. Built-in [task guides](/how-it-works/skills/) cover kinds of work; a learned skill covers one concrete flow and can point to the guide it extends.
 
 - **Index and body.** The owner context lists each learned skill's name and one-line description. Pi reads the body with `skills read` before a matching flow. The body reaches Pi inside an `untrusted_tool_result` block.
 - **Writing.** Pi calls `skills save` when no learned skill covers a flow that took several steps, needed a workaround or was corrected, and `skills patch` when a skill it followed was wrong or out of date. It saves quietly.
@@ -163,8 +163,8 @@ Learned skills are procedures nod writes for itself after a task, as [Hermes Age
 
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/nod/blob/main/src/server/learned-skills.ts).
 
-:::caution[Skills come from what nod read]
-nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
+:::caution[Skills come from what Nod read]
+Nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
 :::
 
 ## Related resources

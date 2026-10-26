@@ -301,7 +301,7 @@ export function Onboarding({
     (waitingForServices || preparation !== 'ready' || completionFailed || runtimeError)
   ) {
     const failure =
-      runtimeError || error || (preparation === 'failed' ? 'nod couldn’t finish setup.' : '');
+      runtimeError || error || (preparation === 'failed' ? 'Nod couldn’t finish setup.' : '');
     const runtime = runtimeStatus?.runtime;
     const activeRuntime = runtime && runtime.phase !== 'ready' ? runtime : runtimeStatus;
     const title =

@@ -136,7 +136,7 @@ export function VaultImportDialog({
                     file.logins.length ? logins(file.logins.length) : 'No logins in this file',
                     file.unreadable ? `${formatNumber(file.unreadable)} can’t be read` : '',
                     file.unusableKeys
-                      ? `${formatNumber(file.unusableKeys)} authenticator ${file.unusableKeys === 1 ? 'key' : 'keys'} nod can’t use`
+                      ? `${formatNumber(file.unusableKeys)} authenticator ${file.unusableKeys === 1 ? 'key' : 'keys'} Nod can’t use`
                       : '',
                   ]
                     .filter(Boolean)

@@ -212,7 +212,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
                         );
                       }}
                     >
-                      <strong>{message.role === 'user' ? 'You' : 'nod'}</strong>
+                      <strong>{message.role === 'user' ? 'You' : 'Nod'}</strong>
                       <span>{snippet}</span>
                     </button>
                   );

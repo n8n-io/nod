@@ -120,7 +120,7 @@ let status = {
   unlockingKeys: false,
   phase: 'idle',
   stage: 'computer',
-  message: 'Set up nod on your computer.',
+  message: 'Set up Nod on your computer.',
   runtime: {
     phase: 'idle',
     stage: 'computer',
@@ -194,7 +194,7 @@ const readinessNotice = createReadinessNotice({
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
-      title: 'nod is ready',
+      title: 'Nod is ready',
       body: onboardingCompleted
         ? 'Your workspace and browser are ready.'
         : 'Your computer is ready. Come back to finish setup.',
@@ -247,7 +247,7 @@ function update(value) {
     delete status.error;
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
-  if (tray) tray.setToolTip(`nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
+  if (tray) tray.setToolTip(`Nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
   updateReadinessNotice();
 }
 
@@ -322,7 +322,7 @@ async function notifyAssistantMessage(message, threadId) {
   )
     return;
   const notification = new Notification({
-    title: 'nod',
+    title: 'Nod',
     body: assistantNotificationPreview(message, knownSecrets),
   });
   displayedNotifications.add(notification);
@@ -397,7 +397,7 @@ function saveEngineDownload(event, item, sender, frame) {
     onError: async (recoveryPath) => {
       const { response } = await dialog.showMessageBox({
         type: 'warning',
-        message: 'nod could not save the file to Downloads.',
+        message: 'Nod could not save the file to Downloads.',
         detail: recoveryPath
           ? 'The downloaded file is available in a temporary folder.'
           : 'Try downloading the file again.',
@@ -550,7 +550,7 @@ function showSettings(section = 'general', loading = false) {
     height: 860,
     minWidth: 700,
     minHeight: 600,
-    title: 'nod',
+    title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
@@ -570,11 +570,11 @@ function showSettings(section = 'general', loading = false) {
   const failed = () => {
     if (quitting || window.isDestroyed() || !pendingRenderers.has(window)) return;
     window.destroy();
-    update({ windowError: 'nod could not open setup. Try again.' });
+    update({ windowError: 'Nod could not open setup. Try again.' });
     void dialog.showMessageBox({
       type: 'error',
-      message: 'nod could not open setup.',
-      detail: 'Close and reopen nod to try again. Your progress is saved.',
+      message: 'Nod could not open setup.',
+      detail: 'Close and reopen Nod to try again. Your progress is saved.',
       buttons: ['OK'],
     });
   };
@@ -658,7 +658,7 @@ function showEngine({ focus = true } = {}) {
       : { width: 1200, height: 860 }),
     minWidth: 700,
     minHeight: 600,
-    title: 'nod',
+    title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
@@ -679,7 +679,7 @@ function showEngine({ focus = true } = {}) {
     welcomeNavigation ||= initialWelcome;
     replayingProductOnboarding ||= initialReplay;
     window.destroy();
-    update({ windowError: 'nod could not open. Try again.' });
+    update({ windowError: 'Nod could not open. Try again.' });
     if (!setupWindow && (!previousSetup || engineFocusRequested))
       void showSettings('general', true);
   };
@@ -865,7 +865,7 @@ function openOnePassword(owner) {
           .map((key) => [key, process.env[key]]),
       ),
       stdio: 'ignore',
-      serviceName: 'nod 1Password',
+      serviceName: 'Nod 1Password',
       allowLoadingUnsignedLibraries: true,
     },
   );
@@ -931,7 +931,7 @@ function analyticsEnvironment(metadata) {
 }
 
 async function engineRequest(path, options = {}) {
-  if (!engineBound) throw new Error('nod is not ready.');
+  if (!engineBound) throw new Error('Nod is not ready.');
   return fetch(`${engineOrigin}${path}`, {
     ...options,
     headers: { ...options.headers, ...authenticationHeaders() },
@@ -1009,7 +1009,7 @@ async function checkRemoteConnection(connection) {
     account.user.id.length > 200 ||
     typeof account.settings?.onboardingCompleted !== 'boolean'
   )
-    throw new Error('This address did not respond as a nod server.');
+    throw new Error('This address did not respond as a Nod server.');
   return { url, token: connection.token, owner: account.user.id };
 }
 
@@ -1051,7 +1051,7 @@ async function startRemote(connection) {
 }
 
 async function saveConnection(input) {
-  if (quitting) throw new Error('nod is closing.');
+  if (quitting) throw new Error('Nod is closing.');
   if (input !== null) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       throw new Error('Enter your server address and authentication token.');
@@ -1083,7 +1083,7 @@ async function stopEngine() {
       }
       finalTimeout = setTimeout(
         () =>
-          reject(new Error('The previous nod process has not stopped. Quit and reopen the app.')),
+          reject(new Error('The previous Nod process has not stopped. Quit and reopen the app.')),
         5000,
       );
     }, 20_000);
@@ -1111,10 +1111,10 @@ async function transferWelcome() {
         headers: { 'Content-Type': 'application/json', Origin: engineOrigin },
         body: JSON.stringify({ usageData: saved.welcome.usageData }),
       });
-      if (!response.ok) throw new Error('nod could not save your choice. Try again.');
+      if (!response.ok) throw new Error('Nod could not save your choice. Try again.');
       const result = await response.json();
       if (result.settings?.usageData !== saved.welcome.usageData)
-        throw new Error('nod could not confirm your choice. Try again.');
+        throw new Error('Nod could not confirm your choice. Try again.');
       await settings.acknowledgeWelcome(saved.welcome);
     }
     if (engineFailure) throw new Error(engineFailure);
@@ -1123,7 +1123,7 @@ async function transferWelcome() {
     welcomeTransferError = undefined;
     update({
       phase: engineRuntimeReady ? 'ready' : 'preparing',
-      message: engineRuntimeReady ? 'nod is running on your computer.' : status.runtime.message,
+      message: engineRuntimeReady ? 'Nod is running on your computer.' : status.runtime.message,
       error: undefined,
     });
     if (pendingFeedback || foregroundWindow()) showEngine();
@@ -1142,7 +1142,7 @@ async function transferWelcome() {
 
 async function finishEnginePreparation(pending = false) {
   await appPreferences.sync();
-  if (quitting || !engine) throw new Error(engineFailure || 'nod is closing.');
+  if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
   if (!onboardingCompleted) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
@@ -1158,7 +1158,7 @@ async function finishEnginePreparation(pending = false) {
       }
     }
   }
-  if (quitting || !engine) throw new Error(engineFailure || 'nod is closing.');
+  if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
   if (!pending && !engineRuntimeReady) {
     engine.postMessage({ type: 'nod-runtime-ready' });
     engineRuntimeReady = true;
@@ -1166,7 +1166,7 @@ async function finishEnginePreparation(pending = false) {
   update({
     phase: pending ? 'preparing' : 'ready',
     stage: pending ? status.runtime.stage : 'ready',
-    message: pending ? status.runtime.message : 'nod is running on your computer.',
+    message: pending ? status.runtime.message : 'Nod is running on your computer.',
     progress: pending ? status.runtime.progress : undefined,
     engineReady: true,
   });
@@ -1204,7 +1204,7 @@ function refreshUpdateMenu() {
   if (tray)
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: 'Open nod', click: showEngine },
+        { label: 'Open Nod', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
         { label: 'Server connection…', click: showConnectionSettings },
         { label: 'Send feedback…', click: showFeedback },
@@ -1214,7 +1214,7 @@ function refreshUpdateMenu() {
           click: () => void checkForUpdates(),
         },
         { type: 'separator' },
-        { label: 'Quit nod', click: () => app.quit() },
+        { label: 'Quit Nod', click: () => app.quit() },
       ]),
     );
 }
@@ -1239,7 +1239,7 @@ async function checkForUpdates(manual = true) {
         if (quitting) return;
         if (!candidate) {
           if (manual)
-            await dialog.showMessageBox({ message: 'nod is up to date.', buttons: ['OK'] });
+            await dialog.showMessageBox({ message: 'Nod is up to date.', buttons: ['OK'] });
           return;
         }
         if (!manual) {
@@ -1247,7 +1247,7 @@ async function checkForUpdates(manual = true) {
           return;
         }
         const { response } = await dialog.showMessageBox({
-          message: `nod ${candidate.version} is ready.`,
+          message: `Nod ${candidate.version} is ready.`,
           buttons: ['Restart', 'Later'],
           defaultId: 1,
           cancelId: 1,
@@ -1265,8 +1265,8 @@ async function checkForUpdates(manual = true) {
         const ready = Boolean(updates.ready);
         const { response } = await dialog.showMessageBox({
           type: 'info',
-          message: ready ? 'Couldn’t restart nod' : 'Couldn’t check for updates',
-          detail: 'You can keep using nod and try again later.',
+          message: ready ? 'Couldn’t restart Nod' : 'Couldn’t check for updates',
+          detail: 'You can keep using Nod and try again later.',
           buttons: [ready ? 'Retry restart' : 'Try again', 'Not now'],
           defaultId: 1,
           cancelId: 1,
@@ -1286,8 +1286,8 @@ async function notifyUpdate(candidate) {
   if (!preferences.notifications || !Notification.isSupported()) return false;
   if (isQuietTime((await appPreferences.get()).preferences)) return true;
   const notification = new Notification({
-    title: `nod ${candidate.version} is ready`,
-    body: 'Restart nod to use the new version.',
+    title: `Nod ${candidate.version} is ready`,
+    body: 'Restart Nod to use the new version.',
   });
   displayedNotifications.add(notification);
   notification.on('click', () => {
@@ -1338,9 +1338,9 @@ async function confirmRestart() {
     : [];
   const { response } = await dialog.showMessageBox({
     type: 'warning',
-    message: work.length ? 'nod is still working.' : 'nod could not check its current work.',
+    message: work.length ? 'Nod is still working.' : 'Nod could not check its current work.',
     detail: work.length
-      ? `Restarting now stops ${new Intl.ListFormat('en').format(work)}. You can ask nod to continue afterwards.`
+      ? `Restarting now stops ${new Intl.ListFormat('en').format(work)}. You can ask Nod to continue afterwards.`
       : 'Restarting now may stop a task in progress.',
     buttons: ['Restart now', 'Later'],
     defaultId: 1,
@@ -1393,7 +1393,7 @@ function installUpdate() {
   });
 }
 
-async function quit(complete, failure = 'nod could not finish shutting down.') {
+async function quit(complete, failure = 'Nod could not finish shutting down.') {
   quitting = true;
   stopUpdateChecks?.();
   const stoppingUpdates = updates?.dispose();
@@ -1410,9 +1410,9 @@ async function removeAllData() {
   if (remoteConnection) return showConnectionSettings();
   const { response } = await dialog.showMessageBox({
     type: 'warning',
-    message: 'Remove all nod data?',
+    message: 'Remove all Nod data?',
     detail:
-      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. nod then quits.',
+      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. Nod then quits.',
     buttons: ['Remove all data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -1429,7 +1429,7 @@ async function removeAllData() {
     await browser.clearCache();
     await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
     app.exit();
-  }, 'nod could not remove all its data.');
+  }, 'Nod could not remove all its data.');
 }
 
 async function finishQuit(complete, failure) {
@@ -1459,7 +1459,7 @@ async function finishQuit(complete, failure) {
 
 async function validateStart() {
   await settings.get();
-  if (quitting) throw new Error('nod is closing.');
+  if (quitting) throw new Error('Nod is closing.');
 }
 
 async function startEngine({ runtime, signal, pending = false }) {
@@ -1467,19 +1467,19 @@ async function startEngine({ runtime, signal, pending = false }) {
   if (engine && enginePreferencesReady) return finishEnginePreparation(pending);
   if (engine) {
     if (!(await confirmRestart()))
-      throw Object.assign(new Error('Restart nod when it finishes its current work.'), {
+      throw Object.assign(new Error('Restart Nod when it finishes its current work.'), {
         code: 'NOD_RESTART_DEFERRED',
       });
     await stopEngine();
   }
-  if (quitting) throw new Error('nod is closing.');
+  if (quitting) throw new Error('Nod is closing.');
   const startup = setupWindow;
   if (startup && pendingRenderers.has(startup)) await setupWindowLoaded;
-  if (quitting || signal.aborted) throw new Error('nod is closing.');
+  if (quitting || signal.aborted) throw new Error('Nod is closing.');
   if (startup?.isDestroyed() || status.windowError)
-    throw new Error('nod could not open setup. Reopen the window, then try again.');
+    throw new Error('Nod could not open setup. Reopen the window, then try again.');
   const port = await availablePort();
-  if (quitting || signal.aborted) throw new Error('nod is closing.');
+  if (quitting || signal.aborted) throw new Error('Nod is closing.');
   engineBound = false;
   authToken = randomBytes(32).toString('base64url');
   knownSecrets.add(authToken);
@@ -1491,7 +1491,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     unlockingKeys: true,
   });
   await new Promise((accept) => setTimeout(accept, 50));
-  if (quitting || signal.aborted) throw new Error('nod is closing.');
+  if (quitting || signal.aborted) throw new Error('Nod is closing.');
   const providerEnvironment = await settings.environment();
   const owner = await profileOwner();
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
@@ -1523,10 +1523,10 @@ async function startEngine({ runtime, signal, pending = false }) {
     ...(tracesToken ? { NOD_TRACES_TOKEN: tracesToken } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
   };
-  if (quitting || signal.aborted) throw new Error('nod is closing.');
+  if (quitting || signal.aborted) throw new Error('Nod is closing.');
   update({
     phase: 'starting',
-    message: 'Starting nod.',
+    message: 'Starting Nod.',
     needsRuntimeArchive: false,
     unlockingKeys: false,
   });
@@ -1534,7 +1534,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     cwd: engineRoot,
     env: environment,
     stdio: 'pipe',
-    serviceName: 'nod engine',
+    serviceName: 'Nod engine',
   });
   engine = child;
   child.on('message', (message) => {
@@ -1567,7 +1567,7 @@ async function startEngine({ runtime, signal, pending = false }) {
         (status.phase === 'error' && status.error) ||
         (status.runtime.phase === 'error' && status.runtime.message) ||
         failure ||
-        `nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
+        `Nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
     stopNotifications?.();
     stopNotifications = undefined;
     if (!closingEngine) void writeDiagnostic(`Engine exited with code ${code}.`).catch(() => {});
@@ -1605,7 +1605,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   if (!ready || engine !== child || signal.aborted) {
     await stopEngine();
     throw new Error(
-      failure || 'nod’s background service did not respond. Try again to restart it.',
+      failure || 'Nod’s background service did not respond. Try again to restart it.',
     );
   }
   enginePreferencesReady = true;
@@ -1672,15 +1672,15 @@ function replayOnboarding() {
 }
 
 async function importRuntime() {
-  if (lifecycle.busy || quitting) throw new Error('Wait for nod to finish its current setup step.');
+  if (lifecycle.busy || quitting) throw new Error('Wait for Nod to finish its current setup step.');
   const chosen = await dialog.showOpenDialog(setupWindow, {
-    title: 'Choose the nod Runtime pack',
+    title: 'Choose the Nod Runtime pack',
     buttonLabel: 'Install runtime',
     properties: ['openFile'],
-    filters: [{ name: 'nod Runtime pack', extensions: ['gz', 'tgz'] }],
+    filters: [{ name: 'Nod Runtime pack', extensions: ['gz', 'tgz'] }],
   });
   if (chosen.canceled || !chosen.filePaths[0] || quitting) return status;
-  if (lifecycle.busy) throw new Error('Wait for nod to finish its current setup step.');
+  if (lifecycle.busy) throw new Error('Wait for Nod to finish its current setup step.');
   try {
     await lifecycle.install(async ({ signal, onStatus }) => {
       const { installRuntimeArchive } = await import(
@@ -1736,8 +1736,8 @@ else {
         !app.isInApplicationsFolder()
       ) {
         const { response } = await dialog.showMessageBox({
-          message: 'Move nod to your Applications folder?',
-          detail: 'nod can update itself only from Applications.',
+          message: 'Move Nod to your Applications folder?',
+          detail: 'Nod can update itself only from Applications.',
           buttons: ['Move to Applications', 'Not Now'],
           defaultId: 0,
           cancelId: 1,
@@ -1807,7 +1807,7 @@ else {
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
           {
-            label: 'nod',
+            label: 'Nod',
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
@@ -1922,7 +1922,7 @@ else {
       });
       ipcMain.handle('nod:preferences:theme', async (event, theme) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (quitting) throw new Error('nod is closing.');
+        if (quitting) throw new Error('Nod is closing.');
         applyPreferences(await settings.save({ theme }));
         return publicPreferences();
       });
@@ -1939,7 +1939,7 @@ else {
           Object.keys(value).some((field) => !allowed.includes(field))
         )
           throw new Error('These settings are not supported.');
-        if (quitting) throw new Error('nod is closing.');
+        if (quitting) throw new Error('Nod is closing.');
         if (value.onboardingCompleted !== undefined) {
           const response = await engineRequest('/api/session');
           if (
@@ -1960,7 +1960,7 @@ else {
               : login.openAtLogin) !== value.launchAtLogin
           )
             throw new Error(
-              'Open at login could not be updated. Check nod in your computer’s login items, then try again.',
+              'Open at login could not be updated. Check Nod in your computer’s login items, then try again.',
             );
         }
         let saved;
@@ -2006,7 +2006,7 @@ else {
           type: 'question',
           message: 'Install Windows Subsystem for Linux?',
           detail:
-            'Windows will ask for administrator approval. Restart your PC after installation, then open nod again.',
+            'Windows will ask for administrator approval. Restart your PC after installation, then open Nod again.',
           buttons: ['Install WSL', 'Cancel'],
           defaultId: 0,
           cancelId: 1,
@@ -2019,8 +2019,8 @@ else {
         await lifecycle.install(installWsl, { warmup: false });
         update({
           phase: 'error',
-          message: 'Restart your PC, then open nod again.',
-          error: 'Restart your PC, then open nod again.',
+          message: 'Restart your PC, then open Nod again.',
+          error: 'Restart your PC, then open Nod again.',
           needsWsl: false,
         });
         return status;
@@ -2033,7 +2033,7 @@ else {
       });
       ipcMain.handle('nod:chat-read:set', (event, ownerId, threadId, cursor) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (quitting) throw new Error('nod is closing.');
+        if (quitting) throw new Error('Nod is closing.');
         if (remoteConnection && ownerId !== remoteConnection.owner)
           throw new Error('This chat does not belong to your server.');
         return chatReadCursors.set(remoteConnection?.cursorOwner || ownerId, threadId, cursor);

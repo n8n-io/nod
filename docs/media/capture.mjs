@@ -156,7 +156,7 @@ try {
       );
     if (scenes[i].view === 'usage')
       assert(
-        await evaluate('document.body.innerText.includes("nod spent")'),
+        await evaluate('document.body.innerText.includes("Nod spent")'),
         'Usage did not load.',
       );
     const screenshot = await send('Page.captureScreenshot', {

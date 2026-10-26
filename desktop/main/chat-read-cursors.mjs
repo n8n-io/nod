@@ -49,7 +49,7 @@ export function createChatReadCursorStore(path, { owner }) {
     try {
       expected = await owner();
     } catch {
-      throw new Error('nod could not read its local profile identity.');
+      throw new Error('Nod could not read its local profile identity.');
     }
     if (!validId(expected) || expected !== ownerId)
       throw new Error('This chat does not belong to the local profile.');
@@ -85,7 +85,7 @@ export function createChatReadCursorStore(path, { owner }) {
       state = { version: 1, ownerId, threads };
     } catch (error) {
       if (error.code !== 'ENOENT')
-        throw new Error('nod could not open its saved chat read positions.');
+        throw new Error('Nod could not open its saved chat read positions.');
       state = { version: 1, ownerId, threads: [] };
     }
     return state;
@@ -98,7 +98,7 @@ export function createChatReadCursorStore(path, { owner }) {
       await rename(temporary, path);
       state = value;
     } catch {
-      throw new Error('nod could not save its chat read position.');
+      throw new Error('Nod could not save its chat read position.');
     } finally {
       await rm(temporary, { force: true }).catch(() => {});
     }

@@ -50,7 +50,7 @@ const stages: Array<{ id: Stage; label: string; hint: string }> = [
     label: 'Mentioned once',
     hint: 'Heard once. A guess until you confirm it or say it again.',
   },
-  { id: 'observed', label: 'Learned', hint: 'Heard in two or more messages. nod uses it.' },
+  { id: 'observed', label: 'Learned', hint: 'Heard in two or more messages. Nod uses it.' },
   { id: 'stated', label: 'Confirmed', hint: 'You said it, wrote it or confirmed it.' },
   {
     id: 'archive',
@@ -60,7 +60,7 @@ const stages: Array<{ id: Stage; label: string; hint: string }> = [
   {
     id: 'skills',
     label: 'Skills',
-    hint: 'How nod did a task, written by nod from what it did and read. It follows them next time.',
+    hint: 'How Nod did a task, written by Nod from what it did and read. It follows them next time.',
   },
 ];
 const stageLabel = Object.fromEntries(stages.map((stage) => [stage.id, stage.label])) as Record<
@@ -77,7 +77,7 @@ const reasons: Record<MemoryArchived['reason'], string> = {
   contradicted: 'Contradicted',
 };
 const channels: Record<string, string> = {
-  web: 'nod web',
+  web: 'Nod web',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
 };
@@ -525,7 +525,7 @@ function SkillDetail({
         </figure>
       )}
       <p className="memory-meta">
-        {skill.edited ? 'Edited by you' : 'Updated by nod'} ·{' '}
+        {skill.edited ? 'Edited by you' : 'Updated by Nod'} ·{' '}
         {formatDayLabel(skill.edited ?? skill.updated, format)}
       </p>
       {error && <Notice>{error}</Notice>}
@@ -714,25 +714,25 @@ function ImportNotes({
           {result
             ? [
                 result.added
-                  ? `nod now knows ${formatNumber(result.added)} more ${result.added === 1 ? 'thing' : 'things'} about you.`
+                  ? `Nod now knows ${formatNumber(result.added)} more ${result.added === 1 ? 'thing' : 'things'} about you.`
                   : '',
                 result.existing
                   ? `${formatNumber(result.existing)} ${result.existing === 1 ? 'was' : 'were'} already saved.`
                   : '',
                 result.skipped
-                  ? `${formatNumber(result.skipped)} looked like a password or card number, so nod left ${result.skipped === 1 ? 'it' : 'them'} out.`
+                  ? `${formatNumber(result.skipped)} looked like a password or card number, so Nod left ${result.skipped === 1 ? 'it' : 'them'} out.`
                   : '',
               ]
                 .filter(Boolean)
                 .join(' ')
             : reviewing
-              ? 'Remove anything you don’t want nod to keep.'
+              ? 'Remove anything you don’t want Nod to keep.'
               : 'Copy this prompt into ChatGPT, Claude or Gemini, then paste its answer below.'}
         </DialogDescription>
         {result ? (
           <div className="memory-form">
             <Button autoFocus onClick={onFinish}>
-              Continue using nod
+              Continue using Nod
             </Button>
           </div>
         ) : (
@@ -981,7 +981,7 @@ export function Memory({
         ))
       ) : (
         <p className="memory-empty">
-          {search ? 'Nothing here.' : 'Nothing yet. nod writes one after a task worth repeating.'}
+          {search ? 'Nothing here.' : 'Nothing yet. Nod writes one after a task worth repeating.'}
         </p>
       )
     ) : stage === 'archive' ? (
@@ -1018,7 +1018,7 @@ export function Memory({
           'Nothing here.'
         ) : (
           <>
-            Nothing yet. Tell nod something to remember, add a note or{' '}
+            Nothing yet. Tell Nod something to remember, add a note or{' '}
             <button type="button" onClick={() => setImporting(true)}>
               import from another assistant
             </button>

@@ -1,15 +1,15 @@
 ---
 title: Workspace and files
-description: What nod's own Linux computer can do, what it can't reach, and how files move between you and nod.
+description: What Nod's own Linux computer can do, what it can't reach, and how files move between you and Nod.
 sidebar:
   order: 4
 ---
 
-nod has its own Linux computer, called the workspace, where it runs commands and keeps files for your conversation.
+Nod has its own Linux computer, called the workspace, where it runs commands and keeps files for your conversation.
 
-The workspace is separate from your computer. nod can write documents, convert files, run code and keep notes there without touching your own files.
+The workspace is separate from your computer. Nod can write documents, convert files, run code and keep notes there without touching your own files.
 
-## What nod can use
+## What Nod can use
 
 | For                     | The workspace has                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -27,8 +27,8 @@ The workspace is separate from your computer. nod can write documents, convert f
 flowchart LR
   you([You]):::accent
   home[(Your home folder)]:::muted
-  server[nod server<br/>keys stay here]
-  subgraph nod ["nod's computer"]
+  server[Nod server<br/>keys stay here]
+  subgraph Nod ["Nod's computer"]
     ws[Workspace]
     br[Browser]
   end
@@ -39,23 +39,23 @@ flowchart LR
   server -- drives --> br
 ```
 
-- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that nod fetches.
-- **Keys.** Model provider keys and nod's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code nod writes.
-- **The browser.** nod's browser runs in its own container. The workspace can't read its saved sign-ins.
+- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that Nod fetches.
+- **Keys.** Model provider keys and Nod's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code Nod writes.
+- **The browser.** Nod's browser runs in its own container. The workspace can't read its saved sign-ins.
 
 :::caution
-The workspace can reach the internet. Code that nod runs there can download files and call websites.
+The workspace can reach the internet. Code that Nod runs there can download files and call websites.
 :::
 
-## Give nod files
+## Give Nod files
 
-- **Attach them in chat.** Each file can be 90 MB or smaller. nod gets a copy in the workspace and sees images directly.
+- **Attach them in chat.** Each file can be 90 MB or smaller. Nod gets a copy in the workspace and sees images directly.
 - **From your apps.** Files from a connected app, such as an email attachment, are saved privately in the workspace.
-- **From the web.** Files that nod downloads in its [browser](/use/browser/) go into the workspace.
+- **From the web.** Files that Nod downloads in its [browser](/use/browser/) go into the workspace.
 
-## Get files from nod
+## Get files from Nod
 
-When nod shares a file, it appears as an attachment in the nod app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to nod while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
+When Nod shares a file, it appears as an attachment in the Nod app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to Nod while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
 
 The panel remembers reading state for up to eight recently viewed files, with a total retention limit of 90 MB. Use the filename selector to jump between files during this conversation visit.
 
@@ -78,11 +78,11 @@ Native opening is limited to supported document and raster image types. Save oth
 | Code, JSON and text                     | With syntax highlighting                                           |
 | ZIP                                     | The list of files inside                                           |
 
-HTML files run in a sandbox, apart from nod. Their scripts work, but they can't reach nod or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
+HTML files run in a sandbox, apart from Nod. Their scripts work, but they can't reach Nod or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
 
 Previews have size limits: 4 MB for text, Markdown, HTML and spreadsheets, 25 MB for Word documents and 60 MB for presentations. Download larger files to open them.
 
-Files nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. Telegram and the WhatsApp QR connection receive shared files up to 50 MB each. With the WhatsApp Cloud API, open nod to get files. See [Telegram and WhatsApp](/use/channels/).
+Files Nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. Telegram and the WhatsApp QR connection receive shared files up to 50 MB each. With the WhatsApp Cloud API, open Nod to get files. See [Telegram and WhatsApp](/use/channels/).
 
 ## One workspace for all tasks
 
@@ -94,13 +94,13 @@ See [Task sessions](/how-it-works/task-sessions/#shared-information-separate-his
 
 ## How long files stay
 
-Files stay in the workspace for the whole conversation. nod can come back to them days later.
+Files stay in the workspace for the whole conversation. Nod can come back to them days later.
 
-In a development run, **Clear messages** gives nod a new, empty workspace folder. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
+In a development run, **Clear messages** gives Nod a new, empty workspace folder. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
 
 ## Related resources
 
-- [Chat with nod](/use/chat/)
-- [nod's browser](/use/browser/)
+- [Chat with Nod](/use/chat/)
+- [Nod's browser](/use/browser/)
 - [Your data and privacy](/trust/privacy/)
 - [Sandbox and browser](/how-it-works/sandbox-and-browser/)

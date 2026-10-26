@@ -27,7 +27,7 @@ identity = '/var/lib/nod/identity'
 os.makedirs('/var/lib/nod', mode=0o700, exist_ok=True)
 if os.path.exists(identity):
     if open(identity).read() != config['identity']:
-        sys.exit('The nod computer identity changed.')
+        sys.exit('The Nod computer identity changed.')
 else:
     with open(identity, 'x') as file:
         file.write(config['identity'])
@@ -66,4 +66,4 @@ if result.returncode or result.stdout.strip() != image['id']:
         sys.exit(f'Docker could not load the {name} image: {loaded.stderr.strip()[-200:]}')
 result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
 if result.returncode or result.stdout.strip() != image['id']:
-    sys.exit(f'The {name} image does not match the nod computer manifest.')
+    sys.exit(f'The {name} image does not match the Nod computer manifest.')

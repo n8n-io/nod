@@ -97,7 +97,7 @@ export default scenario({
     return [
       `The owner's notification rule: "Tell me right away about emails from Helena, my boss." Helena Marques (${helena}) just emailed "${subject}": she needs the Q4 deck by 3pm tomorrow (${world.tomorrow}) for board prep. There is no deck file in any connected app. Other inbox mail: a newsletter and a paid receipt.`,
       `Background turn for the email: ${event ? `${event.status}${event.error ? ` (${event.error})` : ''}` : 'never ran'}.`,
-      `Messages nod sent on its own:\n${
+      `Messages Nod sent on its own:\n${
         eventMessages(run)
           .map((message) => `  - ${message.text.replace(/\s+/g, ' ')}`)
           .join('\n') || '  (none)'

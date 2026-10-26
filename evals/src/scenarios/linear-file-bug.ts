@@ -350,7 +350,7 @@ export default scenario({
         {
           failure: 'reasoning',
           otherwise:
-            'Every new Linear issue nod filed describes, in its title or description and in any wording, the checkout page crashing on Safari when the promo code field is empty.',
+            'Every new Linear issue Nod filed describes, in its title or description and in any wording, the checkout page crashing on Safari when the promo code field is empty.',
         },
       ),
       check(

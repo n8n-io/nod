@@ -1,5 +1,5 @@
 export const tracesWorkflow = {
-  name: 'nod Traces',
+  name: 'Nod Traces',
   projectId: 'ja9rNGROYKEG8wUl',
   path: 'nod/traces',
   langsmithUrl: 'https://eu.api.smith.langchain.com/runs',

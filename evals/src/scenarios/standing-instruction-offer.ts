@@ -15,7 +15,7 @@ const toAna = (write: Run['writes'][number]) =>
 
 export default scenario({
   id: 'standing-instruction-offer',
-  title: 'After the owner acts on a flagged email, nod offers to do it on its own next time',
+  title: 'After the owner acts on a flagged email, Nod offers to do it on its own next time',
   capabilities: ['apps', 'approvals', 'progress'],
   tier: 'pr',
   complexity: 'medium',

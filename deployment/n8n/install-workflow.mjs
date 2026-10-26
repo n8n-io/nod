@@ -81,5 +81,5 @@ export function installWorkflowCode() {
     );
     return `const n${index} = ${[0, 3].includes(index) ? 'trigger' : 'node'}({type:${JSON.stringify(type)},version:${typeVersion},config:${serialized}});`;
   });
-  return `import {workflow,trigger,node,expr} from '@n8n/workflow-sdk';\n${declarations.join('\n')}\nexport default workflow('nod-install','nod Install').add(n0).to(n1).to(n2).add(n3).to(n4).to(n2);\n`;
+  return `import {workflow,trigger,node,expr} from '@n8n/workflow-sdk';\n${declarations.join('\n')}\nexport default workflow('nod-install','Nod Install').add(n0).to(n1).to(n2).add(n3).to(n4).to(n2);\n`;
 }

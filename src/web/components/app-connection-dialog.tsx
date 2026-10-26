@@ -52,22 +52,22 @@ export function AppConnectionDialog({
   const description =
     error ||
     (connected
-      ? 'You can continue in nod.'
+      ? 'You can continue in Nod.'
       : outcome === 'unavailable'
         ? onRetry
           ? 'This sign-in is no longer active. Try again to open a new window.'
-          : 'This link is no longer available. Ask nod for a new sign-in link.'
+          : 'This link is no longer available. Ask Nod for a new sign-in link.'
         : outcome === 'cancelled'
           ? 'You can try again when you’re ready to connect this account.'
           : outcome === 'failed'
             ? onRetry
               ? 'Sign-in couldn’t be confirmed. Try again with a new window.'
-              : 'Ask nod for a new sign-in link to try again.'
+              : 'Ask Nod for a new sign-in link to try again.'
             : signIn?.reopened && !onRetry
-              ? 'Sign-in is already open in your browser. If you closed it, ask nod for a new sign-in link.'
+              ? 'Sign-in is already open in your browser. If you closed it, ask Nod for a new sign-in link.'
               : opening || !signIn?.url
                 ? 'Your browser will open when sign-in is ready.'
-                : 'Review what nod can access in your browser.');
+                : 'Review what Nod can access in your browser.');
   return (
     <Dialog
       open={Boolean(signIn && (!fallbackOnly || (signIn.url && !signIn.opened && !opening)))}

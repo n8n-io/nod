@@ -105,7 +105,7 @@ export function VaultSiteAccess({
             <VaultActivityPages activity={activity} origin={origin} />
           </div>
         ) : (
-          <p className="statement-empty">nod hasn’t used this yet.</p>
+          <p className="statement-empty">Nod hasn’t used this yet.</p>
         )}
       </section>
     </>

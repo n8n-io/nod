@@ -1,13 +1,13 @@
 ---
 title: Interface design
-description: The colors, type, spacing and icons nod's interface uses, the rules that keep it simple, and how to check a UI change.
+description: The colors, type, spacing and icons Nod's interface uses, the rules that keep it simple, and how to check a UI change.
 sidebar:
   order: 7
 ---
 
-This page lists the design rules for nod's web and desktop interface, and how to check a UI change before you open a pull request.
+This page lists the design rules for Nod's web and desktop interface, and how to check a UI change before you open a pull request.
 
-nod follows the [n8n brand system](https://guidelines.n8n.design/): neutral gray surfaces, pink primary actions and clear text. nod keeps its own symbol. It's a product mark, not a copy of the n8n logo.
+Nod follows the [n8n brand system](https://guidelines.n8n.design/): neutral gray surfaces, pink primary actions and clear text. Nod keeps its own symbol. It's a product mark, not a copy of the n8n logo.
 
 ## Keep it simple
 
@@ -112,7 +112,7 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 
 ## Check your change in the running app
 
-The test suite doesn't cover how the interface looks. Run nod with synthetic data and look at the change yourself.
+The test suite doesn't cover how the interface looks. Run Nod with synthetic data and look at the change yourself.
 
 ```mermaid
 flowchart TD
@@ -131,7 +131,7 @@ flowchart TD
 
 ## Related resources
 
-- [Contribute to nod](/contribute/)
+- [Contribute to Nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Pull requests](/contribute/pull-requests/)
 - [Write docs](/contribute/write-docs/)

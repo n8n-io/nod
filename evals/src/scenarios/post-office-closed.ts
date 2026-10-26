@@ -239,7 +239,7 @@ export default scenario({
           };
         },
         {
-          otherwise: `The new top-level message nod posted in #general names ${world.friday.label} as the day the office is closed, in any wording or date format.`,
+          otherwise: `The new top-level message Nod posted in #general names ${world.friday.label} as the day the office is closed, in any wording or date format.`,
         },
       ),
       check(
@@ -260,7 +260,7 @@ export default scenario({
         {
           failure: 'reasoning',
           otherwise:
-            'The new top-level message nod posted in #general tells people the office will be closed, in any wording.',
+            'The new top-level message Nod posted in #general tells people the office will be closed, in any wording.',
         },
       ),
       check(

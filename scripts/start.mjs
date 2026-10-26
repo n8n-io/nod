@@ -47,7 +47,7 @@ try {
     );
     return environment;
   });
-  console.log('\nnod is starting. Open the link it prints when it is ready.\n');
+  console.log('\nNod is starting. Open the link it prints when it is ready.\n');
   const child = spawn(
     'pnpm',
     ['exec', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],

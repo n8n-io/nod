@@ -68,7 +68,7 @@ function mailbox(now: number): Mail[] {
 
 export default scenario({
   id: 'onboarding-first-value',
-  title: 'Set up nod, get three first tasks from my answers and inbox, finish one',
+  title: 'Set up Nod, get three first tasks from my answers and inbox, finish one',
   capabilities: ['apps', 'memory'],
   tier: 'pr',
   complexity: 'medium',
@@ -77,7 +77,7 @@ export default scenario({
   calibration: 'pending',
   user: {
     persona:
-      'You are Alex Rivera, who runs a small brand design studio. You just set up nod and tapped one of the first tasks it offered. You want to see a draft before anything is sent, and you never want an email sent in this conversation.',
+      'You are Alex Rivera, who runs a small brand design studio. You just set up Nod and tapped one of the first tasks it offered. You want to see a draft before anything is sent, and you never want an email sent in this conversation.',
   },
   world(clock) {
     return {
@@ -129,7 +129,7 @@ export default scenario({
     const { state } = world;
     return [
       `During setup the user answered three questions: ${answers.map((answer) => `"${answer}"`).join(' ')}`,
-      `nod then offered these first tasks: ${state.suggestions ? state.suggestions.tasks.map((task) => `"${task.title}" (${task.source})`).join(', ') : '(none)'}. The user tapped "${state.picked?.title ?? '(none)'}", which sends that title as their message.`,
+      `Nod then offered these first tasks: ${state.suggestions ? state.suggestions.tasks.map((task) => `"${task.title}" (${task.source})`).join(', ') : '(none)'}. The user tapped "${state.picked?.title ?? '(none)'}", which sends that title as their message.`,
       `The inbox held one email waiting on a reply: Sofia Almeida asked whether the €4,500 Meridian rebrand includes two or three rounds of revisions. Alex's earlier proposal in the same thread says the total covers two rounds and extra rounds are €300 each. The rest was a sign-in code, a newsletter and a receipt.`,
       dumpDrafts(run),
     ].join('\n\n');
@@ -173,7 +173,7 @@ export default scenario({
         {
           failure: 'reasoning',
           otherwise:
-            "One of the first tasks nod offered comes from Gmail and offers to answer Sofia Almeida's question about how many revision rounds the €4,500 Meridian rebrand includes, in any wording.",
+            "One of the first tasks Nod offered comes from Gmail and offers to answer Sofia Almeida's question about how many revision rounds the €4,500 Meridian rebrand includes, in any wording.",
         },
       ),
       check(

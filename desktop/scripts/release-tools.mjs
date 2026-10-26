@@ -362,13 +362,13 @@ await import('@earendil-works/pi-coding-agent');
 await import('pi-web-access/dist/index.js');
 const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
 assert(native.getNativePlatformHelper());
-console.log('nod engine imports verified.');`;
+console.log('Nod engine imports verified.');`;
   const result = await run(
     join(application, 'Contents/MacOS/nod'),
     ['--input-type=module', '-e', script],
     { cwd: engine, env: { ...environment, ELECTRON_RUN_AS_NODE: '1' } },
   );
-  if (result !== 'nod engine imports verified.')
+  if (result !== 'Nod engine imports verified.')
     throw new Error('The signed Electron engine import check failed.');
 }
 

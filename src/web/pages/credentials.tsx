@@ -43,9 +43,9 @@ function PrivateFormFrame({
   return (
     <Element className={embedded ? 'credential-embedded' : 'credential-page'}>
       {!embedded && (
-        <a href="/" onClick={returnToChat} className="credential-brand" aria-label="nod home">
+        <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Nod home">
           <BrandMark />
-          <span>nod</span>
+          <span>Nod</span>
         </a>
       )}
       {children}
@@ -112,7 +112,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
         }
       } catch {
         if (!controller.signal.aborted && version === updates.current)
-          setError('This payment request is unavailable. Ask nod to check the checkout.');
+          setError('This payment request is unavailable. Ask Nod to check the checkout.');
       }
     };
     void refresh();
@@ -156,7 +156,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
     } catch {
       if (!controller.signal.aborted) {
         setStatus('uncertain');
-        setError('The result is not confirmed. Ask nod to check the order before another attempt.');
+        setError('The result is not confirmed. Ask Nod to check the order before another attempt.');
         try {
           const result = await api<{ status: PaymentStatus }>(`${path}/status`, {
             signal: controller.signal,
@@ -194,10 +194,10 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
         {saving || status === 'entering' ? (
           <Loading label="Submitting your card…" />
         ) : status === 'submitted' ? (
-          <p>nod will check the result and continue your task in the same conversation.</p>
+          <p>Nod will check the result and continue your task in the same conversation.</p>
         ) : status === 'uncertain' ? (
           <p>
-            The card may have reached the website. Ask nod to check the order before another
+            The card may have reached the website. Ask Nod to check the order before another
             attempt.
           </p>
         ) : status === 'expired' ? (
@@ -419,7 +419,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       '/method',
       { methodId },
       submitted,
-      'This method could not continue. Ask nod to check the sign-in page.',
+      'This method could not continue. Ask Nod to check the sign-in page.',
     );
   }
   function useSaved(entryId: string) {
@@ -440,7 +440,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
         listed = true;
         setManager({ stage: 'list', account, logins: result.logins });
       },
-      `nod couldn’t open ${managerName}. Try again.`,
+      `Nod couldn’t open ${managerName}. Try again.`,
       true,
     );
     if (!listed)
@@ -490,7 +490,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
         {saving && manager?.stage === 'waiting' ? (
           <div className="credential-complete" role="status" aria-live="polite">
             <h1>Approve in {managerName}</h1>
-            <p>{managerName} asks before nod can read your logins.</p>
+            <p>{managerName} asks before Nod can read your logins.</p>
             <Loading label={`Waiting for ${managerName}…`} />
           </div>
         ) : saving ? (
@@ -510,7 +510,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               <Check size={24} />
             </div>
             <h1>{request?.kind === 'method' ? 'Continuing sign-in' : 'Details submitted'}</h1>
-            <p>nod will continue from the website’s response.</p>
+            <p>Nod will continue from the website’s response.</p>
             <BackToChat onClose={onClose} />
           </div>
         ) : request?.status === 'entering' ? (
@@ -532,8 +532,8 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               {retried
                 ? 'Return to chat for the next step.'
                 : uncertain
-                  ? 'The sign-in may have reached the website. Ask nod to check its result before another attempt.'
-                  : 'Ask nod to check the sign-in page again.'}
+                  ? 'The sign-in may have reached the website. Ask Nod to check its result before another attempt.'
+                  : 'Ask Nod to check the sign-in page again.'}
             </p>
             {!retried && (
               <Button disabled={saving} onClick={() => void retry()}>

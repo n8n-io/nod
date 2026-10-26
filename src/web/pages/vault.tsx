@@ -354,7 +354,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         {!pageMode && empty && (
           <div className="statement vault-start">
             <p className="statement-summary">
-              nod has <b>no logins</b> and <b>no cards</b> yet.
+              Nod has <b>no logins</b> and <b>no cards</b> yet.
               <br />
               It fills them in for you. The AI never sees your passwords or card numbers.
             </p>
@@ -369,7 +369,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
                 {
                   icon: KeyRound,
                   label: 'Add a login',
-                  detail: 'nod signs in when a task needs it',
+                  detail: 'Nod signs in when a task needs it',
                   run: () => start('login'),
                 },
                 {

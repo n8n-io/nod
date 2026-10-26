@@ -41,5 +41,5 @@ else
   docker compose --file compose.yaml --env-file .env up -d --no-build --wait --wait-timeout 180
 fi
 address=$(docker compose --file compose.yaml --env-file .env exec -T server node -p 'process.env.NOD_PUBLIC_URL')
-printf 'nod is ready at %s\n' "$address"
+printf 'Nod is ready at %s\n' "$address"
 printf '%s\n' 'Enter NOD_AUTH_TOKEN from the private .env file. For a remote loopback address, open an SSH tunnel first.' "Installed source revision: $revision"

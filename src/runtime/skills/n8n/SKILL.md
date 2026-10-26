@@ -1,6 +1,6 @@
 ---
 name: n8n
-description: Use only when the user names n8n, or continues work on an n8n workflow or Agent already in this conversation, and wants something in their connected n8n, such as building, changing, testing, debugging, publishing or explaining it. Otherwise use nod's own tasks and schedules, even when n8n is connected.
+description: Use only when the user names n8n, or continues work on an n8n workflow or Agent already in this conversation, and wants something in their connected n8n, such as building, changing, testing, debugging, publishing or explaining it. Otherwise use Nod's own tasks and schedules, even when n8n is connected.
 ---
 
 # n8n

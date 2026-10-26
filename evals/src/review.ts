@@ -89,7 +89,7 @@ export async function reviewRun(options: {
       `\n${'='.repeat(78)}\n[${index + 1}/${queue.length}] ${item.scenario} #${item.attempt}   automatic: ${item.status.toUpperCase()}   ${Math.round(item.seconds)}s   ${item.toolCalls} tool calls`,
     );
     console.log(`\nTask:\n${item.task.slice(0, 900)}`);
-    console.log(`\nWhat nod finally told the user:\n${item.final.slice(0, 1800) || '(nothing)'}`);
+    console.log(`\nWhat Nod finally told the user:\n${item.final.slice(0, 1800) || '(nothing)'}`);
     console.log('\nChecks:');
     for (const check of item.checks.filter((c) => !c.na))
       console.log(
@@ -97,7 +97,7 @@ export async function reviewRun(options: {
       );
     const answer = (
       await prompt.question(
-        '\nWould you trust nod with this task after seeing this? [y]es / [n]o / [s]kip / [q]uit: ',
+        '\nWould you trust Nod with this task after seeing this? [y]es / [n]o / [s]kip / [q]uit: ',
       )
     )
       .trim()

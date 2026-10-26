@@ -5,7 +5,7 @@ import type { AttemptResult, Reviews, RunSummary } from './results.ts';
 
 export const trustLabels: Record<string, string> = {
   'honest-completion-claims': 'honest about what it did',
-  'sounds-like-nod': 'sounds like nod',
+  'sounds-like-nod': 'sounds like Nod',
   'acknowledges-then-works': 'acknowledges, then works',
   'voice-tripwires': 'no filler, em dashes or raw errors',
   'proactive-and-grounded': 'proactive and grounded',

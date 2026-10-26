@@ -1,11 +1,11 @@
 ---
 title: Conversation traces
-description: What nod sends to the nod team when you turn on conversation traces, what it removes before sending, and how traces are pseudonymised.
+description: What Nod sends to the Nod team when you turn on conversation traces, what it removes before sending, and how traces are pseudonymised.
 sidebar:
   order: 12
 ---
 
-Conversation traces let the nod team at n8n see how nod handles real requests, so they can find and fix problems. They're off until you turn them on. nod removes personal details on the machine running your assistant before sending a trace.
+Conversation traces let the Nod team at n8n see how Nod handles real requests, so they can find and fix problems. They're off until you turn them on. Nod removes personal details on the machine running your assistant before sending a trace.
 
 This page describes n8n's trace service, used by official desktop builds. A server operator can configure another receiver; that receiver controls access and retention.
 
@@ -22,26 +22,26 @@ The switch is separate from **Share usage data**, and you can turn either on wit
 
 ## What a trace contains
 
-While the switch is on, each request nod makes to your model becomes one trace, from chats, tasks, helpers and background checks.
+While the switch is on, each request Nod makes to your model becomes one trace, from chats, tasks, helpers and background checks.
 
 | Sent, after scrubbing                                                     | Never sent                                                     |
 | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | The messages and tool results the model saw for that request              | Your account, installation or device identifier                |
-| nod's instructions, without your saved memory, learned skills and formats | Images, which become `[image]`                                 |
-| The names of the tools the model could use                                | Saved passwords, codes and cards, which nod's model never sees |
+| Nod's instructions, without your saved memory, learned skills and formats | Images, which become `[image]`                                 |
+| The names of the tools the model could use                                | Saved passwords, codes and cards, which Nod's model never sees |
 | The model's reply                                                         | Checks of emails that may give access to an account            |
 | The model name, token counts and cost                                     | Requests to decision services                                  |
 | Whether it came from chat, a task, a helper or a background check         | Your usage analytics, which have their own switch              |
 
 n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
 
-## What nod removes first
+## What Nod removes first
 
 Every trace passes through these layers on the machine running your assistant before it's sent.
 
 | Layer                       | What it removes                                                                                     | How it decides                                               |
 | --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Known secrets               | Keys you saved, model and app keys, nod's own tokens, and text shaped like a key, token or password | The exact values nod knows, plus known key formats           |
+| Known secrets               | Keys you saved, model and app keys, Nod's own tokens, and text shaped like a key, token or password | The exact values Nod knows, plus known key formats           |
 | Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data         | The field name                                               |
 | Your name                   | The name on each Gmail account you connected, in full or in part                                    | An exact match                                               |
 | Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                 | The address format                                           |
@@ -68,14 +68,14 @@ He can call me on [phone] or at the office, [ip]. Thanks, [owner]
 The invoice number stays, because it isn't personal. Checks that need a valid number, such as the card checksum, keep ordinary numbers like order IDs and dates.
 
 :::caution[Removal is automatic]
-nod removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence or a street address in plain text. Turn traces on only if you're comfortable with that.
+Nod removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence or a street address in plain text. Turn traces on only if you're comfortable with that.
 :::
 
 ## How traces are pseudonymised
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other nod data such as feedback reports.
-- **No owner context.** nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other Nod data such as feedback reports.
+- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
 - **No images.** Images are replaced with `[image]`.
 
 These steps remove the direct links to you. Traces are still pseudonymised, not anonymous: what a conversation says can identify you, for example a detail the scrubber doesn't recognize.
@@ -84,15 +84,15 @@ These steps remove the direct links to you. Traces are still pseudonymised, not 
 
 ```mermaid
 flowchart LR
-  nod[nod on your computer or server<br/>scrubs each trace]:::accent -- "HTTPS, with nod's token" --> broker["nod Traces service (n8n)<br/>checks and forwards"]
+  Nod[Nod on your computer or server<br/>scrubs each trace]:::accent -- "HTTPS, with Nod's token" --> broker["Nod Traces service (n8n)<br/>checks and forwards"]
   broker -- write-only key --> langsmith[LangSmith, EU<br/>deleted after 14 days]
 ```
 
-1. nod sends each scrubbed trace to n8n's **nod Traces** service. The service refuses requests without the token in official nod builds. It checks the trace's shape and size, files it in the `nod` project, and keeps no copy of the request. It forwards about 600 traces per clock minute from all senders combined, a best-effort cap that limits the cost of misuse.
-2. The service writes the trace to n8n's LangSmith workspace in the EU with a tracing key that can write traces but can't read them. nod itself never holds a LangSmith key.
+1. Nod sends each scrubbed trace to n8n's **Nod Traces** service. The service refuses requests without the token in official Nod builds. It checks the trace's shape and size, files it in the `nod` project, and keeps no copy of the request. It forwards about 600 traces per clock minute from all senders combined, a best-effort cap that limits the cost of misuse.
+2. The service writes the trace to n8n's LangSmith workspace in the EU with a tracing key that can write traces but can't read them. Nod itself never holds a LangSmith key.
 3. LangSmith deletes each trace 14 days after it arrives. People at n8n with access to that workspace can read traces until then.
 
-n8n uses traces to find and fix problems in nod. It doesn't use them to train AI models.
+n8n uses traces to find and fix problems in Nod. It doesn't use them to train AI models.
 
 :::note[The token isn't a secret from you]
 Anyone who unpacks the desktop app can read the token it sends. The token keeps out scanners and stray requests. The real protection is the scrubbing before sending, the checks in the service and the write-only key.
@@ -103,9 +103,9 @@ Anyone who unpacks the desktop app can read the token it sends. The token keeps 
 | Variable           | What it does                                                                                  |
 | ------------------ | --------------------------------------------------------------------------------------------- |
 | `NOD_TRACES_URL`   | The HTTPS address that receives traces. An empty value turns traces off for everyone.         |
-| `NOD_TRACES_TOKEN` | The token sent as `x-nod-traces-token`. Without it, nod sends no traces and hides the switch. |
+| `NOD_TRACES_TOKEN` | The token sent as `x-nod-traces-token`. Without it, Nod sends no traces and hides the switch. |
 
-Official desktop builds take the token from the `NOD_TRACES_TOKEN` secret of the `release` environment, and only the packaging steps can read it. The service is defined in [`deployment/n8n/traces.mjs`](https://github.com/n8n-io/nod/blob/main/deployment/n8n/traces.mjs). It uses two n8n credentials: **nod traces webhook** holds the token and **nod LangSmith traces** holds the LangSmith tracing key. The tracing key expires after one year. Create a new **Tracing Only** key in LangSmith and update the credential before then. To change the token, update the n8n credential and the release secret together. Desktop builds made with the old token stop sending until people update.
+Official desktop builds take the token from the `NOD_TRACES_TOKEN` secret of the `release` environment, and only the packaging steps can read it. The service is defined in [`deployment/n8n/traces.mjs`](https://github.com/n8n-io/nod/blob/main/deployment/n8n/traces.mjs). It uses two n8n credentials: **Nod traces webhook** holds the token and **Nod LangSmith traces** holds the LangSmith tracing key. The tracing key expires after one year. Create a new **Tracing Only** key in LangSmith and update the credential before then. To change the token, update the n8n credential and the release secret together. Desktop builds made with the old token stop sending until people update.
 
 ## Where this is enforced
 

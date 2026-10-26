@@ -23,9 +23,9 @@ export function Welcome({
   return (
     <section className="ob-step ob-welcome" data-analytics-public>
       <div className="ob-welcome-content">
-        <h1 className="ob-welcome-wordmark" aria-label="nod">
+        <h1 className="ob-welcome-wordmark" aria-label="Nod">
           <NodGlyph size={80} mode="bounce" className="ob-welcome-mark" />
-          <span aria-hidden="true">nod</span>
+          <span aria-hidden="true">Nod</span>
         </h1>
         <p className="ob-welcome-copy">
           Real tasks, done for you, on your
@@ -33,7 +33,7 @@ export function Welcome({
         </p>
         <Button onClick={onNext}>{actionLabel}</Button>
       </div>
-      <p className="ob-welcome-note">This is a preview version of nod, developed by n8n</p>
+      <p className="ob-welcome-note">This is a preview version of Nod, developed by n8n</p>
     </section>
   );
 }

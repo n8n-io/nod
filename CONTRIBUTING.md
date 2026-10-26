@@ -1,6 +1,6 @@
-# Contributing to nod
+# Contributing to Nod
 
-Thanks for helping improve nod. The full guide is in the docs: [Contribute to nod](docs/src/content/docs/contribute/index.mdx). This page has the essentials.
+Thanks for helping improve Nod. The full guide is in the docs: [Contribute to Nod](docs/src/content/docs/contribute/index.mdx). This page has the essentials.
 
 Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
@@ -13,7 +13,7 @@ Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Set up and check
 
-Follow [Install from source](docs/src/content/docs/get-started/install-from-source.mdx), then run nod with automatic reload:
+Follow [Install from source](docs/src/content/docs/get-started/install-from-source.mdx), then run Nod with automatic reload:
 
 ```sh
 pnpm run dev
@@ -42,4 +42,4 @@ A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. See [Pu
 
 ## License
 
-nod is licensed under the [Apache License 2.0](LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
+Nod is licensed under the [Apache License 2.0](LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.

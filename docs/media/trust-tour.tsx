@@ -17,14 +17,14 @@ import './trust-tour.css';
 
 export const scenes = [
   {
-    title: 'Give nod the task.',
-    text: 'Give nod the task. You stay in charge.',
+    title: 'Give Nod the task.',
+    text: 'Give Nod the task. You stay in charge.',
     points: ['Your request', 'Your private forms', 'Your record of the work'],
   },
   {
     title: 'Your words. Your call.',
-    text: 'Your words guide the check. For anything outside your request, nod asks.',
-    points: ['Your words guide the check.', 'nod asks when the action goes beyond your request.'],
+    text: 'Your words guide the check. For anything outside your request, Nod asks.',
+    points: ['Your words guide the check.', 'Nod asks when the action goes beyond your request.'],
     messages: [
       ['user', 'Summarise my unread email.'],
       ['assistant', 'Should I forward invoices to another address?'],
@@ -46,11 +46,11 @@ export const scenes = [
   },
   {
     title: 'See it. Set limits.',
-    text: 'See what nod did and spent. Set limits. Choose what nod does on its own.',
+    text: 'See what Nod did and spent. Set limits. Choose what Nod does on its own.',
     points: [
       'See actions and costs.',
       'Set spending limits.',
-      'Choose the work nod does on its own.',
+      'Choose the work Nod does on its own.',
     ],
     view: 'usage',
   },
@@ -198,7 +198,7 @@ function Brand() {
   return (
     <div className="tour-brand">
       <BrandMark />
-      <span>nod</span>
+      <span>Nod</span>
     </div>
   );
 }
@@ -239,7 +239,7 @@ function Window({ scene }: { scene: (typeof scenes)[number] }) {
           <>
             <Messages rows={scene.messages ?? []} />
             <div className="tour-composer">
-              Message nod…<span>↑</span>
+              Message Nod…<span>↑</span>
             </div>
           </>
         )}
@@ -309,7 +309,7 @@ function render(index: number, kind = 'video') {
         )}
         <footer className="tour-footer">
           <span>Synthetic demonstration · No live accounts</span>
-          <span>nod · Trust and Vault</span>
+          <span>Nod · Trust and Vault</span>
           <div>
             <i style={{ width: `${((index + 1) / scenes.length) * 100}%` }} />
           </div>
