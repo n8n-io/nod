@@ -89,17 +89,17 @@ export function execute(
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
-      if (signal?.aborted) return reject(new Error('nod setup was cancelled.'));
+      if (signal?.aborted) return reject(new Error('Nod setup was cancelled.'));
       if (spawnError)
         return reject(
-          new Error(`nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
+          new Error(`Nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
         );
-      if (timedOut) return reject(new Error('nod runtime setup took too long. Please retry.'));
+      if (timedOut) return reject(new Error('Nod runtime setup took too long. Please retry.'));
       if (code !== 0) {
         const detail = output.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
         return reject(
           new Error(
-            `nod runtime command failed (${code})${
+            `Nod runtime command failed (${code})${
               detail ? `: ${detail.length > 300 ? '…' : ''}${detail.slice(-300)}` : '.'
             }`,
           ),
@@ -142,7 +142,7 @@ async function prepare(options, onComputerStart) {
     return prepareWindowsRuntime(options, onComputerStart);
   }
   if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
-    throw new Error('This experimental nod build requires an Intel or Apple Silicon Mac.');
+    throw new Error('This experimental Nod build requires an Intel or Apple Silicon Mac.');
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const onStatus = options.onStatus || options.onProgress || (() => {});
@@ -181,7 +181,7 @@ async function prepare(options, onComputerStart) {
     manifest.guest.file !== 'guest.img' ||
     manifest.dockerGuest.file !== 'docker-guest.tar.gz'
   )
-    throw new Error('This nod computer bundle is incompatible.');
+    throw new Error('This Nod computer bundle is incompatible.');
   for (const entry of [manifest.guest, manifest.dockerGuest, ...manifest.images]) {
     if (
       !/^[a-f0-9]{64}$/.test(entry.sha256) ||
@@ -189,7 +189,7 @@ async function prepare(options, onComputerStart) {
         entry.file,
       )
     )
-      throw new Error('The nod computer manifest is invalid.');
+      throw new Error('The Nod computer manifest is invalid.');
   }
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
   const limaHome = join(homedir(), '.nod-desktop', identity);
@@ -211,7 +211,7 @@ async function prepare(options, onComputerStart) {
     saved = JSON.parse(await readFile(configPath, 'utf8'));
   } catch (error) {
     if (error.code !== 'ENOENT')
-      throw new Error('The nod local computer configuration needs recovery.');
+      throw new Error('The Nod local computer configuration needs recovery.');
     const orphaned = await access(join(limaHome, 'nod/lima.yaml')).then(
       () => true,
       () => false,
@@ -232,7 +232,7 @@ async function prepare(options, onComputerStart) {
       saved.port > 65535 ||
       !/^[a-f0-9]{64}$/.test(saved.password))
   )
-    throw new Error('The nod local computer configuration needs recovery.');
+    throw new Error('The Nod local computer configuration needs recovery.');
   saved ??= {
     version: 1,
     limaHome,
@@ -278,18 +278,18 @@ async function prepare(options, onComputerStart) {
     try {
       config = JSON.parse(await readFile(vmConfigPath, 'utf8'));
     } catch {
-      throw new Error('The nod computer configuration needs recovery.');
+      throw new Error('The Nod computer configuration needs recovery.');
     }
     if (
       config.mounts?.length !== 1 ||
       config.mounts[0].mountPoint !== '/opt/nod-assets' ||
       config.mounts[0].writable !== false
     )
-      throw new Error('The nod computer has unexpected folder access.');
+      throw new Error('The Nod computer has unexpected folder access.');
     if (config.mounts[0].location !== assets) {
       const currentStatus = await runLima(['list', '--format', '{{.Status}}', vm]);
       if (currentStatus.trim() !== 'Stopped')
-        throw new Error('Quit and reopen nod to update its local computer.');
+        throw new Error('Quit and reopen Nod to update its local computer.');
       config.mounts[0].location = assets;
       config.images = [
         {
@@ -317,7 +317,7 @@ async function prepare(options, onComputerStart) {
     if (installed === item.id) return;
     await runtimeAssets.ready(item.file);
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
-      throw new Error('A nod computer image is damaged. Reinstall this build.');
+      throw new Error('A Nod computer image is damaged. Reinstall this build.');
     await runLima(
       [
         'shell',
@@ -331,7 +331,7 @@ async function prepare(options, onComputerStart) {
       { timeout: 600_000 },
     );
     if ((await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference])) !== item.id)
-      throw new Error('The loaded nod image does not match its manifest.');
+      throw new Error('The loaded Nod image does not match its manifest.');
   };
   return finishRuntime({
     dataRoot,
@@ -360,7 +360,7 @@ function validImage(item) {
     !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
     !/^images\/(workspace|browser|postgres)\.tar\.zst$/.test(item.file)
   )
-    throw new Error('The nod computer image is invalid.');
+    throw new Error('The Nod computer image is invalid.');
   return item;
 }
 
@@ -387,7 +387,7 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
     ]).catch(() => '');
     if (installed === item.id) continue;
     if ((await assetHash(join(assets, item.file), signal)) !== item.sha256)
-      throw new Error('A nod computer image is damaged. Reinstall this build.');
+      throw new Error('A Nod computer image is damaged. Reinstall this build.');
     await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
     loaded.push(item.name);
   }
@@ -446,7 +446,7 @@ export async function ensureNetwork(runDocker, { name, subnet, bridge }) {
     network.Options?.['com.docker.network.bridge.name'] !== bridge ||
     network.Options?.['com.docker.network.bridge.enable_icc'] !== 'false'
   )
-    throw new Error('The nod computer network has unexpected isolation settings.');
+    throw new Error('The Nod computer network has unexpected isolation settings.');
 }
 
 export async function replaceContainer(
@@ -476,7 +476,7 @@ export async function replaceContainer(
   if (inspected) {
     const [current] = JSON.parse(inspected);
     if (current?.Config?.Labels?.['dev.nod.desktop.experiment'] !== 'true')
-      throw new Error('The nod container identity changed.');
+      throw new Error('The Nod container identity changed.');
     for (let index = 0; index < args.length; index++) {
       if (args[index] !== '--volume') continue;
       const [volume, destination] = args[++index].split(':');
@@ -486,7 +486,7 @@ export async function replaceContainer(
             mount.Type === 'volume' && mount.Name === volume && mount.Destination === destination,
         )
       )
-        throw new Error('The nod container storage needs recovery.');
+        throw new Error('The Nod container storage needs recovery.');
     }
     if (
       reuse?.configuration === configuration &&
@@ -621,7 +621,7 @@ export async function finishRuntime({
           await client.query('SELECT 1');
         } catch (error) {
           throw new Error(
-            `nod could not unlock local storage (${error.message || error.code}). Retry without resetting your data.`,
+            `Nod could not unlock local storage (${error.message || error.code}). Retry without resetting your data.`,
           );
         } finally {
           await client.end().catch(() => {});
@@ -755,7 +755,7 @@ exec "$docker" "$@"
       if (
         (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
       )
-        throw Object.assign(new Error('nod’s local browser stopped during setup. Try again.'), {
+        throw Object.assign(new Error('Nod’s local browser stopped during setup. Try again.'), {
           code: 'NOD_CONTAINER_STOPPED',
         });
       return runDocker([
@@ -866,10 +866,10 @@ async function stopComputer(options) {
       throw error;
     }
     if (state.version !== 1 || state.limaHome !== expected)
-      throw new Error('The nod computer identity changed.');
+      throw new Error('The Nod computer identity changed.');
     if (!exists) return;
     const assets = await findRuntimeAssets({ resourcesPath });
-    if (!assets) throw new Error('nod could not find its local computer runtime.');
+    if (!assets) throw new Error('Nod could not find its local computer runtime.');
     const env = {
       PATH: [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
       HOME: homedir(),
@@ -884,14 +884,14 @@ async function stopComputer(options) {
           env,
           timeout: 5000,
         });
-        if (status !== 'Stopped') throw new Error('The nod computer is still running.');
+        if (status !== 'Stopped') throw new Error('The Nod computer is still running.');
       },
       { attempts: 3, interval: 250 },
     );
   } catch {
     throw Object.assign(
       new Error(
-        'nod could not confirm that its private computer stopped. Try again before quitting.',
+        'Nod could not confirm that its private computer stopped. Try again before quitting.',
       ),
       { code: 'NOD_RUNTIME_STOP_FAILED' },
     );

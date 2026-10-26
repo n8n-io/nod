@@ -215,7 +215,7 @@ export function AppAccountManager({
           <DialogTitle>Disconnect from {selected?.name.replace(/\s+MCP$/i, '')}?</DialogTitle>
           <DialogDescription data-analytics-private>
             {selected && accountLabel(selected)}
-            <span>nod will lose access to this account. You can connect it again later.</span>
+            <span>Nod will lose access to this account. You can connect it again later.</span>
           </DialogDescription>
           {disconnectError && (
             <div data-analytics-private>

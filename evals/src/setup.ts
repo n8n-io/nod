@@ -45,7 +45,7 @@ export async function prepare(stack: Stack, world: World, timeZone: string) {
     if (!started.url) throw new Error(`${remote.service} did not start a sign-in.`);
     const authorized = await fetch(started.url, { redirect: 'manual' });
     const location = authorized.headers.get('location');
-    if (!location) throw new Error(`${remote.service} sign-in did not return to nod.`);
+    if (!location) throw new Error(`${remote.service} sign-in did not return to Nod.`);
     const back = new URL(location);
     await call(stack, 'GET', back.pathname + back.search, undefined, 'manual');
     const apps = (await (await call(stack, 'GET', '/api/apps')).json()) as unknown;

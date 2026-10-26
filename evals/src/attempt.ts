@@ -138,7 +138,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     });
     const truth = [
       trace.groundTruth(),
-      `nod is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile. Today is ${dayLabel(started, definition.timeZone)} (${localDate(started, definition.timeZone)}) in that time zone.`,
+      `Nod is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile. Today is ${dayLabel(started, definition.timeZone)} (${localDate(started, definition.timeZone)}) in that time zone.`,
       definition.evidence?.(trace, world),
     ]
       .filter(Boolean)

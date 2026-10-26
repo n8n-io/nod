@@ -126,7 +126,7 @@ export async function draftServerRelease({
     body: {
       tag_name: tag,
       target_commitish: source,
-      name: `nod server ${source.slice(0, 12)}`,
+      name: `Nod server ${source.slice(0, 12)}`,
       body,
       draft: true,
       prerelease: false,

@@ -1,6 +1,6 @@
 ---
 title: Proactivity engine
-description: How nod turns changes in your connected apps into useful private work and decides when to message you.
+description: How Nod turns changes in your connected apps into useful private work and decides when to message you.
 sidebar:
   order: 4
 ---
@@ -23,24 +23,24 @@ flowchart TD
   allowed -- no --> quiet[Stays private]:::muted
 ```
 
-If nothing useful remains, nod stays quiet. It never reports routine checks or repeats a nudge because you didn't reply.
+If nothing useful remains, Nod stays quiet. It never reports routine checks or repeats a nudge because you didn't reply.
 
 ## What it reads
 
 Every connected account is a source. No setup or opt-in is needed.
 
-| Source                                                               | How nod reads it                                                     | When it looks                                                       |
+| Source                                                               | How Nod reads it                                                     | When it looks                                                       |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Gmail                                                                | Conversations from the last 30 days, with exact versions per thread  | On new mail                                                         |
 | Google Calendar                                                      | Events in the primary calendar from yesterday through the next month | When the calendar changes, checked every 30 minutes without a model |
-| Work nod saved for you                                               | Task state, results and waiting conditions                           | When a task changes                                                 |
-| Every other app, including MCP and HTTP connections you added to nod | The account's own read tools, the same ones nod uses in chat         | Every 30 minutes, up to ten due accounts per run                    |
+| Work Nod saved for you                                               | Task state, results and waiting conditions                           | When a task changes                                                 |
+| Every other app, including MCP and HTTP connections you added to Nod | The account's own read tools, the same ones Nod uses in chat         | Every 30 minutes, up to ten due accounts per run                    |
 
 The saved-work change check covers a task's title, completion condition, state, result, waiting condition and next check, so step-by-step progress doesn't start a new assessment.
 
 For an app without its own reader, the worker searches that account's tools, picks one and fills its arguments. The server checks the arguments against the tool's schema, then Trust's read-only check must classify the call as a read. Anything that would create, change, send or delete, a draft included, never runs.
 
-An owner instruction that tells nod to act on its own, such as "forward Ana's invoices to accounting", switches every source to ordinary background work while it's set, where Trust checks every action. Your selected model classifies the instruction once per version; a failed or unclear answer keeps ordinary work.
+An owner instruction that tells Nod to act on its own, such as "forward Ana's invoices to accounting", switches every source to ordinary background work while it's set, where Trust checks every action. Your selected model classifies the instruction once per version; a failed or unclear answer keeps ordinary work.
 
 ## Keep judgment and permission apart
 
@@ -50,7 +50,7 @@ The model judges usefulness. The server enforces permission, freshness and deliv
 | ---------------------------------- | ------------------------------------------------------------------------------- |
 | Does this help your current goals? | The model, from current facts, relevant memory and your preferences             |
 | What does waiting cost?            | The model names a supported deadline or another concrete consequence            |
-| Can nod read this?                 | Trust, from your rules; private preparation skips a read instead of asking you  |
+| Can Nod read this?                 | Trust, from your rules; private preparation skips a read instead of asking you  |
 | Are the facts still current?       | The server re-reads cited records, or requires a read from the last two minutes |
 | Can a nudge go out now?            | The server: repeats, snooze, quiet hours and the pause switch                   |
 
@@ -62,7 +62,7 @@ Sending a draft is always a new request that goes through the [trust check](/tru
 
 A nudge doesn't replace the work. The worker saves a complete draft, plan, comparison or decision aid, with the references, amounts, dates and time zones the reader needs, and states what it couldn't confirm. It never invents eligibility, a cause, a deadline or an action that didn't happen.
 
-The nudge itself states what changed and what's ready in one or two sentences, then asks one short question offering the next step. The first nudge about a kind of thing says once that nod will keep flagging things like it.
+The nudge itself states what changed and what's ready in one or two sentences, then asks one short question offering the next step. The first nudge about a kind of thing says once that Nod will keep flagging things like it.
 
 ## Deliver at the right time
 
@@ -99,7 +99,7 @@ The model judges usefulness. Code checks source versions, tool access, owner con
 | [PRISM, 2026](https://arxiv.org/abs/2602.01532)                                                                                                                   | Test the decision to interrupt separately from the quality of the prepared response.                               |
 | [PARE, 2026](https://arxiv.org/abs/2604.00842)                                                                                                                    | Test changing user state, failed tools, and repeated events. Re-read evidence before saving.                       |
 
-These are design applications of research. Health intervention results don't establish the value of an assistant nudge, and nod uses no fixed psychological score or sender-ranking rule. See [Proactivity evidence](/how-it-works/proactivity-evidence/) for what the evals measure.
+These are design applications of research. Health intervention results don't establish the value of an assistant nudge, and Nod uses no fixed psychological score or sender-ranking rule. See [Proactivity evidence](/how-it-works/proactivity-evidence/) for what the evals measure.
 
 ## Add a source
 

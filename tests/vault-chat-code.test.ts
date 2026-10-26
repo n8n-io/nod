@@ -295,7 +295,7 @@ test(
         },
       );
       await t.test(
-        'a security code sent by itself pays in nod while other numbers are held back',
+        'a security code sent by itself pays in Nod while other numbers are held back',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;

@@ -6,7 +6,7 @@
   "private": true,
   "type": "module",
   "main": "main/main.mjs",
-  "description": "nod local desktop experiment",
+  "description": "Nod local desktop experiment",
   "scripts": {
     "postinstall": "node scripts/patch-osx-sign.mjs",
     "start": "electron .",

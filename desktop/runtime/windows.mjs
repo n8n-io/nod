@@ -29,14 +29,14 @@ export function windowsEnvironment() {
       process.env[key] ? [[key, process.env[key]]] : [],
     ),
   );
-  if (!environment.SYSTEMROOT) throw new Error('nod could not find the Windows system folder.');
+  if (!environment.SYSTEMROOT) throw new Error('Nod could not find the Windows system folder.');
   environment.PATH = join(environment.SYSTEMROOT, 'System32');
   return environment;
 }
 
 export async function protectWindowsProfile(root, resourcesPath) {
   await mkdir(root, { recursive: true });
-  if ((await lstat(root)).isSymbolicLink()) throw new Error('The nod profile cannot be a link.');
+  if ((await lstat(root)).isSymbolicLink()) throw new Error('The Nod profile cannot be a link.');
   const env = { ...windowsEnvironment(), NOD_PROFILE_PATH: root };
   await execute(
     join(env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
@@ -83,7 +83,7 @@ async function download(
   for (let redirects = 0; redirects <= 3; redirects++) {
     const address = new URL(url);
     if (address.protocol !== 'https:' || address.username || address.password)
-      throw new Error('nod received an unsafe download address.');
+      throw new Error('Nod received an unsafe download address.');
     response = await request(url, {
       signal,
       redirect: 'manual',
@@ -94,7 +94,7 @@ async function download(
     await response.body?.cancel();
   }
   if (!response?.ok || !response.body)
-    throw new Error('The nod download is unavailable. Try again.');
+    throw new Error('The Nod download is unavailable. Try again.');
   const hash = createHash('sha256');
   let received = 0;
   let reported = 0;
@@ -107,7 +107,7 @@ async function download(
         onProgress(received / bytes);
       }
       callback(
-        received > bytes ? new Error('The nod download is larger than expected.') : null,
+        received > bytes ? new Error('The Nod download is larger than expected.') : null,
         chunk,
       );
     },
@@ -116,7 +116,7 @@ async function download(
     signal,
   });
   if (received !== bytes || hash.digest('hex') !== sha256)
-    throw new Error('The nod download failed its integrity check. Try again.');
+    throw new Error('The Nod download failed its integrity check. Try again.');
 }
 
 export async function stageWindowsUpdate(
@@ -128,7 +128,7 @@ export async function stageWindowsUpdate(
     candidate.installer?.file !== 'nod-Setup-x64.exe' ||
     candidate.runtime?.file !== 'nod-Runtime-win32-x64.tar.gz'
   )
-    throw new Error('The nod update is invalid.');
+    throw new Error('The Nod update is invalid.');
   const target = join(directory, candidate.version);
   await rm(directory, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
@@ -167,7 +167,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     signal?.throwIfAborted();
     throw Object.assign(
       new Error(
-        'nod needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open nod.',
+        'Nod needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open Nod.',
       ),
       { code: 'NOD_WSL_REQUIRED' },
     );
@@ -217,7 +217,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   try {
     saved = JSON.parse(await readFile(configPath, 'utf8'));
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error('The nod computer configuration needs recovery.');
+    if (error.code !== 'ENOENT') throw new Error('The Nod computer configuration needs recovery.');
   }
   let existing = (await distributions(wsl, hostEnvironment)).includes(distribution);
   if (existing && !saved) {
@@ -234,7 +234,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       saved.distribution !== distribution ||
       !/^[a-f0-9]{64}$/.test(saved.password))
   )
-    throw new Error('The nod computer configuration needs recovery.');
+    throw new Error('The Nod computer configuration needs recovery.');
   saved ??= {
     version: 1,
     distribution,
@@ -264,7 +264,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       2 * 1024 ** 3;
     if (space.bavail * space.bsize < required)
       throw new Error(
-        'nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
+        'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
     const archive = present ? placed : join(controlRoot, 'guest.tar.gz');
     const guest = join(controlRoot, 'guest.tar');
@@ -311,7 +311,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
           signal,
         });
         if (identity !== distribution.slice(4))
-          throw new Error('The nod computer identity changed.');
+          throw new Error('The Nod computer identity changed.');
         await execute(
           wsl,
           [
@@ -441,7 +441,7 @@ export async function stopWindowsRuntime(options) {
     if (error.code === 'ENOENT') return;
     throw Object.assign(
       new Error(
-        'nod could not confirm that its private computer stopped. Try again before quitting.',
+        'Nod could not confirm that its private computer stopped. Try again before quitting.',
       ),
       { code: 'NOD_RUNTIME_STOP_FAILED' },
     );

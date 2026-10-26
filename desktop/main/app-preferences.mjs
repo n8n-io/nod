@@ -18,7 +18,7 @@ function validate(input, complete = false) {
   if (Object.keys(input).some((field) => !fields.includes(field)))
     throw new Error('These preferences are not supported.');
   if (complete && fields.some((field) => !Object.hasOwn(input, field)))
-    throw new Error('nod could not read your preferences.');
+    throw new Error('Nod could not read your preferences.');
   const result = { ...input };
   if (Object.hasOwn(result, 'locale') && result.locale !== null) {
     try {
@@ -58,7 +58,7 @@ function validate(input, complete = false) {
 
 function fromServer(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('nod could not read your preferences.');
+    throw new Error('Nod could not read your preferences.');
   return validate(
     Object.fromEntries(
       fields.filter((field) => Object.hasOwn(value, field)).map((field) => [field, value[field]]),
@@ -86,7 +86,7 @@ export function createAppPreferencesStore(path, { request, isReady }) {
         pending: validate(value.pending),
       };
     } catch (error) {
-      if (error.code !== 'ENOENT') throw new Error('nod could not open its saved preferences.');
+      if (error.code !== 'ENOENT') throw new Error('Nod could not open its saved preferences.');
       state = { version: 1, cached: null, pending: {} };
     }
   }
@@ -105,7 +105,7 @@ export function createAppPreferencesStore(path, { request, isReady }) {
   }
   async function synchronize() {
     const response = await request('/api/preferences', { method: 'GET', redirect: 'error' });
-    if (!response.ok) throw new Error('nod could not read your preferences.');
+    if (!response.ok) throw new Error('Nod could not read your preferences.');
     const cached = fromServer(await response.json());
     if (JSON.stringify(cached) !== JSON.stringify(state.cached)) await write({ ...state, cached });
     if (!Object.keys(state.pending).length) return;
@@ -115,7 +115,7 @@ export function createAppPreferencesStore(path, { request, isReady }) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(state.pending),
     });
-    if (!saved.ok) throw new Error('nod could not apply your saved preferences.');
+    if (!saved.ok) throw new Error('Nod could not apply your saved preferences.');
     await write({ version: 1, cached: fromServer(await saved.json()), pending: {} });
   }
   return {
@@ -144,7 +144,7 @@ export function createAppPreferencesStore(path, { request, isReady }) {
         } catch {
           if (Object.keys(state.pending).length)
             throw Object.assign(
-              new Error('nod could not apply your saved preferences. Try again.'),
+              new Error('Nod could not apply your saved preferences. Try again.'),
               {
                 code: 'PREFERENCES_SYNC_REQUIRED',
               },

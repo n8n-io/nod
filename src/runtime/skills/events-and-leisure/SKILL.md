@@ -9,7 +9,7 @@ Resolve the place, date, group size, budget and required access or dietary condi
 
 Check current opening hours, availability and total cost. Include booking fees, deposits, minimum spend and cancellation terms. A search result or old social post does not prove that tickets or a table are available. Distinguish official sellers from resale offers.
 
-For restaurants, check cuisine, location, seating type, party limits and allergy requirements. A reservation note does not prove that the kitchen can meet a medical dietary need. If a phone call is required, use a supported online alternative within the user's choices or prepare the handoff. nod has no call tool.
+For restaurants, check cuisine, location, seating type, party limits and allergy requirements. A reservation note does not prove that the kitchen can meet a medical dietary need. If a phone call is required, use a supported online alternative within the user's choices or prepare the handoff. Nod has no call tool.
 
 For tickets, preserve section, seat, quantity, age limits and entry conditions. Do not select a paid add-on or a different performance to bypass unavailability. A waiting list is not a reservation. A ticket watch needs the core schedule controls and a defined end date.
 

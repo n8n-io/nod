@@ -74,7 +74,7 @@ systemctl enable --now nod-docker.service
     probes: [
       {
         mode: 'readiness',
-        description: 'nod container runtime',
+        description: 'Nod container runtime',
         script: '#!/bin/bash\nset -e\nsudo /usr/local/bin/docker info >/dev/null\n',
       },
     ],

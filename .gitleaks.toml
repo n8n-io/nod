@@ -1,4 +1,4 @@
-title = "nod secret scanning"
+title = "Nod secret scanning"
 
 [extend]
 useDefault = true

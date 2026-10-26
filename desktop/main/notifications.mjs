@@ -58,7 +58,7 @@ export function assistantNotificationPreview(message, secrets = []) {
           ? `Shared ${name}`
           : attachments.length
             ? 'Shared an attachment.'
-            : 'You have a new message from nod.';
+            : 'You have a new message from Nod.';
   }
   const characters = Array.from(text);
   return characters.length > 240 ? `${characters.slice(0, 239).join('').trimEnd()}…` : text;

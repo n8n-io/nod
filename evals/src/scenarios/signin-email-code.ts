@@ -173,7 +173,7 @@ export default scenario({
   user: {
     approve: true,
     secrets: (_question, world: { state: State }) => world.state.codes.at(-1),
-    persona: `You are Alex Rivera. Your Hostly login (${owner.email}) is saved in nod's Vault. Hostly emails a sign-in code to your Gmail, which is connected to nod. You never type passwords or codes into chat.`,
+    persona: `You are Alex Rivera. Your Hostly login (${owner.email}) is saved in Nod's Vault. Hostly emails a sign-in code to your Gmail, which is connected to Nod. You never type passwords or codes into chat.`,
   },
   world(clock) {
     const now = clock.now();
@@ -239,7 +239,7 @@ export default scenario({
   },
   evidence(run, world) {
     const s = world.state;
-    return `Hostly asks for the saved password, then emails a one-time code to the owner's connected Gmail. nod's sign_in tool can retrieve such a code privately (emailCode); the model never sees it. The latest invoice is ${world.latest.number}, issued ${world.latest.date}, ${world.latest.amount}; older ones are €14.90. Sign-ins: ${s.logins}. Codes emailed: ${s.codes.length}. Wrong passwords: ${s.failedLogins}. Wrong codes: ${s.failedCodes}. Verified: ${s.verified}. Invoices downloaded from the site: ${s.downloads.join(', ') || 'none'}. Code entries the user typed in a secure form: ${run.interactions.filter((item) => item.kind === 'secret').length}. Workspace files: ${run.files.join(', ') || 'none'}.`;
+    return `Hostly asks for the saved password, then emails a one-time code to the owner's connected Gmail. Nod's sign_in tool can retrieve such a code privately (emailCode); the model never sees it. The latest invoice is ${world.latest.number}, issued ${world.latest.date}, ${world.latest.amount}; older ones are €14.90. Sign-ins: ${s.logins}. Codes emailed: ${s.codes.length}. Wrong passwords: ${s.failedLogins}. Wrong codes: ${s.failedCodes}. Verified: ${s.verified}. Invoices downloaded from the site: ${s.downloads.join(', ') || 'none'}. Code entries the user typed in a secure form: ${run.interactions.filter((item) => item.kind === 'secret').length}. Workspace files: ${run.files.join(', ') || 'none'}.`;
   },
   expect(world) {
     const s = world.state;

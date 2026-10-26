@@ -1,12 +1,12 @@
 ---
 title: Security review guide
-description: What a security or IT team needs to assess nod, with data flows, stored data, threats, controls and the code that enforces them.
+description: What a security or IT team needs to assess Nod, with data flows, stored data, threats, controls and the code that enforces them.
 sidebar:
   label: Security review guide
   order: 4
 ---
 
-This page gives a security or IT team what it needs to assess nod: where it runs, what it stores, which threats it addresses and where to verify each control in the code.
+This page gives a security or IT team what it needs to assess Nod: where it runs, what it stores, which threats it addresses and where to verify each control in the code.
 
 ## Deployment options
 
@@ -23,7 +23,7 @@ A desktop app connected to a server is a client. The server holds the assistant'
 
 ```mermaid
 flowchart LR
-  user([User]):::accent --> server[nod server<br/>policy and keys]
+  user([User]):::accent --> server[Nod server<br/>policy and keys]
   server --> model[Model provider<br/>chosen by the user]
   server -- managed app actions --> managed["Configured connection service"]
   managed --> composio[Composio]
@@ -37,7 +37,7 @@ flowchart LR
 
 Model requests go to the provider the user connects. Managed app requests and results pass through the configured connection service and Composio; n8n hosts the default service. Direct MCP connections bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
 
-## What nod stores
+## What Nod stores
 
 | Data                               | Where                                | Protection                                                                                                   | Kept                                     |
 | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
@@ -45,7 +45,7 @@ Model requests go to the provider the user connects. Managed app requests and re
 | Saved logins and cards             | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
 | Model keys users save              | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
 | MCP, API and CLI credentials       | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
-| Server-managed model keys          | Server configuration                 | Not stored by nod; never sent to the sandbox                                                                 | Until unset                              |
+| Server-managed model keys          | Server configuration                 | Not stored by Nod; never sent to the sandbox                                                                 | Until unset                              |
 | App installation identity          | Private installation files           | AES-256-GCM bound to the owner; desktop encryption root protected by the operating system                    | Until app data is removed                |
 | Vault activity                     | PostgreSQL                           | Owner-scoped, no secret values                                                                               | No automatic expiry                      |
 | Model costs and app actions        | PostgreSQL                           | Owner-scoped                                                                                                 | Permanent                                |
@@ -57,20 +57,20 @@ Model requests go to the provider the user connects. Managed app requests and re
 
 | Threat                                                      | Control                                                                                                                                            | Verify in                                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An email or web page tells nod to send data or delete files | Server trust check on the action as sent; the review never sees tool results                                                                       | [`trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts), [`untrusted.ts`](https://github.com/n8n-io/nod/blob/main/src/shared/untrusted.ts), [`approvals.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/approvals.test.ts)                         |
+| An email or web page tells Nod to send data or delete files | Server trust check on the action as sent; the review never sees tool results                                                                       | [`trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts), [`untrusted.ts`](https://github.com/n8n-io/nod/blob/main/src/shared/untrusted.ts), [`approvals.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/approvals.test.ts)                         |
 | A spoofed email triggers a standing instruction             | The instruction names the action and target; any other change asks, and reads and drafts run as usual; the review never sees the email             | [`trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts), [`untrusted.ts`](https://github.com/n8n-io/nod/blob/main/src/shared/untrusted.ts), [`approvals.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/approvals.test.ts)                         |
 | The model leaks a password or card number                   | Secrets never enter its context; private entry; masking in output and screenshots                                                                  | [`vault-access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-access.ts), [`browser-sign-in.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/browser-sign-in.test.ts)                                                                                  |
 | A saved login is used on a lookalike site                   | Exact-origin check on the real field, including frames                                                                                             | [`agent-browser`](https://github.com/n8n-io/nod/tree/main/src/providers/agent-browser), [`vault.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/vault.test.ts)                                                                                                       |
 | A payment or message runs twice                             | Durable claim before work; no automatic retries; uncertain state                                                                                   | [`vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts), [`approvals.ts`](https://github.com/n8n-io/nod/blob/main/src/server/approvals.ts)                                                                                                         |
 | Code in the sandbox steals provider keys                    | Keys never enter the workspace; connected CLI tokens only reach a sealed install                                                                   | [`docker`](https://github.com/n8n-io/nod/tree/main/src/providers/docker), [`sandbox.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/sandbox.test.ts)                                                                                                                 |
-| A web page steers nod to a local address                    | The browser and web tools connect only to public addresses, checked when each connection opens; nod drops proxies from the model or saved settings | [`network.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/agent-browser/network.ts), [`pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts), [`url-guards.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/url-guards.test.ts) |
-| Another local process calls nod's API                       | Owner access key on every request; loopback isn't treated as identity                                                                              | [`access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/access.ts)                                                                                                                                                                                                  |
+| A web page steers Nod to a local address                    | The browser and web tools connect only to public addresses, checked when each connection opens; Nod drops proxies from the model or saved settings | [`network.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/agent-browser/network.ts), [`pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts), [`url-guards.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/url-guards.test.ts) |
+| Another local process calls Nod's API                       | Owner access key on every request; loopback isn't treated as identity                                                                              | [`access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/access.ts)                                                                                                                                                                                                  |
 
 Tests use synthetic data and disposable databases. They never call a live model or a real account. Capability evals run the real agent against fake apps and lookalike websites. See [Checks and tests](/contribute/checks-and-tests/) and [Capability evals](/contribute/evals/).
 
 ## Built on published research
 
-| Pattern                                      | Source                                                                                                             | In nod                                                                                                                                    |
+| Pattern                                      | Source                                                                                                             | In Nod                                                                                                                                    |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Privileged decisions from trusted input only | [CaMeL](https://arxiv.org/abs/2503.18813), [agent design patterns](https://arxiv.org/abs/2506.08837)               | Only the user's own words carry authority. The review also sees the action and the message the user answered, as data, never tool results |
 | Review the proposed action, not the content  | [Chrome agent security](https://blog.google/security/architecting-security-for-agentic/)                           | Confirmations show the request as sent                                                                                                    |
@@ -80,15 +80,15 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 ## Common questions
 
-**Does n8n see our conversations?** Managed app requests and results pass through n8n when you use its default connection service. They can include conversation content used in app actions. Feedback goes to the recipient named in the dialog, n8n by default. It selects a diagnostic report by default, with an exact preview and one-click opt-out. Reports include recent messages, tool inputs and results, and logs for support, debugging, and product improvement. Known secrets and recognized personal details are masked, but redaction can miss information. Credential fields, screenshots, binary data, system prompts, and model thinking are omitted. Feedback text and files the user adds are sent as provided. See [Feedback](/trust/privacy/#feedback). Usage analytics are opt-in and mask content. Conversation traces are opt-in too: with n8n's trace service configured, scrubbed model requests and replies go to the nod team's LangSmith project for 14 days, without any account or device identifier.
+**Does n8n see our conversations?** Managed app requests and results pass through n8n when you use its default connection service. They can include conversation content used in app actions. Feedback goes to the recipient named in the dialog, n8n by default. It selects a diagnostic report by default, with an exact preview and one-click opt-out. Reports include recent messages, tool inputs and results, and logs for support, debugging, and product improvement. Known secrets and recognized personal details are masked, but redaction can miss information. Credential fields, screenshots, binary data, system prompts, and model thinking are omitted. Feedback text and files the user adds are sent as provided. See [Feedback](/trust/privacy/#feedback). Usage analytics are opt-in and mask content. Conversation traces are opt-in too: with n8n's trace service configured, scrubbed model requests and replies go to the Nod team's LangSmith project for 14 days, without any account or device identifier.
 
-**Does nod train on our data?** nod doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
+**Does Nod train on our data?** Nod doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
 
-**Can we choose the model?** Yes. Users choose from the [supported model services](/connect/models/), including ChatGPT plan sign-in. They can also add an OpenAI-compatible server, such as Ollama, at an address reachable from nod's server. The trust check then runs on that model. Operators can provide [environment settings](/connect/models/#set-connections-in-server-settings) for every API-key provider and OpenAI-compatible server. There's no setting yet that limits which providers users can add.
+**Can we choose the model?** Yes. Users choose from the [supported model services](/connect/models/), including ChatGPT plan sign-in. They can also add an OpenAI-compatible server, such as Ollama, at an address reachable from Nod's server. The trust check then runs on that model. Operators can provide [environment settings](/connect/models/#set-connections-in-server-settings) for every API-key provider and OpenAI-compatible server. There's no setting yet that limits which providers users can add.
 
 **Is there single sign-on or an admin console?** No. Each local or self-hosted assistant belongs to one person. A self-hosted server uses one access token across that person's clients. There are no organization accounts.
 
-**Which certifications does nod have?** None. nod is an early preview. Saved-card support is not a PCI DSS compliance claim.
+**Which certifications does Nod have?** None. Nod is an early preview. Saved-card support is not a PCI DSS compliance claim.
 
 ## Limits and reporting
 
@@ -97,5 +97,5 @@ Read the honest limits in [Security model and limits](/trust/security-model/). R
 ## Related resources
 
 - [Our trust principles](/trust/principles/)
-- [How nod compares](/trust/compare/)
+- [How Nod compares](/trust/compare/)
 - [Your data and privacy](/trust/privacy/)

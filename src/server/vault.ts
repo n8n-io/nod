@@ -626,7 +626,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .catch(() => {
         keyPromise = undefined;
         throw new VaultError(
-          'nod can’t open your Vault. Restore the Vault key and restart nod.',
+          'Nod can’t open your Vault. Restore the Vault key and restart Nod.',
           503,
         );
       });
@@ -1509,7 +1509,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     if (!(error instanceof PasswordManagerError)) throw error;
     throw new VaultError(
       error.reason === 'unavailable'
-        ? `nod can’t reach ${name} on this computer. Open ${name}, sign in, and turn on Settings → Developer → Integrate with other apps. (${error.message})`
+        ? `Nod can’t reach ${name} on this computer. Open ${name}, sign in, and turn on Settings → Developer → Integrate with other apps. (${error.message})`
         : error.message,
       error.reason === 'missing' ? 409 : 502,
     );

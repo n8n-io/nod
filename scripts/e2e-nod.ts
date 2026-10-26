@@ -174,7 +174,7 @@ try {
     '--format',
     '{{json .NetworkSettings.Networks}}',
   ]);
-  if (image.exitCode || network.exitCode) throw new Error('Start the nod Docker workspace first.');
+  if (image.exitCode || network.exitCode) throw new Error('Start the Nod Docker workspace first.');
   const networkName = workspaceNetwork(network.stdout);
   const started = await runProcess('docker', [
     'run',

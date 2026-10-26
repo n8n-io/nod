@@ -304,7 +304,7 @@ export function createComposioProxy(options: {
         callback.searchParams.size !== 1
       )
         throw new Error('The integration callback address is invalid.');
-      if (!options.browser) throw new Error('Open nod on this computer to connect an app.');
+      if (!options.browser) throw new Error('Open Nod on this computer to connect an app.');
       const challenge = randomBytes(32).toString('base64url');
       const url = await options.browser.open(
         transactionId,

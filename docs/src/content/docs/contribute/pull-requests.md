@@ -40,7 +40,7 @@ The title matters beyond the check. Desktop release notes group merged changes b
 - **Explain why** the change is needed and how you tested it. Add screenshots or a short video for UI changes.
 - **Call out safety-sensitive changes.** Changes to approvals, the trust check, Vault, sign-in, the sandbox or owner isolation get a closer review and need tests.
 - **Keep secrets out.** No keys, credentials, real accounts or private content in code, tests, logs or screenshots.
-- **Follow the existing style.** nod's code has no comments or JSDoc, and its docs use short, plain sentences.
+- **Follow the existing style.** Nod's code has no comments or JSDoc, and its docs use short, plain sentences.
 
 The template's checklist asks you to confirm you've seen the code, run it and take responsibility for it. That applies whether you or a coding agent wrote it. See [Checks and tests](/contribute/checks-and-tests/) for what to run first.
 
@@ -111,7 +111,7 @@ Dependabot doesn't update Python packages installed inline in Dockerfiles, tools
 
 ## Related resources
 
-- [Contribute to nod](/contribute/)
+- [Contribute to Nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Desktop releases](/contribute/desktop-releases/)
 - [Write docs](/contribute/write-docs/)

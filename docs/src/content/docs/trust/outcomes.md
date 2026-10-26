@@ -1,11 +1,11 @@
 ---
 title: One use, one result
-description: Why nod never runs approved or private work twice, and what to do when a result is uncertain.
+description: Why Nod never runs approved or private work twice, and what to do when a result is uncertain.
 sidebar:
   order: 10
 ---
 
-nod never runs an approved action or a private entry twice. If it can't tell whether something happened, it says so, and you check before anyone tries again.
+Nod never runs an approved action or a private entry twice. If it can't tell whether something happened, it says so, and you check before anyone tries again.
 
 ## A claim before every private step
 
@@ -23,17 +23,17 @@ stateDiagram-v2
 
 | State     | What it means                                                         | What happens next                       |
 | --------- | --------------------------------------------------------------------- | --------------------------------------- |
-| Running   | The server is entering and submitting the values                      | nod waits                               |
-| Submitted | The values were entered, and any chosen submit button was pressed     | nod reads the page to see if it worked  |
+| Running   | The server is entering and submitting the values                      | Nod waits                               |
+| Submitted | The values were entered, and any chosen submit button was pressed     | Nod reads the page to see if it worked  |
 | Uncertain | The step may have reached the website, but the result wasn't recorded | Check the result before another attempt |
 
-**Submitted** doesn't mean the sign-in or payment succeeded. Only the website knows that, so nod checks the page.
+**Submitted** doesn't mean the sign-in or payment succeeded. Only the website knows that, so Nod checks the page.
 
-**Uncertain** means the step may have reached the website. nod keeps the claim and never replays it. Ask nod to look at the page, the order or the account first. A new attempt is a new, explicit request.
+**Uncertain** means the step may have reached the website. Nod keeps the claim and never replays it. Ask Nod to look at the page, the order or the account first. A new attempt is a new, explicit request.
 
 ## Confirmed app actions work the same way
 
-When you say yes to an app action, the server runs that saved action once, and the task continues from the result. If the action can no longer run, for example because the account was disconnected after nod asked, nothing is sent and the task continues knowing that. If it fails or is interrupted, it becomes uncertain, and nod asks you to check the app before trying again. It never runs again on its own.
+When you say yes to an app action, the server runs that saved action once, and the task continues from the result. If the action can no longer run, for example because the account was disconnected after Nod asked, nothing is sent and the task continues knowing that. If it fails or is interrupted, it becomes uncertain, and Nod asks you to check the app before trying again. It never runs again on its own.
 
 ## Tasks and actions aren't retried
 
@@ -43,17 +43,17 @@ When you say yes to an app action, the server runs that saved action once, and t
 | A tool call                            | It isn't repeated                                                                                                                                      |
 | A confirmed app action                 | It becomes uncertain                                                                                                                                   |
 | A private entry or payment             | It becomes uncertain                                                                                                                                   |
-| A saved login that doesn't get through | nod checks the page and doesn't enter that login again in the task. The next try opens the private form, where you pick a login or type a new password |
+| A saved login that doesn't get through | Nod checks the page and doesn't enter that login again in the task. The next try opens the private form, where you pick a login or type a new password |
 | A model request                        | A temporary provider error is retried up to three times                                                                                                |
 
 ## Stop and restarts
 
 **Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app.
 
-After nod restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
+After Nod restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
 
 :::tip
-When nod says a result is uncertain, ask it to check: "Did the order go through?" It reads the page or app without submitting again.
+When Nod says a result is uncertain, ask it to check: "Did the order go through?" It reads the page or app without submitting again.
 :::
 
 ## Where this is enforced

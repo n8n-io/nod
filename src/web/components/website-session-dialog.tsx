@@ -38,7 +38,7 @@ export function WebsiteSessionDialog({
       <DialogContent className="vault-dialog">
         <DialogTitle>Sign in to a website</DialogTitle>
         <DialogDescription>
-          nod opens the website’s home page in its private browser. Sign in once and later tasks
+          Nod opens the website’s home page in its private browser. Sign in once and later tasks
           reuse the session.
         </DialogDescription>
         <form

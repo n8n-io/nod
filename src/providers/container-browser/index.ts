@@ -27,7 +27,7 @@ export function createContainerBrowserComputer(options: {
 }): Computer {
   const container = options.container ?? 'nod-browser';
   if (!/^nod-browser(?:-[a-zA-Z0-9_-]+)?$/.test(container))
-    throw new Error('BROWSER_CONTAINER must identify a nod browser.');
+    throw new Error('BROWSER_CONTAINER must identify a Nod browser.');
   const launch = options.spawn ?? spawn;
   return createBridgeComputer({
     namespace: browserNamespace(options.dataRoot),

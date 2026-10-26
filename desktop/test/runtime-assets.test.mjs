@@ -568,7 +568,7 @@ async function releaseFixture(
   const signingEnv = {
     NOD_DESKTOP_TARGET: 'darwin-arm64',
     NOD_SIGNING_MODE: developerId ? 'developer-id' : 'self-signed',
-    NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+    NOD_SIGNING_IDENTITY: 'Synthetic Nod Signing',
     NOD_SIGNING_CERTIFICATE_SHA256: digest(certificate),
   };
   const fingerprint = plan
@@ -1105,7 +1105,7 @@ test('one official release waits for verified runtime and downloaded app bytes',
   await assert.rejects(f.invoke('draft'));
 });
 
-test('all three checked bundles publish together as one regular nod release', async (t) => {
+test('all three checked bundles publish together as one regular Nod release', async (t) => {
   const f = await releaseFixture(t, {
     plan: true,
     publish: true,
@@ -1133,7 +1133,7 @@ test('all three checked bundles publish together as one regular nod release', as
         env: {
           NOD_DESKTOP_TARGET: 'darwin-x64',
           NOD_SIGNING_MODE: 'self-signed',
-          NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+          NOD_SIGNING_IDENTITY: 'Synthetic Nod Signing',
           NOD_SIGNING_CERTIFICATE_SHA256: f.metadata.signing.certificateSha256,
         },
       })
@@ -1887,7 +1887,7 @@ test('a failed runtime command names its cause from the end of its output, inclu
       'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
     {
-      message: /^nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+      message: /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
     },
   );
   await assert.rejects(
@@ -1897,7 +1897,7 @@ test('a failed runtime command names its cause from the end of its output, inclu
     ]),
     {
       message:
-        'nod runtime command failed (1): Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED',
+        'Nod runtime command failed (1): Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED',
     },
   );
 });
@@ -2876,7 +2876,7 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   assert.equal(
     await windowsRun({
       NOD_SIGNING_MODE: 'self-signed',
-      NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+      NOD_SIGNING_IDENTITY: 'Synthetic Nod Signing',
       NOD_SIGNING_CERTIFICATE_SHA256: 'a'.repeat(64),
     }),
     windowsBefore,
@@ -3107,7 +3107,7 @@ test('local test installs refuse normal apps and cannot reuse or follow foreign 
   const packagePath = join(application, 'Contents', 'Resources', 'app', 'package.json');
   await mkdir(dirname(packagePath), { recursive: true });
   await writeFile(packagePath, JSON.stringify({ name: 'nod-desktop', productName: 'nod' }));
-  await assert.rejects(validateTestApplication(application), /not an isolated nod test/);
+  await assert.rejects(validateTestApplication(application), /not an isolated Nod test/);
   await writeFile(
     packagePath,
     JSON.stringify({

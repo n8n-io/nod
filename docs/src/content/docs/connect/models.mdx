@@ -1,13 +1,13 @@
 ---
 title: Models
-description: Connect a model service or local server, choose capable defaults, and manage the accounts nod uses.
+description: Connect a model service or local server, choose capable defaults, and manage the accounts Nod uses.
 sidebar:
   order: 1
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-nod needs a model connection to think and reply. Connect one or more services in **Settings > Models**, then choose the model nod uses.
+Nod needs a model connection to think and reply. Connect one or more services in **Settings > Models**, then choose the model Nod uses.
 
 Your requests go to the service you connect. Paid providers bill you for use. To run a model on your own computer instead, see [Local models](/connect/local-models/).
 
@@ -30,15 +30,15 @@ Search the provider list to connect any of these services. Regional and token-pl
 
 Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Groq, Hugging Face, Kimi Coding China, Meta, MiniMax, Mistral, Moonshot AI, NVIDIA, OpenCode Zen and Go, Qwen Token Plan, Radius, Together AI, Vercel AI Gateway, xAI, Xiaomi MiMo and token plans, and Z.AI. The picker includes their supported regional variants.
 
-When an account model list is available, nod loads it. For services with only a bundled catalog, nod says **Key saved** and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
+When an account model list is available, Nod loads it. For services with only a bundled catalog, Nod says **Key saved** and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
 
-You can change the initial choice. nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 3.8 Flash is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
+You can change the initial choice. Nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 3.8 Flash is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
 
 :::note[Google free access]
 Create a Gemini API key with your Google account in AI Studio. Gemini 3.8 Flash has a [free tier](https://ai.google.dev/gemini-api/docs/pricing), subject to project quotas and availability; Gemini 4 Argon needs paid API access. The free tier has different data-use terms, so review Google's terms before sending private material.
 :::
 
-Google does not permit third-party assistants to reuse [Gemini CLI OAuth](https://geminicli.com/docs/resources/faq/). A Gemini app subscription is not a nod sign-in option. Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) also require an API connection for Claude in nod.
+Google does not permit third-party assistants to reuse [Gemini CLI OAuth](https://geminicli.com/docs/resources/faq/). A Gemini app subscription is not a Nod sign-in option. Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) also require an API connection for Claude in Nod.
 
 ## Connect a service
 
@@ -48,7 +48,7 @@ Select your current model to open **Choose a model**. Search by model or provide
 
 If a connection stops working, its row in **Settings > Models** says what it needs: **Reconnect** a sign-in, or remove a key or server connection and add it again. When it's the connection you selected, chat links to that screen.
 
-To change to an available model, you can also tell nod which model and service to use. This works in nod, Telegram, and WhatsApp. nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
+To change to an available model, you can also tell Nod which model and service to use. This works in Nod, Telegram, and WhatsApp. Nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
 <Tabs syncKey="model-service">
 <TabItem label="OpenAI">
@@ -66,14 +66,14 @@ To change to an available model, you can also tell nod which model and service t
 <Steps>
 
 1. Next to **OpenAI**, select **Sign in with ChatGPT**.
-2. Sign in to ChatGPT in the browser tab that opens, and allow nod to use your ChatGPT plan.
-3. Return to nod. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
+2. Sign in to ChatGPT in the browser tab that opens, and allow Nod to use your ChatGPT plan.
+3. Return to Nod. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
 
 </Steps>
 
-nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. It needs ChatGPT Plus or Pro. On other plans, OpenAI's consent page says a required permission isn't available, and the sign-in fails. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. Otherwise, connect an OpenAI API key instead.
+Nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists Nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. It needs ChatGPT Plus or Pro. On other plans, OpenAI's consent page says a required permission isn't available, and the sign-in fails. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. Otherwise, connect an OpenAI API key instead.
 
-ChatGPT sign-in listens on port `1455` where nod's server runs. If another program uses that port, nod stops with an error before it opens OpenAI. When connecting to a remote server, the final browser address may not load on your device. Copy that full address into **Callback URL** in nod and select **Complete sign-in**. The server checks the sign-in and stores the connection; you do not need to expose port `1455` publicly.
+ChatGPT sign-in listens on port `1455` where Nod's server runs. If another program uses that port, Nod stops with an error before it opens OpenAI. When connecting to a remote server, the final browser address may not load on your device. Copy that full address into **Callback URL** in Nod and select **Complete sign-in**. The server checks the sign-in and stores the connection; you do not need to expose port `1455` publicly.
 
 </TabItem>
 <TabItem label="Anthropic">
@@ -90,12 +90,12 @@ ChatGPT sign-in listens on port `1455` where nod's server runs. If another progr
 
 <Steps>
 
-1. Next to **OpenRouter**, select **Sign in** to have OpenRouter create a key for nod in your browser, or **Add API key** to paste a key.
+1. Next to **OpenRouter**, select **Sign in** to have OpenRouter create a key for Nod in your browser, or **Add API key** to paste a key.
 2. Finish the sign-in, or select **Save connection** for a key.
 
 </Steps>
 
-nod lists the OpenRouter models that support text and tools.
+Nod lists the OpenRouter models that support text and tools.
 
 </TabItem>
 <TabItem label="Google Gemini">
@@ -133,15 +133,15 @@ Kimi Coding China uses Kimi's China endpoint. Its key must be valid for that reg
 <Steps>
 
 1. In the Amazon Bedrock console, create a long-term key under **API keys**. Short-term keys expire within hours.
-2. In nod, next to **Amazon Bedrock**, select **Add API key**.
+2. In Nod, next to **Amazon Bedrock**, select **Add API key**.
 3. Enter the **Region** your models run in, such as `us-east-1`, and paste the key into **Amazon Bedrock API key**.
 4. Select **Save connection**, then choose a model.
 
 </Steps>
 
-nod lists the models and inference profiles Bedrock offers in that Region, such as `eu.anthropic.claude-opus-5-5`. The key still needs permission to call the one you choose. A profile that starts with `global.` can send requests to any commercial AWS Region. A geographic profile such as `eu.` or `us.` stays in that geography, and each model's page in the AWS docs lists the Regions it can use. That's why nod doesn't choose a Bedrock model for you.
+Nod lists the models and inference profiles Bedrock offers in that Region, such as `eu.anthropic.claude-opus-5-5`. The key still needs permission to call the one you choose. A profile that starts with `global.` can send requests to any commercial AWS Region. A geographic profile such as `eu.` or `us.` stays in that geography, and each model's page in the AWS docs lists the Regions it can use. That's why Nod doesn't choose a Bedrock model for you.
 
-The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`) and call them. Keys made in the Bedrock console get the `AmazonBedrockLimitedAccess` policy, which allows both. nod doesn't use AWS access keys or profiles.
+The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`) and call them. Keys made in the Bedrock console get the `AmazonBedrockLimitedAccess` policy, which allows both. Nod doesn't use AWS access keys or profiles.
 
 </TabItem>
 <TabItem label="Google Vertex AI">
@@ -149,13 +149,13 @@ The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListIn
 <Steps>
 
 1. In the Google Cloud console, create an API key for Vertex AI: an express mode key, or a standard key bound to a service account with Vertex AI access in a project with billing.
-2. In nod, next to **Google Vertex AI**, select **Add API key**.
+2. In Nod, next to **Google Vertex AI**, select **Add API key**.
 3. Paste the key into **Google Vertex AI API key**, then select **Save connection**.
 4. Choose a model.
 
 </Steps>
 
-nod checks the key with a free token count and lists the Gemini models on Vertex AI. Requests go to Vertex AI's global endpoint. Google recommends service accounts over API keys for production, but nod doesn't support service account key files yet.
+Nod checks the key with a free token count and lists the Gemini models on Vertex AI. Requests go to Vertex AI's global endpoint. Google recommends service accounts over API keys for production, but Nod doesn't support service account key files yet.
 
 </TabItem>
 <TabItem label="Azure OpenAI">
@@ -163,15 +163,15 @@ nod checks the key with a free token count and lists the Gemini models on Vertex
 <Steps>
 
 1. In Azure AI Foundry, open your model deployment and copy its endpoint, deployment name and key.
-2. In nod, next to **Azure OpenAI**, select **Add API key**.
-3. Enter the **Endpoint**, such as `https://your-resource.openai.azure.com`, and the **Deployment name**. If the deployment has its model's name, nod fills in **Model**. Otherwise, choose the model the deployment runs.
+2. In Nod, next to **Azure OpenAI**, select **Add API key**.
+3. Enter the **Endpoint**, such as `https://your-resource.openai.azure.com`, and the **Deployment name**. If the deployment has its model's name, Nod fills in **Model**. Otherwise, choose the model the deployment runs.
 4. Paste the key into **Azure OpenAI API key**, then select **Save connection**.
 
 </Steps>
 
-nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it uses a loopback address on nod's server. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
+Nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it uses a loopback address on Nod's server. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
 
-Each deployment is one connection with one model. Add another connection for each deployment you want to use. The model you choose sets the context size and the prices nod counts toward your [spending](/use/spending/). Microsoft Entra ID sign-in isn't supported.
+Each deployment is one connection with one model. Add another connection for each deployment you want to use. The model you choose sets the context size and the prices Nod counts toward your [spending](/use/spending/). Microsoft Entra ID sign-in isn't supported.
 
 </TabItem>
 <TabItem label="OpenAI-compatible">
@@ -179,7 +179,7 @@ Each deployment is one connection with one model. Add another connection for eac
 <Steps>
 
 1. Next to **OpenAI-compatible**, select **Add server**.
-2. Check the **Server address**. nod fills in Ollama's address, `http://localhost:11434/v1`. Add an **API key** only if the server needs one.
+2. Check the **Server address**. Nod fills in Ollama's address, `http://localhost:11434/v1`. Add an **API key** only if the server needs one.
 3. Select **Save connection**.
 
 </Steps>
@@ -195,7 +195,7 @@ All the models from your connections appear in one searchable list. Choosing a m
 
 You can connect several accounts of one service, such as two ChatGPT accounts or a personal and a work API key. A ChatGPT connection shows the account's email. A key connection, including one an OpenRouter sign-in created, shows the key's last four characters, which the model never sees. Signing in again with an account you already connected, or adding the same key or server address to the same service again, updates that connection instead of adding another.
 
-If your selected connection is removed or needs reconnecting, the next connection you add or reconnect in **Models** becomes your model. If only your model disappears from a working connection, nod keeps your choice and asks you to choose another. nod doesn't switch by itself after a failed request.
+If your selected connection is removed or needs reconnecting, the next connection you add or reconnect in **Models** becomes your model. If only your model disappears from a working connection, Nod keeps your choice and asks you to choose another. Nod doesn't switch by itself after a failed request.
 
 | To                      | Do this                                                                                               |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -206,17 +206,17 @@ If your selected connection is removed or needs reconnecting, the next connectio
 
 ## One model for everything
 
-nod uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with.
+Nod uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with.
 
-If a model request fails, nod doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
+If a model request fails, Nod doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
 
 Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. Background work and checks that use your selected model use the lightest reasoning it offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
 
 ## Decision checks
 
-Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
+Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email Nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
 
-Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) runs on it. Use the [decision evals](/contribute/evals/#compare-decision-checks) to compare models on synthetic permission checks before changing the model you rely on.
+Pick a capable model if Nod acts for you: the [trust check](/trust/approvals/) runs on it. Use the [decision evals](/contribute/evals/#compare-decision-checks) to compare models on synthetic permission checks before changing the model you rely on.
 
 | Current connection     | Confirmation replies                                   |
 | ---------------------- | ------------------------------------------------------ |
@@ -228,7 +228,7 @@ These calls are billed through the connection that runs them. GPT Decisions is p
 
 In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, then [apply the configuration change](/deploy/configuration/#how-settings-work). The key stays on the server and is not added to **Models**.
 
-A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
+A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice needs an API connection]
 Spoken replies need an OpenAI API key, saved in **Models** or set through `OPENAI_API_KEY`. Transcription also works with an OpenRouter connection; a ChatGPT plan alone doesn't enable voice.
@@ -293,7 +293,7 @@ Additional settings:
 | Cloudflare        | `CLOUDFLARE_ACCOUNT_ID`, the 32-character hexadecimal account ID. AI Gateway also requires `CLOUDFLARE_GATEWAY_ID`.                                        |
 | OpenAI-compatible | `OPENAI_COMPATIBLE_BASE_URL` and optional `OPENAI_COMPATIBLE_API_KEY`. Use `LLM_PROVIDER=compatible` for the initial choice.                               |
 
-Set the cloud provider's required fields before starting nod. A Cloudflare gateway ID has one to 64 lowercase letters, digits, or hyphens, starting with a letter or digit. Both Cloudflare connections use the same account ID from `.env`; connections saved in **Models** can use separate accounts and gateways.
+Set the cloud provider's required fields before starting Nod. A Cloudflare gateway ID has one to 64 lowercase letters, digits, or hyphens, starting with a letter or digit. Both Cloudflare connections use the same account ID from `.env`; connections saved in **Models** can use separate accounts and gateways.
 
 For Azure, leave `LLM_MODEL` empty to use the deployment's model, or set it to the same model ID as `AZURE_OPENAI_MODEL`. The deployment name defaults to that ID. The [Azure setup rules](#connect-a-service) for endpoints also apply to `.env`.
 
@@ -306,11 +306,11 @@ Regional providers use separate key variables so one region's key isn't automati
 
 ## Where your keys go
 
-The nod server adds your key to each model request. The key never enters the workspace, nod's browser or the model's context.
+The Nod server adds your key to each model request. The key never enters the workspace, Nod's browser or the model's context.
 
 ```mermaid
 flowchart LR
-  you([You]):::accent --> server[nod server]
+  you([You]):::accent --> server[Nod server]
   store[(Encrypted<br/>key store)]:::muted -- key --> server
   server -- request + key --> provider[Model provider]:::accent
   provider -- reply --> server
@@ -319,11 +319,11 @@ flowchart LR
   server -. no key .-> sandbox
 ```
 
-- nod encrypts saved keys and sign-ins with the Vault key. macOS uses Keychain, the Windows app uses Windows DPAPI, and Linux source installs use a private file. The self-hosting stack generates `NOD_VAULT_KEY` in its private `.env`. See [Vault configuration](/deploy/configuration/#vault).
-- nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
+- Nod encrypts saved keys and sign-ins with the Vault key. macOS uses Keychain, the Windows app uses Windows DPAPI, and Linux source installs use a private file. The self-hosting stack generates `NOD_VAULT_KEY` in its private `.env`. See [Vault configuration](/deploy/configuration/#vault).
+- Nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
 - Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, or the Azure OpenAI endpoint you entered.
-- Your browser doesn't store the key, and nod removes it from provider errors.
+- Your browser doesn't store the key, and Nod removes it from provider errors.
 
 ## Related resources
 
@@ -336,4 +336,4 @@ flowchart LR
 
 ## Images with a text model
 
-If your selected model cannot read images, nod looks for an image model in your connected services. It checks your selected connection first, then your other connected services. When one is available, it receives your current request and the images. Your selected chat model receives its description and stays selected. This image request uses that service's credentials and counts toward your spending limits. If no image model is available, the files stay in the workspace. See [Files and voice messages](/use/channels/#files-and-voice-messages).
+If your selected model cannot read images, Nod looks for an image model in your connected services. It checks your selected connection first, then your other connected services. When one is available, it receives your current request and the images. Your selected chat model receives its description and stays selected. This image request uses that service's credentials and counts toward your spending limits. If no image model is available, the files stay in the workspace. See [Files and voice messages](/use/channels/#files-and-voice-messages).

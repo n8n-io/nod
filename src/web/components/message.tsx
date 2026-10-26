@@ -457,7 +457,7 @@ export function MessageBubble({
     <article
       ref={articleElement}
       className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${panel ? ' message-panel-open' : ''}`}
-      aria-label={streaming ? 'nod is responding' : message.role === 'user' ? 'You' : 'nod'}
+      aria-label={streaming ? 'Nod is responding' : message.role === 'user' ? 'You' : 'Nod'}
       data-message-id={streaming ? undefined : message.id}
       onMouseUp={selectQuote}
       onKeyUp={selectQuote}
@@ -642,8 +642,8 @@ export function MessageBubble({
                       key={agentReaction}
                       className={reactionClass}
                       role="img"
-                      aria-label={`nod reacted: ${reactionName(agentReaction)}`}
-                      title={`nod reacted: ${reactionName(agentReaction)}`}
+                      aria-label={`Nod reacted: ${reactionName(agentReaction)}`}
+                      title={`Nod reacted: ${reactionName(agentReaction)}`}
                     >
                       {agentReaction}
                     </span>

@@ -1,28 +1,28 @@
 ---
 title: Local models
-description: Run nod on a model on your own computer with Ollama, LM Studio, vLLM or llama.cpp, or connect any service with an OpenAI-compatible API.
+description: Run Nod on a model on your own computer with Ollama, LM Studio, vLLM or llama.cpp, or connect any service with an OpenAI-compatible API.
 sidebar:
   order: 2
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
+Nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
 
 Local models work in the [desktop app](/get-started/install-desktop/), [source installs](/get-started/install-from-source/), and [self-hosted servers](/deploy/self-host/).
 
-The model server must be reachable from nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to nod's container.
+The model server must be reachable from Nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to Nod's container.
 
-:::caution[Your model also decides when nod asks you]
-nod's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether nod asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
+:::caution[Your model also decides when Nod asks you]
+Nod's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether Nod asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
 :::
 
 ## Before you start
 
 You need two things from the model server:
 
-- **A model that supports tool calls.** nod does all its work through tools, so a model without them can only chat.
-- **At least 64,000 tokens of context.** nod's instructions and tools take about 20,000 tokens before your first message. Most servers start with 4,096, and some cut nod's instructions off without an error.
+- **A model that supports tool calls.** Nod does all its work through tools, so a model without them can only chat.
+- **At least 64,000 tokens of context.** Nod's instructions and tools take about 20,000 tokens before your first message. Most servers start with 4,096, and some cut Nod's instructions off without an error.
 
 ## Set up your server
 
@@ -43,11 +43,11 @@ You need two things from the model server:
    OLLAMA_CONTEXT_LENGTH=65536 ollama serve
    ```
 
-3. Use the address `http://localhost:11434/v1` in nod.
+3. Use the address `http://localhost:11434/v1` in Nod.
 
 </Steps>
 
-nod reads each Ollama model's details. It lists only models that support tools, sends images to vision models, offers the model's thinking levels and uses its context length.
+Nod reads each Ollama model's details. It lists only models that support tools, sends images to vision models, offers the model's thinking levels and uses its context length.
 
 </TabItem>
 <TabItem label="LM Studio">
@@ -57,11 +57,11 @@ nod reads each Ollama model's details. It lists only models that support tools, 
 1. In [LM Studio](https://lmstudio.ai), download a model that supports tools.
 2. Load it with **Context Length** set to 65,536 or more.
 3. Start the server from the **Developer** tab, or run `lms server start`.
-4. Use the address `http://localhost:1234/v1` in nod.
+4. Use the address `http://localhost:1234/v1` in Nod.
 
 </Steps>
 
-With LM Studio 0.4 or later, nod reads each model's details. It skips embedding models and models not trained for tool use, sends images to vision models and uses the context length the model is loaded with, so the model list shows when that's too small.
+With LM Studio 0.4 or later, Nod reads each model's details. It skips embedding models and models not trained for tool use, sends images to vision models and uses the context length the model is loaded with, so the model list shows when that's too small.
 
 </TabItem>
 <TabItem label="vLLM">
@@ -74,7 +74,7 @@ With LM Studio 0.4 or later, nod reads each model's details. It skips embedding 
    vllm serve <model> --max-model-len 65536 --enable-auto-tool-choice --tool-call-parser <parser>
    ```
 
-2. Use the address `http://localhost:8000/v1` in nod. If you started vLLM with `--api-key`, add that key too.
+2. Use the address `http://localhost:8000/v1` in Nod. If you started vLLM with `--api-key`, add that key too.
 
 </Steps>
 
@@ -89,19 +89,19 @@ With LM Studio 0.4 or later, nod reads each model's details. It skips embedding 
    llama-server -m <model>.gguf -c 65536 --jinja
    ```
 
-2. Use the address `http://localhost:8080/v1` in nod.
+2. Use the address `http://localhost:8080/v1` in Nod.
 
 </Steps>
 
 </TabItem>
 </Tabs>
 
-## Connect nod
+## Connect Nod
 
 <Steps>
 
 1. Open **Settings → Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
-2. Check the **Server address**. nod fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, nod tries it for you.
+2. Check the **Server address**. Nod fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, Nod tries it for you.
 3. Add an **API key** only if the server needs one.
 4. Select **Save connection**, or **Connect** during onboarding.
 
@@ -109,11 +109,11 @@ With LM Studio 0.4 or later, nod reads each model's details. It skips embedding 
 
 ![The Your own server page in onboarding, with the server address http://localhost:11434/v1 filled in, a hint naming Ollama, LM Studio and vLLM, and an optional API key field next to Connect.](../../../assets/screens/local-models-onboarding.png)
 
-nod checks the address by listing the server's models. The connection shows the server's host, such as `localhost:11434`. If you haven't chosen a model yet, nod selects the server's first one. To switch, open **Settings → Models** and choose a model.
+Nod checks the address by listing the server's models. The connection shows the server's host, such as `localhost:11434`. If you haven't chosen a model yet, Nod selects the server's first one. To switch, open **Settings → Models** and choose a model.
 
 ![The Models dialog lists the OpenAI-compatible server localhost:11434 with one model, selected, next to the Add server button.](../../../assets/screens/local-models-settings.png)
 
-After you pull or load another model, select the refresh button next to the connection. To change a server's key, add the same address again: nod updates that connection instead of adding a second one.
+After you pull or load another model, select the refresh button next to the connection. To change a server's key, add the same address again: Nod updates that connection instead of adding a second one.
 
 ## Set the server in `.env`
 
@@ -126,7 +126,7 @@ OPENAI_COMPATIBLE_API_KEY=
 LLM_MODEL=gpt-oss:20b
 ```
 
-Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. After editing `.env`, [apply the configuration change](/deploy/configuration/#how-settings-work). If the server isn't running when nod starts, start it and select the refresh button next to the connection.
+Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. After editing `.env`, [apply the configuration change](/deploy/configuration/#how-settings-work). If the server isn't running when Nod starts, start it and select the refresh button next to the connection.
 
 ## Other OpenAI-compatible services
 
@@ -134,13 +134,13 @@ For services listed in **Models**, such as Groq, Together AI, and DeepSeek, use 
 
 Use an OpenAI-compatible connection for other hosted services that offer this API. Enter the service's address and your API key.
 
-nod lists every model such a service returns, including ones that can't chat. Pick a chat model that supports tools.
+Nod lists every model such a service returns, including ones that can't chat. Pick a chat model that supports tools.
 
 ## What changes with these connections
 
 | Area                | With a local or OpenAI-compatible model                                                                                                                                                               |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Spending            | nod doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you.        |
+| Spending            | Nod doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you.        |
 | Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                                    |
 | Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                             |
 | Decision checks     | Your selected model handles confirmation replies and email checks unless `TYPESAFE_API_KEY` configures a decision model. See [Decision checks](/connect/models/#decision-checks).                     |
@@ -152,13 +152,13 @@ nod lists every model such a service returns, including ones that can't chat. Pi
 
 | Problem                                                       | Fix                                                                                                                                            |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models. |
-| **This server has no models nod can use**                     | nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                    |
-| nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
+| **Nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models. |
+| **This server has no models Nod can use**                     | Nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                    |
+| Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
 | A new model doesn't appear                                    | Select the refresh button next to the connection.                                                                                              |
 | **Can’t load its models** next to a server set in `.env`      | Start the server, then select the refresh button next to the connection.                                                                       |
-| **Remove it and add the server again**                        | nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                |
-| nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
+| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                |
+| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
 
 ## Related resources
 

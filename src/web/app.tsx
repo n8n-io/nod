@@ -605,14 +605,14 @@ function AccountApp({
     else
       return (
         <main className="empty-state">
-          <p>Open nod in the desktop app.</p>
+          <p>Open Nod in the desktop app.</p>
         </main>
       );
-  if (sessionState.loading) return <SetupProgress title="Opening nod…" />;
+  if (sessionState.loading) return <SetupProgress title="Opening Nod…" />;
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">
-        <Notice>{sessionState.error || 'nod could not be opened.'}</Notice>
+        <Notice>{sessionState.error || 'Nod could not be opened.'}</Notice>
         <Button variant="outline" onClick={() => void sessionState.refresh()}>
           Try again
         </Button>

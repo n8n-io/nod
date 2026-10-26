@@ -203,7 +203,7 @@ export function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
 
 function markdown(summary: ReturnType<typeof summarizeWhisper>, manifest: Record<string, unknown>) {
   const lines = [
-    `# WhisperBench on nod: ${manifest.label}`,
+    `# WhisperBench on Nod: ${manifest.label}`,
     '',
     `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}. Lower is better. $${summary.costUsd.toFixed(2)} total, ${summary.incomplete} incomplete.`,
     '',

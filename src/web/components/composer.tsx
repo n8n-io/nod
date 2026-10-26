@@ -112,7 +112,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     editorProps: {
       attributes: {
         role: 'textbox',
-        'aria-label': 'Message nod',
+        'aria-label': 'Message Nod',
         'aria-multiline': 'true',
         'aria-describedby': 'composer-keyboard-hint',
         class: 'composer-editor message-text',
@@ -492,7 +492,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
           <div>
-            <strong>Replying to {replyTo.role === 'assistant' ? 'nod' : 'yourself'}</strong>
+            <strong>Replying to {replyTo.role === 'assistant' ? 'Nod' : 'yourself'}</strong>
             <span>{replyTo.text || 'Attachment'}</span>
           </div>
           <Button

@@ -24,7 +24,7 @@ export function renderIntegrationBrowser(
   const broker = JSON.stringify(brokerOrigin).replaceAll('<', '\\u003c');
   const secret = JSON.stringify(bridgeKey).replaceAll('<', '\\u003c');
   const expected = JSON.stringify(continuation).replaceAll('<', '\\u003c');
-  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connecting your app · nod</title><style nonce="${nonce}">:root{color-scheme:light dark}body{font:16px system-ui;margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#fafafa,#191919);color:light-dark(#191919,#fafafa)}main{max-width:360px;padding:32px;text-align:center}h1{font-size:16px;font-weight:400}p{line-height:1.6;color:light-dark(#676767,#bfbfbf)}.failed h1{font-size:21px;font-weight:550;letter-spacing:-.4px}</style></head><body><main hidden><h1 id="heading">Opening sign-in…</h1><p id="status" role="status"></p></main><script nonce="${nonce}">
+  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connecting your app · Nod</title><style nonce="${nonce}">:root{color-scheme:light dark}body{font:16px system-ui;margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#fafafa,#191919);color:light-dark(#191919,#fafafa)}main{max-width:360px;padding:32px;text-align:center}h1{font-size:16px;font-weight:400}p{line-height:1.6;color:light-dark(#676767,#bfbfbf)}.failed h1{font-size:21px;font-weight:550;letter-spacing:-.4px}</style></head><body><main hidden><h1 id="heading">Opening sign-in…</h1><p id="status" role="status"></p></main><script nonce="${nonce}">
 const brokerOrigin=${broker};
 const bridgeKey=${secret};
 const expected=${expected};
@@ -68,7 +68,7 @@ location.replace(target.href);
 }
 }catch{
 try{sessionStorage.removeItem(slot);if(database)await stored('take');}catch{}
-content.hidden=false;document.body.classList.add('failed');document.title='Sign-in could not be completed · nod';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to nod and try again.';
+content.hidden=false;document.body.classList.add('failed');document.title='Sign-in could not be completed · Nod';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to Nod and try again.';
 }finally{clearTimeout(waiting);database?.close();}})();
 </script></body></html>`;
 }
@@ -197,7 +197,7 @@ export function createIntegrationBrowser(): IntegrationConnectionBrowser {
           send(200, { id, url: remote.href, expiresAt });
         } catch {
           send(400, {
-            error: 'The app connection could not be started. Return to nod and try again.',
+            error: 'The app connection could not be started. Return to Nod and try again.',
           });
         }
       });

@@ -313,7 +313,7 @@ if (!imagesOnly) {
   await writeFile(
     join(assets, 'licenses/COMPONENTS.md'),
     [
-      '# nod runtime components',
+      '# Nod runtime components',
       '',
       `- Docker CLI ${buildLock.dockerVersion}: https://github.com/docker/cli/tree/v${buildLock.dockerVersion}. License and notices: docker-cli/LICENSE, docker-cli/NOTICE.`,
       `- Docker Engine ${buildLock.dockerVersion}: https://github.com/moby/moby/tree/v${buildLock.dockerVersion}. License and notices: docker-engine/LICENSE, docker-engine/NOTICE.`,

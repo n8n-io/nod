@@ -7,8 +7,8 @@ import { Button } from '../../components/ui';
 type DisplayStep = OnboardingStep | 'launchAtLogin';
 
 const stepNames: Record<DisplayStep, string> = {
-  welcome: 'Welcome to nod',
-  intro: 'Meet nod',
+  welcome: 'Welcome to Nod',
+  intro: 'Meet Nod',
   email: 'Connect your email',
   calendar: 'Connect your calendar',
   brain: 'Connect an AI provider',
@@ -41,7 +41,7 @@ export function OnboardingFrame({
           {!welcome && (
             <>
               <NodGlyph mode="still" />
-              <span>nod</span>
+              <span>Nod</span>
             </>
           )}
         </div>

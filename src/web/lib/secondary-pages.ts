@@ -115,8 +115,8 @@ export function channelLabel(setup: ChannelSetupSummary | undefined, configured:
       awaiting_scan: 'Scan the QR code to finish setup',
       connected:
         setup.linkMode === 'self-chat'
-          ? 'Chat with nod in Message yourself'
-          : 'Only your selected number can message nod',
+          ? 'Chat with Nod in Message yourself'
+          : 'Only your selected number can message Nod',
       disconnected: 'Reconnecting to WhatsApp',
       logged_out: 'Link the WhatsApp account again',
       expired: 'QR setup expired',
@@ -132,7 +132,7 @@ export function channelLabel(setup: ChannelSetupSummary | undefined, configured:
       : 'Waiting for Start in Telegram';
   }
   if (setup.allowedUserId)
-    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message nod`;
+    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message Nod`;
   if (setup.mode === 'polling') return null;
   return setup.webhookStatus === 'registered' ? 'Webhook registered' : 'Finish delivery setup';
 }

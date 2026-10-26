@@ -466,7 +466,7 @@ export function VaultDetails({
 
   const host = entry.kind === 'login' ? originLabel(entry.origin) : '';
   const name = details?.label ?? entry.label;
-  const removal = `nod will remove “${name}”${host ? ` for ${host}` : ''} from your vault. You cannot undo this.`;
+  const removal = `Nod will remove “${name}”${host ? ` for ${host}` : ''} from your vault. You cannot undo this.`;
   const copyButton = (label: string, onClick: () => void) => (
     <Button
       type="button"

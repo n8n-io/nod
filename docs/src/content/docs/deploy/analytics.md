@@ -1,23 +1,23 @@
 ---
 title: Analytics and recordings
-description: What usage data nod collects when you opt in, how to turn it off, and the rules for masked session recordings.
+description: What usage data Nod collects when you opt in, how to turn it off, and the rules for masked session recordings.
 sidebar:
   order: 4
 ---
 
-This page explains what usage data nod collects, how to turn it on or off, and what session recordings never show.
+This page explains what usage data Nod collects, how to turn it on or off, and what session recordings never show.
 
-Usage data is opt-in for each owner and off by default. nod sends product events and masked session recordings to the nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
+Usage data is opt-in for each owner and off by default. Nod sends product events and masked session recordings to the Nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
 
-nod never sends what you write, what nod replies, what your apps return, or what you type into a form. Events describe what kind of thing happened, using fixed lists of values, counts and durations.
+Nod never sends what you write, what Nod replies, what your apps return, or what you type into a form. Events describe what kind of thing happened, using fixed lists of values, counts and durations.
 
 ## Turn usage data on or off
 
 You turn on **Share usage data** in the introduction, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
 
-Next to the switch, nod says: "Help us make nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
+Next to the switch, Nod says: "Help us make Nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
-The deployment has a switch too. nod collects only when both are on, and `NOD_ANALYTICS_ENABLED=false` always wins.
+The deployment has a switch too. Nod collects only when both are on, and `NOD_ANALYTICS_ENABLED=false` always wins.
 
 ```mermaid
 flowchart LR
@@ -32,13 +32,13 @@ flowchart LR
 | `NOD_ANALYTICS_ENABLED`     | `false` turns off events and recordings. `true` turns them on, even in development.       |
 | `NOD_ANALYTICS_ENVIRONMENT` | Sets the event label to `production` or `development` without turning anything on or off. |
 
-Restart nod after you change either one.
+Restart Nod after you change either one.
 
-To disable both upstream analytics and feedback, set `NOD_ANALYTICS_ENABLED=false` and `NOD_FEEDBACK_ENABLED=false` in the environment used to start nod. In the desktop app, quit it completely and launch it with those variables. This stops those two collectors, including feedback status checks. Model providers, connected services and software updates have separate network access; this is not an offline mode.
+To disable both upstream analytics and feedback, set `NOD_ANALYTICS_ENABLED=false` and `NOD_FEEDBACK_ENABLED=false` in the environment used to start Nod. In the desktop app, quit it completely and launch it with those variables. This stops those two collectors, including feedback status checks. Model providers, connected services and software updates have separate network access; this is not an offline mode.
 
 ## Identity
 
-nod counts installations, not people. Two installations count as two, and a shared one counts as one.
+Nod counts installations, not people. Two installations count as two, and a shared one counts as one.
 
 | Runtime                      | Identity                                                      | Available by default                                                          |
 | ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -51,7 +51,7 @@ Web and desktop clients connected to the same server use that server's installat
 
 ### Stop sharing or delete past data
 
-Turn off **Share usage data** in **Settings → General** to stop sending. Turning it off doesn't delete data PostHog already has. To ask for that, use **Send feedback** in the app and ask for your analytics data to be deleted. The nod team handles the request.
+Turn off **Share usage data** in **Settings → General** to stop sending. Turning it off doesn't delete data PostHog already has. To ask for that, use **Send feedback** in the app and ask for your analytics data to be deleted. The Nod team handles the request.
 
 ## Internal builds
 
@@ -64,12 +64,12 @@ Events say `environment=development` unless they come from a release build:
 
 `NOD_ANALYTICS_ENVIRONMENT` overrides the label for source installs. Dashboards read only `production`.
 
-## What never leaves nod
+## What never leaves Nod
 
-- Message text, nod's replies, task titles, summaries and quotes.
+- Message text, Nod's replies, task titles, summaries and quotes.
 - Tool arguments, tool results, app data, web pages and files.
 - Names, email addresses, account names, phone numbers and IDs of your threads, turns or messages.
-- Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites nod visits, signs in to or buys from, and links you open from a reply, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
+- Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites Nod visits, signs in to or buys from, and links you open from a reply, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
 - Raw error text, console output, request headers and bodies.
 - Vault values, card details, codes, keys, order details and shop accounts. A payment sends only its amount, currency, status and the shop's registrable domain.
 - Model names from an OpenAI-compatible server you run yourself. They're sent as `custom`.
@@ -81,7 +81,7 @@ Every event carries `analytics_schema=nod_v3` and `environment`. Packaged releas
 
 - **UI events** and recordings add `surface` (`web` or `desktop`) and a normalized `route`.
 - **Server events** add `capture_source=server`.
-- **Events within a turn** carry a random `run_id`. It's separate from nod's private turn and conversation IDs, and joins a turn's tools, model requests, services and inferred tasks.
+- **Events within a turn** carry a random `run_id`. It's separate from Nod's private turn and conversation IDs, and joins a turn's tools, model requests, services and inferred tasks.
 - **Events within a web turn** also carry `$session_id`, the PostHog recording session of the browser tab that sent the message.
 
 Every event is checked against an explicit schema before it's sent. Unknown events, unknown properties and values outside the lists below are dropped.
@@ -101,7 +101,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `nod_task_card_started`        | You start a first-chat task card                   | `kind`: `immediate`, `ongoing`; `position`: `0`, `1`, `2`                                                                                                                                           |
 | `nod_setup_link_clicked`       | You open a setup link in a reply                   | `setup`: `app`, `vault`, `website`, `browser`                                                                                                                                                       |
 | `nod_link_opened`              | You open or play a link from a reply               | Registrable `domain`; `source`: `text`, `preview`, `tooltip`, `player`; for `preview` and `player`, the row's `position`, 1 to 20. Never the address                                                |
-| `nod_browser_handoff_action`   | You use a control on a browser nod handed to you   | `action`: `done`, `back`, `reload`, `expand`, `collapse`                                                                                                                                            |
+| `nod_browser_handoff_action`   | You use a control on a browser Nod handed to you   | `action`: `done`, `back`, `reload`, `expand`, `collapse`                                                                                                                                            |
 | `nod_message_reaction_changed` | You add, change or remove a reaction               | `operation`: `add`, `remove`, `change`; `reaction`: `thumbs_up`, `heart`, `joy`, `party`, `wow`, `pray`, `thumbs_down`, `other`; `method`: `quick`, `picker`, `double_click`, `menu`, `pin`; `role` |
 | `nod_message_action`           | You copy or reply to a message                     | `action`: `copy`, `reply`; `role`: `assistant`, `user`; `method`: `button`, `context_menu`                                                                                                          |
 | `nod_attachment_added`         | You add files to a message                         | `method`: `picker`, `drop`, `paste`; `kind` of the first file: `image`, `pdf`, `other`; `count`: `1`, `2-5`, `6+`                                                                                   |
@@ -112,7 +112,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 
 Onboarding asks about **Share usage data** in the introduction. Step events are sent only after you turn it on, so the welcome screen and introduction are usually not recorded. The native welcome is not recorded. The introduction is recorded if sharing was already enabled when it appears; enabling sharing there does not backfill earlier events. The Open at login question is reported when it appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Email and calendar can be skipped. The apps step always lets you continue without connecting a tool.
 
-### What nod does
+### What Nod does
 
 Turns and chat:
 
@@ -133,15 +133,15 @@ Tools, confirmations and models:
 | Event                           | When                                                                                    | Properties                                                                                                                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `nod_tool_used`                 | A tool call finishes, in the main session or a subagent                                 | `tool`: `apps`, `ask_user`, `browser`, `browser_session`, `create_audio`, `delegate`, `follow_up`, `manage_apps`, `manage_personal_context`, `pay`, `react_to_message`, `send_message`, `share_file`, `sign_in`, `skills`, `task`, `workspace`, `web`, `other`; `outcome`; `duration_ms`; `subagent`            |
-| `nod_confirmation_changed`      | nod asks for your yes, or the question closes                                           | `status`: `asked`, `approved`, `declined`, `executed`, `expired`, `uncertain`; `action_kind`: `app`, `browser`, `sign_in`, `settings`, `memory`; `source` of the turn that asked                                                                                                                                |
+| `nod_confirmation_changed`      | Nod asks for your yes, or the question closes                                           | `status`: `asked`, `approved`, `declined`, `executed`, `expired`, `uncertain`; `action_kind`: `app`, `browser`, `sign_in`, `settings`, `memory`; `source` of the turn that asked                                                                                                                                |
 | `nod_model_used`                | A model request finishes                                                                | `provider`: a supported provider ID, `typesafe`, or `other`; `model`; `purpose`: `agent`, `memory`, `review`, `tasks`, `analytics` (the request analysis below); `outcome`; `input_tokens`, `output_tokens`, `cached_input_tokens`, `cost_usd`; `pricing`: `api`, `plan_estimate`, `unavailable`; `duration_ms` |
 | `nod_model_connection_changed`  | A model connection is saved, removed, or its save or sign-in fails                      | `provider`: a supported provider ID; `method`: `api_key`, `subscription`, `oauth`; `status`: `connected`, `disconnected`, `failed`. Never the key, address or account                                                                                                                                           |
 | `nod_model_connection_observed` | Each model connection, after opt-in, at startup and after model changes                 | `provider`, `method`, `selected`; `model` and `effort`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` on the selected connection only                                                                                                                                                               |
-| `nod_website_visited`           | nod's browser shows a page, or a web fetch reads one, at most once per website per turn | Registrable `domain`; `via`: `browser`, `fetch`; `subagent`. Never the address, page or search text                                                                                                                                                                                                             |
+| `nod_website_visited`           | Nod's browser shows a page, or a web fetch reads one, at most once per website per turn | Registrable `domain`; `via`: `browser`, `fetch`; `subagent`. Never the address, page or search text                                                                                                                                                                                                             |
 
 Provider IDs come from the fixed [supported connection list](/connect/models/#set-connections-in-server-settings), plus `compatible` for owner-configured endpoints. Arbitrary provider names, endpoints, cloud account IDs, gateway IDs, and credentials are never analytics properties. A model connection's `connected` status means its configuration was saved; providers using a bundled catalog check access on first use.
 
-`workspace` groups the file and shell tools inside nod's workspace, and `web` groups web search and page fetches. `model` is the provider's public model name for hosted providers, and `custom` for an OpenAI-compatible server. The same rule applies to `model` on turn and model connection events. `cost_usd` is the provider's charge, or the estimated API price for plan usage. `input_tokens` includes cached input. `cached_input_tokens` is the part read from the provider's prompt cache, when the provider reports it. `duration_ms` is the elapsed time nod measures for handling the request and can include request setup or reporting overhead.
+`workspace` groups the file and shell tools inside Nod's workspace, and `web` groups web search and page fetches. `model` is the provider's public model name for hosted providers, and `custom` for an OpenAI-compatible server. The same rule applies to `model` on turn and model connection events. `cost_usd` is the provider's charge, or the estimated API price for plan usage. `input_tokens` includes cached input. `cached_input_tokens` is the part read from the provider's prompt cache, when the provider reports it. `duration_ms` is the elapsed time Nod measures for handling the request and can include request setup or reporting overhead.
 
 Settings, memory and schedules:
 
@@ -162,7 +162,7 @@ Apps, connections and Vault:
 | `nod_vault_imported`       | New logins are committed by an import                                                                      | Batches of up to 100 normalized `domains`, one entry per imported login; `unavailable` when no public domain can be derived. No login values or names                                                                                                                                                                                                                      |
 | `nod_secure_entry_changed` | A sign-in, payment or verification code request opens, is entered, fails, becomes uncertain or is replaced | `kind`: `sign_in`, `payment`, `code`; `status`: `requested`, `superseded` (a newer request replaced it), `submitted`, `failed`, `uncertain` for every kind, plus `approved` when you approve a payment with the card's security code; registrable `domain` of the sign-in page or shop; exact `amount` and `currency` of a payment. Never the card, order, item or account |
 
-Tasks nod works on, inferred after each turn:
+Tasks Nod works on, inferred after each turn:
 
 | Event                    | When                                                                                    | Properties                                                                                                                                                                                                                                             |
 | ------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -174,7 +174,7 @@ Tasks nod works on, inferred after each turn:
 
 ## Request analysis and timing
 
-With usage data enabled, a tool-free call to your selected model at its lowest supported reasoning effort analyzes a bounded portion of the finished conversation and previously associated requests. It runs after turns you started, scheduled runs, resumes and background tasks. Event turns, activity checks and the onboarding first-task turn are skipped. This uses your model account, appears in your usage and counts toward your spending limit. The selector takes the first advertised effort among `off`, `minimal`, `low` and `medium`, or the first advertised level if none match. Tool payloads, attachments, screenshots, verification codes and Vault values are excluded, and every run of three or more digits, including digits separated by spaces or punctuation such as `12 34 56` or `1,234`, is replaced with `#`. The model returns short generated labels and references to supplied messages; references are sent to the selected model for association and stored in nod's private database, but are not sent to PostHog. No conversation excerpts, summaries or explanations go to PostHog.
+With usage data enabled, a tool-free call to your selected model at its lowest supported reasoning effort analyzes a bounded portion of the finished conversation and previously associated requests. It runs after turns you started, scheduled runs, resumes and background tasks. Event turns, activity checks and the onboarding first-task turn are skipped. This uses your model account, appears in your usage and counts toward your spending limit. The selector takes the first advertised effort among `off`, `minimal`, `low` and `medium`, or the first advertised level if none match. Tool payloads, attachments, screenshots, verification codes and Vault values are excluded, and every run of three or more digits, including digits separated by spaces or punctuation such as `12 34 56` or `1,234`, is replaced with `#`. The model returns short generated labels and references to supplied messages; references are sent to the selected model for association and stored in Nod's private database, but are not sent to PostHog. No conversation excerpts, summaries or explanations go to PostHog.
 
 The model combines a small vocabulary of generic actions and subjects, such as `find:document`, `analyze:spreadsheet` and `send:email`. It also selects a broad task type, one `use_case` family, a `context` and a `collaboration` mode. This supports compound requests without defining every possible task or assigning category IDs. The vocabulary is declared once in the event schema and included in the model instructions. Add a primitive only when it describes a reusable product need.
 
@@ -182,7 +182,7 @@ The export validator rejects task labels outside that vocabulary, extra fields a
 
 Existing labels are supplied with known tasks for reuse on continuations. Associations can span turns and restarts within the same session. A new consent period or conversation reset prevents linking back to previous requests. Analysis is asynchronous, has a bounded queue and doesn't retry a failed model request. Overflow reports are coalesced while the queue is full; other skipped runs appear as missing analysis, so `queue_full` event counts are not dropped-turn counts. A crash can miss an analysis; these measurements are not an exhaustive record of every request.
 
-For example, `communication` can split into `summarize` / `email`, `draft` / `email`, and `send` / `message`. A general question is `advice` with `explain` / `knowledge`, paying a bill is `transaction` with `pay` / `finance`, ordering groceries is `order` / `product`, cancelling a subscription is `cancel` / `finance`, and booking a flight is `transaction` with `book` / `travel`. `meeting` is the meeting or call itself, such as its agenda, notes or transcript; `calendar` is its time slot. `place` is a physical place or local service, and `device` a physical or smart device. A reminder for you is `schedule` / `task`. Setting up recurring work nod performs is `schedule` / `automation`; its later run uses the actual requested action and subject. App and domain labels come from actual connection or service events, not from model guesses.
+For example, `communication` can split into `summarize` / `email`, `draft` / `email`, and `send` / `message`. A general question is `advice` with `explain` / `knowledge`, paying a bill is `transaction` with `pay` / `finance`, ordering groceries is `order` / `product`, cancelling a subscription is `cancel` / `finance`, and booking a flight is `transaction` with `book` / `travel`. `meeting` is the meeting or call itself, such as its agenda, notes or transcript; `calendar` is its time slot. `place` is a physical place or local service, and `device` a physical or smart device. A reminder for you is `schedule` / `task`. Setting up recurring work Nod performs is `schedule` / `automation`; its later run uses the actual requested action and subject. App and domain labels come from actual connection or service events, not from model guesses.
 
 One goal can contain several requested activities. For example, finding records, totaling them, and emailing the total stays one task, with one outcome and elapsed time. `task_action` and `task_subject` describe its primary goal. `task_activities` stores up to eight unique `action:subject` pairs. Only requested components qualify; the model must not invent intermediate tool steps. Activities accumulate as that goal is clarified across turns. Completed means the whole goal is inferred complete, not that one component finished.
 
@@ -208,13 +208,13 @@ Completion is **inferred**, not independently verified delivery. A successful ru
 - a browser step you confirmed that ran;
 - a submitted payment (`nod_secure_entry_changed` with `kind=payment` and `submitted`).
 
-When the turn only changed nod's own schedules, notification settings, your rules, spending limits or memory, it gets `settings_changed`. Otherwise it's `inferred`; unfinished tasks are `none`. Reads, sign-ins, browser steps that ran without asking and `send_message`, which only messages you, don't count. The read check uses the action's name, so an app action with an unusual name can be counted the wrong way. Every completed task in that turn gets the evidence, and a task finished in a later turn than its action stays `inferred`. Corrections can reopen a task; no reply doesn't mean cancellation. Frustration describes an interaction, not a person's mood or personality. It requires an explicit complaint or repeated unresolved request/correction.
+When the turn only changed Nod's own schedules, notification settings, your rules, spending limits or memory, it gets `settings_changed`. Otherwise it's `inferred`; unfinished tasks are `none`. Reads, sign-ins, browser steps that ran without asking and `send_message`, which only messages you, don't count. The read check uses the action's name, so an app action with an unusual name can be counted the wrong way. Every completed task in that turn gets the evidence, and a task finished in a later turn than its action stays `inferred`. Corrections can reopen a task; no reply doesn't mean cancellation. Frustration describes an interaction, not a person's mood or personality. It requires an explicit complaint or repeated unresolved request/correction.
 
 `starter` is `true` when the task's request is the title of a first-chat task card, which is what **Do it** sends. A message you type with the exact card title counts too.
 
 ### Real jobs
 
-A **real job** is a task you asked for that nod finished in an app or on a website. In events, it's the latest `nod_task_updated` for a `task_id` with `source` `user` or `task`, `starter=false`, `outcome=completed` and `completion_evidence=action_succeeded`. First-chat task cards, scheduled runs, event turns and changes to nod's own settings don't count. Count distinct `task_id` values; a task reopened after completion counts once.
+A **real job** is a task you asked for that Nod finished in an app or on a website. In events, it's the latest `nod_task_updated` for a `task_id` with `source` `user` or `task`, `starter=false`, `outcome=completed` and `completion_evidence=action_succeeded`. First-chat task cards, scheduled runs, event turns and changes to Nod's own settings don't count. Count distinct `task_id` values; a task reopened after completion counts once.
 
 `elapsed_ms` runs from the first associated request to the observed turn finish, including queueing and time between turns. `duration_ms` on turn completion measures that execution segment, excluding the classifier call. `queue_duration_ms` measures the queued turn's wait to execute. A turn that pauses includes the runtime's bounded `waiting_reason`. These timings don't yet separate active work, user waiting and provider latency within a task. Compare percentiles by task category, source and app version, and show unfinished requests alongside completed ones.
 
@@ -230,7 +230,7 @@ Vault imports batch domain entries so a 5,000-login import emits at most 50 even
 
 Opt-out cancels pending analysis and drops unsent events and recordings. Turning sharing back on can't revive queued server events or task associations from an earlier consent period. Browser tabs revoke capture when notified of a preference change. This can't recall an event already transmitted. Historical data in PostHog isn't deleted by the switch.
 
-Website domains, sign-in domains and purchase amounts let the nod team see which kinds of websites nod is used on and how much is spent through it.
+Website domains, sign-in domains and purchase amounts let the Nod team see which kinds of websites Nod is used on and how much is spent through it.
 
 These are pseudonymous, opt-in measurements. Installation IDs and service domains are not anonymous, and opted-in users may not represent the whole user base.
 
@@ -243,7 +243,7 @@ Recordings show navigation, layout, controls, scrolling and clicks, with private
 - **Replaced:** every URL becomes a fixed `https://nod.invalid` route, without query strings, fragments or external destinations.
 - **Never collected:** console output, request headers and bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles.
 
-Capture failures never interrupt nod. Model keys and PostHog settings never enter the workspace.
+Capture failures never interrupt Nod. Model keys and PostHog settings never enter the workspace.
 
 To add, change or remove an event, see [Change analytics](/contribute/analytics/).
 

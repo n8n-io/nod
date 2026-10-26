@@ -131,7 +131,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         throw new Error();
       value.notificationRequest ??= 'legacy';
     } catch (error) {
-      if (error.code !== 'ENOENT') throw new Error('nod could not open its saved settings.');
+      if (error.code !== 'ENOENT') throw new Error('Nod could not open its saved settings.');
     }
     current = value ?? {
       version: 1,
@@ -148,7 +148,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   }
   const keyStoreMessage =
     platform === 'darwin'
-      ? 'Unlock your Mac keychain, then quit and reopen nod.'
+      ? 'Unlock your Mac keychain, then quit and reopen Nod.'
       : 'Unlock your system key store, then try again.';
   async function available() {
     try {
@@ -227,7 +227,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             value.secrets.serverToken,
             Object.assign(
               new Error(
-                'nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
+                'Nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
               ),
               { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' },
             ),

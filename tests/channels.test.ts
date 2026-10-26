@@ -866,7 +866,7 @@ test(
                 async attachmentFailure(names) {
                   notices++;
                   assert.deepEqual(names, [file.name]);
-                  return `The file ${file.name} is available in nod.`;
+                  return `The file ${file.name} is available in Nod.`;
                 },
               });
               const delivered = sent.slice(before);
@@ -876,7 +876,7 @@ test(
               const fallback = delivered[0].content.text as string;
               for (const line of answer.replaceAll('**', '').split('\n'))
                 assert.ok(fallback.includes(line));
-              assert.equal(delivered[1].content.text, `The file ${file.name} is available in nod.`);
+              assert.equal(delivered[1].content.text, `The file ${file.name} is available in Nod.`);
               assert.ok(delivered.every((message) => !message.content.image));
               assert.deepEqual(
                 result.ids,
@@ -905,7 +905,7 @@ test(
               ],
               async attachmentFailure(names) {
                 assert.deepEqual(names, ['missing.png']);
-                return 'The missing.png file is available in nod.';
+                return 'The missing.png file is available in Nod.';
               },
             });
             assert.equal(sent.length, beforeMixed + 3);
@@ -913,7 +913,7 @@ test(
             assert.deepEqual(sent[beforeMixed + 1].content.image, Buffer.from('available image'));
             assert.equal(
               sent[beforeMixed + 2].content.text,
-              'The missing.png file is available in nod.',
+              'The missing.png file is available in Nod.',
             );
             assert.deepEqual(
               mixed.ids,
@@ -931,7 +931,7 @@ test(
                 attachments: [attachment('uncertain.png', 'image/png', 'uncertain image')],
                 async attachmentFailure() {
                   uncertainImageNotices++;
-                  return 'The image is available in nod.';
+                  return 'The image is available in Nod.';
                 },
               }),
               /may have accepted/,
@@ -2289,7 +2289,7 @@ test('channel presentation isolates private links from the model and rejects uns
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });
-    return 'Continua na aplicação nod.';
+    return 'Continua na aplicação Nod.';
   };
   await channelReply(
     'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
@@ -2302,7 +2302,7 @@ test('channel presentation isolates private links from the model and rejects uns
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
   for (const page of ['/vault', '/trust']) {
-    await channelReply(`Save it in nod: ${page}?add=login`, { threadId: 'owned-thread', present });
+    await channelReply(`Save it in Nod: ${page}?add=login`, { threadId: 'owned-thread', present });
     assert.doesNotMatch(JSON.stringify(presentation), /(?:vault|trust)\?add/);
   }
   for (const generated of [
@@ -2489,7 +2489,7 @@ test(
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
         if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
         if (input.kind === 'delivery' && input.files) unavailableFiles.push(input.files);
-        return 'Continua na aplicação nod.';
+        return 'Continua na aplicação Nod.';
       },
       transport,
       resolveAttachments: async (resolvedThreadId, ids) => {
@@ -3048,7 +3048,7 @@ test(
       }
       const rejectedImages = await addReply(
         'channel:whatsapp:555000:wamid.good',
-        'These files remain in nod.',
+        'These files remain in Nod.',
         [
           { id: largeImageId },
           { id: brokenImageId },
@@ -3098,7 +3098,7 @@ test(
           failure === 'rejected' ? ['text', 'image', 'image', 'text'] : ['text', 'image', 'text'],
         );
         assert.deepEqual(delivered.at(-2)!.body.image, { id: `fixture-media-${uploaded.length}` });
-        assert.match(JSON.stringify(delivered.at(-1)!.body), /Continua na aplicação nod/);
+        assert.match(JSON.stringify(delivered.at(-1)!.body), /Continua na aplicação Nod/);
         const acceptedIds: string[] = delivered.flatMap((_, index) =>
           failure === 'rejected' && index === 1
             ? []
@@ -3164,7 +3164,7 @@ test(
         await channels.drain();
         assert.equal(sent.length, before + 2);
         assert.equal(sent.at(-1)?.provider, provider);
-        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação nod/);
+        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação Nod/);
         assert.match(
           provider === 'telegram' ? readable(sent.at(-2)!.body) : JSON.stringify(sent.at(-2)?.body),
           /The website needs sign-in/,
@@ -3199,7 +3199,7 @@ test(
       await app.close();
       const restarted = await createChannels(pool, {
         ownerId: 'local-development',
-        present: async () => 'Consulta os ficheiros na aplicação nod.',
+        present: async () => 'Consulta os ficheiros na aplicação Nod.',
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');

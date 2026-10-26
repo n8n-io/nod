@@ -219,7 +219,7 @@ const paths = await packager({
   extendInfo: {
     LSMinimumSystemVersion: minimumSystemVersion,
     ElectronSquirrelPreventDowngrades: true,
-    NSMicrophoneUsageDescription: 'nod uses your microphone when you record a voice message.',
+    NSMicrophoneUsageDescription: 'Nod uses your microphone when you record a voice message.',
   },
 });
 const application = join(paths[0], `${configuration.productName}.app`);

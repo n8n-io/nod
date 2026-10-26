@@ -103,7 +103,7 @@ export function createDockerWorkspace(options: {
   return createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
     instructions:
-      'Your Linux workspace uses Docker networking without a nod egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: nod installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
+      'Your Linux workspace uses Docker networking without a Nod egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: Nod installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
     runCommand: (id, args, input) =>
       runWorkspaceCommand({
         container: options.container,
@@ -153,7 +153,7 @@ export function createCommandWorkspace(options: {
     signal?: AbortSignal,
   ) {
     if (unavailable || disposed)
-      throw new Error('The workspace is unavailable. Restart nod before continuing.');
+      throw new Error('The workspace is unavailable. Restart Nod before continuing.');
     const operation = run(signal ? AbortSignal.any([signal, lifecycle.signal]) : lifecycle.signal);
     pending.add(operation);
     try {

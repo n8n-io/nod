@@ -94,20 +94,20 @@ export async function loadIntegrationIdentity(options: {
   const name = createHash('sha256').update(options.ownerId).digest('hex');
   if (expected !== undefined) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(expected))
-      throw new Error('nod’s saved app identity is invalid. Restore its app data to reconnect.');
+      throw new Error('Nod’s saved app identity is invalid. Restore its app data to reconnect.');
     for (const extension of ['encrypted', 'public'])
       if (
         !(await readProtected(
           join(options.dataRoot, 'integration-identity', `${name}.${extension}`),
         ))
       )
-        throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
+        throw new Error('Nod’s saved app identity is missing. Restore its app data to reconnect.');
   }
   if (!options.keyStore.configured)
-    throw new Error('Unlock or configure nod’s key store before connecting apps.');
+    throw new Error('Unlock or configure Nod’s key store before connecting apps.');
   const encryptionKey = Buffer.from(await options.keyStore.getKey());
   try {
-    if (encryptionKey.length !== 32) throw new Error('nod’s key store returned an invalid key.');
+    if (encryptionKey.length !== 32) throw new Error('Nod’s key store returned an invalid key.');
     await mkdir(options.dataRoot, { recursive: true, mode: 0o700 });
     const dataRoot = await realpath(options.dataRoot);
     const directory = join(dataRoot, 'integration-identity');
@@ -131,7 +131,7 @@ export async function loadIntegrationIdentity(options: {
     const binding = Buffer.from(JSON.stringify(['nod-integration-identity-v1', options.ownerId]));
     if (!encrypted) {
       if (marker)
-        throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
+        throw new Error('Nod’s saved app identity is missing. Restore its app data to reconnect.');
       const nonce = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', encryptionKey, nonce);
       cipher.setAAD(binding);
@@ -159,17 +159,17 @@ export async function loadIntegrationIdentity(options: {
       if (key.asymmetricKeyType !== 'ed25519') throw new Error();
     } catch {
       throw new Error(
-        'nod could not unlock its saved app identity. Restore its key store or app data.',
+        'Nod could not unlock its saved app identity. Restore its key store or app data.',
       );
     }
     const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
     if (!publicKey || Buffer.from(publicKey, 'base64url').length !== 32)
       throw new Error('The integration identity is invalid.');
     if (expected !== undefined && expected !== publicKey)
-      throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
+      throw new Error('Nod’s saved app identity changed. Restore its app data to reconnect.');
     if (!marker) await publish(markerPath, Buffer.from(publicKey));
     if ((await readProtected(markerPath))?.toString() !== publicKey)
-      throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
+      throw new Error('Nod’s saved app identity changed. Restore its app data to reconnect.');
     await persist(directory, dataRoot);
     await options.checkpoint.commit(publicKey);
     return {

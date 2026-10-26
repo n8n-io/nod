@@ -79,7 +79,7 @@ export function desktopOnePassword() {
         }
       ).parentPort;
       if (!parent) {
-        reject(new Error('The 1Password helper needs nod desktop.'));
+        reject(new Error('The 1Password helper needs Nod desktop.'));
         return;
       }
       const listener = ({ data, ports }: ElectronMessage) => {
@@ -88,7 +88,7 @@ export function desktopOnePassword() {
         parent.removeListener('message', listener);
         const [port] = ports;
         if (!port) {
-          reject(new Error('nod couldn’t start its 1Password helper.'));
+          reject(new Error('Nod couldn’t start its 1Password helper.'));
           return;
         }
         port.start();
@@ -101,7 +101,7 @@ export function desktopOnePassword() {
       };
       const timer = setTimeout(() => {
         parent.removeListener('message', listener);
-        reject(new Error('nod couldn’t start its 1Password helper.'));
+        reject(new Error('Nod couldn’t start its 1Password helper.'));
       }, 15_000);
       parent.on('message', listener);
       parent.postMessage({ type: 'nod-1password-open' });
@@ -155,7 +155,7 @@ export function createOnePassword(options: {
         if (current === opening) current = undefined;
         throw new PasswordManagerError(
           'unavailable',
-          error instanceof Error ? error.message : 'nod couldn’t start its 1Password helper.',
+          error instanceof Error ? error.message : 'Nod couldn’t start its 1Password helper.',
         );
       },
     );
@@ -221,7 +221,7 @@ export function createOnePassword(options: {
     current = undefined;
     const channel = await opened?.catch(() => undefined);
     if (!channel) return;
-    stop(channel, 'nod closed its 1Password helper.');
+    stop(channel, 'Nod closed its 1Password helper.');
     channel.close();
   }
 

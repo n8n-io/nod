@@ -454,7 +454,7 @@ export function Apps({
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to nod';
+        popup.document.title = 'Connect to Nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}
@@ -890,7 +890,7 @@ export function Apps({
                   {hasFilters
                     ? 'Try a different search or clear your filters.'
                     : view === 'connected'
-                      ? 'Connect your first app to use it with nod.'
+                      ? 'Connect your first app to use it with Nod.'
                       : 'Reload the catalog to check for available apps.'}
                 </p>
                 <Button
@@ -940,7 +940,7 @@ export function Apps({
                     )
                   }
                 >
-                  Ask nod in chat
+                  Ask Nod in chat
                 </Button>
               </div>
             )}

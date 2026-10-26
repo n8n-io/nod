@@ -5,16 +5,16 @@ sidebar:
   order: 6
 ---
 
-This page explains how to add, change or remove a product analytics event in nod, and what else must change with it. It's written for contributors and coding agents.
+This page explains how to add, change or remove a product analytics event in Nod, and what else must change with it. It's written for contributors and coding agents.
 
-What nod sends and when is listed in [Analytics and recordings](/deploy/analytics/). That page is the contract with users. Update it in the same change as the code.
+What Nod sends and when is listed in [Analytics and recordings](/deploy/analytics/). That page is the contract with users. Update it in the same change as the code.
 
 ## The rules every event follows
 
 - **Opt-in only.** Never call PostHog directly. Server events go through `capture` in [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts), UI events through `captureAnalytics` in [`src/web/lib/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics.ts). Both drop the event unless the deployment and the owner allow it.
-- **No content.** Never send text the owner or nod wrote, tool arguments or results, names, email addresses, account names, nod's own owner, thread, turn or message IDs, URLs, paths or raw error text. The random `task_id` and `run_id` made only for analytics are allowed.
+- **No content.** Never send text the owner or Nod wrote, tool arguments or results, names, email addresses, account names, Nod's own owner, thread, turn or message IDs, URLs, paths or raw error text. The random `task_id` and `run_id` made only for analytics are allowed.
 - **Bounded values only.** Use enums, booleans, non-negative integers, durations in milliseconds and normalized public domains from `analyticsDomain`. A free string is a leak waiting to happen.
-- **Describe kinds, not instances.** Send `tool: 'browser'`, not the page nod opened. Send `provider: 'compatible'` and `model: 'custom'`, not the name of a server the owner runs.
+- **Describe kinds, not instances.** Send `tool: 'browser'`, not the page Nod opened. Send `provider: 'compatible'` and `model: 'custom'`, not the name of a server the owner runs.
 - **Count actual changes.** Fire after the change commits or the server answers 2xx, not when a button is clicked "to save".
 - **Name events `nod_<noun>_<past verb>`**, such as `nod_tool_used`. Properties are `snake_case`. Reuse existing property names (`source`, `channel`, `outcome`, `operation`, `duration_ms`) with the same meaning.
 
@@ -23,7 +23,7 @@ What nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 1. Add the event to the `analyticsEvent` union in [`src/server/analytics-events.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics-events.ts). Use `.strict()` objects and bounded types, like the events around it. The server drops the whole event if it has an unknown property or a value the schema doesn't allow.
 2. Capture it where the change commits, with the owner's `CaptureAnalytics` (`analytics.forOwner(ownerId)`), passed in through [`src/server/composition.ts`](https://github.com/n8n-io/nod/blob/main/src/server/composition.ts).
 3. For an event that only marks a successful API call, add the route to `analyticsRoutes` in `src/server/analytics.ts` instead. A test checks that every route in that map is registered, so a renamed route fails the tests.
-4. Events captured inside a turn get the turn's `run_id` automatically, and a web turn's events get its recording `$session_id`. Don't pass nod's own turn, session or message IDs.
+4. Events captured inside a turn get the turn's `run_id` automatically, and a web turn's events get its recording `$session_id`. Don't pass Nod's own turn, session or message IDs.
 
 ## Add a UI event
 
@@ -35,7 +35,7 @@ What nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 
 ## Count real jobs
 
-A real job is the product's main measure: the latest `nod_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; nod's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
+A real job is the product's main measure: the latest `nod_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Nod's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
 
 ## Evolve the task vocabulary
 
@@ -52,7 +52,7 @@ Renaming a value changes its meaning, so it needs a schema bump. Adding one does
 
 Recordings mask all text and inputs by default and block the selectors listed in `blocked` in `src/web/lib/analytics-privacy.ts`.
 
-- A new surface that shows content from the owner, nod, an app or a website must be blocked. Add its class to `blocked`, or put `data-analytics-private` on its root.
+- A new surface that shows content from the owner, Nod, an app or a website must be blocked. Add its class to `blocked`, or put `data-analytics-private` on its root.
 - Put `data-analytics-public` only around static product labels. Never wrap a value that can come from the owner, a server or an error message, such as a hostname or a provider error.
 
 ## Change or remove an event
@@ -67,7 +67,7 @@ Prefer deleting an event nobody reads to keeping it "just in case". Dead events 
 
 ## Update the dashboards
 
-The PostHog project is the nod team's EU project. There are four dashboards: **nod · Overview**, **nod · Activation**, **nod · Tasks & quality** and **nod · Models, apps & websites**. Each tile is named after the question it answers, such as "Are tasks getting done?", and each dashboard has at most eight tiles. Each starts with a text tile whose agent context lists the events it uses.
+The PostHog project is the Nod team's EU project. There are four dashboards: **Nod · Overview**, **Nod · Activation**, **Nod · Tasks & quality** and **Nod · Models, apps & websites**. Each tile is named after the question it answers, such as "Are tasks getting done?", and each dashboard has at most eight tiles. Each starts with a text tile whose agent context lists the events it uses.
 
 Add a tile only when it answers a question the team reads. If a new event doesn't change an answer, leave the dashboards alone.
 
@@ -86,12 +86,12 @@ When you bump the schema, update the filters and tags on every insight and remov
 3. Tests and the fixture use intercepted transports and never call PostHog. They don't prove live delivery. After release, confirm the event arrives in PostHog with the expected properties.
 
 :::caution
-A test can't prove an event carries no private data. Read every property you send and ask: could this value ever come from the owner, nod, an app or a website?
+A test can't prove an event carries no private data. Read every property you send and ask: could this value ever come from the owner, Nod, an app or a website?
 :::
 
 ## Related resources
 
-- [Contribute to nod](/contribute/)
+- [Contribute to Nod](/contribute/)
 - [Analytics and recordings](/deploy/analytics/)
 - [Your data and privacy](/trust/privacy/)
 - [Checks and tests](/contribute/checks-and-tests/)

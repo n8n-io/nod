@@ -197,7 +197,7 @@ function markdown(
   manifest: Record<string, unknown>,
 ) {
   const lines = [
-    `# LongMemEval-S on nod: ${manifest.label}`,
+    `# LongMemEval-S on Nod: ${manifest.label}`,
     '',
     `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, $${summary.totalCostUsd.toFixed(2)} total.`,
     '',

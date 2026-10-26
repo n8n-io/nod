@@ -172,7 +172,7 @@ app.whenReady().then(async () => {
 }
 
 async function certificate(root, name) {
-  const identity = `nod Update Fixture ${randomUUID()}`;
+  const identity = `Nod Update Fixture ${randomUUID()}`;
   const base = join(root, name);
   const password = randomBytes(32).toString('hex');
   await writeFile(`${base}.password`, password, { mode: 0o600 });

@@ -1,13 +1,13 @@
 ---
 title: Payments
-description: Let nod complete a checkout with a saved card, only after you approve that one payment.
+description: Let Nod complete a checkout with a saved card, only after you approve that one payment.
 sidebar:
   order: 9
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-nod can complete a checkout with a card saved in Vault, but only after you approve that one payment. The model never sees the card number or security code.
+Nod can complete a checkout with a card saved in Vault, but only after you approve that one payment. The model never sees the card number or security code.
 
 ## Save a card
 
@@ -19,30 +19,30 @@ nod can complete a checkout with a card saved in Vault, but only after you appro
 
 </Steps>
 
-nod never saves the card's security code. You enter it for each payment.
+Nod never saves the card's security code. You enter it for each payment.
 
-If nod reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell nod to continue. You can also add it in **Vault**.
+If Nod reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell Nod to continue. You can also add it in **Vault**.
 
 ## Approve one payment
 
-When nod has filled in the rest of the checkout, it prepares one payment request. Before you see it, the browser reads the real origin of each card field. The request is bound to:
+When Nod has filled in the rest of the checkout, it prepares one payment request. Before you see it, the browser reads the real origin of each card field. The request is bound to:
 
 | Bound to                 | What it means                                                 |
 | ------------------------ | ------------------------------------------------------------- |
 | The card and its version | Editing the card cancels the request                          |
 | The shop                 | The origin of the checkout page                               |
-| The checkout page        | The exact page nod prepared                                   |
+| The checkout page        | The exact page Nod prepared                                   |
 | Card-field destinations  | The real origin of every card field, including payment frames |
-| The submit button        | The one control nod chose                                     |
+| The submit button        | The one control Nod chose                                     |
 | Amount and currency      | As shown on the page                                          |
 
-The request stays open while its task waits for you. If nod can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with nod never closes its payment request.
+The request stays open while its task waits for you. If Nod can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Nod never closes its payment request.
 
-In nod web or desktop, nod shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
+In Nod web or desktop, Nod shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
 
 ### From Telegram or WhatsApp
 
-Chat apps can't approve payments or receive security codes. nod asks you to open the same conversation in its web or desktop app, where the **Approve payment** form waits. After you approve, nod replies in the original chat.
+Chat apps can't approve payments or receive security codes. Nod asks you to open the same conversation in its web or desktop app, where the **Approve payment** form waits. After you approve, Nod replies in the original chat.
 
 ## What happens after you approve
 
@@ -51,23 +51,23 @@ sequenceDiagram
   actor You
   participant Server
   participant Shop
-  participant nod
+  participant Nod
   You->>Server: Security code
   Server->>Server: Check card version, claim one use
   Server->>Shop: Enter card and submit privately
-  Shop-->>nod: Page after submit, card values masked
-  nod->>nod: Check the shop's result
-  nod-->>You: Order confirmed, or what went wrong
+  Shop-->>Nod: Page after submit, card values masked
+  Nod->>Nod: Check the shop's result
+  Nod-->>You: Order confirmed, or what went wrong
 ```
 
-**Card submitted is not paid.** Vault records that the card was submitted, with the amount. nod then reads the shop's page and tells you the result, because only the shop and your bank decide whether the payment went through. If the operation was interrupted, Vault shows **Result unknown**: check the order before you try again. See [One use, one result](/trust/outcomes/).
+**Card submitted is not paid.** Vault records that the card was submitted, with the amount. Nod then reads the shop's page and tells you the result, because only the shop and your bank decide whether the payment went through. If the operation was interrupted, Vault shows **Result unknown**: check the order before you try again. See [One use, one result](/trust/outcomes/).
 
-## When nod never pays
+## When Nod never pays
 
 - With an expired, replaced or already-used request.
 
 :::caution[Limits]
-A saved card can't make your card issuer enforce the amount or the shop. nod binds its own operation, but a website can still change the cart. Saving a card in Vault isn't a PCI DSS compliance claim.
+A saved card can't make your card issuer enforce the amount or the shop. Nod binds its own operation, but a website can still change the cart. Saving a card in Vault isn't a PCI DSS compliance claim.
 :::
 
 ## Where this is enforced

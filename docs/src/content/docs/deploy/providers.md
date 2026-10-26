@@ -1,11 +1,11 @@
 ---
 title: Choose a cloud server
-description: Choose a VPS for nod, compare Hetzner and DigitalOcean, and understand Railway trial limits.
+description: Choose a VPS for Nod, compare Hetzner and DigitalOcean, and understand Railway trial limits.
 sidebar:
   order: 3
 ---
 
-Use a Linux virtual machine with Docker Engine and persistent disk storage. Hetzner and DigitalOcean can run the same nod stack as a Mac mini. Railway has a separate VM sandbox product worth considering for short experiments.
+Use a Linux virtual machine with Docker Engine and persistent disk storage. Hetzner and DigitalOcean can run the same Nod stack as a Mac mini. Railway has a separate VM sandbox product worth considering for short experiments.
 
 Start with two CPU cores, 8 GB of memory, and 50 GB of disk. This is a starting size, not a measured minimum. Browser tasks and local models can need more capacity.
 
@@ -29,7 +29,7 @@ If you need a free-only test, confirm the credit before starting and delete reso
 4. Connect through SSH and [install Docker Engine with Compose](https://docs.docker.com/engine/install/ubuntu/).
 5. Follow [Host your own server](/deploy/self-host/). Open an SSH tunnel before local browser access, or configure a domain and HTTPS.
 
-Use nod's [backup procedure](/deploy/server-operations/#back-up) to preserve the database, files, and keys together. Keep a copy outside the VM.
+Use Nod's [backup procedure](/deploy/server-operations/#back-up) to preserve the database, files, and keys together. Keep a copy outside the VM.
 
 ## DigitalOcean
 
@@ -39,11 +39,11 @@ Use nod's [backup procedure](/deploy/server-operations/#back-up) to preserve the
 4. Connect through SSH, [install Docker Engine with Compose](https://docs.docker.com/engine/install/ubuntu/), and follow [Host your own server](/deploy/self-host/).
 5. For a disposable test, export a backup and remove the Droplet and related resources before the credit expires or runs out.
 
-The normal nod stack includes PostgreSQL. A managed database is optional and is not needed for this setup.
+The normal Nod stack includes PostgreSQL. A managed database is optional and is not needed for this setup.
 
 ## Railway: understand the VM limits
 
-Railway's [Sandboxes](https://docs.railway.com/sandboxes) are Linux VMs, separate from its ordinary deployed services. They [include a Docker daemon and CLI](https://railway.com/changelog/2026-06-12-docker-in-sandboxes), so running sibling containers is possible. Deploying nod's server image as an ordinary Railway service alone does not create its Docker runtime, browser, or workspace.
+Railway's [Sandboxes](https://docs.railway.com/sandboxes) are Linux VMs, separate from its ordinary deployed services. They [include a Docker daemon and CLI](https://railway.com/changelog/2026-06-12-docker-in-sandboxes), so running sibling containers is possible. Deploying Nod's server image as an ordinary Railway service alone does not create its Docker runtime, browser, or workspace.
 
 Free and Trial Sandboxes are limited to two vCPUs and 2 GB RAM. They are destroyed after up to five idle minutes; only paid plans can disable that timeout. Active SSH, port-forwarding, or command sessions defer idle destruction. Background containers alone do not. Checkpoints preserve a disk snapshot, but they are not a replacement for a consistent database backup.
 
@@ -55,7 +55,7 @@ ssh railway.new
 
 It requires no account or card, identifies you by your SSH key, and gives you 60 minutes to build. There is then a 24-hour window to claim the VM; unclaimed files are deleted. The preview URL is restricted to your IP until claimed. Availability is capacity-dependent. This is a separate trial flow: its page does not guarantee a disk size or list Docker among its installed tools.
 
-Before transferring nod, check the VM:
+Before transferring Nod, check the VM:
 
 ```sh title="Remote terminal"
 df -h
@@ -66,7 +66,7 @@ docker compose version
 
 Use the [prebuilt bundle](/deploy/self-host/#install-a-prebuilt-bundle) matching the VM's Linux architecture. A 2 GB VM may run out of memory when building from source, and a successful installation does not establish that it has enough memory for your browser tasks. Keep the server configuration and token private.
 
-Use a persistent VPS for an unattended assistant. Don't keep the only copy of your conversation, credentials, or files in a disposable trial VM. These Railway instructions describe the platform constraints; they do not establish a verified nod deployment there.
+Use a persistent VPS for an unattended assistant. Don't keep the only copy of your conversation, credentials, or files in a disposable trial VM. These Railway instructions describe the platform constraints; they do not establish a verified Nod deployment there.
 
 ## Other cloud accounts
 
@@ -81,7 +81,7 @@ Check [EC2 free-tier eligibility](https://docs.aws.amazon.com/AWSEC2/latest/User
 
 ## Finish the network setup
 
-For public access, point a domain at the VM and use [nod's HTTPS setup](/deploy/self-host/#add-public-https). Open only ports 80 and 443 for the proxy and keep SSH restricted. An SSH tunnel works without a domain.
+For public access, point a domain at the VM and use [Nod's HTTPS setup](/deploy/self-host/#add-public-https). Open only ports 80 and 443 for the proxy and keep SSH restricted. An SSH tunnel works without a domain.
 
 Docker warns that published container ports can bypass `ufw` rules. Use the provider firewall too, and don't publish PostgreSQL, the browser, the workspace, or the Docker API. See [Docker's firewall limitations](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations).
 

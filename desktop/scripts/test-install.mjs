@@ -27,7 +27,7 @@ export async function validateTestApplication(path) {
     configuration.nodBuild?.testProfile !== true ||
     configuration.nodBuild.release === true
   )
-    throw new Error('This is not an isolated nod test application.');
+    throw new Error('This is not an isolated Nod test application.');
   return configuration;
 }
 
@@ -92,7 +92,7 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
   if (!release || release.platform !== `darwin-${process.arch}`)
     throw new Error('Choose an installed engine with a matching runtime-release.json.');
   const assets = await findRuntimeAssets({ resourcesPath: resolve(source), release });
-  if (!assets) throw new Error('The verified runtime is not cached. Open the installed nod first.');
+  if (!assets) throw new Error('The verified runtime is not cached. Open the installed Nod first.');
   const installed = await lstat(application).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
     return null;
@@ -169,7 +169,7 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
     extendInfo: {
       CFBundleDisplayName: name,
       LSMinimumSystemVersion: release.minimumSystemVersion || '14.0',
-      NSMicrophoneUsageDescription: 'nod uses your microphone when you record a voice message.',
+      NSMicrophoneUsageDescription: 'Nod uses your microphone when you record a voice message.',
     },
   });
   const built = join(paths[0], `${name}.app`);
