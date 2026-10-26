@@ -14,6 +14,7 @@ interface Syntax {
   bullet: string;
   number(value: number): string;
   quote: string;
+  literal: RegExp;
 }
 
 const telegram: Syntax = {
@@ -28,6 +29,7 @@ const telegram: Syntax = {
   bullet: '•',
   number: (value) => `${value}\\.`,
   quote: '>',
+  literal: /(?<![\w@:/.~-])[\w~./-]*[\w-]\.(?:md|py|sh|java|zip|mov)(?![\w-]|\.\w)/gi,
 };
 
 const whatsapp: Syntax = {
@@ -41,6 +43,7 @@ const whatsapp: Syntax = {
   bullet: '-',
   number: (value) => `${value}.`,
   quote: '> ',
+  literal: /(?<![\p{L}\p{N}])([*_~])(?=\S)[^\n`]*?(?<=\S)\1(?![\p{L}\p{N}])/gu,
 };
 
 function plain(node: Node): string {
@@ -48,11 +51,30 @@ function plain(node: Node): string {
   return 'children' in node ? node.children.map((child) => plain(child as Node)).join('') : '';
 }
 
-function render(root: Root, syntax: Syntax) {
+function prose(value: string, syntax: Syntax) {
+  let result = '';
+  let last = 0;
+  for (const match of value.matchAll(syntax.literal)) {
+    result += syntax.text(value.slice(last, match.index)) + syntax.code(match[0]);
+    last = match.index + match[0].length;
+  }
+  return result + syntax.text(value.slice(last));
+}
+
+function render(root: Root, syntax: Syntax, source?: string) {
   const inline = (nodes: Node[], open: ReadonlySet<string>) =>
     nodes.map((node) => phrase(node, open)).join('');
 
   const mark = (marker: string, node: Parent, open: ReadonlySet<string>) => {
+    const from = node.position?.start.offset;
+    const to = node.position?.end.offset;
+    if (
+      source !== undefined &&
+      from !== undefined &&
+      to !== undefined &&
+      /[\p{L}\p{N}]/u.test(`${source[from - 1] ?? ''}${source[to] ?? ''}`)
+    )
+      return source.slice(from, to);
     const content = inline(node.children as Node[], new Set([...open, marker]));
     const core = content.trim();
     if (open.has(marker) || !core) return content;
@@ -63,6 +85,7 @@ function render(root: Root, syntax: Syntax) {
   const phrase = (node: Node, open: ReadonlySet<string>): string => {
     switch (node.type) {
       case 'text':
+        return open.has('link') ? syntax.text(node.value) : prose(node.value, syntax);
       case 'html':
         return syntax.text(node.value);
       case 'strong':
@@ -79,7 +102,9 @@ function render(root: Root, syntax: Syntax) {
       case 'image': {
         const label = node.type === 'image' ? node.alt || 'Image' : plain(node);
         const rendered =
-          node.type === 'image' ? syntax.text(label) : inline(node.children as Node[], open);
+          node.type === 'image'
+            ? syntax.text(label)
+            : inline(node.children as Node[], new Set([...open, 'link']));
         if (
           !/^(?:https?|mailto|tel):/i.test(node.url) ||
           [label, `mailto:${label}`].includes(node.url)
@@ -171,5 +196,5 @@ export function telegramText(markdown: string | Root) {
 }
 
 export function whatsappText(markdown: string) {
-  return render(parseMarkdown(markdown), whatsapp);
+  return render(parseMarkdown(markdown), whatsapp, markdown);
 }

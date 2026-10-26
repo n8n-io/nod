@@ -2939,6 +2939,7 @@ test(
         '- **Integration:** approval\n- **Pilot:** a date',
         '1. Ask\n2. Decide',
         '| Flight | Price |\n| --- | --- |\n| LH 1 | €120.50 |',
+        'Saved to outputs/report.md. Type \\*text\\* to bold, 5*3*2 stays.',
       ].join('\n\n');
       const beforeFormatted = sent.length;
       await addReply('channel:telegram:987:123456:10', formatted);
@@ -2948,7 +2949,7 @@ test(
         [
           [
             'MarkdownV2',
-            '*Call:* today at 17:30\\. [Join call](https://meet.example.com/a)\\.\n\nGoal first\\.\nThen details\\.\n\n• *Integration:* approval\n• *Pilot:* a date\n\n1\\. Ask\n2\\. Decide\n\n*LH 1*\n• Price: €120\\.50',
+            '*Call:* today at 17:30\\. [Join call](https://meet.example.com/a)\\.\n\nGoal first\\.\nThen details\\.\n\n• *Integration:* approval\n• *Pilot:* a date\n\n1\\. Ask\n2\\. Decide\n\n*LH 1*\n• Price: €120\\.50\n\nSaved to `outputs/report.md`\\. Type \\*text\\* to bold, 5_3_2 stays\\.',
           ],
         ],
       );
@@ -2961,7 +2962,7 @@ test(
       assert.deepEqual(
         sent.slice(beforeFormattedWhatsApp).map(({ body }) => (body.text as { body: string }).body),
         [
-          '*Call:* today at 17:30. Join call (https://meet.example.com/a).\n\nGoal first.\nThen details.\n\n- *Integration:* approval\n- *Pilot:* a date\n\n1. Ask\n2. Decide\n\n*LH 1*\n- Price: €120.50',
+          '*Call:* today at 17:30. Join call (https://meet.example.com/a).\n\nGoal first.\nThen details.\n\n- *Integration:* approval\n- *Pilot:* a date\n\n1. Ask\n2. Decide\n\n*LH 1*\n- Price: €120.50\n\nSaved to outputs/report.md. Type `*text*` to bold, 5*3*2 stays.',
         ],
       );
       const beforeWhatsApp = sent.length;
