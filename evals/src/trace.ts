@@ -27,6 +27,7 @@ export interface ChatMessage {
 
 export interface Run {
   api: Session['api'];
+  proactivity: Session['proactivity'];
   task: string;
   messages: ChatMessage[];
   replies: string[];
@@ -41,6 +42,7 @@ export interface Run {
     background: boolean;
     waiting_reason?: string | null;
     waiting?: boolean;
+    proactive?: boolean;
     startedAt?: number;
     finishedAt?: number;
   }>;
@@ -257,7 +259,8 @@ export async function collect(options: {
   }));
   const turns = (
     await stack.pool.query(
-      `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting FROM turns t ORDER BY t.created_at, t.id`,
+      `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting,
+      COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive FROM turns t ORDER BY t.created_at, t.id`,
     )
   ).rows.map(({ started_at, finished_at, ...turn }) => ({
     ...turn,
@@ -372,6 +375,7 @@ export async function collect(options: {
     world,
     apps: world.apps,
     api: session.api,
+    proactivity: session.proactivity,
     read: (path) => session.workspace.read(filePath(path)),
     async text(path) {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';

@@ -1737,6 +1737,7 @@ async function appsFixture(
       | 'wake'
       | 'readWorkspaceFile'
       | 'writingStyle'
+      | 'removeActivity'
       | 'admission'
     >
   > = {},
@@ -7256,5 +7257,516 @@ test(
       statusCode: 404,
     });
     assert.equal(f.executed.length, executions);
+  },
+);
+
+test(
+  'source identity survives a login refresh and rejects an in-flight account swap',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const connected = await f.connect('gmail');
+    assert.ok(connected.connectionId);
+    const { identity } = createComposioProvider({
+      proxy: composioProxyFixture({} as Composio),
+    }).activity!.gmail;
+    const gmail = { read: async () => ({ records: [] }), identity };
+    f.provider.activity = { gmail };
+    await f.pool.query(
+      "UPDATE app_connections SET account_email='owner@example.test' WHERE id=$1",
+      [connected.connectionId],
+    );
+    const first = (await f.service.activitySources())[0];
+    assert.ok(first.revision);
+    assert.equal(first.changeToken, undefined);
+    assert.equal(first.eventDriven, true);
+    await f.pool.query(
+      'UPDATE app_connections SET inbox_failed=true,triggers_enabled=false,trigger_id=NULL WHERE id=$1',
+      [connected.connectionId],
+    );
+    const degraded = (await f.service.activitySources())[0];
+    assert.equal(degraded.active, true);
+    assert.equal(degraded.changeToken, undefined);
+    assert.equal(degraded.eventDriven, false);
+    await f.pool.query(
+      'UPDATE app_connections SET inbox_failed=false,inbox_reconnect_required=true WHERE id=$1',
+      [connected.connectionId],
+    );
+    assert.equal((await f.service.activitySources())[0].changeToken, undefined);
+    await f.pool.query(
+      'UPDATE app_connections SET inbox_reconnect_required=false,watch_requested=false WHERE id=$1',
+      [connected.connectionId],
+    );
+    assert.equal((await f.service.activitySources())[0].active, false);
+    await f.pool.query('UPDATE app_connections SET watch_requested=true WHERE id=$1', [
+      connected.connectionId,
+    ]);
+
+    await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
+      connected.connectionId,
+    ]);
+    const expired = (await f.service.activitySources())[0];
+    assert.equal(expired.revision, first.revision);
+    assert.equal(expired.active, false);
+    assert.equal(
+      (await f.service.connectedApps()).some((app) => app.connectionId === connected.connectionId),
+      false,
+    );
+    await f.pool.query(
+      "UPDATE app_connections SET account_active=true,account_id='replacement-physical-id' WHERE id=$1",
+      [connected.connectionId],
+    );
+    const refreshed = (await f.service.activitySources())[0];
+    assert.equal(refreshed.revision, first.revision);
+    assert.equal(refreshed.active, true);
+    await f.service.readActivity(
+      { connectionId: connected.connectionId, revision: first.revision },
+      new AbortController().signal,
+    );
+    gmail.read = async () => {
+      await f.pool.query(
+        "UPDATE app_connections SET account_id='another-physical-id' WHERE id=$1",
+        [connected.connectionId],
+      );
+      return { records: [] };
+    };
+    await assert.rejects(
+      f.service.readActivity(
+        { connectionId: connected.connectionId, revision: first.revision },
+        new AbortController().signal,
+      ),
+      /changed during/,
+    );
+    await f.pool.query(
+      "UPDATE app_connections SET account_email='different@example.test' WHERE id=$1",
+      [connected.connectionId],
+    );
+    assert.notEqual((await f.service.activitySources())[0].revision, first.revision);
+    await assert.rejects(
+      f.service.readActivity(
+        { connectionId: connected.connectionId, revision: first.revision },
+        new AbortController().signal,
+      ),
+      /changed before/,
+    );
+  },
+);
+
+test('proactive readers use fixed GET paths, preserve pages, and check exact source state', async () => {
+  const { composioActivity } = await import('../src/providers/composio/activity.ts');
+  const readActivity = async (
+    client: Pick<Composio['tools'], 'proxyExecute'>,
+    service: string,
+    accountId: string,
+    input: { ids?: string[]; cursor?: string; asOf?: string },
+    signal: AbortSignal,
+  ) => {
+    const readers = composioActivity(client);
+    if (!Object.hasOwn(readers, service)) throw new Error('This source has no reader.');
+    return readers[service].read(accountId, input, signal);
+  };
+  const calls: Array<{
+    endpoint: string;
+    method: string;
+    parameters?: Array<{ name: string; value: unknown }>;
+  }> = [];
+  const message = (id: string, at: number, labels: string[]) => ({
+    id,
+    internalDate: String(at),
+    labelIds: labels,
+    payload: {
+      mimeType: 'text/plain',
+      headers: [
+        { name: 'From', value: 'sender@example.test' },
+        { name: 'Subject', value: 'Fixture request' },
+      ],
+      body: { data: Buffer.from('Please review the synthetic plan.').toString('base64url') },
+    },
+  });
+  let fail = false;
+  const proxyExecute = async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
+    assert.equal(input.method, 'GET');
+    assert.equal(input.connectedAccountId, 'fixture-account');
+    calls.push(input);
+    if (fail) return { status: 503, data: {} };
+    if (input.endpoint.endsWith('/missing')) return { status: 404, data: {} };
+    if (input.endpoint.endsWith('/threads'))
+      return { status: 200, data: { threads: [{ id: 'thread1' }], nextPageToken: 'page2' } };
+    if (input.endpoint.endsWith('/thread1'))
+      return {
+        status: 200,
+        data: {
+          id: 'thread1',
+          messages: [
+            message('sent', 2000, ['SENT']),
+            message('received', 1000, ['INBOX']),
+            message('draft', 3000, ['DRAFT']),
+          ],
+        },
+      };
+    if (input.endpoint.includes('/messages/')) {
+      const messageId = input.endpoint.split('/').at(-1)!;
+      return {
+        status: 200,
+        data: message(
+          messageId,
+          messageId === 'sent' ? 2000 : 1000,
+          messageId === 'sent' ? ['SENT'] : ['INBOX'],
+        ),
+      };
+    }
+    if (input.endpoint.endsWith('/cancelled'))
+      return { status: 200, data: { id: 'cancelled', status: 'cancelled' } };
+    throw new Error('Unexpected endpoint.');
+  };
+  const client = { proxyExecute } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
+  const read = (service: string, input: { ids?: string[]; cursor?: string; asOf?: string }) =>
+    readActivity(client, service, 'fixture-account', input, new AbortController().signal);
+  const first = await read('gmail', { asOf: '2026-10-23T12:00:00.000Z' });
+  assert.equal(first.nextCursor, 'page2');
+  assert.equal(first.records[0].available, true);
+  assert.equal((first.records[0].data.messages as Array<{ sent: boolean }>).at(-1)!.sent, true);
+  assert.equal((first.records[0].data.messages as unknown[]).length, 1);
+  const second = await read('gmail', {
+    cursor: first.nextCursor,
+    asOf: '2026-10-23T12:00:00.000Z',
+  });
+  assert.equal(second.records[0].version, first.records[0].version);
+  assert.ok(JSON.stringify(calls).includes('page2'));
+  assert.equal((await read('gmail', { ids: ['missing'] })).records[0].available, false);
+  assert.equal((await read('gmail', { ids: ['thread1'] })).records[0].available, true);
+  assert.ok(
+    calls
+      .filter((call) => call.endpoint.includes('/threads/'))
+      .every(
+        (call) =>
+          !call.parameters?.some(
+            (parameter) => parameter.name === 'format' && parameter.value === 'full',
+          ),
+      ),
+  );
+  assert.equal(
+    (await read('googlecalendar', { ids: ['cancelled'] })).records[0].data.status,
+    'cancelled',
+  );
+  assert.ok(
+    calls.every((call) =>
+      ['https://gmail.googleapis.com', 'https://www.googleapis.com'].includes(
+        new URL(call.endpoint).origin,
+      ),
+    ),
+  );
+  const before = calls.length;
+  for (const id of ['../messages/send', 'id?alt=media', 'https://evil.example'])
+    await assert.rejects(read('gmail', { ids: [id] }));
+  await assert.rejects(read('unknown', {}));
+  await assert.rejects(readActivity(client, 'gmail', 'fixture-account', {}, AbortSignal.abort()));
+  assert.equal(calls.length, before);
+  fail = true;
+  await assert.rejects(read('gmail', {}), /could not be checked/);
+  const isolatedCalls: Array<Parameters<Composio['tools']['proxyExecute']>[0]> = [];
+  const isolated = {
+    proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
+      isolatedCalls.push(input);
+      const item = input.endpoint.split('/').at(-1)!;
+      if (item === 'threads')
+        return {
+          status: 200,
+          data: {
+            threads: [{ id: 'bad' }, { id: 'large' }, { id: 'good' }],
+            nextPageToken: 'next-page',
+          },
+        };
+      if (item === 'bad') return { status: 503, data: {} };
+      if (input.endpoint.includes('/messages/')) {
+        const full = input.parameters?.some(
+          (parameter) => parameter.name === 'format' && parameter.value === 'full',
+        );
+        return {
+          status: 200,
+          data:
+            item === 'large1000' && full
+              ? { ...message(item, 1000, []), oversized: 'x'.repeat(1_000_001) }
+              : message(item, 1000, []),
+        };
+      }
+      return {
+        status: 200,
+        data: {
+          id: item,
+          historyId: 'history-one',
+          messages:
+            item === 'large'
+              ? Array.from({ length: 1001 }, (_, i) => ({
+                  id: `large${i}`,
+                  internalDate: String(i + 1),
+                  labelIds: ['INBOX'],
+                }))
+              : [{ id: 'good-message', internalDate: '1000', labelIds: ['INBOX'] }],
+        },
+      };
+    },
+  } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
+  const partial = await readActivity(
+    isolated,
+    'gmail',
+    'fixture-account',
+    {},
+    new AbortController().signal,
+  );
+  assert.equal(partial.nextCursor, 'next-page');
+  assert.equal(partial.records.find((record) => record.id === 'bad')?.error, 'unavailable');
+  assert.equal(partial.records.find((record) => record.id === 'large')?.available, true);
+  assert.equal(partial.records.find((record) => record.id === 'good')?.available, true);
+  assert.ok(
+    isolatedCalls
+      .filter((call) => call.endpoint.includes('/threads/'))
+      .every(
+        (call) =>
+          !call.parameters?.some(
+            (parameter) => parameter.name === 'format' && parameter.value === 'full',
+          ),
+      ),
+  );
+  const exact = await readActivity(
+    isolated,
+    'gmail',
+    'fixture-account',
+    { ids: ['large', 'good'] },
+    new AbortController().signal,
+  );
+  assert.equal(exact.records.find((record) => record.id === 'large')?.error, 'unavailable');
+  assert.equal(exact.records.find((record) => record.id === 'good')?.available, true);
+  const slow = {
+    proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
+      if (input.endpoint.endsWith('/threads'))
+        return {
+          status: 200,
+          data: { threads: [{ id: 'slow' }, { id: 'good' }], nextPageToken: 'after-slow' },
+        };
+      if (input.endpoint.endsWith('/slow')) return new Promise<never>(() => {});
+      return isolated.proxyExecute(input);
+    },
+  } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
+  const started = performance.now();
+  const recovered = await readActivity(
+    slow,
+    'gmail',
+    'fixture-account',
+    {},
+    new AbortController().signal,
+  );
+  assert.ok(performance.now() - started < 10000);
+  assert.equal(recovered.records.find((record) => record.id === 'slow')?.error, 'unavailable');
+  assert.equal(recovered.records.find((record) => record.id === 'good')?.available, true);
+  assert.equal(recovered.nextCursor, 'after-slow');
+});
+
+test('generic source privacy checks hide access mail and cannot delay Stop', async () => {
+  const { createObservationSources } = await import('../src/server/observation-sources.ts');
+  const secret = 'synthetic-known-source-secret';
+  let release: () => void = () => {};
+  let begin: () => void = () => {};
+  let hold = false;
+  let entered = new Promise<void>((resolve) => {
+    begin = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const source = createObservationSources(
+    [
+      {
+        id: 'records',
+        sources: async () => [
+          {
+            id: 'feed',
+            label: 'Private feed',
+            description: 'Read current records.',
+            revision: 'v1',
+            readable: true,
+          },
+        ],
+        read: async () => ({
+          records: [
+            {
+              id: 'item/1',
+              version: 'v1',
+              available: true,
+              data: {
+                note: secret,
+                mail: {
+                  id: 'access/1',
+                  from: 'sender@example.test',
+                  subject: 'Sign in',
+                  text: 'Your synthetic sign-in code is 843921. ' + secret,
+                },
+                padding1: 'x'.repeat(64000),
+                padding2: 'y'.repeat(64000),
+                padding3: 'z'.repeat(64000),
+              },
+            },
+          ],
+        }),
+      },
+    ],
+    {
+      secrets: [secret],
+      check: async (mail) => {
+        assert.equal(JSON.stringify(mail).includes(secret), false);
+        begin();
+        if (hold) await pending;
+        return true;
+      },
+    },
+  );
+  const result = await source.read({ sourceId: 'records:feed' }, new AbortController().signal);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.equal(JSON.stringify(result).includes('843921'), false);
+  assert.match(JSON.stringify(result), /content is private/);
+  hold = true;
+  entered = new Promise<void>((resolve) => {
+    begin = resolve;
+  });
+  const controller = new AbortController();
+  const stopped = source.read({ sourceId: 'records:feed' }, controller.signal);
+  await entered;
+  controller.abort();
+  await assert.rejects(stopped);
+  release();
+  const recovering = createObservationSources(
+    [
+      {
+        id: 'mail',
+        sources: async () => [
+          {
+            id: 'feed',
+            label: 'Synthetic feed',
+            description: 'Read current records.',
+            revision: 'one',
+            readable: true,
+          },
+        ],
+        read: async () => ({
+          records: ['slow', 'ready'].map((id) => ({
+            id,
+            version: 'v1',
+            available: true,
+            data: {
+              from: id + '@example.test',
+              subject: 'Synthetic request',
+              text: 'Please review this item.',
+            },
+          })),
+          nextCursor: 'second-page',
+        }),
+      },
+    ],
+    {
+      check: async (mail) =>
+        mail.from.startsWith('slow') ? new Promise<boolean>(() => {}) : false,
+    },
+  );
+  const started = Date.now();
+  const page = await recovering.read({ sourceId: 'mail:feed' }, new AbortController().signal);
+  assert.equal(page.nextCursor, 'second-page');
+  assert.equal(page.records.find((record) => record.id === 'slow')?.error, 'unavailable');
+  assert.equal(page.records.find((record) => record.id === 'ready')?.available, true);
+  assert.ok(Date.now() - started < 15000);
+});
+
+test(
+  'cheap source changes keep stable tokens and reject failures and account races',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    let removed = '';
+    const f = await appsFixture(
+      t,
+      {},
+      {
+        removeActivity: async (id, client) => {
+          const current = (
+            await client.query('SELECT revoked FROM app_connections WHERE id=$1', [id])
+          ).rows[0];
+          assert.equal(current.revoked, true);
+          removed = id;
+        },
+      },
+    );
+    const account = await f.connect('googlecalendar');
+    const calendar: import('../src/ports/integrations.ts').ActivityReader = {
+      read: async () => ({ records: [] }),
+    };
+    f.provider.activity = { googlecalendar: calendar };
+    let calls = 0;
+    let token = 'version-one';
+    let fail = false;
+    let swap = false;
+    let changedConfiguration = false;
+    calendar.changeToken = async (accountId) => {
+      calls++;
+      assert.equal(accountId, account.accountId);
+      if (changedConfiguration) {
+        await f.pool.query(
+          "UPDATE app_connections SET configuration_id='replacement-config' WHERE id=$1",
+          [account.connectionId],
+        );
+        throw new Error('The previous configuration failed late.');
+      }
+      if (fail) throw new Error('Synthetic outage');
+      if (swap)
+        await f.pool.query("UPDATE app_connections SET account_id='replacement' WHERE id=$1", [
+          account.connectionId,
+        ]);
+      return token;
+    };
+    const age = () =>
+      f.pool.query(
+        "UPDATE app_connections SET activity_poll_at=now()-interval '1 minute' WHERE id=$1",
+        [account.connectionId],
+      );
+    await f.service.pollActivityChanges();
+    const first = (await f.service.activitySources())[0];
+    assert.equal(first.changeToken, 'version-one');
+    assert.equal(first.eventDriven, true);
+    await f.service.pollActivityChanges();
+    assert.equal(calls, 1);
+    await age();
+    await f.service.pollActivityChanges();
+    assert.equal((await f.service.activitySources())[0].changeToken, first.changeToken);
+    fail = true;
+    await age();
+    await f.service.pollActivityChanges();
+    assert.equal((await f.service.activitySources())[0].active, false);
+    fail = false;
+    token = 'version-two';
+    await age();
+    await f.service.pollActivityChanges();
+    assert.equal((await f.service.activitySources())[0].active, true);
+    assert.equal((await f.service.activitySources())[0].changeToken, token);
+    changedConfiguration = true;
+    await age();
+    await f.service.pollActivityChanges();
+    assert.equal((await f.service.activitySources())[0].active, true);
+    changedConfiguration = false;
+    await f.pool.query('UPDATE app_connections SET configuration_id=NULL WHERE id=$1', [
+      account.connectionId,
+    ]);
+    swap = true;
+    token = 'wrong-account';
+    await age();
+    await f.service.pollActivityChanges();
+    assert.equal((await f.service.activitySources())[0].changeToken, 'version-two');
+    await f.pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+      account.connectionId,
+      account.accountId,
+    ]);
+    const response = await f.app.inject({
+      method: 'POST',
+      url: `/api/apps/googlecalendar/accounts/${account.connectionId}/disconnect`,
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(removed, account.connectionId);
+    assert.equal((await f.service.activitySources()).length, 0);
   },
 );

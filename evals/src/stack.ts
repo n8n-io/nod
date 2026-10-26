@@ -80,6 +80,10 @@ export function parseModel(value: string, environment: Record<string, string | u
 }
 
 export interface Stack {
+  proactivity: {
+    view(): Promise<import('../../src/shared/proactivity.ts').ProactivityView>;
+    control(input: Record<string, unknown>): Promise<unknown>;
+  };
   request(
     path: string,
     init?: RequestInit & { headers?: Record<string, string> },
@@ -95,7 +99,7 @@ export interface Stack {
   prompts: Array<{ turnId: string; sessionId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
-  event(summary: string): Promise<string>;
+  event(summary: string, sources?: string[]): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -108,6 +112,8 @@ export function createStackRequest(baseUrl: string, cookie: string): Stack['requ
 export async function startStack(options: {
   model: Model;
   integrations: IntegrationProvider;
+  observations?: import('../../src/ports/proactivity.ts').ObservationProvider[];
+  proactiveBaseline?: boolean;
   siteHosts: string[];
   siteUpstreamPort: number;
   hermetic: boolean;
@@ -319,91 +325,97 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
-    const capture = createCapture();
+    const capture = createCapture(options.proactiveBaseline);
     const { observations, prompts } = capture;
-    application = await createApplication({
-      observe: capture.observe,
-      agent: capture.agent(
-        createPiAgent({
+    application = await createApplication(
+      {
+        observations: options.observations,
+        observe: capture.observe,
+        agent: capture.agent(
+          createPiAgent({
+            provider: model.provider,
+            model: model.name,
+            apiKey: model.apiKey,
+            sessionRoot,
+          }),
+        ),
+        computer,
+        workspace: createDockerWorkspace({ container, workspaceRoot }),
+        integrations: options.integrations,
+        messagingSetup: {
+          verifier: {
+            verify: async () => {
+              throw new ChannelSetupFailure('invalid_input');
+            },
+          },
+          create: () => ({
+            channels: (['telegram', 'whatsapp'] as const).map((id) => ({
+              id,
+              status: 'disabled' as const,
+              missing: [],
+              accountId: '',
+              allowedSenderIds: [],
+            })),
+            receive: async () => ({ status: 404, body: { error: 'Channels are disabled.' } }),
+            post: async () => {
+              throw new Error('Channels are disabled.');
+            },
+            close: async () => {},
+          }),
+        },
+        speech: {
+          id: 'disabled',
+          configured: false,
+          synthesize: async () => {
+            throw new Error('Speech is disabled in the evaluation.');
+          },
+        },
+        keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
+        ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
+          ? {
+              relevance: (
+                await load<{
+                  createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
+                }>('src/providers/openai/relevance.ts')
+              ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+            }
+          : {}),
+        ...((typesafe || model.provider !== 'anthropic') &&
+        existsSync(join(appSource, 'src/providers/decisions.ts'))
+          ? {
+              decisions: (
+                await load<typeof import('../../src/providers/decisions.ts')>(
+                  'src/providers/decisions.ts',
+                )
+              ).createDecisionModel({
+                resolve: async () =>
+                  typesafe
+                    ? { provider: 'typesafe', key: typesafe }
+                    : {
+                        provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
+                        key: model.apiKey,
+                      },
+              }),
+            }
+          : {}),
+        memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
+        onboardingCurator: createPiMemoryCurator({
           provider: model.provider,
-          model: model.name,
           apiKey: model.apiKey,
-          sessionRoot,
+          model: model.name,
+          lightest: true,
         }),
-      ),
-      computer,
-      workspace: createDockerWorkspace({ container, workspaceRoot }),
-      integrations: options.integrations,
-      messagingSetup: {
-        verifier: {
-          verify: async () => {
-            throw new ChannelSetupFailure('invalid_input');
-          },
-        },
-        create: () => ({
-          channels: (['telegram', 'whatsapp'] as const).map((id) => ({
-            id,
-            status: 'disabled' as const,
-            missing: [],
-            accountId: '',
-            allowedSenderIds: [],
-          })),
-          receive: async () => ({ status: 404, body: { error: 'Channels are disabled.' } }),
-          post: async () => {
-            throw new Error('Channels are disabled.');
-          },
-          close: async () => {},
-        }),
+        linkPreviews: createPublicLinkPreviewProvider(),
+        model: { provider: model.provider, name: model.name, configured: true },
       },
-      speech: {
-        id: 'disabled',
-        configured: false,
-        synthesize: async () => {
-          throw new Error('Speech is disabled in the evaluation.');
-        },
-      },
-      keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-      ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
-        ? {
-            relevance: (
-              await load<{
-                createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
-              }>('src/providers/openai/relevance.ts')
-            ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
-          }
-        : {}),
-      ...((typesafe || model.provider !== 'anthropic') &&
-      existsSync(join(appSource, 'src/providers/decisions.ts'))
-        ? {
-            decisions: (
-              await load<typeof import('../../src/providers/decisions.ts')>(
-                'src/providers/decisions.ts',
-              )
-            ).createDecisionModel({
-              resolve: async () =>
-                typesafe
-                  ? { provider: 'typesafe', key: typesafe }
-                  : {
-                      provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
-                      key: model.apiKey,
-                    },
-            }),
-          }
-        : {}),
-      memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
-      onboardingCurator: createPiMemoryCurator({
-        provider: model.provider,
-        apiKey: model.apiKey,
-        model: model.name,
-        lightest: true,
-      }),
-      linkPreviews: createPublicLinkPreviewProvider(),
-      model: { provider: model.provider, name: model.name, configured: true },
-    });
+      { heartbeat: false },
+    );
     await application.app.listen({ host: '127.0.0.1', port });
     const baseUrl = `http://localhost:${port}`;
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
+    const engine = application.proactivity;
     return {
+      proactivity: { view: () => engine.view(), control: (input) => engine.control(input) },
       request: createStackRequest(baseUrl, cookie),
       waiting: (alias) => waitingTurnSql?.(alias) ?? `${alias}.status='waiting'`,
       origin: baseUrl,
@@ -426,11 +438,19 @@ export async function startStack(options: {
         const { previousThreadId } = await resetThread((await activeThread()).id);
         await computer.discard?.(previousThreadId).catch(() => {});
       },
-      async event(summary) {
+      async event(summary, sources) {
         const eventId = `eval:${randomUUID()}`;
         const legacy = (
           await pool.query("SELECT to_regclass('notifications') IS NOT NULL AS found")
         ).rows[0].found;
+        const observationSources: string[] = [...(sources ?? [])];
+        if (!sources)
+          for (const provider of options.observations ?? [])
+            for (const source of await provider.sources())
+              if (source.readable) observationSources.push(`${provider.id}:${source.id}`);
+        if (!legacy && !sources && typeof application!.integrations.activitySources === 'function')
+          for (const source of await application!.integrations.activitySources())
+            if (source.active) observationSources.push(source.connectionId);
         const queued = legacy
           ? await (
               application!.triage.triageEvent as unknown as (
@@ -439,7 +459,12 @@ export async function startStack(options: {
                 intent: string,
               ) => Promise<unknown>
             )(summary, eventId, 'inspect_message')
-          : await application!.triage.triageEvent(summary, eventId);
+          : await application!.triage.triageEvent(
+              summary,
+              eventId,
+              undefined,
+              observationSources.length ? observationSources : undefined,
+            );
         const turnId =
           typeof queued === 'string'
             ? queued

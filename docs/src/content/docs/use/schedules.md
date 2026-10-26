@@ -51,17 +51,17 @@ Each run appears in **Tasks → Previous**. A run that messages you ends with a 
 
 ## Work nod starts on its own
 
-nod keeps an eye on your connected apps only after you say so. Connecting an app doesn't start it.
-
-- **nod offers once.** After a task that connects or uses an app like Gmail or Slack, nod asks in one line whether to flag what needs you there. Say yes and it starts. Ignore or decline it, and nod doesn't ask again for that app.
-- **Or just tell it.** At any time, say what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
+nod reads every app you connect on its own, prepares useful work privately and messages you only when it's worth it. See [Nudges](/use/nudges/). There's nothing to turn on. At any time, you can say what's worth interrupting you for, such as "tell me when a client emails", and nod uses it to choose what to flag.
 
 How nod checks:
 
-- **Gmail.** nod checks for new inbox mail every five minutes. Once you've said yes, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Until then, nod only saves the message.
-- **Other connected apps.** Each update works the same way. For an app without updates, nod checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+- **Gmail.** nod checks for new inbox mail every five minutes. Each new message starts a quiet private run that decides whether there's useful work, such as preparing a reply.
+- **Google Calendar.** nod checks for changed events every 30 minutes without a model call.
+- **Other connected apps.** Every 30 minutes, one quiet private run reads them through their own read tools.
 
 Work nod starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. [Your rules](/trust/approvals/#your-rules) can change both: a rule to go ahead lets an action run without asking, and a rule to ask first makes nod ask even when your standing instruction covers the action. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, select it in **Usage**, or tell nod, for example "stop flagging Slack messages".
+
+The private preparation behind nudges can only read, prepare private work and nudge you. It can't send, delete, submit, book, buy or change connected apps. To stop it, tell nod "Pause preparation".
 
 The first time nod messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. When that first message asks you something, the line goes in it, before the question, so a short reply still answers the question. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, nod offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes. When you act on something background work brought you, such as asking nod to reply, and it will come up again, nod offers once to do it without asking next time.
 

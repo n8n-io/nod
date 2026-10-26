@@ -40,6 +40,7 @@ test(
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
+    const { enqueueTurn } = await import('../src/server/thread.ts');
     const phases = new Map<string, number>();
     const results = new Map<string, AgentToolResult>();
     const plans = new Map<
@@ -83,6 +84,10 @@ test(
     let methodBindings = 0;
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
+    const sourceRevision = 'v1';
+    let sourceReads = 0;
+    let toolSearch: Record<string, unknown> | undefined;
+    const readOnlyActions = new Set<string>();
     let appOutage = false;
     let appResult: unknown;
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
@@ -183,9 +188,11 @@ test(
                   const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute(
-                      plan.tool === 'browser' || plan.tool === 'sign_in'
-                        ? { action: plan.action, ...plan.args }
-                        : { action: plan.action, args: plan.args },
+                      plan.tool === 'read_source'
+                        ? plan.args
+                        : plan.tool === 'browser' || plan.tool === 'sign_in'
+                          ? { action: plan.action, ...plan.args }
+                          : { action: plan.action, args: plan.args },
                     );
                   results.set(options.turnId, result);
                   return;
@@ -266,6 +273,9 @@ test(
               uploads.push(Buffer.from(file.bytes).toString());
               return { name: file.name, mimetype: file.mimeType, s3key: randomUUID() };
             };
+            const search = session.search.bind(session);
+            session.search = async (...input) =>
+              toolSearch ? { tools: toolSearch, suggestions: [] } : search(...input);
             const execute = session.execute.bind(session);
             session.execute = async (...input) => {
               executedApps.push(input[0]);
@@ -276,6 +286,24 @@ test(
             return session;
           },
         },
+        observations: [
+          {
+            id: 'fixture',
+            sources: async () => [
+              {
+                id: 'notes',
+                label: 'Synthetic notes',
+                description: 'Read current synthetic notes.',
+                revision: sourceRevision,
+                readable: true,
+              },
+            ],
+            read: async () => {
+              sourceReads++;
+              return { records: [] };
+            },
+          },
+        ],
         speech: {
           id: 'fixture',
           configured: false,
@@ -321,6 +349,8 @@ test(
               return { valid: confirmationValid };
             }
             if (task === 'review' && !('purpose' in input)) fallbackChecks.push(input);
+            if (task === 'review' && 'action' in input && 'schema' in Object(input.action))
+              return { readOnly: readOnlyActions.has(String(Object(input.action).name)) };
             if (task === 'review' && 'action' in input && checkCost !== undefined)
               report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
             return task === 'review' && 'reply' in input
@@ -721,6 +751,145 @@ test(
         },
       );
 
+      await t.test(
+        'a proactive read the checker would hold asks nobody and reads nothing',
+        async () => {
+          const previous = await application.triage.getPreferences();
+          const previousCheckCost = checkCost;
+          const previousDecisionCost = decisionCost;
+          checkCost = 0;
+          decisionCost = 0;
+          const prompt = 'Synthetic source read check ' + randomUUID();
+          plans.set(prompt, {
+            tool: 'read_source',
+            action: 'read',
+            args: { sourceId: 'fixture:notes', ids: ['record/1'] },
+          });
+          try {
+            await application.triage.updatePreferences({ notificationRule: '', rules: '' });
+            const turnId = await enqueueTurn(prompt, {
+              source: 'event',
+              background: true,
+              proactive: true,
+            });
+            let status = '';
+            for (let attempt = 0; attempt < 300; attempt++) {
+              status = (await pool.query('SELECT status FROM turns WHERE id=$1', [turnId])).rows[0]
+                .status;
+              if (status === 'succeeded' || status === 'failed') break;
+              await delay(20);
+            }
+            assert.ok(['succeeded', 'failed'].includes(status));
+            assert.ok(
+              fallbackChecks.some(
+                (input) => Object(Object(input).action).name === 'NOD_read_source',
+              ),
+            );
+            assert.deepEqual(await approvalsFor(turnId), []);
+            assert.equal(sourceReads, 0);
+          } finally {
+            checkCost = previousCheckCost;
+            decisionCost = previousDecisionCost;
+            await application.triage.updatePreferences(previous);
+          }
+        },
+      );
+      await t.test(
+        'a proactive app read runs only what the read-only check calls a read',
+        async () => {
+          const connection = (
+            await pool.query(
+              "SELECT id FROM app_connections WHERE owner_id=$1 AND slug='gmail' AND NOT revoked",
+              [ownerId],
+            )
+          ).rows[0];
+          const sourceId = `connections:${connection.id}`;
+          const schema = (field: string) => ({
+            type: 'object',
+            properties: { [field]: { type: 'string' } },
+            additionalProperties: false,
+          });
+          toolSearch = {
+            GMAIL_FETCH_EMAILS: { description: 'Read messages.', inputSchema: schema('query') },
+            GMAIL_SEND_EMAIL: {
+              description: 'Send a message.',
+              inputSchema: schema('recipient_email'),
+            },
+          };
+          readOnlyActions.add('GMAIL_FETCH_EMAILS');
+          const writes = integrationFixture.writes.length;
+          const executed = executedApps.length;
+          const read = async (args: Record<string, unknown>) => {
+            const prompt = 'Synthetic app read ' + randomUUID();
+            plans.set(prompt, { tool: 'read_source', action: 'read', args: { sourceId, ...args } });
+            const turnId = await enqueueTurn(prompt, {
+              source: 'event',
+              background: true,
+              proactive: true,
+            });
+            let turn = { status: '', error: '' };
+            for (let attempt = 0; attempt < 300; attempt++) {
+              turn = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [turnId]))
+                .rows[0];
+              if (turn.status === 'succeeded' || turn.status === 'failed') break;
+              await delay(20);
+            }
+            assert.deepEqual(await approvalsFor(turnId), []);
+            return turn.status === 'succeeded' ? JSON.stringify(results.get(turnId)) : turn.error;
+          };
+          try {
+            assert.match(
+              await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'invoice' } }),
+              /Search this source/,
+            );
+            assert.match(await read({ query: 'email' }), /GMAIL_SEND_EMAIL/);
+            assert.match(
+              await read({ tool: 'GMAIL_SEND_EMAIL', args: { recipient_email: 'x@example.test' } }),
+              /not a read/,
+            );
+            assert.equal(executedApps.length, executed);
+            await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'invoice' } });
+            assert.deepEqual(executedApps.slice(executed), ['GMAIL_FETCH_EMAILS']);
+            assert.equal(integrationFixture.writes.length, writes);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT count(*)::int AS count FROM proactive_evidence WHERE owner_id=$1 AND source_id=$2 AND resource_id<>'tools'",
+                  [ownerId, sourceId],
+                )
+              ).rows[0].count,
+              1,
+            );
+          } finally {
+            toolSearch = undefined;
+            readOnlyActions.clear();
+          }
+        },
+      );
+      await t.test('an old proactive approval cannot enable a connected write', async () => {
+        const before = integrationFixture.writes.length;
+        const held = await propose(
+          'GMAIL_SEND_EMAIL',
+          {
+            recipient_email: 'blocked@example.test',
+            subject: 'Synthetic old approval',
+            body: 'This must stay private.',
+          },
+          'apps',
+        );
+        const [card] = await approvalsFor(held);
+        assert.equal(card.status, 'pending');
+        await pool.query('UPDATE turns SET proactive=true WHERE id=$1', [held]);
+        const approved = await request('POST', '/api/messages', {
+          text: 'Yes',
+          replyToMessageId: card.confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(approved.statusCode, 200, approved.body);
+        await waitFor(approved.json().turnId, 'succeeded');
+        assert.equal(integrationFixture.writes.length, before);
+        assert.equal((await approvalsFor(held))[0].status, 'expired');
+      });
       await t.test(
         'a rejected generated confirmation cannot create an approval or send an email',
         async () => {

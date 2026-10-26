@@ -10,6 +10,7 @@ const apps: Record<string, string> = {
 };
 
 export function actionTitle(action: string) {
+  if (action === 'NOD_read_source') return { app: '', label: 'Read source observations' };
   if (action === 'CONNECTED_HTTP') return { app: '', label: 'Call a connected API' };
   if (action === 'CONNECTED_MCP_CALL') return { app: '', label: 'Run a tool on a connected app' };
   if (action === 'CONNECTED_CLI') return { app: '', label: 'Run a connected command line tool' };

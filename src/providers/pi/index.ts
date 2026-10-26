@@ -562,7 +562,7 @@ export function createPiAgent(options: {
           if (activeNativeScript === scope) activeNativeScript = undefined;
         }
       };
-      const sandboxTools = createSandbox(input.workspace, input.timeZone);
+      const sandboxTools = input.restricted ? [] : createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
           ...definition,
@@ -690,9 +690,9 @@ export function createPiAgent(options: {
         cwd: input.workspace.path,
         agentDir: directory,
         settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
-        additionalExtensionPaths: [webExtension],
+        additionalExtensionPaths: input.restricted ? [] : [webExtension],
         extensionFactories: [
-          createCodemodeExtension(),
+          ...(input.restricted ? [] : [createCodemodeExtension()]),
           ...(deferred ? [createToolSearchExtension()] : []),
           nativeObservations,
           recentImages,
