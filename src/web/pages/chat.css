@@ -386,7 +386,7 @@
 }
 .voice-recorder-actions {
   display: grid;
-  grid-template-columns: 32px 136px;
+  grid-template-columns: repeat(2, 36px);
   align-items: center;
   flex: none;
   margin-left: auto;
@@ -409,8 +409,7 @@
   background: var(--surface-subtle);
 }
 .voice-recorder-bar,
-.voice-recorder-status,
-.voice-recorder-input {
+.voice-recorder-status {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -438,59 +437,61 @@
   flex-shrink: 0;
 }
 .voice-recorder-actions > .button-icon {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
 .voice-recorder-input {
+  display: grid;
   flex: 1;
   min-width: 0;
+  grid-template-columns: 32px 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 .voice-recorder-dot {
-  flex-shrink: 0;
+  justify-self: center;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--destructive);
 }
 .voice-recorder-time {
-  min-width: 36px;
-  font-size: var(--text-control);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .voice-recorder-level {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 20px;
   min-width: 0;
-  margin-inline: 4px;
+  height: 36px;
 }
-.voice-recorder-level span {
-  flex-shrink: 1;
-  width: 4px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--border);
+.voice-recorder-level svg,
+.recording-preview-position svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
-.voice-recorder-level span[data-active] {
-  background: var(--accent);
+.recording-waveform-base {
+  fill: var(--border);
+}
+.recording-waveform-progress {
+  fill: var(--accent);
 }
 .voice-recorder-preview {
-  width: 136px;
-  padding-inline: 8px;
-  flex-shrink: 0;
+  width: 36px;
+  padding: 0;
 }
 .recording-preview {
   display: grid;
   flex: 1;
   min-width: 0;
-  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-columns: 32px 32px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
 }
 .recording-preview .audio-player-play {
+  grid-row: auto;
+  align-self: center;
   width: 32px;
   height: 32px;
 }
@@ -498,41 +499,23 @@
   display: none;
 }
 .recording-preview-position {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
   min-width: 0;
+  height: 36px;
+  border-radius: 4px;
 }
 .recording-preview-position input {
-  appearance: none;
-  flex: 1;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-width: 0;
-  height: 32px;
-  border-radius: var(--radius-full);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 4px;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
 }
-.recording-preview-position input::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.recording-preview-position input::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.recording-preview-position input:focus-visible {
+.recording-preview-position:has(:focus-visible) {
   outline: 2px solid var(--ring);
-  outline-offset: 6px;
+  outline-offset: 3px;
 }
 .recording-preview-time {
   color: var(--muted-foreground);
@@ -566,16 +549,18 @@
   height: 8px;
   accent-color: var(--accent);
 }
-@media (max-width: 480px) {
+@media (pointer: coarse) and (min-width: 360px) {
   .voice-recorder-actions {
-    grid-template-columns: 32px 32px;
+    grid-template-columns: repeat(2, 44px);
   }
-  .voice-recorder-preview {
-    width: 32px;
-    padding: 0;
+  .voice-recorder-actions > .button-icon,
+  .recording-preview .audio-player-play {
+    width: 44px;
+    height: 44px;
   }
-  .voice-recorder-preview span {
-    display: none;
+  .voice-recorder-input,
+  .recording-preview {
+    grid-template-columns: 44px 32px minmax(0, 1fr);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -984,6 +969,42 @@
   top: auto;
   right: 7px;
   bottom: 5px;
+}
+.chat-page .message-audio-only .message-attachments {
+  margin-bottom: 0;
+}
+.chat-page .message-audio-only > .message-body > .message-time {
+  position: absolute;
+  left: 14px;
+  bottom: 15px;
+  width: 44px;
+  min-height: 0;
+  margin: 0;
+  line-height: 14px;
+  text-align: center;
+}
+.chat-page .message-bubble.message-audio-only > .message-menu-trigger {
+  right: -36px;
+  bottom: 6px;
+}
+.chat-page .message-audio-only > .message-react-trigger {
+  top: 4px;
+  transform: none;
+}
+.chat-page .message-user .message-audio-only > .message-menu-trigger {
+  right: auto;
+  left: -36px;
+}
+.chat-page .message-audio-only:has(.audio-player-error) > .message-body > .message-time {
+  position: static;
+  width: auto;
+  margin: 3px 0 0;
+  text-align: right;
+}
+@media (pointer: coarse) {
+  .chat-page .message-audio-only > .message-body > .message-time {
+    bottom: 21px;
+  }
 }
 .chat-page .message-body .audio-player {
   width: 100%;

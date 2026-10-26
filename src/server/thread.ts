@@ -1234,7 +1234,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await ensureCurrent();
       return call(...args);
     };
-  const replies: Array<{ id: string; text: string }> = [];
+  const replies: Array<{ id: string; text: string; source: string }> = [];
   let explicitAudio = false;
   const published = new Map<string, Artifact>();
   const post = async (
@@ -1244,6 +1244,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     replyToMessageId?: string,
     presentation?: Presentation,
   ) => {
+    const source = text;
     const created = new Map<string, Artifact>();
     const cleanup: Array<() => Promise<void>> = [];
     let rolledBack = false;
@@ -1289,7 +1290,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           presentation,
         );
       });
-      if (text.trim()) replies.push({ id, text });
+      if (text.trim()) replies.push({ id, text, source });
     } catch (error) {
       if (rolledBack) await Promise.allSettled(cleanup.map((remove) => remove()));
       throw error;
@@ -1680,7 +1681,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (shared.length && (result.status === 'succeeded' || !result.message))
       await post('', shared.splice(0));
     const finalReply = result.spokenReply
-      ? replies.findLast(({ text }) => text.trim() === result.spokenReply!.trim())
+      ? replies.findLast(({ source }) => source.trim() === result.spokenReply!.trim())
       : replies.at(-1);
     const questionText =
       result.status === 'waiting_user' &&

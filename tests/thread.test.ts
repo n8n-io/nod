@@ -469,6 +469,13 @@ test(
           await context.reply('Should I compare the other options?');
           return { status: 'succeeded', spokenReply: 'The synthetic answer is ready.' };
         }
+        if (context.prompt === 'audio-workspace-link-fixture') {
+          await writeFile(join(context.workspacePath, 'spoken-update.txt'), 'Synthetic update');
+          const reply = `Read [the update](/workspace/${context.threadId}/spoken-update.txt).`;
+          await context.reply(reply);
+          await context.reply('Should I compare the other options?');
+          return { status: 'succeeded', spokenReply: reply };
+        }
         if (context.prompt.startsWith('audio-question-')) {
           await context.reply('Synthetic progress before the question.');
           const kind = context.prompt.slice('audio-question-'.length);
@@ -2118,6 +2125,7 @@ test(
               )
             ).rows;
           let releaseSynthesis: (() => void) | undefined;
+          const previousRead = dependencies.readArtifact;
           try {
             audioReplyMode = 'voice';
             const before = spoken.length;
@@ -2161,6 +2169,37 @@ test(
             const followUpMessages = await assistantMessages(followUp.turnId);
             assert.equal(followUpMessages.length, 3);
             assert.equal(followUpMessages[2].reply_to_message_id, followUpMessages[0].id);
+            dependencies.readArtifact = async (workspace, path) => {
+              assert.equal(workspace, threadId);
+              assert.equal(path, 'spoken-update.txt');
+              return readFile(join(root, 'workspaces', workspace, path));
+            };
+            for (const mode of ['voice', 'always'] as const) {
+              audioReplyMode = mode;
+              const beforePublishedReply = spoken.length;
+              const linked = await thread.submitUserMessage(
+                'audio-workspace-link-fixture',
+                mode === 'voice' ? [clip] : [],
+              );
+              await waitFor(settled(linked.turnId));
+              assert.equal(await turnStatus(linked.turnId), 'succeeded');
+              assert.equal(spoken.length, beforePublishedReply + 1);
+              assert.equal(spoken.at(-1), 'Read spoken-update.txt.');
+              const linkedMessages = await assistantMessages(linked.turnId);
+              assert.equal(linkedMessages.length, 3);
+              const published = linkedMessages[0].attachments[0];
+              assert.equal(published.name, 'spoken-update.txt');
+              assert.equal(linkedMessages[0].text, `Read [spoken-update.txt](${published.url}).`);
+              assert.equal(
+                (await localArtifacts.readArtifact(published.id)).toString(),
+                'Synthetic update',
+              );
+              assert.equal(linkedMessages[2].reply_to_message_id, linkedMessages[0].id);
+              assert.deepEqual(
+                await localArtifacts.readArtifact(linkedMessages[2].attachments[0].id),
+                Buffer.from('Synthetic generated audio'),
+              );
+            }
             synthesisError = new Error('Synthetic unavailable voice');
             const failure = await thread.submitUserMessage('audio-failure-fixture');
             await waitFor(settled(failure.turnId));
@@ -2183,6 +2222,7 @@ test(
             await delay(30);
             assert.equal((await assistantMessages(stopped.turnId)).length, 1);
           } finally {
+            dependencies.readArtifact = previousRead;
             audioReplyMode = 'never';
             synthesisError = undefined;
             synthesisGate = undefined;

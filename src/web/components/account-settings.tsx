@@ -497,11 +497,11 @@ export function AccountSettings({
             className="account-settings-close"
             variant="ghost"
             aria-label="Close settings"
-            title="Close settings (Esc)"
+            title="Close settings (ESC)"
             onClick={close}
           >
             <X size={18} aria-hidden="true" />
-            <kbd aria-hidden="true">Esc</kbd>
+            <kbd aria-hidden="true">ESC</kbd>
           </Button>
         </div>
       </header>

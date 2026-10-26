@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { SpeechVoice } from '../../shared/speech';
 import { Check, ChevronDown, LoaderCircle, Play, Square } from './icons';
 import {
@@ -29,6 +29,13 @@ function sourceLabel(voice: SpeechVoice) {
     : voice.engine;
 }
 
+export function voiceLabel(voice: SpeechVoice) {
+  const parts = voice.engine === 'ElevenLabs' && voice.name.match(/^(.+?)\s+[–—-]\s+(.+)$/);
+  return parts
+    ? { name: parts[1], description: parts[2] }
+    : { name: voice.name, description: voice.description };
+}
+
 export function VoiceSample({
   voice,
   loading,
@@ -42,7 +49,7 @@ export function VoiceSample({
   disabled?: boolean;
   onPlay(): void;
 }) {
-  const label = `${loading || playing ? 'Stop' : 'Play'} ${voice.name} sample, ${voice.description}, ${sourceLabel(voice)}`;
+  const label = `${loading || playing ? 'Stop' : 'Play'} ${voice.name} sample, ${voice.description}`;
   return (
     <Button
       type="button"
@@ -100,9 +107,6 @@ export function VoicePicker({
   const [query, setQuery] = useState('');
   const id = useId();
   const search = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (open) search.current?.focus();
-  }, [open]);
   const selected = voices.find((voice) => voice.id === (value ?? defaultVoice));
   const languageNames = new Intl.DisplayNames([navigator.language], { type: 'language' });
   const language = (voice: SpeechVoice) =>
@@ -115,15 +119,18 @@ export function VoicePicker({
     .toLowerCase()
     .trim()
     .split(/\s+/);
-  const matches = voices.filter((voice) =>
-    words.every((word) =>
-      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${language(voice)} ${voice.engine} ${sourceLabel(voice)}`
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .includes(word),
-    ),
-  );
+  const matches = voices
+    .filter((voice) =>
+      words.every((word) =>
+        `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${language(voice)} ${voice.engine} ${sourceLabel(voice)}`
+          .normalize('NFKD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .includes(word),
+      ),
+    )
+    .sort((a, b) => Number(b.id === selected?.id) - Number(a.id === selected?.id));
+  const groups = [...new Set(matches.map(language))];
   return (
     <Dialog
       open={open}
@@ -153,9 +160,13 @@ export function VoicePicker({
       >
         <span className="voice-picker-label">
           <span id={`${id}-value`}>
-            {selected?.name ?? (value ? 'Choose another voice' : 'Choose a voice')}
+            {selected
+              ? voiceLabel(selected).name
+              : value
+                ? 'Choose another voice'
+                : 'Choose a voice'}
           </span>
-          {selected && <small id={`${id}-detail`}>{selected.description}</small>}
+          {selected && <small id={`${id}-detail`}>{voiceLabel(selected).description}</small>}
         </span>
         <ChevronDown size={16} />
       </DialogTrigger>
@@ -165,7 +176,10 @@ export function VoicePicker({
         aria-busy={disabled}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          search.current?.focus({ preventScroll: true });
+          const current = search.current
+            ?.closest('[role="dialog"]')
+            ?.querySelector<HTMLButtonElement>('.voice-choice[aria-pressed="true"]');
+          (current ?? search.current)?.focus({ preventScroll: true });
         }}
         onKeyDown={(event) => {
           if (event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing)
@@ -220,9 +234,9 @@ export function VoicePicker({
           clearLabel="Clear voice search"
         />
         <div className="voice-picker-options">
-          {[...new Set(matches.map(language))].map((group) => (
+          {groups.map((group) => (
             <div key={group} role="group" aria-label={group}>
-              <h3 className="voice-picker-group">{group}</h3>
+              {groups.length > 1 && <h3 className="voice-picker-group">{group}</h3>}
               {matches
                 .filter((voice) => language(voice) === group)
                 .map((voice) => (
@@ -231,20 +245,6 @@ export function VoicePicker({
                     key={voice.id}
                     data-selected={voice.id === (value ?? defaultVoice)}
                   >
-                    <button
-                      type="button"
-                      className="voice-choice"
-                      aria-label={`Choose ${voice.name}, ${voice.description}, ${sourceLabel(voice)}`}
-                      aria-pressed={voice.id === (value ?? defaultVoice)}
-                      disabled={disabled}
-                      onClick={() => onChange(voice.id)}
-                    >
-                      <span className="voice-picker-label">
-                        <span>{voice.name}</span>
-                        {voice.description !== group && <small>{voice.description}</small>}
-                      </span>
-                      {voice.id === (value ?? defaultVoice) && <Check size={16} />}
-                    </button>
                     <VoiceSample
                       voice={voice}
                       loading={loading === voice.id}
@@ -252,6 +252,23 @@ export function VoicePicker({
                       disabled={disabled}
                       onPlay={() => onPreview(voice.id)}
                     />
+                    <button
+                      type="button"
+                      className="voice-choice"
+                      aria-label={`Choose ${voice.name}, ${voice.description}, ${sourceLabel(voice)}`}
+                      aria-pressed={voice.id === (value ?? defaultVoice)}
+                      title={`${voice.name}\n${voice.description}`}
+                      disabled={disabled}
+                      onClick={() => onChange(voice.id)}
+                    >
+                      <span className="voice-picker-label">
+                        <span>{voiceLabel(voice).name}</span>
+                        {voiceLabel(voice).description !== group && (
+                          <small>{voiceLabel(voice).description}</small>
+                        )}
+                      </span>
+                      {voice.id === (value ?? defaultVoice) && <Check size={16} />}
+                    </button>
                   </div>
                 ))}
             </div>

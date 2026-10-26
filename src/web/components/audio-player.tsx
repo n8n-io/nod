@@ -208,8 +208,9 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           className="audio-player-time"
           aria-label={`${audioTime(current)} of ${audioTime(duration)}`}
         >
-          {audioTime(current)}
-          <span className="audio-player-total"> / {duration ? audioTime(duration) : '–:––'}</span>
+          <span className="audio-player-current">{audioTime(current)}</span>
+          <span className="audio-player-separator"> / </span>
+          <span className="audio-player-total">{duration ? audioTime(duration) : '–:––'}</span>
         </span>
         <button
           type="button"

@@ -1,9 +1,9 @@
 import { useLayoutEffect, useState } from 'react';
 import type { SpeechVoice } from '../../shared/speech';
 import { useModelSignIn, useModels } from '../hooks/use-models';
-import { Check, ExternalLink, LoaderCircle, Mic, RefreshCw } from './icons';
+import { Check, ExternalLink, LoaderCircle, RefreshCw } from './icons';
 import { modelProviderNames } from '../../shared/models';
-import { ModelKeyHelp, ModelProviderLogo } from './models';
+import { ModelKeyHelp } from './models';
 import { Button, Field, Input, Notice } from './ui';
 
 export function VoiceConnections({
@@ -48,61 +48,50 @@ export function VoiceConnections({
   }
   const directConnections =
     models.data?.connections.filter((connection) => connection.provider === 'elevenlabs') ?? [];
-  function connected(provider: 'elevenlabs' | 'openrouter' | 'openai') {
-    return (
-      voices.some(
-        (voice) =>
-          voice.source === provider ||
-          (!voice.source &&
-            (provider === 'openrouter'
-              ? /^(elevenlabs|kokoro):/.test(voice.id)
-              : voice.id.startsWith(provider === 'elevenlabs' ? 'elevenlabs-direct:' : 'openai:'))),
-      ) ||
-      models.data?.connections.some(
-        (connection) =>
-          connection.provider === provider &&
-          connection.status === 'connected' &&
-          connection.method !== 'subscription',
-      )
+  const available = voices.some(
+    (voice) =>
+      voice.source === provider ||
+      (!voice.source &&
+        (provider === 'openrouter'
+          ? /^(elevenlabs|kokoro):/.test(voice.id)
+          : voice.id.startsWith(provider === 'elevenlabs' ? 'elevenlabs-direct:' : 'openai:'))),
+  );
+  const connected =
+    available ||
+    models.data?.connections.some(
+      (connection) =>
+        connection.provider === provider &&
+        connection.status === 'connected' &&
+        connection.method !== 'subscription',
     );
-  }
   return (
     <div className="voice-connections">
-      {!models.data && models.loading ? (
+      {!models.data && models.loading && !available ? (
         <p className="field-hint" role="status">
           Loading connection…
         </p>
       ) : (
-        models.data && (
+        (models.data || available) && (
           <section className="voice-connect-option" key={provider}>
-            <div className="voice-connect-heading">
-              {provider === 'elevenlabs' ? (
-                <Mic size={22} aria-hidden="true" />
-              ) : (
-                <ModelProviderLogo provider={provider} size={22} />
-              )}
-              <div>
-                <h3>{modelProviderNames[provider]}</h3>
-                <p>
-                  {connected(provider)
-                    ? provider === 'elevenlabs'
-                      ? 'Use the voices saved in your ElevenLabs account.'
-                      : 'Ready with your saved connection.'
-                    : provider === 'elevenlabs'
-                      ? 'Use voices from your ElevenLabs account.'
-                      : provider === 'openrouter'
-                        ? 'ElevenLabs and more, using your OpenRouter credits.'
-                        : 'Use an OpenAI API key. Separate from a ChatGPT plan.'}
+            {!connected && (
+              <p className="field-hint">
+                {provider === 'elevenlabs'
+                  ? 'Connect your ElevenLabs account to use its voices.'
+                  : provider === 'openrouter'
+                    ? 'ElevenLabs and more, using your OpenRouter credits.'
+                    : 'Connect with an OpenAI API key. Separate from a ChatGPT plan.'}
+              </p>
+            )}
+            {connected && keyProvider !== provider && (
+              <>
+                <p className="voice-connection-status">
+                  {available && <Check size={14} aria-hidden="true" />}
+                  {available
+                    ? `Uses your ${modelProviderNames[provider]} connection`
+                    : `No voices are available from your ${modelProviderNames[provider]} connection.`}
                 </p>
-              </div>
-            </div>
-            {connected(provider) && keyProvider !== provider && (
-              <div className="voice-connect-actions">
-                <span className="voice-connect-ready">
-                  <Check size={14} /> Connected
-                </span>
                 {provider === 'elevenlabs' && (
-                  <>
+                  <div className="voice-connect-actions">
                     <a
                       className="voice-library-link"
                       href="https://elevenlabs.io/app/voice-library"
@@ -129,50 +118,47 @@ export function VoiceConnections({
                       />
                       Refresh voices
                     </Button>
-                  </>
+                  </div>
                 )}
-              </div>
+              </>
             )}
-            {!connected(provider) &&
-              keyProvider !== provider &&
-              flow.signIn?.provider !== provider && (
-                <div className="voice-connect-actions">
-                  {provider === 'openrouter' && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={disabled || busy || Boolean(key.trim())}
-                      onClick={() => {
-                        setKey('');
-                        setKeyProvider(null);
-                        setCallback('');
-                        void flow.connect('openrouter');
-                      }}
-                    >
-                      {flow.pending && !flow.signIn ? (
-                        <>
-                          <LoaderCircle size={14} className="voice-preview-loading" />
-                          Opening sign-in…
-                        </>
-                      ) : (
-                        'Sign in with OpenRouter'
-                      )}
-                    </Button>
-                  )}
+            {!connected && keyProvider !== provider && flow.signIn?.provider !== provider && (
+              <div className="voice-connect-actions">
+                {provider === 'openrouter' && (
                   <Button
                     type="button"
-                    variant={provider === 'openrouter' ? 'ghost' : 'outline'}
                     size="sm"
                     disabled={disabled || busy || Boolean(key.trim())}
-                    onClick={() => addKey(provider)}
+                    onClick={() => {
+                      setKey('');
+                      setKeyProvider(null);
+                      setCallback('');
+                      void flow.connect('openrouter');
+                    }}
                   >
-                    {provider === 'openrouter' ? 'Use API key' : 'Connect'}
+                    {flow.pending && !flow.signIn ? (
+                      <>
+                        <LoaderCircle size={14} className="voice-preview-loading" />
+                        Opening sign-in…
+                      </>
+                    ) : (
+                      'Sign in with OpenRouter'
+                    )}
                   </Button>
-                </div>
-              )}
+                )}
+                <Button
+                  type="button"
+                  variant={provider === 'openrouter' ? 'ghost' : 'outline'}
+                  size="sm"
+                  disabled={disabled || busy || Boolean(key.trim())}
+                  onClick={() => addKey(provider)}
+                >
+                  {provider === 'openrouter' ? 'Use API key' : 'Connect'}
+                </Button>
+              </div>
+            )}
             {provider === 'elevenlabs' && directConnections.length > 0 && (
-              <details className="voice-connect-manage">
-                <summary>Manage connection</summary>
+              <div className="voice-connect-manage">
                 {directConnections.map((connection) => (
                   <div className="voice-connection-entry" key={connection.id}>
                     <span>
@@ -205,7 +191,7 @@ export function VoiceConnections({
                 {directConnections.length > 1 && (
                   <p className="field-hint">Keep one ElevenLabs connection to use its voices.</p>
                 )}
-              </details>
+              </div>
             )}
             {keyProvider === provider && (
               <form

@@ -2568,7 +2568,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         players.push(player);
         return player;
       };
-      let settings = { transcription: true, synthesis: true, speechReply: 'voice', speechVoice: null,
+      let settings = { transcription: true, synthesis: true, speechReply: 'voice', speechVoice: 'local:pf_dora',
         local: { state: 'not_downloaded' },
         defaultVoice: 'local:pf_dora', voices: [
           { id: 'local:pm_alex', name: 'Alex', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
@@ -2631,8 +2631,8 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(player.getAttribute('src'), null);
         assert.equal(revoked.filter(value => value === url).length, 1);
       };
-      const dora = 'Dora sample, Brazilian Portuguese, Free voices';
-      const alex = 'Alex sample, Brazilian Portuguese, Free voices';
+      const dora = 'Dora sample, Brazilian Portuguese';
+      const alex = 'Alex sample, Brazilian Portuguese';
       try {
         await render();
         await settle(() => trigger());
@@ -2642,11 +2642,28 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
           trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
         });
         await settle(() => picker());
-        assert.equal(document.activeElement.getAttribute('aria-label'), 'Search voices');
+        assert.equal(document.activeElement, picker().querySelector('.voice-choice[aria-pressed="true"]'));
+        const search = picker().querySelector('input');
+        await act(async () => {
+          search.focus();
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, 'Alex');
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        assert.equal(picker().querySelectorAll('.voice-choice').length, 1);
+        await act(async () => search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+        assert.equal(document.activeElement, picker().querySelector('.voice-choice'));
+        await act(async () => {
+          picker().querySelector('.voice-sample').focus();
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+        });
+        assert.equal(document.activeElement, picker().querySelector('.voice-sample'));
+        await click('Clear voice search', picker());
+        assert.equal(document.activeElement, search);
+        assert.deepEqual(writes, []);
         await click('Play ' + dora, picker());
         assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
         assert.deepEqual(writes, []);
-        assert.equal(settings.speechVoice, null);
+        assert.equal(settings.speechVoice, 'local:pf_dora');
         await click('Play ' + alex, picker());
         assert.equal(requests[0].options.signal.aborted, true);
         assert.deepEqual(JSON.parse(requests[1].options.body), { voice: 'local:pm_alex', locale: 'pt-PT' });
@@ -2707,6 +2724,8 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await click('Play ' + dora);
         await act(async () => requests[7].resolve(Response.json({ error: 'Synthetic preview failure' }, { status: 503 })));
         assert.ok(document.body.textContent.includes('Synthetic preview failure'));
+        assert.equal(requests.length, 8);
+        assert.equal(settings.speechVoice, 'local:pf_dora');
         await openKeyboard('ArrowUp');
         assert.equal(document.body.textContent.includes('Synthetic preview failure'), false);
         await click('Close', picker());
@@ -2734,7 +2753,6 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await render();
         await settle(() => trigger());
         const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
-        await act(async () => button('Manage').click());
         await settle(() => button('Download voices'));
         for (const outcome of ['cancel', 'failure', 'complete']) {
           await act(async () => button('Download voices').click());
@@ -2792,6 +2810,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(trigger().getAttribute('aria-disabled'), 'true');
         assert.equal(settings.speechVoice, 'elevenlabs-direct:saved');
         assert.equal(writes.length, beforeCatalogLoss);
+        assert.equal(document.querySelector('.voice-sample'), null);
         await chooseProvider('OpenRouter');
         assert.equal(provider().getAttribute('aria-label'), 'Voice provider, OpenRouter');
         assert.equal(settings.speechVoice, 'elevenlabs-direct:saved');
@@ -2810,8 +2829,29 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await settle(() => settings.speechVoice === null && busy.at(-1) === false);
         assert.deepEqual(writes.at(-1), { speechVoice: null });
         assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
+        assert.equal(trigger(), undefined);
+        const automatic = () => document.querySelector('.voice-automatic-choice');
+        assert.ok(automatic().textContent.includes(settings.voices.find(voice => voice.id === settings.defaultVoice).name));
+        const beforeAutomaticSample = writes.length;
         await click('Play ' + dora);
         assert.deepEqual(JSON.parse(requests.at(-1).options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
+        assert.equal(writes.length, beforeAutomaticSample);
+        assert.equal(settings.speechVoice, null);
+        await resolve(requests.length - 1);
+        const automaticPlayer = players.at(-1);
+        const automaticUrl = automaticPlayer.src;
+        assert.equal(automaticPlayer.playing, true);
+        settings = { ...settings, defaultVoice: 'openai:coral' };
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await settle(() => automatic().textContent.includes(settings.voices.find(voice => voice.id === settings.defaultVoice).name));
+        released(automaticPlayer, automaticUrl);
+        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
+        assert.equal(trigger(), undefined);
+        assert.equal(settings.speechVoice, null);
+        assert.equal(writes.length, beforeAutomaticSample);
+        await click('Play Coral sample, Warm and friendly');
+        assert.deepEqual(JSON.parse(requests.at(-1).options.body), { voice: 'openai:coral', locale: 'pt-PT' });
+        assert.equal(writes.length, beforeAutomaticSample);
       } finally {
         if (mounted) await act(async () => root.unmount());
         dom.window.close();

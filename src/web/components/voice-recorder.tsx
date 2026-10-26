@@ -1,7 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import type { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import { Check, ChevronDown, LoaderCircle, Mic, Pause, Play, RotateCcw, Trash2, X } from './icons';
+import {
+  Check,
+  ChevronDown,
+  LoaderCircle,
+  Mic,
+  Pause,
+  Play,
+  RotateCcw,
+  Square,
+  Trash2,
+  X,
+} from './icons';
 import { Button } from './ui';
 
 export function MicrophonePicker({
@@ -130,12 +141,39 @@ function recordingTime(milliseconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+function RecordingWaveform({ levels, progress = 1 }: { levels: number[]; progress?: number }) {
+  const clip = useId();
+  const bars = Array.from({ length: 64 }, (_, index) => {
+    const start = Math.floor((index * levels.length) / 64);
+    const end = Math.max(start + 1, Math.floor(((index + 1) * levels.length) / 64));
+    const peak = Math.max(0.06, ...levels.slice(start, end));
+    return (
+      <rect key={index} x={index * 5} y={16 - peak * 14} width="3" height={peak * 28} rx="1.5" />
+    );
+  });
+  return (
+    <svg viewBox="0 0 320 32" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <clipPath id={clip}>
+          <rect width={320 * progress} height="32" />
+        </clipPath>
+      </defs>
+      <g className="recording-waveform-base">{bars}</g>
+      <g className="recording-waveform-progress" clipPath={`url(#${clip})`}>
+        {bars}
+      </g>
+    </svg>
+  );
+}
+
 function RecordingPreview({
   recording,
   sending,
+  levels,
 }: {
   recording: NonNullable<ReturnType<typeof useVoiceRecorder>['recording']>;
   sending: boolean;
+  levels: number[];
 }) {
   const audio = useRef<HTMLAudioElement>(null);
   const playButton = useRef<HTMLButtonElement>(null);
@@ -144,7 +182,7 @@ function RecordingPreview({
   const [failed, setFailed] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(recording.duration / 1000);
-  const progress = duration ? Math.min(100, (current / duration) * 100) : 0;
+  const progress = duration ? Math.min(1, current / duration) : 0;
   useEffect(() => {
     const element = audio.current;
     if (element) element.src = recording.url;
@@ -223,7 +261,15 @@ function RecordingPreview({
           <Play size={20} solid />
         )}
       </button>
+      <span
+        className="recording-preview-time"
+        aria-label={`${recordingTime(current * 1000)} of ${recordingTime(Math.ceil(duration) * 1000)}`}
+        title={`${recordingTime(current * 1000)} / ${recordingTime(Math.ceil(duration) * 1000)}`}
+      >
+        {recordingTime((current > 0 || playing ? current : Math.ceil(duration)) * 1000)}
+      </span>
       <div className="recording-preview-position">
+        <RecordingWaveform levels={levels} progress={progress} />
         <input
           type="range"
           min={0}
@@ -233,18 +279,12 @@ function RecordingPreview({
           disabled={sending || !duration || failed}
           aria-label="Seek recording"
           aria-valuetext={`${recordingTime(current * 1000)} of ${recordingTime(Math.ceil(duration) * 1000)}`}
-          style={{
-            backgroundImage: `linear-gradient(to right, var(--accent) ${progress}%, var(--border) ${progress}%)`,
-          }}
           onChange={(event) => {
             if (!audio.current) return;
             audio.current.currentTime = Number(event.target.value);
             setCurrent(audio.current.currentTime);
           }}
         />
-        <span className="recording-preview-time">
-          {recordingTime(current * 1000)} / {recordingTime(Math.ceil(duration) * 1000)}
-        </span>
       </div>
       {failed && <p role="alert">Preview unavailable. You can still send this recording.</p>}
     </div>
@@ -261,11 +301,21 @@ export function VoiceRecorder({
   onDiscard(): void;
 }) {
   const discardButton = useRef<HTMLButtonElement>(null);
+  const sampledAt = useRef(-1);
+  const [levels, setLevels] = useState<number[]>([]);
   const { phase, recording, elapsed, level } = recorder;
   const preview = phase === 'preview' && recording && !sending;
   useEffect(() => {
     if (phase === 'requesting') discardButton.current?.focus();
   }, [phase]);
+  useEffect(() => {
+    if (phase !== 'recording' || elapsed === sampledAt.current) return;
+    const restart = elapsed < sampledAt.current;
+    sampledAt.current = elapsed;
+    setLevels((current) =>
+      elapsed === 0 ? [] : [...(restart ? [] : current), level].slice(-3000),
+    );
+  }, [phase, elapsed, level]);
   if (phase === 'idle') return null;
   return (
     <section
@@ -275,7 +325,12 @@ export function VoiceRecorder({
     >
       <div className="voice-recorder-bar">
         {preview ? (
-          <RecordingPreview key={recording.url} recording={recording} sending={sending} />
+          <RecordingPreview
+            key={recording.url}
+            recording={recording}
+            sending={sending}
+            levels={levels}
+          />
         ) : phase === 'recording' ? (
           <div className="voice-recorder-input">
             <span className="voice-recorder-dot" aria-hidden="true" />
@@ -290,9 +345,7 @@ export function VoiceRecorder({
               aria-valuemax={100}
               aria-valuenow={Math.round(level * 100)}
             >
-              {Array.from({ length: 8 }, (_, index) => (
-                <span key={index} data-active={level > index / 8 || undefined} />
-              ))}
+              <RecordingWaveform levels={[...Array<number>(64).fill(0), ...levels].slice(-64)} />
             </div>
           </div>
         ) : (
@@ -324,27 +377,25 @@ export function VoiceRecorder({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="icon"
               className="voice-recorder-preview"
               aria-label="Record again"
               title="Record again"
               onClick={() => void recorder.start()}
             >
-              <RotateCcw size={14} />
-              <span>Record again</span>
+              <RotateCcw size={18} />
             </Button>
           ) : phase === 'recording' ? (
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="icon"
               className="voice-recorder-preview"
               aria-label="Stop and preview recording"
               title="Stop and preview recording"
               onClick={recorder.stop}
             >
-              <Play size={14} />
-              <span>Preview</span>
+              <Square size={16} />
             </Button>
           ) : null}
         </div>
