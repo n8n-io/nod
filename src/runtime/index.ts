@@ -195,6 +195,7 @@ export function createAgentRuntime(dependencies: {
     let answered = false;
     let lastNote = '';
     let reported = false;
+    let deliveredMessage = false;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -222,11 +223,12 @@ export function createAgentRuntime(dependencies: {
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
-      if (!trimmed || trimmed === lastReply) return;
+      if (!trimmed || trimmed === lastReply) return false;
       await context.reply(trimmed, id, replyToMessageId);
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
       replyOwed = false;
+      return true;
     };
     const reply = deliverReply;
     let handoffBrowserId: string | undefined;
@@ -364,6 +366,7 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
+          if (name === 'create_audio') deliveredMessage = true;
           if (
             name === 'send_message' ||
             name === 'create_audio' ||
@@ -526,7 +529,9 @@ export function createAgentRuntime(dependencies: {
         },
         computer: browser,
         pageVisited: dependencies.pageVisited,
-        reply,
+        reply: async (text: string, id?: string, replyToMessageId?: string) => {
+          if (await reply(text, id, replyToMessageId)) deliveredMessage = true;
+        },
         pause,
         confirm,
         visited: (browserId: string, url: string) => {
@@ -614,9 +619,13 @@ export function createAgentRuntime(dependencies: {
       const followUp = (text: string) => {
         const trimmed = text.trim();
         if (!trimmed) throw new Error('Write the follow-up line.');
+        if (!deliveredMessage)
+          throw new Error(
+            'Deliver the requested result with send_message or create_audio before offering a follow-up.',
+          );
         if (followUps.length) return 'A follow-up is already queued.';
         followUps.push(trimmed);
-        return 'Queued. It goes out as its own message right after your reply; do not repeat it.';
+        return 'Queued. It goes out as its own message; do not repeat the result or the offer.';
       };
       const tools = bind(
         {
