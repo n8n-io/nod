@@ -103,6 +103,7 @@ export function createTriage(
         )
       ).rows[0];
       const rule = policy?.notification_rule ?? defaultPreferences.notificationRule;
+      if (!preparing && !rule.trim()) return undefined;
       if (rule !== prefs.notificationRule || (policy?.rules ?? '') !== prefs.rules)
         throw new Error('The notification rules changed before dispatch.');
       if (preparing) {

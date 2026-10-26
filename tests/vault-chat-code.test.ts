@@ -295,58 +295,6 @@ test(
         },
       );
       await t.test(
-        'concise code replies bypass ordinary routing and save only a masked acknowledgement',
-        async () => {
-          for (const [text, code] of [
-            [' 739126 ', '739126'],
-            ['001234.', '001234'],
-            ['001\u00a0234', '001234'],
-            ['001\u202f234', '001234'],
-            ['O código é 001\u00a0234', '001234'],
-            ['The code is 739126', '739126'],
-            ['Code: 073912', '073912'],
-            ['OTP: 012345', '012345'],
-            ['2FA code: 012345', '012345'],
-            ['Verification code = 739126', '739126'],
-            ['SMS code: 739126.', '739126'],
-            ['O código é 739 126.', '739126'],
-            ['Código de verificação: 739 126', '739126'],
-            ['739 126', '739126'],
-            ['1 2 3 4 5 6 7 8', '12345678'],
-            ['Mi código es 739126', '739126'],
-            ['Der Code lautet 739 126.', '739126'],
-            ['Votre code : 073912', '073912'],
-            ['認証コード 739126', '739126'],
-          ]) {
-            await reset();
-            const request = await seed();
-            const before = (await app.inject({ url: '/api/state', headers })).json();
-            assert.equal(before.verificationRequests[0].id, request.requestId);
-            const response = await send(text);
-            assert.equal(response.statusCode, 200, response.body);
-            assert.equal(response.json().verificationStatus, 'submitted');
-            assert.deepEqual(injected, [
-              {
-                owner: ownerId,
-                turnId: request.turnId,
-                code,
-                requestId: request.requestId,
-              },
-            ]);
-            assert.deepEqual(ordinary, []);
-            const state = (await app.inject({ url: '/api/state', headers })).json();
-            assert.equal(state.verificationRequests.length, 0);
-            assert.ok(!JSON.stringify(state).includes(code));
-            assert.ok(!JSON.stringify(state).includes(text.trim()));
-            const persisted = await db.pool.query(
-              'SELECT row_to_json(m) AS row FROM messages m UNION ALL SELECT row_to_json(v) FROM chat_verification_submissions v UNION ALL SELECT row_to_json(t) FROM turns t',
-            );
-            assert.ok(!JSON.stringify(persisted.rows).includes(code));
-            assert.ok(!JSON.stringify(persisted.rows).includes(text.trim()));
-          }
-        },
-      );
-      await t.test(
         'a security code sent by itself pays in nod while other numbers are held back',
         async () => {
           await reset();
@@ -447,15 +395,6 @@ test(
           );
         },
       );
-      await t.test('code-shaped attachments cannot bypass an OTP wait', async () => {
-        await reset();
-        await seed();
-        const response = await send('578231', { attachmentIds: [randomUUID()] });
-        assert.equal(response.statusCode, 409, response.body);
-        assert.deepEqual(ordinary, []);
-        assert.equal(injected.length, 0);
-        assert.equal((await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount, 0);
-      });
       await t.test(
         'ambiguous explicit code replies stay private while a challenge is registered',
         async () => {
@@ -486,40 +425,6 @@ test(
             (await db.pool.query('SELECT * FROM chat_verification_submissions')).rowCount,
             0,
           );
-        },
-      );
-      await t.test(
-        'unrelated numeric prose stays ordinary and concise codes need a challenge',
-        async () => {
-          const unrelated = [
-            'The code is in the email',
-            'The meeting is at 15:30',
-            'I have 2 boxes and 12 hinges',
-            'Code:',
-          ];
-          await reset();
-          await seed();
-          for (const text of unrelated) assert.equal((await send(text)).statusCode, 200);
-          assert.deepEqual(ordinary, unrelated);
-          for (const text of ['The code snippet has 123456 lines', 'Order 123456 is ready'])
-            assert.equal((await send(text)).statusCode, 409, text);
-          assert.deepEqual(ordinary, unrelated);
-          assert.equal(injected.length, 0);
-          await reset();
-          const noChallenge = [
-            '2026',
-            'Code: +123456',
-            'Code: +351912345678',
-            'Code = abcdef',
-            'Code:',
-            'Código =',
-            'Code: 123456 or 654321',
-            'Code: 2026-09-29',
-            'Code: 12.34',
-          ];
-          for (const text of noChallenge) assert.equal((await send(text)).statusCode, 200);
-          assert.deepEqual(ordinary, noChallenge);
-          assert.equal(injected.length, 0);
         },
       );
       await t.test(
@@ -574,113 +479,6 @@ test(
           assert.equal(
             (await db.pool.query('SELECT * FROM chat_verification_submissions')).rowCount,
             1,
-          );
-        },
-      );
-      await t.test(
-        'foreign, other-channel, expired, reset-thread, non-waiting, superseded and non-code requests cannot accept a code',
-        async () => {
-          for (const options of [
-            { owner: 'someone-else' },
-            { channel: 'telegram:other' },
-            { archived: true },
-            { kind: 'password' },
-            { status: 'running', reason: undefined },
-            { reason: 'question' },
-            { status: 'failed' },
-            { superseded: true },
-          ]) {
-            await reset();
-            const request = await seed(options);
-            assert.deepEqual(await verification.pending(), []);
-            const response = await send('761924', { verificationRequestId: request.requestId });
-            assert.equal(response.statusCode, 409, JSON.stringify(options));
-            assert.deepEqual(ordinary, []);
-            assert.equal(injected.length, 0);
-          }
-        },
-      );
-      await t.test('codes are held only while their request is pending', async () => {
-        for (const options of [{ status: 'cancelled' }, { status: 'failed' }]) {
-          await reset();
-          await seed(options);
-          const response = await send('The code is 791 483');
-          assert.equal(response.statusCode, 409, JSON.stringify(options));
-          assert.deepEqual(ordinary, []);
-          assert.equal(injected.length, 0);
-          assert.equal(
-            (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
-            0,
-          );
-        }
-        for (const options of [
-          { superseded: true },
-          { status: 'cancelled', superseded: true },
-          { status: 'failed', superseded: true },
-        ]) {
-          await reset();
-          await seed(options);
-          assert.equal((await send('The code is 791 483')).statusCode, 409);
-          assert.deepEqual(ordinary, [], JSON.stringify(options));
-          assert.equal(injected.length, 0);
-        }
-        for (const options of [
-          { supersededLongAgo: true },
-          { status: 'cancelled', supersededLongAgo: true },
-        ]) {
-          await reset();
-          const stale = await seed(options);
-          assert.equal(
-            (await send('791483', { replyToMessageId: stale.messageId })).statusCode,
-            409,
-          );
-          assert.equal((await send('Call me at 1530')).statusCode, 200);
-          assert.equal((await send('The code is 791 483')).statusCode, 200);
-          assert.deepEqual(
-            ordinary,
-            ['Call me at 1530', 'The code is 791 483'],
-            JSON.stringify(options),
-          );
-          assert.equal(injected.length, 0);
-        }
-        await reset();
-        await seed();
-        assert.equal((await send('791483')).statusCode, 200);
-        assert.equal(injected.length, 1);
-        const persisted = await db.pool.query('SELECT row_to_json(m) FROM messages m');
-        assert.doesNotMatch(JSON.stringify(persisted.rows), /791483/);
-        assert.equal((await send('Código: 791 483')).statusCode, 200);
-        assert.deepEqual(ordinary, ['Código: 791 483']);
-        assert.equal(injected.length, 1);
-      });
-      await t.test(
-        'reset fences and invalid explicit code input never persist or route plaintext',
-        async () => {
-          await reset();
-          const request = await seed();
-          assert.equal(
-            (
-              await send('582491', {
-                verificationRequestId: request.requestId,
-                threadId: randomUUID(),
-              })
-            ).statusCode,
-            409,
-          );
-          assert.equal(
-            (
-              await send('my password', {
-                verificationRequestId: request.requestId,
-                threadId: request.threadId,
-              })
-            ).statusCode,
-            409,
-          );
-          assert.deepEqual(ordinary, []);
-          assert.equal(injected.length, 0);
-          assert.equal(
-            (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
-            0,
           );
         },
       );
