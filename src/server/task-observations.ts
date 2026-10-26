@@ -33,7 +33,13 @@ export function createTaskObservations(
     read: async (sourceId, input, signal) => {
       signal.throwIfAborted();
       if (sourceId !== 'tasks') throw new Error('This source is unavailable.');
-      const ids = input.ids ? z.array(z.uuid()).max(10).parse(input.ids) : null;
+      const ids = input.ids
+        ? z
+            .array(z.uuid())
+            .max(10)
+            .parse(input.ids)
+            .map((id) => id.toLowerCase())
+        : null;
       const [position, after] = input.cursor
         ? z.tuple([z.string().regex(/^\d{1,20}$/), z.uuid()]).parse(input.cursor.split(':'))
         : [null, null];

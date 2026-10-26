@@ -749,6 +749,7 @@ export function createProactivity(options: {
       ).rows[0];
       if (current?.notification_rule !== prefs.notificationRule || current?.rules !== prefs.rules)
         throw new Error('The monitoring rules changed. Start a new assessment.');
+      if (current?.proactive_paused) throw new Error('Private preparation is paused.');
       const active = await sourceCatalog(signal, client);
       const sources = await evidence(client, input.sources, turn, input);
       if (
@@ -900,8 +901,7 @@ export function createProactivity(options: {
         input.evidence === 'strong' &&
         input.impact !== 'low' &&
         (!alreadyShown || changed || snoozeEnded) &&
-        !snoozed &&
-        !current.proactive_paused
+        !snoozed
           ? deliveryTime(
               {
                 ...prefs,

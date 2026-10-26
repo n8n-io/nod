@@ -181,6 +181,7 @@ export function populationScenario(cohort: number, baseline: boolean) {
           return {
             pass:
               metrics.found === metrics.expected &&
+              metrics.readRecords === metrics.records &&
               metrics.falsePrepared === 0 &&
               metrics.unwanted === 0 &&
               !metrics.criticalMissed &&

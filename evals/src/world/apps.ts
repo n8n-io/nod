@@ -1770,6 +1770,7 @@ export function createApps(
                     id,
                     version: hash(thread),
                     available: thread.length > 0,
+                    url: `https://mail.google.com/mail/u/0/#all/${id}`,
                     data: thread.length
                       ? {
                           truncated: !input.ids || thread.length > 8,

@@ -149,7 +149,9 @@ export function createConnectionSources(options: {
         records: [
           {
             id: 'tools',
-            version: fingerprint(tools.map(({ name }) => name)),
+            version: fingerprint(
+              tools.map(({ name, description, schema }) => ({ name, description, schema })),
+            ),
             available: true,
             data: {
               tools: tools.map(({ name, description, schema }) => ({ name, description, schema })),
