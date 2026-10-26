@@ -10,7 +10,7 @@ Report it privately through [GitHub private vulnerability reporting](https://git
 
 Please include:
 
-- the Nod version (desktop: **Nod → About Nod**; source: `git rev-parse --short HEAD`) and how you run it (desktop app, `pnpm start` or `pnpm run dev`);
+- the Nod version (desktop: **About** in the app menu; source: `git rev-parse --short HEAD`) and how you run it (desktop app, `pnpm start` or `pnpm run dev`);
 - the affected part, such as the approvals, Vault, sandbox, browser, a channel or the desktop updater;
 - steps to reproduce, the impact you observed and what an attacker needs;
 - a proof of concept that uses synthetic data and accounts you own.

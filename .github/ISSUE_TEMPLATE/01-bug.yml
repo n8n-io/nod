@@ -55,7 +55,7 @@ body:
     id: version
     attributes:
       label: Nod version
-      description: 'Desktop: Nod → About Nod. Source: `git rev-parse --short HEAD`.'
+      description: 'Desktop: About in the app menu. Source: `git rev-parse --short HEAD`.'
       placeholder: ex. 0.1.10 or 6c3af62
     validations:
       required: true

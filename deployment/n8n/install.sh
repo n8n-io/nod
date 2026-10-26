@@ -203,7 +203,7 @@ elif [ -n "$current_identity" ]; then
 fi
 mv "$temporary/nod.app" "$target" || fail 'The new Nod app could not be installed.'
 installed=true
-printf '\nnod %s is installed at %s\n' "$version" "$target"
+printf '\nNod %s is installed at %s\n' "$version" "$target"
 printf 'Your keys, conversations and workspace are kept. Updates are available inside Nod.\n'
 printf 'Opening Nod…\n'
 open "$target" || fail 'Nod is installed, but could not open. Open Nod from Applications.'
