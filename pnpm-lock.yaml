@@ -65,8 +65,8 @@ importers:
         specifier: 7.0.0-rc14
         version: 7.0.0-rc14(patch_hash=4b39b1d960dd03c09cc725741416fca69f6b7fefefedd5cbe55c31dee50a78aa)(sharp@0.35.5(@types/node@24.19.2))
       agent-browser:
-        specifier: 0.39.1
-        version: 0.39.1
+        specifier: 0.39.2
+        version: 0.39.2
       chat:
         specifier: ^4.42.0
         version: 4.42.0(zod@4.6.7)
@@ -1898,8 +1898,8 @@ packages:
     resolution: {integrity: sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==}
     engines: {node: '>= 20'}
 
-  agent-browser@0.39.1:
-    resolution: {integrity: sha512-0zdIq0v2r9Gio7K5wIe/e2W9nyLoVC6tUGpGV+btuynBQT9aCgOk5IEIyK+6OtfKRzQjp96DQ/3akBqxccigTQ==}
+  agent-browser@0.39.2:
+    resolution: {integrity: sha512-8zh5Dj4r/Lo14nDw+8jUViTlmZV5ON3qmrGp1wppmB87NhMqmSXUqVIeNith9xjIJNr/00wHxhCqH/2lATezYQ==}
     engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
     hasBin: true
 
@@ -6059,7 +6059,7 @@ snapshots:
 
   agent-base@9.0.0: {}
 
-  agent-browser@0.39.1: {}
+  agent-browser@0.39.2: {}
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
