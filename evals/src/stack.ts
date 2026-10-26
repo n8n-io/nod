@@ -448,7 +448,7 @@ export async function startStack(options: {
           for (const provider of options.observations ?? [])
             for (const source of await provider.sources())
               if (source.readable) observationSources.push(`${provider.id}:${source.id}`);
-        if (!legacy && !sources)
+        if (!legacy && !sources && typeof application!.integrations.activitySources === 'function')
           for (const source of await application!.integrations.activitySources())
             if (source.active) observationSources.push(source.connectionId);
         const queued = legacy
