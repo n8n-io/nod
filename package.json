@@ -43,7 +43,7 @@
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "agent-browser": "0.39.1",
     "chat": "^4.42.0",
-    "dotenv": "^18.0.8",
+    "dotenv": "^18.0.9",
     "fastify": "^5.12.7",
     "jose": "6.2.12",
     "libphonenumber-js": "1.13.15",
