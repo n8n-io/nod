@@ -1,6 +1,13 @@
 import type { Run } from './trace.ts';
 import { check, type Expectation } from './scenario.ts';
 
+export function nudges(run: Run) {
+  const proactive = new Set(run.turns.filter((turn) => turn.proactive).map((turn) => turn.id));
+  return run.messages.filter(
+    (message) => message.role === 'assistant' && proactive.has(message.turnId ?? ''),
+  );
+}
+
 export const finished = check(
   'finished',
   (run) => {

@@ -1,6 +1,6 @@
 import type { ObservationProvider, ObservationRecord } from '../../../src/ports/proactivity.ts';
 import type { ProactivityView } from '../../../src/shared/proactivity.ts';
-import { noWrites } from '../checks.ts';
+import { noWrites, nudges } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 
 export const stressKinds = [
@@ -602,16 +602,16 @@ export function stressScenario(
           holdout && kind === 'changed_goal' ? world.state.importedHistory : undefined,
         sourceCalls: world.state.calls,
         currentRecords: world.tables,
-        messages: run.messages.filter((m) => world.state.turnIds.includes(m.turnId ?? '')),
+        messages: nudges(run),
         memory: kind === 'changed_goal' ? run.memory : undefined,
         writes: run.writes,
       });
     },
     expect(world) {
-      const messages = (run: import('../trace.ts').Run) =>
-        run.messages.filter(
-          (m) => m.role === 'assistant' && world.state.turnIds.includes(m.turnId ?? ''),
-        );
+      const messages = nudges;
+      const fired = world.state.timeline
+        .filter((entry) => entry.kind === 'event')
+        .map((entry) => Date.parse(String(entry.at)));
       return [
         check('stress-observable-outcome', (run) => {
           const last = world.state.phases.at(-1);
@@ -620,8 +620,8 @@ export function stressScenario(
           const open = issues.filter((i) => ['open', 'offered'].includes(i.state));
           const count = messages(run).length;
           const onlyFirst =
-            messages(run).filter((m) => m.turnId === world.state.turnIds[0]).length === 1 &&
-            world.state.turnIds.slice(1).every((id) => !messages(run).some((m) => m.turnId === id));
+            messages(run).filter((m) => fired[1] === undefined || m.at < fired[1]).length === 1 &&
+            !messages(run).some((m) => fired[1] !== undefined && m.at >= fired[1]);
           const critical = issues.find((i) => i.sources.some((s) => s.id === world.criticalId));
           let pass = count === 1 && open.length === 1;
           if (kind === 'late_page') {

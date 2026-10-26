@@ -20,7 +20,7 @@ export function createTriage(
     consumers?: WorkConsumers;
     connectedApps?(): Promise<CheckableApp[]>;
     preparation?(rule: string, rules: string, sourceId: string): Promise<boolean>;
-    signal?(sourceId: string, client: PoolClient): Promise<void>;
+    signal?(sourceId: string, client: PoolClient, summary: string): Promise<void>;
     due?(): Promise<unknown>;
     sweep?(): Promise<void>;
   } = {},
@@ -107,7 +107,7 @@ export function createTriage(
       if (rule !== prefs.notificationRule || (policy?.rules ?? '') !== prefs.rules)
         throw new Error('The notification rules changed before dispatch.');
       if (preparing) {
-        for (const source of sources) await options.signal!(source, client);
+        for (const source of sources) await options.signal!(source, client, summary);
         return;
       }
       return enqueueTurn(

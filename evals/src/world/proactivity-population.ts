@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { noWrites, nudges } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import type { ProactiveIssue } from '../../../src/shared/proactivity.ts';
 
@@ -144,7 +144,7 @@ export function populationScenario(cohort: number, baseline: boolean) {
         expected: item.facts,
         deadlineHours: 20,
         issues: world.state.issues,
-        messages: run.messages.filter((m) => m.turnId === world.state.turnId),
+        messages: nudges(run),
         writes: run.writes,
       });
     },
@@ -173,12 +173,7 @@ export function populationScenario(cohort: number, baseline: boolean) {
             relevantNotified: notified.size,
             unwanted: offered.filter((i) => !match(i).length).length,
             duplicateNudges:
-              Math.max(
-                0,
-                run.messages.filter(
-                  (m) => m.role === 'assistant' && m.turnId === world.state.turnId,
-                ).length - offered.length,
-              ) +
+              Math.max(0, nudges(run).length - offered.length) +
               offered.flatMap(match).length -
               notified.size,
           };

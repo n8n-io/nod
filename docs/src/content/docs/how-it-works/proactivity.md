@@ -9,7 +9,7 @@ The proactivity engine reads your connected apps on its own, prepares useful wor
 
 ## From a change to a nudge
 
-A changed source, or a saved matter that is due for another look, starts one private run. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
+A changed source, or a saved matter that is due for another look, starts one private run. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
 
 ```mermaid
 flowchart TD
@@ -76,7 +76,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 ## Keep one record of each matter
 
-Prepared work is saved per matter, identified by a stable key and its main record, so a repeated signal never opens a second matter. A resolved or dismissed matter stays closed until its evidence really changes. Closed drafts are deleted after 30 days; their closed state stays so dismissed work doesn't come back. Removing an account deletes everything prepared from it.
+Prepared work is saved per matter, identified by a stable key and its main record, so a repeated signal never opens a second matter. A resolved matter stays closed until its condition really changes. A dismissed one comes back only for a changed condition or a new option, never just because a deadline moved. Closed drafts are deleted after 30 days; their closed state stays so dismissed work doesn't come back. Removing an account deletes everything prepared from it.
 
 You answer in chat. `prepared_list` shows a draft, and reading it in a turn you started counts as review. `prepared_update` snoozes, closes, dismisses or rates a matter, and runs only in a turn started by your own message.
 

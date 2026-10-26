@@ -2405,7 +2405,7 @@ test(
                 await reset();
                 const routed = createTriage({
                   preparation: async () => true,
-                  signal: (id, client) => engine.signal(id, client),
+                  signal: (id, client, summary) => engine.signal(id, client, summary),
                   due: engine.due,
                 });
                 const before = Number(
@@ -2429,18 +2429,34 @@ test(
                 assert.deepEqual(new Set(ids), new Set([turnId]));
                 const source = (
                   await db.pool.query(
-                    'SELECT signal_version,inspected_signal FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    'SELECT signal_version,inspected_signal,events FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
                     [ownerId, sourceId],
                   )
                 ).rows[0];
                 assert.equal(Number(source.signal_version), 50);
                 assert.equal(Number(source.inspected_signal), 0);
+                assert.equal(source.events.length, 10);
+                assert.ok(
+                  source.events.every(
+                    (event: { summary: string }) =>
+                      event.summary === 'Untrusted synthetic event text',
+                  ),
+                );
                 await engine.read(ref, { sourceId }, new AbortController().signal);
                 await routed.triageEvent(
                   'Later synthetic signal',
                   randomUUID(),
                   async () => true,
                   sourceId,
+                );
+                assert.deepEqual(
+                  (
+                    await db.pool.query(
+                      'SELECT events FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                      [ownerId, sourceId],
+                    )
+                  ).rows[0].events.map((event: { summary: string }) => event.summary),
+                  ['Later synthetic signal'],
                 );
                 const failing = createTriage({
                   preparation: async () => true,

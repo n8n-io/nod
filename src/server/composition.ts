@@ -782,9 +782,9 @@ async function initializeApplication(
       const source = observedSource(await observations.sources(), sourceId);
       return Boolean(source?.readable) && (await preparationRule(rule, rules));
     },
-    signal: async (sourceId, client) => {
+    signal: async (sourceId, client, summary) => {
       const source = observedSource(await observations.sources(client), sourceId);
-      if (source) await proactivity.signal(source.id, client);
+      if (source) await proactivity.signal(source.id, client, summary);
     },
     sweep: () => vault.forgetExpiredHolds(),
     due: () => proactivity.due(),

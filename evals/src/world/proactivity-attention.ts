@@ -1,5 +1,5 @@
 import type { ProactiveIssue } from '../../../src/shared/proactivity.ts';
-import { noWrites } from '../checks.ts';
+import { noWrites, nudges } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 
 export function attentionScenario(baseline: boolean) {
@@ -101,7 +101,7 @@ export function attentionScenario(baseline: boolean) {
       return JSON.stringify({
         deadline: world.deadline,
         issues: world.state.issues,
-        messages: run.messages.filter((m) => m.turnId === world.state.turnId),
+        messages: nudges(run),
         writes: run.writes,
       });
     },
@@ -113,9 +113,7 @@ export function attentionScenario(baseline: boolean) {
           const critical = world.state.issues.find((i) => matches(i, 'r-647'));
           const routine = world.state.issues.find((i) => matches(i, 'r-391'));
           const handled = world.state.issues.find((i) => matches(i, 'r-582'));
-          const messages = run.messages.filter(
-            (m) => m.role === 'assistant' && m.turnId === world.state.turnId,
-          );
+          const messages = nudges(run);
           return {
             pass:
               !!critical?.notifiedAt &&
