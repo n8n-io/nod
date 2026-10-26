@@ -2791,13 +2791,23 @@ test(
                     title: 'Renamed review',
                   });
                   assert.equal(renamed.statusCode, 200);
-                  const changed = await reader.read(
-                    'tasks',
-                    { since },
-                    new AbortController().signal,
-                  );
+                  const asOf = new Date(Date.now() + 1000).toISOString();
+                  const changed = [];
+                  for (
+                    let cursor: string | undefined, first = true;
+                    first || cursor;
+                    first = false
+                  ) {
+                    const page = await reader.read(
+                      'tasks',
+                      { since, asOf, ...(cursor ? { cursor } : {}) },
+                      new AbortController().signal,
+                    );
+                    changed.push(...page.records);
+                    cursor = page.nextCursor;
+                  }
                   assert.ok(
-                    changed.records.some(
+                    changed.some(
                       (record) => record.id === own && record.data.title === 'Renamed review',
                     ),
                   );
