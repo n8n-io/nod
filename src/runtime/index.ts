@@ -23,6 +23,7 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import {
+  compactHistory,
   compactOwnerContext,
   compactSystemPrompt,
   firstInstruction,
@@ -847,21 +848,20 @@ export function createAgentRuntime(dependencies: {
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
+      const compact = Boolean(session.contextWindow && session.contextWindow < 65_536);
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
       await session!.prompt(
         instruct(
           firstInstruction(
-            session.contextWindow && session.contextWindow < 65_536
+            compact
               ? {
                   ...context,
-                  history: context.history
-                    .slice(-2)
-                    .filter((message) => message.text.length <= 2000),
+                  history: compactHistory(context.history),
                   relatedConversation: undefined,
                   tasks: [],
                 }
               : context,
-            resumed,
+            resumed && !compact,
             omitted,
             analysis,
           ),

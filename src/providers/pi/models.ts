@@ -62,7 +62,33 @@ export function modelContextBudget(model: {
 }
 
 function payloadTokens(payload: unknown) {
-  return Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 3);
+  let images = 0;
+  const text = JSON.stringify(payload, (_key, value) => {
+    if (!value || typeof value !== 'object') return value;
+    if (value.type === 'image_url' && typeof value.image_url?.url === 'string') {
+      images++;
+      return { ...value, image_url: { ...value.image_url, url: '[image]' } };
+    }
+    if (value.type === 'input_image' && typeof value.image_url === 'string') {
+      images++;
+      return { ...value, image_url: '[image]' };
+    }
+    if (value.type === 'image' && value.source?.type === 'base64') {
+      images++;
+      return { ...value, source: { ...value.source, data: '[image]' } };
+    }
+    for (const key of ['inlineData', 'inline_data'])
+      if (/^image\//.test(value[key]?.mimeType ?? value[key]?.mime_type ?? '')) {
+        images++;
+        return { ...value, [key]: { ...value[key], data: '[image]' } };
+      }
+    if (value.image?.source?.bytes && value.image?.format) {
+      images++;
+      return { ...value, image: { ...value.image, source: { bytes: '[image]' } } };
+    }
+    return value;
+  });
+  return Math.ceil(Buffer.byteLength(text) / 3) + images * 1200;
 }
 const callbackUrl = 'http://127.0.0.1:1455/auth/callback';
 const registration = 'dynamic_agent_client';

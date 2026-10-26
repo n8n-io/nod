@@ -55,7 +55,13 @@ function smallContextAccess(
         ? { type: 'api_key', key: 'fixture-small-key' }
         : { type: 'endpoint', url: 'http://127.0.0.1:1/v1', key: 'fixture-small-key' },
     definition: {
-      choice: { id, name: id, efforts: ['off'], images: false, contextWindow: window },
+      choice: {
+        id,
+        name: id,
+        efforts: ['off'],
+        images: id === 'fixture-vision',
+        contextWindow: window,
+      },
       spec: {
         id,
         name: id,
@@ -64,7 +70,7 @@ function smallContextAccess(
         baseUrl:
           provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'http://127.0.0.1:1/v1',
         reasoning: false,
-        input: ['text'],
+        input: id === 'fixture-vision' ? ['text', 'image'] : ['text'],
         contextWindow: window,
         maxTokens: 4096,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -83,13 +89,30 @@ test('small models and routers complete tool discovery inside the endpoint conte
     { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
     { provider: 'compatible', id: 'fixture-resumed', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-vision', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-mcp', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-followup', window: 8192, limit: 8192 },
   ] as const)
     await t.test(id, async (test) => {
       const directory = await mkdtemp(join(tmpdir(), 'nod-small-context-'));
       test.after(() => rm(directory, { recursive: true, force: true }));
       await writeFile(join(directory, 'report.txt'), 'Synthetic report bytes');
+      if (id === 'fixture-vision') {
+        const { createCanvas } = await import('@napi-rs/canvas');
+        const canvas = createCanvas(128, 128);
+        const drawing = canvas.getContext('2d');
+        const pixels = drawing.createImageData(128, 128);
+        let seed = 17;
+        for (let index = 0; index < pixels.data.length; index++) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+          pixels.data[index] = index % 4 === 3 ? 255 : seed >>> 24;
+        }
+        drawing.putImageData(pixels, 0, 0);
+        await writeFile(join(directory, 'synthetic.png'), canvas.toBuffer('image/png'));
+      }
+      const guide = 'Synthetic MCP guide: inspect the selected account before reading its records.';
       const earlier = 'Synthetic earlier session content. '.repeat(2000);
-      if (id === 'fixture-resumed') {
+      if (id === 'fixture-resumed' || id === 'fixture-followup') {
         const saved = join(directory, 'sessions/fixture');
         await mkdir(saved, { recursive: true });
         const manager = SessionManager.create(saved, saved);
@@ -108,9 +131,10 @@ test('small models and routers complete tool discovery inside the endpoint conte
       let requests = 0;
       let summaries = 0;
       const bodies: Record<string, any>[] = [];
+      const requestBudgets: number[] = [];
       const calls = [
         ['tool_search', { query: 'skills', limit: 1 }],
-        ['skills', { action: 'read', name: 'artifacts' }],
+        ['skills', { action: 'read', name: id === 'fixture-mcp' ? 'mcp__fixture' : 'artifacts' }],
         ['tool_search', { query: 'share_file', limit: 1 }],
         ['share_file', { path: 'report.txt' }],
       ] as const;
@@ -118,9 +142,17 @@ test('small models and routers complete tool discovery inside the endpoint conte
         assert.equal(String(url), `${access.definition.spec.baseUrl}/chat/completions`);
         const body = JSON.parse(String(init?.body));
         bodies.push(body);
-        const input = Math.ceil(
-          JSON.stringify({ messages: body.messages, tools: body.tools }).length / 3.5,
+        let images = 0;
+        const text = JSON.stringify(
+          { messages: body.messages, tools: body.tools },
+          (_key, part) => {
+            if (part?.type !== 'image_url') return part;
+            images++;
+            return { type: 'image_url', image_url: { url: '[image]' } };
+          },
         );
+        const input = Math.ceil(text.length / 3.5) + images * 1200;
+        requestBudgets.push(input + (body.max_tokens ?? body.max_completion_tokens ?? 0));
         if (input + (body.max_tokens ?? body.max_completion_tokens ?? 0) > limit)
           return Response.json(
             { error: { message: `Synthetic endpoint context is ${limit} tokens.` } },
@@ -133,6 +165,20 @@ test('small models and routers complete tool discovery inside the endpoint conte
         else {
           assert.ok(JSON.stringify(body).includes('Return the text report named report.txt.'));
           assert.ok(JSON.stringify(body).includes('Do not contact anyone.'));
+          if (id === 'fixture-mcp' && requests === 2) {
+            assert.ok(JSON.stringify(body).includes(guide));
+            assert.ok(JSON.stringify(body).includes('untrusted_tool_result'));
+          }
+          if (id === 'fixture-followup' && requests === 0)
+            assert.ok(JSON.stringify(body).includes('Synthetic owner intent for the report.'));
+          if (id === 'fixture-vision' && requests === 0) {
+            assert.equal(images, 1);
+            assert.ok(
+              JSON.stringify(body).includes(
+                (await readFile(join(directory, 'synthetic.png'))).toString('base64'),
+              ),
+            );
+          }
           if (id === 'fixture-resumed' && requests === 0) {
             assert.ok(JSON.stringify(body).includes('Synthetic retained recent turn.'));
             assert.ok(!JSON.stringify(body).includes(earlier));
@@ -203,7 +249,9 @@ test('small models and routers complete tool discovery inside the endpoint conte
         }),
         skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
         computer: fakeComputer(),
-        workspace: fakeWorkspace(),
+        workspace: fakeWorkspace({
+          readArtifact: async (_thread, path) => readFile(join(directory, path)),
+        }),
       });
       test.after(() => runtime.dispose());
       const input: RuntimeContext = {
@@ -216,6 +264,36 @@ test('small models and routers complete tool discovery inside the endpoint conte
           role: 'assistant',
           text: 'Synthetic older conversation. '.repeat(200),
         })),
+        ...(id === 'fixture-mcp'
+          ? {
+              mcpServers: [
+                {
+                  connectionId: 'fixture',
+                  pathId: 'fixture',
+                  service: 'fixture',
+                  name: 'Synthetic MCP',
+                  accountName: 'Synthetic account',
+                  instructions: guide,
+                  tools: [],
+                },
+              ],
+            }
+          : {}),
+        ...(id === 'fixture-followup'
+          ? {
+              history: [
+                { role: 'user', text: 'Synthetic owner intent for the report.', unseen: false },
+                ...[1, 2, 3].map((index) => ({
+                  role: 'assistant',
+                  text: `Synthetic progress ${index}.`,
+                  unseen: true,
+                })),
+              ],
+            }
+          : {}),
+        ...(id === 'fixture-vision'
+          ? { attachments: [{ path: join(directory, 'synthetic.png'), mimeType: 'image/png' }] }
+          : {}),
         publish: async (path) => {
           const bytes = await readFile(join(directory, path));
           published.push(bytes);
@@ -235,9 +313,7 @@ test('small models and routers complete tool discovery inside the endpoint conte
           provider,
           requests,
           summaries,
-          largestRequestTokens: Math.max(
-            ...bodies.map((body) => Math.ceil(JSON.stringify(body).length / 3.5) + body.max_tokens),
-          ),
+          largestRequestTokens: Math.max(...requestBudgets),
         }),
       );
       assert.equal(requests, 5);
