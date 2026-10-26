@@ -117,7 +117,13 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
-The container images, the Windows runtime, Mac signing and notarization, the Mac update checks and the publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon; the Intel app builds and runs its checks with x64 Node under Rosetta. The Windows jobs run on GitHub's Windows runners, because the installer check needs WSL 2, which Blacksmith's Windows runners can't run. The Mac and Windows update checks run alongside the builds, and the Windows job installs and builds while the Windows runtime builds or downloads. Each Mac app job signs its own runtime before packaging the app, and the release uploads its assets in parallel.
+The container images, Windows runtime, Mac signing, Mac update checks, and publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon. The Intel app uses x64 Node under Rosetta. Windows jobs use GitHub's Windows runners because the installer check needs WSL 2.
+
+Docker builds use Blacksmith's disk cache, with a separate cache for each Mac architecture and the Windows runtime. They do not export Docker layers to GitHub's cache service.
+
+Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. After app signing and any required notarization, the ZIP and disk image build in parallel. The final job downloads platform artifacts in parallel. It checks all three platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
+
+The Mac build logs show separate times for signing, notarization, ZIP creation, and disk image creation. Use these times and the Actions step times to compare releases. Compare runtime rebuilds with other rebuilds, and runtime reuse with other reuse runs.
 
 ## How installed apps update
 
@@ -131,7 +137,7 @@ Drafts are never offered to the installer or the updater.
 - An automatic check announces a ready update with a notification when notifications are on and quiet hours allow it. Background checks never open a dialog. The menu offers **Restart to update** until you restart.
 - If a reply, schedule or background check is running, or Nod can't tell, it asks before restarting.
 - If the runtime hasn't changed, Nod reuses it and downloads only the app or installer.
-- A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads, the runtime build scripts and the release workflow. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint doesn't cover.
+- A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and its imports, scripts the images copy, dependencies, Dockerfiles, pinned downloads, and runtime build scripts. Workflow changes alone do not rebuild it. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint does not cover.
 - A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it. A Windows install that already has that runtime then updates with only the installer.
 - The first release built in a new week (from Monday, UTC) rebuilds both runtimes and refetches the images' system packages, such as Chromium, instead of reusing Docker's cached layers. Later releases that week reuse them. A week without a release build ships no refresh.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept.
