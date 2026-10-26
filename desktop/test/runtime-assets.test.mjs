@@ -3085,7 +3085,7 @@ test('runtime removes images outside its manifest without touching current image
 });
 
 test(
-  'removing a profile deletes only its own data and private computer',
+  'removing all data restarts after deletion and preserves the app and other profiles',
   { skip: process.platform === 'win32' },
   async (t) => {
     const { removeProfile } = await import('../runtime/index.mjs');
@@ -3100,13 +3100,72 @@ test(
     const computer = (profile) =>
       join(homes, createHash('sha256').update(profile).digest('hex').slice(0, 12));
     const profiles = [join(root, 'nod/profiles/local'), join(root, 'Other/profiles/local')];
+    const application = join(root, 'nod.app');
+    await writeFile(application, 'synthetic app');
     for (const profile of profiles) {
       await mkdir(join(profile, 'desktop-runtime'), { recursive: true });
       await writeFile(join(profile, 'desktop-runtime/state.json'), '{}');
       await mkdir(join(computer(profile), 'nod'), { recursive: true });
       await writeFile(join(computer(profile), 'nod/lima.yaml'), '{}');
     }
-    await removeProfile({ dataRoot: profiles[0], resourcesPath: root });
+    const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+    let response = 1;
+    let storageCleared = false;
+    let cacheCleared = false;
+    let relaunched = false;
+    let exited = false;
+    const removeAllData = runInNewContext(
+      `${source
+        .slice(
+          source.indexOf('async function removeAllData()'),
+          source.indexOf('async function finishQuit('),
+        )
+        .replace(/await import\([\s\S]*?\);/, 'runtime;')}; removeAllData`,
+      {
+        quitting: false,
+        remoteConnection: undefined,
+        dialog: { showMessageBox: async () => ({ response }) },
+        quit: async (complete) => complete(),
+        runtime: { removeProfile },
+        profileRoot: profiles[0],
+        engineRoot: root,
+        session: {
+          fromPartition: () => ({
+            clearStorageData: async () => {
+              storageCleared = true;
+            },
+            clearCache: async () => {
+              cacheCleared = true;
+            },
+          }),
+        },
+        app: {
+          setLoginItemSettings() {},
+          relaunch() {
+            assert.equal(storageCleared && cacheCleared, true);
+            assert.equal(existsSync(profiles[0]), false);
+            assert.equal(existsSync(computer(profiles[0])), false);
+            assert.equal(readFileSync(application, 'utf8'), 'synthetic app');
+            relaunched = true;
+          },
+          exit() {
+            assert.equal(relaunched, true);
+            exited = true;
+          },
+        },
+      },
+    );
+    await removeAllData();
+    assert.equal(exited, false);
+    assert.equal(existsSync(profiles[0]), true);
+    assert.equal(await readFile(join(profiles[0], 'desktop-runtime/state.json'), 'utf8'), '{}');
+    assert.equal(await readFile(join(computer(profiles[0]), 'nod/lima.yaml'), 'utf8'), '{}');
+    assert.equal(storageCleared, false);
+    assert.equal(cacheCleared, false);
+    assert.equal(relaunched, false);
+    response = 0;
+    await removeAllData();
+    assert.equal(exited, true);
     await assert.rejects(stat(profiles[0]), { code: 'ENOENT' });
     await assert.rejects(stat(computer(profiles[0])), { code: 'ENOENT' });
     assert.equal(await readFile(join(profiles[1], 'desktop-runtime/state.json'), 'utf8'), '{}');

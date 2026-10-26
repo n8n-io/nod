@@ -37,10 +37,12 @@ export function createSkillLibrary(
   const enabled = skills.filter((skill) => !skill.disableModelInvocation);
   const byName = new Map(enabled.map((skill) => [skill.name, skill.baseDir]));
   return {
+    core: excluded,
     catalog: enabled.map(({ name, description }) => ({ name, description: description.trim() })),
     read(name: string, file = 'SKILL.md') {
-      const base = byName.get(name);
-      if (!base) throw new Error('Select a skill from the skill library.');
+      const base = byName.get(name) ?? (excluded.includes(name) ? resolve(root, name) : undefined);
+      if (!base || !base.startsWith(root + sep))
+        throw new Error('Select a skill from the skill library.');
       return { name, file, content: readFileSync(checkedPath(base, file), 'utf8').trim() };
     },
   };

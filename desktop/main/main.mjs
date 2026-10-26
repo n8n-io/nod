@@ -1410,9 +1410,9 @@ async function removeAllData() {
   if (remoteConnection) return showConnectionSettings();
   const { response } = await dialog.showMessageBox({
     type: 'warning',
-    message: 'Remove all Nod data?',
+    message: 'Remove all data and start over?',
     detail:
-      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. Nod then quits.',
+      'This permanently deletes your conversations, unsent drafts, files, memory, saved logins, cards, model and app connections, and settings from this computer. You cannot undo this.\n\nNod stays installed and restarts automatically. You will need to complete setup again.',
     buttons: ['Remove all data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -1428,6 +1428,7 @@ async function removeAllData() {
     await browser.clearStorageData();
     await browser.clearCache();
     await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
+    app.relaunch();
     app.exit();
   }, 'Nod could not remove all its data.');
 }

@@ -97,6 +97,8 @@ ChatGPT sign-in listens on port `1455` where Nod's server runs. If another progr
 
 Nod lists the OpenRouter models that support text and tools.
 
+The `openrouter/free` and `openrouter/auto` routers can select different models for each request. Nod keeps your router choice and uses an 8,192-token working limit. This leaves room for routes with a small context window. Provider limits and free-model availability still apply.
+
 </TabItem>
 <TabItem label="Google Gemini">
 
@@ -211,6 +213,14 @@ Nod uses the same model choice in the app, Telegram and WhatsApp. A task that's 
 If a model request fails, Nod doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
 
 Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. Background work and checks that use your selected model use the lightest reasoning it offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
+
+## Models with a small context window
+
+For a context window below 65,536 tokens, Nod uses short instructions and loads one detailed tool at a time. It reads guides, saved memory and older messages when needed. Large tool results stay in workspace files, with a short preview in the conversation.
+
+Nod reserves space for the reply and starts history compaction earlier. It keeps your current request and rules complete. If a request still does not fit, Nod asks for a shorter request or a model with a larger context window. Large images and tool schemas can need a larger window. Token estimates cannot guarantee that every provider accepts a request.
+
+The same server checks still decide app actions, sign-ins and payments. A smaller context window does not change those checks. Model ability still affects whether Nod can complete a task.
 
 ## Decision checks
 

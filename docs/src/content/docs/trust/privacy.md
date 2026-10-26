@@ -136,7 +136,7 @@ During setup, Nod can read small samples from your connected tools to suggest fi
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Nod to forget something.
 - **Vault items.** Open the item in **Vault** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
-- **A local desktop assistant.** Select **Remove all data** in **Settings → General**. Nod deletes your local profile and private computer, then quits. If connected to a server, first choose **Use this computer** in **Server connection**. This deletes no server data.
+- **A local desktop assistant.** Select **Remove all data** in **Settings → General**. Nod deletes your local profile, private computer, and app browser storage, including unsent drafts. It then restarts and opens setup. The app stays installed. If connected to a server, first choose **Use this computer** in **Server connection**. This deletes no server data.
 - **A source install or self-hosted server.** Stop it, then remove its data directory and Docker volumes. For a server, follow [Server operations](/deploy/server-operations/). Disconnecting or uninstalling a client keeps the server's data.
 
 Uninstalling the desktop app alone keeps its data. A service you signed in to through Nod may still list Nod as a connected app until you remove it there.
