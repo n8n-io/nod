@@ -1062,6 +1062,53 @@ test(
 );
 
 test(
+  'a lost provider reply never sends a committed message twice',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const provider of ['telegram', 'whatsapp'])
+      await t.test(provider, async (t) => {
+        const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(
+          t,
+          undefined,
+          provider,
+        );
+        const post = transport.post;
+        transport.post = async (input) => {
+          await post(input);
+          throw new Error('Synthetic lost provider reply after acceptance');
+        };
+        const original = await create();
+        try {
+          receive('111', 'nudge', 'chat-nudge');
+          await original.drain();
+          const { turn_id: turnId } = await turnOf('nudge');
+          const id = randomUUID();
+          await reply(turnId, 'A synthetic decision changed. A reply is ready.', id, 0);
+          await original.drain();
+          await original.close();
+          const restarted = await create();
+          try {
+            await Promise.all([restarted.drain(), restarted.drain(), original.drain()]);
+            assert.equal(posts.length, 1);
+            assert.deepEqual(
+              (
+                await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+                  id,
+                ])
+              ).rows,
+              [{ state: 'uncertain', reason: 'send_not_confirmed' }],
+            );
+          } finally {
+            await restarted.close();
+          }
+        } finally {
+          await original.close();
+        }
+      });
+  },
+);
+
+test(
   'restart reclaims presentation without replaying an interrupted provider send',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
   async (t) => {

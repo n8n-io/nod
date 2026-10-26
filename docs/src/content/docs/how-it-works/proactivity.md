@@ -75,6 +75,10 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.
 
+The saved matter and its chat message commit together. A repeated save does not repeat a nudge. A material evidence change or an ended snooze can permit another nudge. The desktop listener uses message IDs to suppress repeated alerts during refresh and reconnect.
+
+Channel delivery claims a saved message before it sends. If the channel reply is lost after acceptance, delivery stays uncertain and Nod does not send again. This prevents an automatic duplicate, but cannot prove receipt by the channel.
+
 ## Keep one record of each matter
 
 Prepared work is saved per matter, identified by a stable key and its main record, so a repeated signal never opens a second matter. A resolved matter stays closed until its condition really changes. A dismissed one comes back only for a changed condition or a new option, never just because a deadline moved. Closed drafts are deleted after 30 days; their closed state stays so dismissed work doesn't come back. Removing an account deletes everything prepared from it.

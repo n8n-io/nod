@@ -4183,18 +4183,69 @@ test(
               assert.equal(await delivered(), 2);
             });
             await t.test(
-              'observer turns share history and do not repeat a saved nudge',
+              'observer nudges reach the message API and desktop listener once across repeated events',
               async () => {
                 await reset();
                 await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                const notificationsModule = '../desktop/main/notifications.mjs';
+                const { watchAssistantMessages } = await import(notificationsModule);
+                const notifications: string[] = [];
+                let snapshots = 0;
+                let materialChange = 'none';
+                const stop = watchAssistantMessages({
+                  onMessage: (message: { id: string }) => notifications.push(message.id),
+                  request: async (path: string, input: { signal: AbortSignal }) => {
+                    if (path === '/api/state') {
+                      const response = await request('GET', path);
+                      assert.equal(response.statusCode, 200);
+                      snapshots++;
+                      return Response.json(response.json());
+                    }
+                    assert.equal(path, '/api/events');
+                    let remove = () => {};
+                    return new Response(
+                      new ReadableStream({
+                        start(controller) {
+                          const listener = (event: { type: string }) => {
+                            if (event.type === 'refresh')
+                              controller.enqueue(
+                                new TextEncoder().encode('data: {"type":"refresh"}\n\n'),
+                              );
+                          };
+                          remove = () => events.off('event', listener);
+                          events.on('event', listener);
+                          input.signal.addEventListener(
+                            'abort',
+                            () => {
+                              remove();
+                              controller.error(input.signal.reason);
+                            },
+                            { once: true },
+                          );
+                        },
+                        cancel: () => remove(),
+                      }),
+                    );
+                  },
+                });
                 inspectObserver = async (context) => {
                   if (!context.prompt.startsWith('Assess the due sources')) return;
                   const active = { turnId: context.turnId, threadId: context.threadId };
                   await engine.read(active, { sourceId }, context.signal);
-                  await engine.save(active, proposal(), undefined, context.signal);
+                  await Promise.all(
+                    Array.from({ length: 8 }, () =>
+                      createProactivity(options).save(
+                        active,
+                        proposal({ materialChange }),
+                        undefined,
+                        context.signal,
+                      ),
+                    ),
+                  );
                   return { status: 'succeeded' };
                 };
                 try {
+                  await waitFor(async () => snapshots > 0);
                   await transaction(
                     (client) => engine.signal(sourceId, client, 'Synthetic first source change'),
                     db.pool,
@@ -4202,6 +4253,7 @@ test(
                   const first = await engine.due();
                   assert.ok(first);
                   await waitFor(settled(first));
+                  await waitFor(async () => notifications.length === 1);
                   await transaction(
                     (client) =>
                       engine.signal(sourceId, client, 'Another report of the same source change'),
@@ -4213,17 +4265,48 @@ test(
                   assert.equal(ran(first)!.sessionId, ran(second)!.sessionId);
                   assert.notEqual(ran(first)!.sessionId, currentThread);
                   assert.ok(ran(second)!.history.some((message) => message.turnId === first));
-                  assert.equal(
-                    (
-                      await db.pool.query(
-                        "SELECT id FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND starts_with(stream_id,'proactive:')",
-                        [ownerId, [first, second]],
-                      )
-                    ).rowCount,
-                    1,
+                  const saved = await db.pool.query(
+                    "SELECT id FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND starts_with(stream_id,'proactive:')",
+                    [ownerId, [first, second]],
                   );
+                  assert.deepEqual(
+                    saved.rows.map(({ id }) => id),
+                    notifications,
+                  );
+                  assert.equal(notifications.length, 1);
+                  version = 'v2';
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic evidence changed'),
+                    db.pool,
+                  );
+                  const third = await engine.due();
+                  assert.ok(third);
+                  await waitFor(settled(third));
+                  const before = snapshots;
+                  events.emit('event', { type: 'refresh' });
+                  events.emit('event', { type: 'refresh' });
+                  await waitFor(async () => snapshots >= before + 2);
+                  assert.equal(notifications.length, 1);
+                  version = 'v3';
+                  materialChange = 'condition_changed';
+                  await transaction(
+                    (client) => engine.signal(sourceId, client, 'Synthetic condition changed'),
+                    db.pool,
+                  );
+                  const fourth = await engine.due();
+                  assert.ok(fourth);
+                  await waitFor(settled(fourth));
+                  await waitFor(async () => notifications.length === 2);
+                  assert.equal(new Set(notifications).size, 2);
+                  const visible = (await request('GET', '/api/state')).json().messages;
+                  for (const id of notifications)
+                    assert.equal(
+                      visible.filter((message: { id: string }) => message.id === id).length,
+                      1,
+                    );
                 } finally {
                   inspectObserver = undefined;
+                  stop();
                 }
               },
             );
