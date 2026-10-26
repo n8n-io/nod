@@ -130,11 +130,11 @@ Select **Send feedback** in the chat. In the desktop app, it's also in the menu 
 
 If the workspace crashes, use **Send feedback** on the error screen before **Reload Nod** to include the captured error.
 
-Choose a feedback category and describe what happened. Include what you expected, what actually happened, and the steps that trigger the problem. **Include diagnostic report** starts selected for every category. Your choice stays with a saved draft.
+Choose a feedback category and describe what happened. Include what you expected, what actually happened, and the steps that trigger the problem. **Include diagnostic report** starts selected for every category until you change it. Nod remembers your choice for your account on this device after sending or discarding a draft.
 
 Select **Review** to inspect the exact attachment, or untick the checkbox to omit it. The report masks known secrets and recognized personal details, but can miss information. If preparation fails, select **Continue without report**. Your Nod runtime prepares the report from recent messages, logs, and app activity. Only **Send feedback** sends it to the configured feedback recipient.
 
-Screenshots aren't captured automatically. Check your feedback text and any files you add for personal information. Never add API keys, passwords, or your settings file.
+A new desktop draft includes a screenshot when capture is available. Private screens, open dialogs, and unsent text or files prevent capture. Review, annotate, or remove the screenshot before sending. Check your feedback text and attachments for personal information. Never add API keys, passwords, or your settings file.
 
 To report a bug, use the [bug report form](https://github.com/n8n-io/nod/issues/new/choose). Report a vulnerability privately, as the [security policy](https://github.com/n8n-io/nod/blob/main/SECURITY.md) describes.
 

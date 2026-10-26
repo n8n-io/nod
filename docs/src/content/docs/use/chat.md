@@ -162,13 +162,13 @@ Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea
 
 After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
-**Include diagnostic report** starts selected for every feedback category. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve Nod. Known secrets and recognized personal details are masked, but redaction can miss information.
+**Include diagnostic report** starts selected for every feedback category until you change it. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve Nod. Known secrets and recognized personal details are masked, but redaction can miss information.
 
-Select **Review** to inspect the exact report that will be attached. Untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
+Select **Review** to inspect the exact report that will be attached. Untick the checkbox to leave it out. Nod remembers your choice for your account on this device, including after sending or discarding a draft.
 
 Preparing a report sends recent app activity and errors to your Nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
 
-Screenshots aren't captured automatically. Your feedback text and files you add are sent as provided, so check them for personal information too.
+In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Nod skips private screens, open dialogs, and unsent text or files. Review, annotate, or remove the screenshot before sending. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided, so check them for personal information too.
 
 ## Start with an empty chat
 

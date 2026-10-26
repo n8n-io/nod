@@ -4047,6 +4047,16 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   const allowed = dom.window.document.body.innerHTML;
   const leaked = [];
   for (const [name, markup] of [
+    ['private content', '<div data-analytics-private>Synthetic private content</div>'],
+    ['password field', '<input type="password">'],
+    ['verification field', '<input autocomplete="one-time-code">'],
+    ['saved password field', '<input autocomplete="current-password">'],
+    ['new password field', '<input autocomplete="new-password">'],
+    ['native dialog', '<dialog open>Synthetic private dialog</dialog>'],
+    ['app dialog', '<div role="dialog">Synthetic private dialog</div>'],
+    ['alert dialog', '<div role="alertdialog">Synthetic private dialog</div>'],
+    ['embedded frame', '<iframe></iframe>'],
+    ['embedded browser', '<webview></webview>'],
     [
       'collapsed handoff',
       '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>',
@@ -4112,6 +4122,14 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   frame.url = 'http://127.0.0.1:4310/credentials/synthetic';
   navigated.resolve(image);
   assert.equal(await navigating, null);
+  frame.url = 'http://127.0.0.1:4310/';
+  const replaced = deferred();
+  contents.capturePage = () => replaced.promise;
+  const replacing = capture(event);
+  await new Promise(setImmediate);
+  contents.mainFrame = { ...frame };
+  replaced.resolve(image);
+  assert.equal(await replacing, null);
 });
 
 test('engine preload exposes no credential reveal and withholds privileged IPC event objects', async () => {
