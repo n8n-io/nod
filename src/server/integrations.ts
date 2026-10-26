@@ -988,7 +988,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (!configurationMatches(row)) {
       if (row.revoked || !normalizedEmail(row.account_email ?? ''))
         throw new IntegrationError(unverifiedAccount, 409);
-      return connect(slug, returnTo, turn, row);
+      return {
+        ...(await connect(slug, returnTo, turn, row)),
+        account: {
+          name: row.account_name ?? undefined,
+          email: normalizedEmail(row.account_email!),
+        },
+      };
     }
     const selected = providerForRow(row);
     if (row.revoked || !selected.configured || !selected.reconnectAccount)
@@ -1074,6 +1080,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       return {
         url: attempt.url,
         ...(returnTo === 'window' || returnTo === 'desktop' ? { attempt: nonce } : {}),
+        account: { name: row.account_name ?? undefined, email },
       };
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
@@ -2643,7 +2650,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .map(({ connectionId, accountName }) => ({ connectionId, accountName }));
         if (accounts.length && connectionId === undefined && newAccount !== true)
           return { name: serviceInfo(slug).name, accounts };
-        return options.discovered.signIn(slug, turn, connectionId);
+        const result = await options.discovered.signIn(slug, turn, connectionId);
+        const account = accounts.find((entry) => entry.connectionId === connectionId);
+        return {
+          ...result,
+          operation: connectionId ? 'reconnect' : newAccount ? 'add_account' : 'connect',
+          ...(account ? { account: { name: account.accountName } } : {}),
+        };
       }
       if (connectionId !== undefined) {
         const result = await reconnect(
@@ -2652,7 +2665,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           turn ? 'chat' : 'apps',
           turn,
         );
-        return { name: serviceInfo(slug).name, ...result };
+        return { name: serviceInfo(slug).name, ...result, operation: 'reconnect' };
       }
       const accounts = (await connectionRows(configuredOwner))
         .filter(
@@ -2672,7 +2685,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }));
       if (accounts.length && newAccount !== true) return { name: serviceInfo(slug).name, accounts };
       const result = await connect(slug, turn ? 'chat' : 'apps', turn);
-      return { name: serviceInfo(slug).name, ...result };
+      return {
+        name: serviceInfo(slug).name,
+        ...result,
+        operation: newAccount ? 'add_account' : 'connect',
+      };
     },
     status: list,
     drain,

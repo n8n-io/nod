@@ -1450,7 +1450,9 @@ async function initializeApplication(
         const message = await communication.present(turn.threadId, {
           kind: 'connection',
           app: result.name,
-          next: 'connect_account_then_continue',
+          operation: 'operation' in result ? result.operation : 'connect',
+          ...('account' in result ? { account: result.account } : {}),
+          next: 'complete_private_sign_in',
         });
         return { ...result, message };
       },
