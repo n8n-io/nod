@@ -13,7 +13,7 @@ export function createTaskObservations(
     sources: async () => {
       const change = (
         await pool.query(
-          'SELECT jsonb_agg(jsonb_build_array(id,title,done_when,now_text,state,result,waiting_for,next_check,updated_at) ORDER BY id) AS state FROM tasks WHERE owner_id=$1',
+          'SELECT jsonb_agg(jsonb_build_array(id,title,done_when,state,result,waiting_for,next_check) ORDER BY id) AS state FROM tasks WHERE owner_id=$1',
           [ownerId],
         )
       ).rows[0];

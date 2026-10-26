@@ -2766,18 +2766,19 @@ test(
                   assert.equal(JSON.stringify(hidden).includes('Foreign content'), false);
                   let token = (await reader.sources())[0].changeToken;
                   let version = first.version;
-                  for (const [field, value] of Object.entries({
-                    title: 'Updated review',
-                    done_when: 'Updated completion condition',
-                    now_text: 'The required details are ready',
-                    result: 'Updated result',
-                    updated_at: '2026-10-27T12:00:00.000Z',
-                  })) {
+                  for (const [field, value, wakes] of [
+                    ['title', 'Updated review', true],
+                    ['done_when', 'Updated completion condition', true],
+                    ['result', 'Updated result', true],
+                    ['now_text', 'The required details are ready', false],
+                    ['updated_at', '2026-10-27T12:00:00.000Z', false],
+                  ] as const) {
                     await db.pool.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`, [own, value]);
                     const current = (await read(own)).records[0];
                     const changed = (await reader.sources())[0].changeToken;
                     assert.notEqual(current.version, version, field);
-                    assert.notEqual(changed, token, field);
+                    if (wakes) assert.notEqual(changed, token, field);
+                    else assert.equal(changed, token, field);
                     version = current.version;
                     token = changed;
                   }
