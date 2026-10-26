@@ -1,3 +1,4 @@
+import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { rm, symlink, writeFile } from 'node:fs/promises';
@@ -214,7 +215,7 @@ test(
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1702,11 +1703,23 @@ test(
     });
     channels.registerRoutes(app);
     const filePaths: string[] = [];
-    const addReply = async (turnId: string, attachments: unknown[], text = 'Here is the file.') => {
+    const addReply = async (
+      turnId: string,
+      attachments: unknown[],
+      text = 'Here is the file.',
+      presentation?: unknown,
+    ) => {
       const id = randomUUID();
       await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5)",
-        [id, ownerId, text, turnId, JSON.stringify(attachments)],
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,presentation) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5,$6)",
+        [
+          id,
+          ownerId,
+          text,
+          turnId,
+          JSON.stringify(attachments),
+          presentation ? JSON.stringify(presentation) : null,
+        ],
       );
       return id;
     };
@@ -1967,6 +1980,308 @@ test(
       assert.equal((await state(forged)).state, 'sent');
       assert.doesNotMatch(texts.at(-1)!, /localhost/);
       assert.equal(sent.length, failedCount);
+      const flight: Presentation = {
+        version: 1,
+        type: 'flights',
+        title: 'Synthetic flight comparison',
+        caption: 'Prices include one traveler.',
+        asOf: '2026-10-24 10:00 UTC',
+        sources: [{ label: 'Synthetic fare source', url: 'https://example.com/fares' }],
+        options: [
+          {
+            id: 'connecting',
+            label: 'Flexible fare',
+            journeys: [
+              {
+                id: 'outbound',
+                label: 'Outbound',
+                duration: '19h 50m',
+                segments: [
+                  {
+                    airline: 'Synthetic Air',
+                    flightNumber: 'ND123',
+                    operatedBy: 'Fixture Regional',
+                    aircraft: 'Synthetic narrow-body',
+                    cabin: 'Economy',
+                    duration: '2h 50m',
+                    departure: {
+                      airport: 'LIS',
+                      date: '2026-11-02',
+                      time: '09:00',
+                      timeZone: 'Europe/Lisbon',
+                      terminal: '1',
+                    },
+                    arrival: {
+                      airport: 'LHR',
+                      date: '2026-11-02',
+                      time: '11:50',
+                      timeZone: 'Europe/London',
+                      terminal: '2',
+                    },
+                    technicalStops: [],
+                    connectionAfter: {
+                      duration: '4h 10m',
+                      airportChange: 'yes',
+                      selfTransfer: 'yes',
+                      details: 'Ground transfer not included; recheck baggage',
+                    },
+                  },
+                  {
+                    airline: 'Fixture Air',
+                    flightNumber: 'ND456',
+                    aircraft: 'Synthetic wide-body',
+                    cabin: 'Premium economy',
+                    departure: {
+                      airport: 'LGW',
+                      date: '2026-11-02',
+                      time: '16:00',
+                      timeZone: 'Europe/London',
+                    },
+                    arrival: {
+                      airport: 'SIN',
+                      date: '2026-11-03',
+                      time: '12:50',
+                      timeZone: 'Asia/Singapore',
+                    },
+                    technicalStops: [
+                      {
+                        airport: 'BKK',
+                        duration: '45m',
+                        details: 'Same flight; boarding instructions not supplied',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            price: 'EUR 124 return',
+            baggage: 'One cabin bag',
+            recommended: true,
+            url: 'https://example.com/fares/connection',
+          },
+          {
+            id: 'nonstop',
+            label: 'Flexible fare',
+            journeys: [
+              {
+                id: 'outbound',
+                label: 'Outbound',
+                duration: '13h 45m',
+                segments: [
+                  {
+                    airline: 'Synthetic Air',
+                    flightNumber: 'ND789',
+                    aircraft: 'Synthetic long-range aircraft',
+                    cabin: 'Business',
+                    departure: {
+                      airport: 'LIS',
+                      date: '2026-11-04',
+                      time: '10:00',
+                      timeZone: 'Europe/Lisbon',
+                    },
+                    arrival: {
+                      airport: 'SIN',
+                      date: '2026-11-05',
+                      time: '07:45',
+                      timeZone: 'Asia/Singapore',
+                    },
+                    technicalStops: [],
+                  },
+                ],
+              },
+            ],
+            price: 'EUR 219 return',
+            baggage: 'Two checked bags',
+            url: 'https://example.com/fares/nonstop',
+          },
+        ],
+      };
+      const visualReply = await addReply(
+        turnId,
+        [],
+        'Review the synthetic connecting itinerary.',
+        flight,
+      );
+      const beforeVisual = texts.length;
+      await channels.drain();
+      assert.equal((await state(visualReply)).state, 'sent');
+      const deliveredVisual = texts.slice(beforeVisual).join('\n\n');
+      for (const detail of [
+        'Review the synthetic',
+        'LIS',
+        'LHR',
+        '09:00',
+        '11:50',
+        'ND123',
+        '19h 50m',
+        '2h 50m',
+        '4h 10m',
+        '1 connection',
+        '1 technical stop',
+        'LGW',
+        'SIN',
+        'ND456',
+        'BKK',
+        '45m',
+        'Ground transfer not included',
+        'recheck baggage',
+        'Airport change: yes',
+        'Self-transfer: yes',
+        'Operated by Fixture Regional',
+        'Terminal 1',
+        'Terminal 2',
+        'Synthetic narrow-body',
+        'Synthetic wide-body',
+        'Premium economy',
+        '2026-11-02',
+        '2026-11-03',
+        '16:00',
+        '12:50',
+        'Europe/Lisbon',
+        'Europe/London',
+        'Asia/Singapore',
+        'Same flight; boarding instructions not supplied',
+        'EUR 124 return',
+        'One cabin bag',
+        '2026-10-24',
+        'https://example.com/fares',
+      ])
+        assert.ok(deliveredVisual.includes(detail), detail);
+      const alternatives = deliveredVisual.split(/\n\n(?=Option \d+ ·)/).slice(1);
+      assert.equal(alternatives.length, 2);
+      assert.match(alternatives[0]!, /^Option 1 · Flexible fare/);
+      assert.match(alternatives[1]!, /^Option 2 · Flexible fare/);
+      const distinctFacts = [
+        [
+          'ND123',
+          'ND456',
+          'BKK',
+          'EUR 124 return',
+          'One cabin bag',
+          'Airport change: yes',
+          'Ground transfer not included',
+          'https://example.com/fares/connection',
+        ],
+        [
+          'ND789',
+          '13h 45m',
+          'Business',
+          'EUR 219 return',
+          'Two checked bags',
+          '2026-11-04',
+          '2026-11-05',
+          '10:00',
+          '07:45',
+          'https://example.com/fares/nonstop',
+        ],
+      ];
+      for (const [index, alternative] of alternatives.entries()) {
+        assert.ok(alternative.includes('Synthetic Air'));
+        for (const fact of distinctFacts[index]!) assert.ok(alternative.includes(fact), fact);
+        for (const fact of distinctFacts[1 - index]!) assert.ok(!alternative.includes(fact), fact);
+      }
+      assert.doesNotMatch(deliveredVisual, /artifactId|"version"|"options"|api\/artifacts/);
+      assert.equal(
+        (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
+        'Review the synthetic connecting itinerary.',
+      );
+      const venue: Presentation = {
+        version: 1,
+        type: 'booking',
+        title: 'Synthetic venue comparison',
+        sources: [],
+        name: 'Courtyard',
+        status: 'option',
+        facts: [{ label: 'Total', value: 'EUR 120' }],
+        photos: [{ artifactId: image.id, alt: 'The courtyard entrance' }],
+        notes: ['Step-free entry reported by the venue'],
+        rating: {
+          value: 4.2,
+          scale: 5,
+          count: 93,
+          sourceLabel: 'Fixture reviews',
+          url: 'https://example.com/reviews',
+          summary: 'Visitors report a quiet courtyard.',
+        },
+        alternatives: [
+          {
+            name: 'Terrace',
+            status: 'option',
+            facts: [{ label: 'Total', value: 'EUR 140' }],
+            notes: ['Outdoor tables only'],
+            url: 'https://example.com/terrace',
+          },
+        ],
+      };
+      const venueReply = await addReply(
+        turnId,
+        [image],
+        'Compare these two sourced venues.',
+        venue,
+      );
+      const beforeVenue = sent.length;
+      const beforeVenueText = texts.length;
+      await channels.drain();
+      assert.equal((await state(venueReply)).state, 'sent');
+      assert.equal(sent.length, beforeVenue + 1);
+      assert.deepEqual(Buffer.from(sent.at(-1)!.file), imageBytes);
+      const deliveredVenue = [
+        ...texts.slice(beforeVenueText),
+        ...sent.slice(beforeVenue).map((message) => message.caption),
+      ]
+        .join('\n')
+        .replace(/\\([^\p{L}\p{N}\s])/gu, '$1');
+      for (const detail of [
+        'Courtyard',
+        'Terrace',
+        'EUR 120',
+        'EUR 140',
+        '4.2/5',
+        '93 reviews',
+        'https://example.com/reviews',
+        'Visitors report a quiet courtyard.',
+        'Step-free entry',
+        'Outdoor tables only',
+        'The courtyard entrance',
+        'https://example.com/terrace',
+      ])
+        assert.ok(deliveredVenue.includes(detail), detail);
+      assert.doesNotMatch(deliveredVenue, /artifactId|"photos"|api\/artifacts/);
+      const chart: Presentation = {
+        version: 1,
+        type: 'chart',
+        chart: 'bar',
+        title: 'Synthetic net',
+        sources: [],
+        unit: 'EUR',
+        series: [
+          {
+            id: 'net',
+            label: 'Net',
+            points: [
+              { label: 'January', value: -12.5 },
+              { label: 'February', value: 0 },
+            ],
+          },
+        ],
+      };
+      const chartReply = await addReply(
+        turnId,
+        [],
+        'January is negative; February is zero.',
+        chart,
+      );
+      await channels.drain();
+      assert.equal((await state(chartReply)).state, 'sent');
+      assert.match(texts.at(-1)!, /January: -12.5 EUR; February: 0 EUR/);
+      const invalidVisual = await addReply(turnId, [], 'Plain fallback survives.', {
+        ...flight,
+        version: 2,
+      });
+      await channels.drain();
+      assert.equal((await state(invalidVisual)).state, 'sent');
+      assert.equal(texts.at(-1), 'Plain fallback survives.');
+      const beforeAccountChange = sent.length;
       holdResolve = true;
       const changedAccount = await addReply(turnId, [image]);
       const pending = channels.drain();
@@ -1996,7 +2311,7 @@ test(
         state: 'blocked',
         reason: 'channel_access_changed',
       });
-      assert.equal(sent.length, failedCount);
+      assert.equal(sent.length, beforeAccountChange);
       const localOnly = await addReply(turnId, [image], '');
       await channels.drain();
       assert.equal((await state(localOnly)).state, 'sent');

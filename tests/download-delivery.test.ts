@@ -13,7 +13,7 @@ import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createChannels } from '../src/server/channels.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
-import { fakeWorkspace } from './runtime-fixtures.ts';
+import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
 const native = process.env.NOD_TEST_NATIVE_DOWNLOAD === 'true';
@@ -83,6 +83,7 @@ test(
       string,
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
+    let completedTurns = 0;
     let stagingCompletion: Promise<unknown> | undefined;
     cleanup.push(async () => {
       const results = await Promise.allSettled(
@@ -176,6 +177,9 @@ test(
       cleanup.push(() => channels!.close());
       channels.registerRoutes(app);
       await threads.startThreadWorkers({
+        analytics: ({ event }) => {
+          if (event === 'nod_turn_completed') completedTurns += 1;
+        },
         browserStep: async () => 'run',
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
@@ -377,6 +381,178 @@ test(
           runtimes.delete(prompt);
         }
       });
+      const submitHeld = async (text: string) => {
+        const submitted = await threads.submitUserMessage(text);
+        await waitFor(() => held.has(submitted.turnId));
+        return submitted;
+      };
+      await t.test(
+        'page screenshot tools stage owned images and refuse a missing screen',
+        async () => {
+          for (const available of [true, false]) {
+            const prompt = `Capture the synthetic page ${available}`;
+            let screenshotId: string | undefined;
+            let captures = 0;
+            const runtime = createAgentRuntime({
+              computer: fakeComputer({
+                screenshot: async () => {
+                  captures++;
+                  return available ? Buffer.from('synthetic page pixels') : null;
+                },
+                screenStatus: () => ({ state: 'live' }),
+              }),
+              workspace: fakeWorkspace(),
+              agent: {
+                open: async (input) => ({
+                  resumed: false,
+                  abort() {},
+                  dispose() {},
+                  prompt: async () => {
+                    const tools = new Map(input.tools.map((tool) => [tool.name, tool]));
+                    const capture = () =>
+                      tools
+                        .get('browser')!
+                        .execute({ action: 'share_screenshot', name: 'page.png' });
+                    if (!available) {
+                      await assert.rejects(capture(), /available screenshot/);
+                      return;
+                    }
+                    const result = await capture();
+                    const content = result.content[0];
+                    assert.equal(content.type, 'text');
+                    if (content.type !== 'text') throw new Error('Expected a screenshot receipt.');
+                    const receipt = JSON.parse(
+                      content.text.slice(
+                        content.text.indexOf('{'),
+                        content.text.lastIndexOf('}') + 1,
+                      ),
+                    );
+                    screenshotId = receipt.id;
+                    assert.equal(receipt.source, 'browser_screenshot');
+                    assert.equal(
+                      (
+                        await db.pool.query(
+                          "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
+                          [input.turnId],
+                        )
+                      ).rowCount,
+                      0,
+                    );
+                    await tools.get('send_message')!.execute({
+                      text: 'This is the sourced page screenshot.',
+                      presentation: {
+                        version: 1,
+                        type: 'image',
+                        title: 'Synthetic page',
+                        sources: [],
+                        artifactId: screenshotId,
+                        alt: 'The synthetic page content.',
+                      },
+                    });
+                  },
+                }),
+                dispose() {},
+              },
+            });
+            runtimes.set(prompt, runtime);
+            try {
+              const turn = await threads.submitUserMessage(prompt);
+              await succeeded(turn.turnId);
+              assert.equal(captures, 1);
+              const saved = (
+                await db.pool.query(
+                  "SELECT * FROM messages WHERE turn_id=$1 AND role='assistant'",
+                  [turn.turnId],
+                )
+              ).rows;
+              assert.equal(saved.length, available ? 1 : 0);
+              if (available) {
+                assert.equal(saved[0].presentation.artifactId, screenshotId);
+                assert.deepEqual(
+                  saved[0].attachments.map((item: Artifact) => [item.id, item.source]),
+                  [[screenshotId, 'browser_screenshot']],
+                );
+                const pixels = await app.inject({
+                  method: 'GET',
+                  url: `/api/artifacts/${screenshotId}`,
+                  headers,
+                });
+                assert.equal(pixels.statusCode, 200);
+                assert.equal(pixels.body, 'synthetic page pixels');
+                const history = (
+                  await app.inject({ method: 'GET', url: '/api/messages', headers })
+                ).json<MessageHistoryPage>().messages;
+                assert.deepEqual(
+                  history.find((message) => message.id === saved[0].id)?.presentation,
+                  saved[0].presentation,
+                );
+              }
+            } finally {
+              await runtime.dispose();
+              runtimes.delete(prompt);
+            }
+          }
+        },
+      );
+      await t.test(
+        'raster downloads and screenshots join one reply or flush once, while stop prevents delivery',
+        async () => {
+          for (const capture of ['download', 'screenshot'] as const)
+            for (const mode of ['visual', 'alone', 'stopped'] as const) {
+              const { turnId } = await submitHeld(`Held raster ${capture} ${mode}`);
+              const context = held.get(turnId)!;
+              const artifact =
+                capture === 'screenshot'
+                  ? await context.publishScreenshot!(
+                      Buffer.from('synthetic raster fixture'),
+                      'seat-plan.png',
+                    )
+                  : await context.publishBrowserFile!({
+                      bytes: Buffer.from('synthetic raster fixture'),
+                      name: 'seat-plan.png',
+                      mimeType: 'image/png',
+                    });
+              const messages = async () =>
+                (
+                  await db.pool.query(
+                    "SELECT attachments,presentation FROM messages WHERE turn_id=$1 AND role='assistant'",
+                    [turnId],
+                  )
+                ).rows;
+              assert.deepEqual(await messages(), []);
+              if (mode === 'visual')
+                await context.reply('The window seat is on the left.', undefined, undefined, {
+                  version: 1,
+                  type: 'image',
+                  title: 'Seat plan',
+                  sources: [],
+                  artifactId: artifact.id,
+                  alt: 'Synthetic cabin plan with a left window seat.',
+                });
+              if (mode === 'stopped') await threads.stopThread();
+              const completedBeforeRelease = completedTurns;
+              release.get(turnId)!();
+              await waitFor(() => completedTurns > completedBeforeRelease);
+              if (mode !== 'stopped') await succeeded(turnId);
+              const saved = await messages();
+              assert.equal(saved.length, mode === 'stopped' ? 0 : 1);
+              if (mode !== 'stopped') {
+                assert.deepEqual(
+                  saved[0].attachments.map((item: Artifact) => item.id),
+                  [artifact.id],
+                );
+                assert.equal(
+                  saved[0].presentation?.artifactId ?? null,
+                  mode === 'visual' ? artifact.id : null,
+                );
+                assert.equal(
+                  saved[0].attachments[0].source,
+                  capture === 'screenshot' ? 'browser_screenshot' : undefined,
+                );
+              }
+            }
+        },
+      );
     } finally {
       for (const finish of release.values()) finish();
     }

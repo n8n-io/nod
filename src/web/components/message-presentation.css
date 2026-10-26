@@ -1,0 +1,434 @@
+.message-presentation {
+  container-type: inline-size;
+  width: 100%;
+  margin: 14px 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  color: var(--foreground);
+  background: var(--surface);
+  font-size: var(--text-control);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.chat-page .message .message-row > .message-bubble:has(.message-presentation) {
+  width: min(100%, 680px);
+  max-width: 100%;
+}
+.chat-page .message .message-bubble > .message-body:has(.message-presentation) {
+  width: 100%;
+  padding: 10px 14px 6px;
+}
+.chat-page .message-body:has(.message-presentation) > .message-text {
+  padding-right: 22px;
+}
+.chat-page .message-body:has(.message-presentation) > .message-time {
+  margin: 3px 0 0;
+  min-height: 30px;
+  padding-top: 8px;
+}
+.chat-page .message-bubble:has(.message-presentation) > .message-react-trigger {
+  right: 60px;
+  top: auto;
+  bottom: 5px;
+  transform: none;
+}
+.presentation-heading {
+  padding: 18px 20px 16px;
+}
+.presentation-heading h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.presentation-heading p {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.message-presentation a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--link);
+  text-decoration: none;
+}
+.message-presentation a svg {
+  flex: 0 0 auto;
+}
+.message-presentation :is(button, summary, a):focus-visible,
+.message-presentation [tabindex='0']:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -3px;
+}
+.message-presentation button,
+.flight-option summary {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.presentation-sources {
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.presentation-sources summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 20px;
+  cursor: pointer;
+  list-style: none;
+}
+.presentation-sources summary::-webkit-details-marker {
+  display: none;
+}
+.presentation-sources summary > svg:last-child {
+  margin-left: auto;
+}
+.presentation-sources[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.presentation-source-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--control);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.presentation-source-details {
+  padding: 0 20px 16px;
+}
+.presentation-source-details ul {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.presentation-source-details a {
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  width: 100%;
+  padding-block: 6px;
+}
+.presentation-source-details a > span {
+  display: grid;
+  gap: 2px;
+}
+.presentation-source-details strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.presentation-source-details small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.presentation-source-details p {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+.presentation-source-details p > span {
+  color: var(--text-secondary);
+}
+.presentation-tag,
+.booking-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 550;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.presentation-footnote,
+.presentation-empty,
+.presentation-unavailable {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.presentation-empty {
+  padding: 0 20px 20px;
+}
+.presentation-image-button {
+  position: relative;
+  display: block;
+  padding: 0;
+  width: 100%;
+  border: 0;
+  background: var(--surface-subtle);
+  cursor: zoom-in;
+}
+.presentation-image-button img {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+}
+.presentation-image-button > span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 10px 16px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.places-map {
+  position: relative;
+  height: 250px;
+  background: var(--surface-subtle);
+  border-block: 1px solid var(--border);
+  overflow: hidden;
+}
+.places-map iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.places-map-label {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.places-plot {
+  position: absolute;
+  inset: 24px 20px 44px;
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+.place-pin {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  font-weight: 550;
+}
+.place-pin[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+  z-index: 1;
+}
+.load-map {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  transform: translateX(-50%);
+  background: var(--surface);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.load-map span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.places-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.places-list li {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.places-list li.is-selected {
+  background: var(--accent-soft);
+}
+.place-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  padding: 14px 20px;
+  border: 0;
+  text-align: left;
+  color: var(--foreground);
+  background: none;
+  cursor: pointer;
+}
+.place-select > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.place-select strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.place-select span span {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.place-index {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 11px;
+}
+.places-list li > a {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+.place-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 20px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.place-detail a {
+  min-height: 32px;
+}
+.diagram-scroll {
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface-subtle);
+  border-block: 1px solid var(--border);
+  overscroll-behavior: contain;
+}
+.diagram-canvas {
+  position: relative;
+  margin: auto;
+}
+.diagram-canvas svg {
+  position: absolute;
+  inset: 0;
+  color: var(--muted-foreground);
+}
+.diagram-canvas svg > path {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1.5;
+  opacity: 0.5;
+}
+.diagram-canvas svg > path.is-selected {
+  stroke: var(--accent);
+  opacity: 1;
+}
+.diagram-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 156px;
+  height: 68px;
+  padding: 8px 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  color: var(--foreground);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.diagram-node[aria-pressed='true'] {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.diagram-node > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.diagram-detail {
+  padding: 14px 20px;
+}
+.diagram-detail > strong {
+  font-weight: 550;
+}
+.diagram-detail p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.diagram-detail ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.diagram-detail li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.diagram-detail li span {
+  flex-basis: 100%;
+  color: var(--muted-foreground);
+}
+@media (hover: hover) and (pointer: fine) {
+  .presentation-sources summary:hover {
+    color: var(--foreground);
+    background: var(--control);
+  }
+  .message-presentation a:hover {
+    text-decoration: underline;
+  }
+  .place-select:hover {
+    background: var(--control);
+  }
+  .diagram-node:hover {
+    border-color: var(--accent);
+  }
+  .diagram-node {
+    transition: transform 120ms var(--ease-enter);
+  }
+  .diagram-node:active:not(:focus-visible) {
+    transform: scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diagram-node {
+    transition: none;
+  }
+  .diagram-node:active:not(:focus-visible) {
+    transform: none;
+  }
+}

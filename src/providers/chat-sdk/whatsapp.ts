@@ -597,6 +597,7 @@ export function createWhatsAppLinkedTransport(options: {
         ? { id: input.replyToMessageId, text: input.replyToText ?? '' }
         : undefined;
       const ids: string[] = [];
+      const unsent: string[] = [];
       const text = whatsappText(input.text);
       const caption =
         input.attachments?.length === 1 &&
@@ -610,10 +611,17 @@ export function createWhatsAppLinkedTransport(options: {
         if (part.trim())
           ids.push(await send(input.threadId, { text: part, linkPreview: null }, quote));
       for (const file of input.attachments ?? []) {
-        if (!file.size || file.size > 50 * 1024 * 1024)
-          throw new Error('The WhatsApp file is too large.');
-        const bytes = Buffer.from(await file.read(lifetime.signal));
-        if (bytes.length !== file.size) throw new Error('The WhatsApp file has changed.');
+        let bytes: Buffer;
+        try {
+          if (!file.size || file.size > 50 * 1024 * 1024)
+            throw new Error('The WhatsApp file is too large.');
+          bytes = Buffer.from(await file.read(lifetime.signal));
+          if (bytes.length !== file.size) throw new Error('The WhatsApp file has changed.');
+        } catch {
+          lifetime.signal.throwIfAborted();
+          unsent.push(file.name);
+          continue;
+        }
         if (file.name === 'location.json' && bytes.length <= 4096) {
           let location;
           try {
@@ -671,6 +679,16 @@ export function createWhatsAppLinkedTransport(options: {
               ? { audio: bytes, mimetype: file.mimeType, ptt: file.mimeType === 'audio/ogg' }
               : { document: bytes, mimetype: file.mimeType, fileName: file.name };
         ids.push(await send(input.threadId, { ...media, ...(caption ? { caption } : {}) }, quote));
+      }
+      if (unsent.length) {
+        if (caption)
+          for (const part of splitMessage(text))
+            if (part.trim())
+              ids.push(await send(input.threadId, { text: part, linkPreview: null }, quote));
+        const notice = await input.attachmentFailure?.(unsent);
+        for (const part of splitMessage(whatsappText(notice ?? '')))
+          if (part.trim())
+            ids.push(await send(input.threadId, { text: part, linkPreview: null }, quote));
       }
       if (!ids.length) throw new Error('WhatsApp delivery was not confirmed.');
       return { id: ids[0], ids };

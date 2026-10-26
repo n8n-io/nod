@@ -1,3 +1,4 @@
+import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -25,7 +26,7 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/objec
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
-import type { Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
+import type { Artifact, Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
@@ -404,6 +405,20 @@ test(
           await context.reply('Synthetic long paragraph. '.repeat(200));
           return { status: 'succeeded' };
         }
+        if (context.prompt === 'presentation-source-fixture') {
+          await context.reply('The two-step synthetic process.', undefined, undefined, {
+            version: 1,
+            type: 'diagram',
+            title: 'Synthetic handoff',
+            sources: [],
+            nodes: [
+              { id: 'before', label: 'Research' },
+              { id: 'after', label: 'Comparison' },
+            ],
+            edges: [{ from: 'before', to: 'after', label: 'Once reviewed' }],
+          });
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
@@ -436,7 +451,7 @@ test(
                 context.turnId,
               ])
             ).rows.map((row) => row.attachments.map((item: { name: string }) => item.name)),
-            [['research.png']],
+            [],
           );
           assert.equal(
             (await readFile(join(context.workspacePath, file.workspaceFile))).toString(),
@@ -595,6 +610,191 @@ test(
       let firstThreadId = '';
       let firstUserTurnId = '';
       const firstClientMessageId = randomUUID();
+
+      await t.test(
+        'presentations persist with owned images, reload safely and stop with their turn',
+        async () => {
+          const turnId = randomUUID();
+          const otherThread = randomUUID();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Synthetic visual fixture','running')",
+            [turnId, ownerId, threadId],
+          );
+          await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+            otherThread,
+            ownerId,
+          ]);
+          const image = await storeArtifact(
+            Buffer.from('synthetic image bytes'),
+            'seat-plan.png',
+            'image/png',
+            threadId,
+          );
+          const otherImage = await storeArtifact(
+            Buffer.from('other image bytes'),
+            'other.png',
+            'image/png',
+            otherThread,
+          );
+          const vector = await storeArtifact(
+            Buffer.from('<svg></svg>'),
+            'vector.svg',
+            'image/svg+xml',
+            threadId,
+          );
+          const visual: Presentation = {
+            version: 1,
+            type: 'image',
+            title: 'Synthetic seat plan',
+            sources: [],
+            artifactId: image.id,
+            alt: 'Two synthetic rows with an aisle.',
+          };
+          const ref = { threadId, turnId };
+          const count = async () =>
+            (
+              await db.pool.query('SELECT count(*)::int AS count FROM messages WHERE turn_id=$1', [
+                turnId,
+              ])
+            ).rows[0].count;
+          try {
+            await thread.reply(
+              ref,
+              'The aisle separates the two columns.',
+              [image],
+              undefined,
+              undefined,
+              { ...visual, artifactId: image.id.toUpperCase() },
+            );
+            const saved = (await db.pool.query('SELECT * FROM messages WHERE turn_id=$1', [turnId]))
+              .rows[0];
+            assert.deepEqual(saved.presentation, visual);
+            assert.equal(saved.attachments.length, 1);
+            assert.equal(saved.attachments[0].url, `/api/artifacts/${image.id}`);
+            for (const path of [
+              '/api/state',
+              '/api/messages',
+              `/api/messages/around/${saved.id}`,
+            ]) {
+              const response = await request('GET', path);
+              assert.equal(response.statusCode, 200);
+              const body = response.json();
+              const shown = (Array.isArray(body) ? body : body.messages).find(
+                (message: { id: string }) => message.id === saved.id,
+              );
+              assert.deepEqual(shown.presentation, visual);
+            }
+            const venue: Presentation = {
+              version: 1,
+              type: 'booking',
+              title: 'Synthetic venues',
+              sources: [],
+              name: 'Courtyard',
+              status: 'option',
+              facts: [{ label: 'Price', value: 'EUR 80' }],
+              photos: [{ artifactId: image.id.toUpperCase(), alt: 'Courtyard screenshot' }],
+              alternatives: [
+                {
+                  name: 'Terrace',
+                  status: 'option',
+                  facts: [{ label: 'Price', value: 'EUR 90' }],
+                  photos: [{ artifactId: image.id, alt: 'Shared exterior view' }],
+                },
+              ],
+            };
+            await thread.reply(
+              ref,
+              'Compare the two sourced venues.',
+              [{ ...image, source: 'browser_screenshot' }],
+              undefined,
+              undefined,
+              venue,
+            );
+            const savedVenue = (
+              await db.pool.query(
+                "SELECT * FROM messages WHERE turn_id=$1 AND text='Compare the two sourced venues.'",
+                [turnId],
+              )
+            ).rows[0];
+            assert.equal(savedVenue.presentation.photos[0].artifactId, image.id);
+            assert.deepEqual(
+              savedVenue.attachments.map((item: Artifact) => [item.id, item.source]),
+              [[image.id, 'browser_screenshot']],
+            );
+            for (const path of [
+              '/api/state',
+              '/api/messages',
+              `/api/messages/around/${savedVenue.id}`,
+            ]) {
+              const body = (await request('GET', path)).json();
+              const shown = (Array.isArray(body) ? body : body.messages).find(
+                (message: { id: string }) => message.id === savedVenue.id,
+              );
+              assert.deepEqual(shown.presentation, savedVenue.presentation);
+            }
+            for (const artifactId of [randomUUID(), otherImage.id, vector.id])
+              for (const invalid of [
+                { ...visual, artifactId },
+                { ...venue, photos: [{ artifactId, alt: 'Invalid primary' }] },
+                {
+                  ...venue,
+                  alternatives: [
+                    {
+                      ...venue.alternatives![0],
+                      photos: [{ artifactId, alt: 'Invalid alternative' }],
+                    },
+                  ],
+                },
+              ])
+                await assert.rejects(
+                  thread.reply(ref, 'Invalid visual.', [], undefined, undefined, invalid),
+                  /unavailable/,
+                );
+            await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
+              image.id,
+            ]);
+            await assert.rejects(
+              thread.reply(ref, 'Foreign visual.', [], undefined, undefined, visual),
+              /unavailable/,
+            );
+            await assert.rejects(
+              thread.reply(ref, 'Foreign venue.', [], undefined, undefined, venue),
+              /unavailable/,
+            );
+            await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [
+              image.id,
+              ownerId,
+            ]);
+            await assert.rejects(
+              thread.reply(ref, ' ', [], undefined, undefined, visual),
+              /text answer/,
+            );
+            assert.equal(await count(), 2);
+            await db.pool.query('UPDATE messages SET presentation=$2 WHERE id=$1', [
+              saved.id,
+              JSON.stringify({ ...visual, version: 2 }),
+            ]);
+            const fallback = (await request('GET', '/api/messages'))
+              .json()
+              .messages.find((message: { id: string }) => message.id === saved.id);
+            assert.equal(fallback.presentation, undefined);
+            assert.equal(fallback.text, 'The aisle separates the two columns.');
+            await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
+            await assert.rejects(
+              thread.reply(ref, 'Late visual.', [], undefined, undefined, visual),
+              /no longer active/,
+            );
+            assert.equal(await count(), 2);
+          } finally {
+            await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [turnId]);
+            await db.pool.query('DELETE FROM turns WHERE id=$1', [turnId]);
+            await db.pool.query('DELETE FROM artifacts WHERE id=ANY($1::uuid[])', [
+              [image.id, otherImage.id, vector.id],
+            ]);
+            await db.pool.query('DELETE FROM threads WHERE id=$1', [otherThread]);
+          }
+        },
+      );
 
       await t.test('credential resume and source-keyed messages are idempotent', async () => {
         const id = randomUUID();
@@ -1012,6 +1212,38 @@ test(
         );
         firstThreadId = first.threadId;
       });
+
+      await t.test(
+        'visual facts reach owned reply and rebuilt history context without changing stored text',
+        async () => {
+          const source = await thread.submitUserMessage('presentation-source-fixture');
+          await waitFor(settled(source.turnId));
+          const shown = (
+            await db.pool.query(
+              "SELECT id,text FROM messages WHERE turn_id=$1 AND role='assistant'",
+              [source.turnId],
+            )
+          ).rows[0];
+          assert.equal(shown.text, 'The two-step synthetic process.');
+          const followup = await thread.submitUserMessage(
+            'What follows the first synthetic step?',
+            [],
+            { replyToMessageId: shown.id },
+          );
+          await waitFor(settled(followup.turnId));
+          const followupContext = ran(followup.turnId)!;
+          assert.equal(followupContext.replyTo?.id, shown.id);
+          assert.match(followupContext.replyTo!.text, /Research → Comparison: Once reviewed/);
+          const previous = followupContext.history.find(
+            (message) => message.turnId === source.turnId && message.role === 'assistant',
+          );
+          assert.match(previous!.text, /Research → Comparison: Once reviewed/);
+          assert.ok(
+            followupContext.history.some((message) => message.text === 'done: first message'),
+          );
+          assert.doesNotMatch(JSON.stringify(followupContext.replyTo), /"edges"|"presentation"/);
+        },
+      );
 
       await t.test('a reached spending limit pauses chat and background turns', async (t) => {
         const raced = await thread.submitUserMessage('limit race fixture');
@@ -2151,6 +2383,10 @@ test(
             t.mock.timers.setTime(instant.getTime());
             const expectedToday = mode === 'mixed' ? '2026-10-23' : '2026-10-24';
             const owner = `synthetic-discovery-${mode}`;
+            t.after(async () => {
+              await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
+              await db.pool.query('DELETE FROM onboarding_suggestions WHERE owner_id=$1', [owner]);
+            });
             const slugs = ['slack', 'slack', 'fixture-mcp'];
             const accounts = Array.from({ length: mode === 'large' ? 30 : 3 }, (_, index) => ({
               connectionId: randomUUID(),
@@ -2415,8 +2651,6 @@ test(
               if (mode === 'revoked_read' || mode === 'revoked_plan' || mode === 'cancelled')
                 assert.doesNotMatch(JSON.stringify(posted), /Juniper/);
             }
-            await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
-            await db.pool.query('DELETE FROM onboarding_suggestions WHERE owner_id=$1', [owner]);
           }
         },
       );
@@ -4306,11 +4540,15 @@ test(
                 research,
               ])
             ).rows;
-            assert.equal(messages.length, 3);
-            const artifact = messages.find(
-              (message) => message.attachments[0]?.name === 'finished.txt',
+            assert.equal(messages.length, 2);
+            const artifact = messages.find((message) =>
+              message.attachments.some((item: Artifact) => item.name === 'finished.txt'),
             );
             assert.equal(artifact.text, 'The synthetic research summary is ready.');
+            assert.deepEqual(
+              artifact.attachments.map((item: Artifact) => item.name),
+              ['research.png', 'finished.txt'],
+            );
             const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
             await waitFor(settled(unrelated));
             block(pending);
@@ -4339,7 +4577,9 @@ test(
                 ),
               );
               assert.ok(
-                history.some((message) => message.attachments?.[0]?.name === 'finished.txt'),
+                history.some((message) =>
+                  message.attachments?.some((item) => item.name === 'finished.txt'),
+                ),
               );
               for (const text of [
                 pending,

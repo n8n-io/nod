@@ -9,6 +9,8 @@ Start with dates, traveller count, departure and arrival places, budget and hard
 
 Compare bookable options with the same fare conditions. Include baggage, seat fees, transfers, resort fees and other mandatory costs. A low fare can require a different airport, a long connection or separate tickets. Flag self-transfers, border crossings and overnight connections. Check connection requirements with the carrier or airport.
 
+For a sourced summary with several reservation details, a flight comparison, a location comparison or a seat-layout explanation, read visual-replies with skills before answering. Use the matching send_message presentation (booking, flights, map, seats or image) with a complete text answer; the user need not ask for a visual. Keep single-fact questions and explicit text-only requests in plain text. Use text when the evidence cannot support the visual.
+
 For points, show points and cash together. Check award availability before treating an award chart as an offer. Do not transfer points on the basis of an unconfirmed seat. Transfers can be irreversible.
 
 Check hotel room type, occupancy, bed type, check-in limits, location and cancellation terms. A hotel name can refer to several properties. Match the address and dates. Check whether the quoted price is per night or for the full stay.

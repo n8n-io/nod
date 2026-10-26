@@ -1,3 +1,4 @@
+import type { Presentation } from '../shared/presentation.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -167,6 +168,7 @@ export function createAgentRuntime(dependencies: {
     let modelIncomplete = false;
     let completed = false;
     let lastReply = '';
+    let lastPresentation = '';
     let checkInSpent = context.checkIn?.spentUsd ?? 0;
     let checkInBlocked = false;
     let checkInStrikes = 0;
@@ -220,11 +222,19 @@ export function createAgentRuntime(dependencies: {
 
     let taskResult = '';
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
-    const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
+    const deliverReply = async (
+      text: string,
+      id?: string,
+      replyToMessageId?: string,
+      presentation?: Presentation,
+    ) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
-      if (!trimmed || trimmed === lastReply) return false;
-      await context.reply(trimmed, id, replyToMessageId);
+      const visual = presentation ? JSON.stringify(presentation) : '';
+      if (!trimmed || (trimmed === lastReply && (!visual || visual === lastPresentation)))
+        return false;
+      await context.reply(trimmed, id, replyToMessageId, presentation);
+      lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
       replyOwed = false;
@@ -529,8 +539,13 @@ export function createAgentRuntime(dependencies: {
         },
         computer: browser,
         pageVisited: dependencies.pageVisited,
-        reply: async (text: string, id?: string, replyToMessageId?: string) => {
-          if (await reply(text, id, replyToMessageId)) deliveredMessage = true;
+        reply: async (
+          text: string,
+          id?: string,
+          replyToMessageId?: string,
+          presentation?: Presentation,
+        ) => {
+          if (await reply(text, id, replyToMessageId, presentation)) deliveredMessage = true;
         },
         pause,
         confirm,

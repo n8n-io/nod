@@ -1,3 +1,9 @@
+import {
+  presentationImages,
+  presentationSchema,
+  presentationText,
+  type Presentation,
+} from '../shared/presentation.ts';
 import { logFailure } from './failure-log.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -10,7 +16,7 @@ import { transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
-import { localArtifacts, type ArtifactService } from './artifacts.ts';
+import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { GeneratedAudio } from '../ports/speech.ts';
 import type { Artifact, MessageReaction, SpeechReplyMode } from '../shared/contracts.ts';
@@ -36,6 +42,14 @@ import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
 
 const queue = 'thread-drain';
+const rasterTypes = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/bmp',
+]);
 export const boss = new PgBoss({
   connectionString: databaseUrl,
   schema: process.env.PGBOSS_SCHEMA || 'pgboss',
@@ -284,12 +298,42 @@ export async function insertAssistantMessage(
   attachments: Artifact[] = [],
   streamId?: string,
   replyToMessageId?: string,
+  presentation?: Presentation,
 ) {
+  const visual = presentation === undefined ? undefined : presentationSchema.parse(presentation);
+  if (visual && !text.trim()) throw new Error('A complete text answer is required.');
+  const images = visual ? presentationImages(visual) : [];
+  if (images.length) {
+    const rows = (
+      await client.query(
+        'SELECT * FROM artifacts WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND thread_id=$3',
+        [
+          [...new Set(images.map((image) => image.artifactId.toLowerCase()))],
+          ownerId,
+          turn.threadId,
+        ],
+      )
+    ).rows;
+    const owned = new Map(rows.map((row) => [row.id, row]));
+    for (const image of images) {
+      const stored = owned.get(image.artifactId.toLowerCase());
+      if (!stored || !rasterTypes.has(stored.mime_type))
+        throw new Error('The presentation image is unavailable in this conversation.');
+      image.artifactId = stored.id;
+    }
+    const attached = new Map(attachments.map((item) => [item.id, item]));
+    for (const row of rows)
+      attached.set(row.id, {
+        ...artifactView(row),
+        ...(attached.get(row.id)?.source ? { source: attached.get(row.id)!.source } : {}),
+      });
+    attachments = [...attached.values()];
+  }
   replyToMessageId ??= turn.taskMessageId;
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
   const id = randomUUID();
   await client.query(
-    'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id,presentation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [
       id,
       ownerId,
@@ -300,6 +344,7 @@ export async function insertAssistantMessage(
       JSON.stringify(attachments),
       streamId ?? null,
       replyToMessageId ?? null,
+      visual ? JSON.stringify(visual) : null,
     ],
   );
   return id;
@@ -311,9 +356,18 @@ export async function reply(
   attachments: Artifact[] = [],
   streamId?: string,
   replyToMessageId?: string,
+  presentation?: Presentation,
 ) {
   await withTurnLock(turn.turnId, (client) =>
-    insertAssistantMessage(client, turn, text, attachments, streamId, replyToMessageId),
+    insertAssistantMessage(
+      client,
+      turn,
+      text,
+      attachments,
+      streamId,
+      replyToMessageId,
+      presentation,
+    ),
   );
   refresh();
 }
@@ -1000,7 +1054,7 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,
+          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
            s.role='user' AND NOT EXISTS (
              SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
                AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
@@ -1017,6 +1071,7 @@ async function loadMessage(messageId: string | null) {
         role: message.role as string,
         text: message.text as string,
         attachments: message.reply_attachments,
+        presentation: message.presentation,
       }
     : undefined;
   return {
@@ -1051,8 +1106,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen,turn_id AS "turnId" FROM (
-       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.turn_id,
+       SELECT role,text,created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
+       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
@@ -1167,9 +1222,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     attachments: Artifact[] = [],
     streamId?: string,
     replyToMessageId?: string,
+    presentation?: Presentation,
   ) => {
     const id = await current((client) =>
-      insertAssistantMessage(client, ref, text, attachments, streamId, replyToMessageId),
+      insertAssistantMessage(
+        client,
+        ref,
+        text,
+        attachments,
+        streamId,
+        replyToMessageId,
+        presentation,
+      ),
     );
     if (text.trim()) replies.push({ id, text });
     refresh();
@@ -1266,7 +1330,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return staged;
     };
     const attachments = await stageUploads(loaded.uploads);
-    const describe = ({ attachments, ...row }: Record<string, any>): any => {
+    const describe = ({ attachments, presentation, ...row }: Record<string, any>): any => {
+      const visual =
+        row.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
+      if (visual?.success)
+        row.text = [row.text, presentationText(visual.data)].filter(Boolean).join('\n\n');
       const files = (Array.isArray(attachments) ? attachments : []) as StoredAttachment[];
       return files.length
         ? {
@@ -1302,7 +1370,15 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return artifact;
     };
     const attachFile = async (file: { bytes: Uint8Array; name: string; mimeType: string }) => {
-      const artifact = await attach(file.bytes, file.name, file.mimeType, '', !turn.background);
+      const withReply = !turn.background && rasterTypes.has(file.mimeType);
+      const artifact = await attach(
+        file.bytes,
+        file.name,
+        file.mimeType,
+        '',
+        !turn.background && !withReply,
+      );
+      if (withReply) shared.push(artifact);
       return {
         ...artifact,
         workspaceFile: workspaceReference(
@@ -1347,8 +1423,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       signal,
       attachments,
       emit,
-      reply: (text, streamId, replyToMessageId) =>
-        post(text, shared.splice(0), streamId, replyToMessageId),
+      reply: async (text, streamId, replyToMessageId, presentation) => {
+        const pending = shared.slice();
+        await post(text, pending, streamId, replyToMessageId, presentation);
+        shared.splice(0, pending.length);
+      },
       delta: (text, streamId, done) => {
         if (!signal.aborted && !turn.background && turn.channel === 'web')
           delta({ ownerId, channel: turn.channel, threadId, turnId, text, streamId, done });
@@ -1479,10 +1558,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             maxBytes,
           ),
         ),
-      publishScreenshot: (bytes, name) => {
+      publishScreenshot: async (bytes, name) => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
-        return attach(bytes, fileName, 'image/png', '', true, 'browser_screenshot');
+        const artifact = await attach(
+          bytes,
+          fileName,
+          'image/png',
+          '',
+          false,
+          'browser_screenshot',
+        );
+        shared.push(artifact);
+        return artifact;
       },
       publishBrowserFile: attachFile,
     });

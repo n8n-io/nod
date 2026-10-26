@@ -13,6 +13,8 @@ Use existing libraries and native features before adding code. Change only the n
 
 For web work, verify the requested path in the browser. Inspect errors, empty states, keyboard access and the relevant screen size. A successful build does not prove that the user can complete the task. Use the user's chosen design and content rather than a generic template that changes the product.
 
+When a diagram would clarify an architecture or workflow explanation in chat, read visual-replies with skills before presenting it.
+
 Run focused checks with synthetic data and isolated resources. Do not use real recipients, connected accounts or a live model as a test fixture. Check a migration on a disposable database; do not reset a normal database.
 
 Return changed files, the verified result and remaining limits. Keep prototype, preview and production states distinct. Do not push, merge, publish or deploy without the current task's explicit authority. If a live operation has an unknown result, inspect it and report uncertainty instead of running it again.

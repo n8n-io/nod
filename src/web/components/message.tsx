@@ -7,6 +7,11 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Message } from '../../shared/contracts';
 import { reactionEmoji } from '../../shared/emoji';
+import {
+  presentationImages,
+  presentationSchema,
+  presentationText,
+} from '../../shared/presentation';
 import { Checkbox, Loading, Notice } from './ui';
 import { BrandMark } from './brand';
 import { errorMessage, post } from '../lib/api';
@@ -28,6 +33,7 @@ import { SetupActions } from './setup-link';
 import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
+import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { money } from '../lib/money';
 import { copyContent, selectedText } from '../lib/clipboard';
@@ -422,11 +428,17 @@ export function MessageBubble({
     captureAnalytics('nod_message_action', { action: 'copy', role: message.role, method });
     setPanel(null);
     try {
-      if (markdown) await navigator.clipboard.writeText(message.text);
+      const visual = presentationSchema.safeParse(message.presentation);
+      const text = visual.success
+        ? `${message.text}\n\n${presentationText(visual.data)}`
+        : message.text;
+      if (markdown) await navigator.clipboard.writeText(text);
       else
         await copyContent(
-          message.text,
-          articleElement.current?.querySelector<HTMLElement>('.message-text'),
+          text,
+          visual.success
+            ? undefined
+            : articleElement.current?.querySelector<HTMLElement>('.message-text'),
         );
       setCopied(true);
       clearTimeout(copyTimeout.current);
@@ -532,8 +544,19 @@ export function MessageBubble({
                   handoffTurnId={message.turnId ?? undefined}
                 />
               )}
+              {message.role === 'assistant' && !streaming && message.presentation && (
+                <MessagePresentation value={message.presentation} />
+              )}
               {message.role === 'assistant' && message.attachments.length > 0 && (
-                <MessageAttachments attachments={message.attachments} />
+                <MessageAttachments
+                  attachments={message.attachments.filter(
+                    (attachment) =>
+                      !message.presentation ||
+                      !presentationImages(message.presentation).some(
+                        (image) => image.artifactId === attachment.id,
+                      ),
+                  )}
+                />
               )}
               {!streaming && (
                 <>

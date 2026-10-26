@@ -1,3 +1,4 @@
+import type { Presentation } from './presentation';
 import type { TaskSuggestions } from './onboarding';
 import type { TrustBecause } from './trust';
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
@@ -23,6 +24,7 @@ export interface Message {
   turnId: string | null;
   createdAt: string;
   attachments: Artifact[];
+  presentation?: Presentation;
   receipt?: MessageReceipt;
   questionState?:
     'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
