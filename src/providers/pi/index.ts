@@ -21,7 +21,7 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { createPiModelRuntime } from './models.ts';
+import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
 import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
@@ -32,7 +32,8 @@ import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } fro
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
-import { createSandbox, workspaceOutputs } from './sandbox.ts';
+import { createSandbox, workspaceOutputs, writeWorkspaceFile } from './sandbox.ts';
+import { untrustedBlock } from '../../shared/untrusted.ts';
 import { isPublicAddress, publicLookup } from '../agent-browser/network.ts';
 
 function isFinalAnswer(signature: string | undefined) {
@@ -138,7 +139,6 @@ function toolSchema(schema: unknown) {
   }
 }
 
-const compactAt = 256_000;
 const imageStep = 8;
 
 const webAccess = {
@@ -353,8 +353,74 @@ export function createPiAgent(options: {
               },
             }
           : selectedModel;
+      const budget = modelContextBudget({
+        ...model,
+        contextWindow: Math.min(
+          model.contextWindow,
+          connection?.textModel?.contextWindow ?? model.contextWindow,
+        ),
+      });
+      if (budget.compact && input.compactInstructions)
+        input = { ...input, ...input.compactInstructions };
+      const boundedOutput = async (
+        name: string,
+        run: () => ReturnType<ToolDefinition['execute']>,
+        signal?: AbortSignal,
+        nested = false,
+      ) => {
+        const result = await run();
+        if (!budget.compact || nested) return result;
+        const text = result.content
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n');
+        if (text.length <= Math.floor(budget.window / 2)) return result;
+        signal?.throwIfAborted();
+        if (input.shouldStop()) throw new Error('The turn was stopped.');
+        const directory = `${input.workspace.path}/.nod/outputs`;
+        const path = `${directory}/${randomUUID()}.txt`;
+        if (
+          (
+            await input.workspace.exec(`mkdir -p -- '${directory.replaceAll("'", "'\\''")}'`, {
+              signal,
+            })
+          ).exitCode
+        )
+          throw new Error('The full tool output could not be saved.');
+        await writeWorkspaceFile(input.workspace, path, Buffer.from(text), signal);
+        const saved = JSON.stringify({
+          workspaceFile: path,
+          characters: text.length,
+          preview: text.slice(0, 1000),
+        });
+        return {
+          ...result,
+          content: [
+            { type: 'text' as const, text: result.isError ? saved : untrustedBlock(name, saved) },
+            ...result.content.filter((part) => part.type === 'image'),
+          ],
+        };
+      };
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
+      const historyTokens = budget.compact
+        ? estimateModelTokens(manager.buildSessionContext().messages)
+        : 0;
+      if (budget.compact && historyTokens > budget.window / 2) {
+        let recentTokens = 0;
+        let firstKept: string | null = null;
+        for (const entry of manager.buildContextEntries().toReversed()) {
+          if (entry.type !== 'message') continue;
+          recentTokens += estimateModelTokens(entry.message);
+          if (recentTokens > budget.recent) break;
+          if (entry.message.role === 'user') firstKept = entry.id;
+        }
+        manager.appendCompaction(
+          'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.',
+          firstKept,
+          historyTokens,
+        );
+      }
       const sandboxTools = input.restricted ? [] : createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
@@ -363,7 +429,14 @@ export function createPiAgent(options: {
             const result = await input.runTool(
               definition.name,
               params,
-              () => definition.execute(id, params, signal, onUpdate, context),
+              () =>
+                id.includes('/')
+                  ? definition.execute(id, params, signal, onUpdate, context)
+                  : boundedOutput(
+                      definition.name,
+                      () => definition.execute(id, params, signal, onUpdate, context),
+                      signal,
+                    ),
               { nested: id.includes('/') },
             );
             return { ...result, details: result.details ?? {} };
@@ -373,30 +446,45 @@ export function createPiAgent(options: {
           name: tool.name,
           label: tool.name.replaceAll('_', ' '),
           description: tool.description,
-          parameters: (tool.deferred
-            ? toolSchema(tool.parameters)
-            : tool.parameters) as ToolDefinition['parameters'],
-          ...(tool.deferred
+          parameters: (budget.compact && tool.name === 'send_message'
+            ? {
+                ...tool.parameters,
+                properties: { ...(tool.parameters.properties as object), presentation: openSchema },
+              }
+            : tool.deferred
+              ? toolSchema(tool.parameters)
+              : tool.parameters) as ToolDefinition['parameters'],
+          ...(tool.deferred || budget.compact
             ? {
                 exposure: 'deferred' as const,
-                namespace: {
-                  name: tool.deferred.namespace,
-                  description: tool.deferred.description,
-                },
+                namespace: tool.deferred
+                  ? { name: tool.deferred.namespace, description: tool.deferred.description }
+                  : {
+                      name: 'nod',
+                      description: 'Nod tools for apps, browsers, files, memory and tasks.',
+                    },
               }
             : { exposure: 'model-only' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
-          execute: async (id, args) => {
+          execute: async (id, args, signal) => {
+            if (id.includes('/') && !tool.deferred)
+              throw new Error('Call this Nod tool directly, outside codemode.');
             return {
-              ...(await tool.execute(args as Record<string, unknown>, {
-                nested: id.includes('/'),
-              })),
+              ...(await boundedOutput(
+                tool.name,
+                () =>
+                  tool
+                    .execute(args as Record<string, unknown>, { nested: id.includes('/') })
+                    .then((result) => ({ ...result, details: result.details ?? {} })),
+                signal,
+                id.includes('/'),
+              )),
               details: {},
             };
           },
         })),
       ];
-      const deferred = input.tools.some((tool) => tool.deferred);
+      const deferred = budget.compact || input.tools.some((tool) => tool.deferred);
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
@@ -404,7 +492,33 @@ export function createPiAgent(options: {
         additionalExtensionPaths: input.restricted ? [] : [webExtension],
         extensionFactories: [
           ...(input.restricted ? [] : [createCodemodeExtension()]),
-          ...(deferred ? [createToolSearchExtension()] : []),
+          ...(deferred
+            ? [
+                budget.compact
+                  ? (pi: ExtensionAPI) =>
+                      createToolSearchExtension()({
+                        ...pi,
+                        registerTool: (tool) =>
+                          pi.registerTool({
+                            ...tool,
+                            execute: (id, params, signal, update, context) => {
+                              pi.setActiveTools([
+                                ...sandboxTools.map((tool) => tool.name),
+                                'tool_search',
+                              ]);
+                              return tool.execute(
+                                id,
+                                { ...(params as object), limit: 1 } as typeof params,
+                                signal,
+                                update,
+                                context,
+                              );
+                            },
+                          }),
+                      })
+                  : createToolSearchExtension(),
+              ]
+            : []),
           recentImages,
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
@@ -428,6 +542,9 @@ export function createPiAgent(options: {
             ...registered,
             definition: {
               ...registered.definition,
+              ...(budget.compact && name !== 'tool_search'
+                ? { exposure: 'deferred' as const, namespace: { name: web ? 'web' : 'workspace' } }
+                : {}),
               ...(web
                 ? {
                     parameters: webParameters(registered.definition.parameters),
@@ -451,15 +568,27 @@ export function createPiAgent(options: {
                   name,
                   args,
                   () =>
-                    workspaceOutputs(
+                    boundedOutput(
+                      name,
                       () =>
-                        web
-                          ? webRequests.run(connections, () =>
-                              registered.definition.execute(id, args, signal, onUpdate, context),
-                            )
-                          : registered.definition.execute(id, args, signal, onUpdate, context),
-                      input.workspace,
+                        workspaceOutputs(
+                          () =>
+                            web
+                              ? webRequests.run(connections, () =>
+                                  registered.definition.execute(
+                                    id,
+                                    args,
+                                    signal,
+                                    onUpdate,
+                                    context,
+                                  ),
+                                )
+                              : registered.definition.execute(id, args, signal, onUpdate, context),
+                          input.workspace,
+                          signal,
+                        ),
                       signal,
+                      id.includes('/'),
                     ),
                   { nested: id.includes('/') },
                 );
@@ -494,7 +623,9 @@ export function createPiAgent(options: {
             ...extensions.extensions.flatMap((extension) =>
               [...extension.tools.values()].map((tool) => tool.definition),
             ),
-          ].flatMap((tool) => tool.promptGuidelines ?? []),
+          ]
+            .filter((tool) => !budget.compact || tool.exposure !== 'deferred')
+            .flatMap((tool) => tool.promptGuidelines ?? []),
         ),
       ];
       if (guidelines.some((rule) => rule.includes('codemode')))
@@ -511,10 +642,12 @@ export function createPiAgent(options: {
         cwd: input.workspace.path,
         agentDir: directory,
         modelRuntime: runtime,
-        model,
+        model: { ...model, contextWindow: budget.window },
         thinkingLevel: access?.effort ?? 'high',
         tools: [
-          ...tools.filter((tool) => tool.exposure !== 'deferred').map((tool) => tool.name),
+          ...tools
+            .filter((tool) => budget.compact || tool.exposure !== 'deferred')
+            .map((tool) => tool.name),
           ...extensions.extensions.flatMap((extension) => [...extension.tools.keys()]),
         ],
         customTools: tools,
@@ -524,16 +657,15 @@ export function createPiAgent(options: {
         settingsManager: SettingsManager.inMemory({
           compaction: {
             enabled: true,
-            reserveTokens: Math.max(16_384, (model.contextWindow || 0) - compactAt),
-            keepRecentTokens: Math.max(
-              0,
-              Math.round(Math.min(compactAt, (model.contextWindow || compactAt) - 16_384) / 3),
-            ),
+            reserveTokens: budget.reserve,
+            keepRecentTokens: budget.recent,
           },
           transport: 'sse',
           steeringMode: 'all',
         }),
       });
+      if (budget.compact)
+        session.setActiveToolsByName([...sandboxTools.map((tool) => tool.name), 'tool_search']);
       if (disposed) {
         session.dispose();
         throw new Error('The agent service has stopped.');
@@ -668,7 +800,15 @@ export function createPiAgent(options: {
         resumed,
         readsImages: model.input.includes('image'),
         readsAudio: readsNativeAudio(model) && Boolean(input.readAudio),
+        contextWindow: budget.window,
         async prompt(text, images, audio) {
+          if (
+            budget.compact &&
+            Math.ceil(Buffer.byteLength(text) / 3) + budget.output + budget.margin > budget.window
+          )
+            throw new Error(
+              `This request does not fit the model's ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
+            );
           const owner = input.ownerContext;
           const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
           if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)

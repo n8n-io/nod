@@ -41,6 +41,389 @@ const sandbox = {
   runTool: (_name: string, _params: unknown, run: () => Promise<{ content: [] }>) => run(),
 };
 
+function smallContextAccess(
+  provider: 'compatible' | 'openrouter',
+  id: string,
+  window: number,
+): import('../src/ports/models.ts').ModelAccess {
+  return {
+    provider,
+    method: 'api_key',
+    effort: 'off',
+    read: async () =>
+      provider === 'openrouter'
+        ? { type: 'api_key', key: 'fixture-small-key' }
+        : { type: 'endpoint', url: 'http://127.0.0.1:1/v1', key: 'fixture-small-key' },
+    definition: {
+      choice: {
+        id,
+        name: id,
+        efforts: ['off'],
+        images: id.startsWith('fixture-vision'),
+        contextWindow: window,
+      },
+      spec: {
+        id,
+        name: id,
+        provider,
+        api: 'openai-completions',
+        baseUrl:
+          provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'http://127.0.0.1:1/v1',
+        reasoning: false,
+        input: id.startsWith('fixture-vision') ? ['text', 'image'] : ['text'],
+        contextWindow: window,
+        maxTokens: 4096,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        compat: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
+      },
+    },
+  };
+}
+
+test('small models and routers complete tool discovery inside the endpoint context', async (t) => {
+  const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { coreSkills } = await import('../src/runtime/prompt.ts');
+  for (const { provider, id, window, limit } of [
+    { provider: 'compatible', id: 'fixture-small', window: 8192, limit: 8192 },
+    { provider: 'openrouter', id: 'openrouter/free', window: 200_000, limit: 8192 },
+    { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
+    { provider: 'compatible', id: 'fixture-resumed', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-vision', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-vision-resumed', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-mcp', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-followup', window: 8192, limit: 8192 },
+  ] as const)
+    await t.test(id, async (test) => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-small-context-'));
+      test.after(() => rm(directory, { recursive: true, force: true }));
+      await writeFile(join(directory, 'report.txt'), 'Synthetic report bytes');
+      if (id.startsWith('fixture-vision')) {
+        const { createCanvas } = await import('@napi-rs/canvas');
+        const canvas = createCanvas(128, 128);
+        const drawing = canvas.getContext('2d');
+        const pixels = drawing.createImageData(128, 128);
+        let seed = 17;
+        for (let index = 0; index < pixels.data.length; index++) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+          pixels.data[index] = index % 4 === 3 ? 255 : seed >>> 24;
+        }
+        drawing.putImageData(pixels, 0, 0);
+        const image = canvas.toBuffer('image/png');
+        await writeFile(join(directory, 'synthetic.png'), image);
+        if (id === 'fixture-vision-resumed') {
+          const saved = join(directory, 'sessions/fixture');
+          await mkdir(saved, { recursive: true });
+          const manager = SessionManager.create(saved, saved);
+          manager.appendMessage({
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Synthetic image from the previous turn.' },
+              { type: 'image', data: image.toString('base64'), mimeType: 'image/png' },
+            ],
+            timestamp: 1,
+          });
+          manager.appendMessage(fauxAssistantMessage([{ type: 'text', text: 'Image received.' }]));
+        }
+      }
+      const guide = 'Synthetic MCP guide: inspect the selected account before reading its records.';
+      const earlier = 'Synthetic earlier session content. '.repeat(2000);
+      if (id === 'fixture-resumed' || id === 'fixture-followup') {
+        const saved = join(directory, 'sessions/fixture');
+        await mkdir(saved, { recursive: true });
+        const manager = SessionManager.create(saved, saved);
+        manager.appendMessage({ role: 'user', content: earlier, timestamp: 1 });
+        manager.appendMessage(
+          fauxAssistantMessage([{ type: 'text', text: 'Earlier work ended.' }]),
+        );
+        manager.appendMessage({
+          role: 'user',
+          content: 'Synthetic retained recent turn.',
+          timestamp: 2,
+        });
+        manager.appendMessage(fauxAssistantMessage([{ type: 'text', text: 'Recent work ended.' }]));
+      }
+      const access = smallContextAccess(provider, id, window);
+      let requests = 0;
+      let summaries = 0;
+      const bodies: Record<string, any>[] = [];
+      const requestBudgets: number[] = [];
+      const calls = [
+        ['tool_search', { query: 'skills', limit: 1 }],
+        ['skills', { action: 'read', name: id === 'fixture-mcp' ? 'mcp__fixture' : 'artifacts' }],
+        ['tool_search', { query: 'share_file', limit: 1 }],
+        ['share_file', { path: 'report.txt' }],
+      ] as const;
+      const serve = async (url: RequestInfo | URL, init?: RequestInit) => {
+        assert.equal(String(url), `${access.definition.spec.baseUrl}/chat/completions`);
+        const body = JSON.parse(String(init?.body));
+        bodies.push(body);
+        let images = 0;
+        const text = JSON.stringify(
+          { messages: body.messages, tools: body.tools },
+          (_key, part) => {
+            if (part?.type !== 'image_url') return part;
+            images++;
+            return { type: 'image_url', image_url: { url: '[image]' } };
+          },
+        );
+        const input = Math.ceil(text.length / 3.5) + images * 1200;
+        requestBudgets.push(input + (body.max_tokens ?? body.max_completion_tokens ?? 0));
+        if (input + (body.max_tokens ?? body.max_completion_tokens ?? 0) > limit)
+          return Response.json(
+            { error: { message: `Synthetic endpoint context is ${limit} tokens.` } },
+            { status: 400 },
+          );
+        assert.ok(!JSON.stringify(body).includes('fixture-small-key'));
+        assert.equal(body.model, id);
+        const summarizing = !body.tools?.length;
+        if (summarizing) summaries++;
+        else {
+          assert.ok(JSON.stringify(body).includes('Return the text report named report.txt.'));
+          assert.ok(JSON.stringify(body).includes('Do not contact anyone.'));
+          if (id === 'fixture-mcp' && requests === 2) {
+            assert.ok(JSON.stringify(body).includes(guide));
+            assert.ok(JSON.stringify(body).includes('untrusted_tool_result'));
+          }
+          if (id === 'fixture-followup' && requests === 0)
+            assert.ok(JSON.stringify(body).includes('Synthetic owner intent for the report.'));
+          if (id.startsWith('fixture-vision') && requests === 0) {
+            assert.equal(images, 1);
+            assert.ok(
+              JSON.stringify(body).includes(
+                (await readFile(join(directory, 'synthetic.png'))).toString('base64'),
+              ),
+            );
+          }
+          if (id === 'fixture-resumed' && requests === 0) {
+            assert.ok(JSON.stringify(body).includes('Synthetic retained recent turn.'));
+            assert.ok(!JSON.stringify(body).includes(earlier));
+          }
+        }
+        const call = summarizing ? undefined : calls[requests++];
+        if (call) assert.ok(body.tools.some((tool: any) => tool.function.name === call[0]));
+        const chunk = {
+          id: `fixture-${bodies.length}`,
+          model: 'fixture-served-model',
+          object: 'chat.completion.chunk',
+          choices: [
+            {
+              index: 0,
+              delta: call
+                ? {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: `call_${requests}`,
+                        type: 'function',
+                        function: { name: call[0], arguments: JSON.stringify(call[1]) },
+                      },
+                    ],
+                  }
+                : {
+                    role: 'assistant',
+                    content: summarizing
+                      ? 'Goal: Return the text report named report.txt. Rule: Do not contact anyone. Continue the file task with its tools.'
+                      : 'The report is attached.',
+                  },
+              finish_reason: null,
+            },
+          ],
+        };
+        const end = {
+          ...chunk,
+          choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: input, completion_tokens: 30, total_tokens: input + 30 },
+        };
+        return new Response(
+          `data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(end)}\n\ndata: [DONE]\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      };
+      let fetchMocked = false;
+      const published: Buffer[] = [];
+      const failures: unknown[] = [];
+      const started: string[] = [];
+      const runtime = createAgentRuntime({
+        observe: (_id, event) => {
+          if (event.type === 'tool_start') started.push(event.name);
+          if (event.type === 'tool_end' && event.status !== 'succeeded')
+            failures.push({ name: event.name, error: event.error });
+        },
+        agent: createPiAgent({
+          provider,
+          resolve: async () => access,
+          sessionRoot: join(directory, 'sessions'),
+          createSession: async (options) => {
+            if (!fetchMocked) {
+              test.mock.method(globalThis, 'fetch', serve);
+              fetchMocked = true;
+            }
+            return createAgentSession(options);
+          },
+        }),
+        skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
+        computer: fakeComputer(),
+        workspace: fakeWorkspace({
+          readArtifact: async (_thread, path) => readFile(join(directory, path)),
+        }),
+      });
+      test.after(() => runtime.dispose());
+      const input: RuntimeContext = {
+        ...context(directory),
+        turnId: randomUUID(),
+        prompt: 'Return the text report named report.txt.',
+        rules: 'Do not contact anyone.',
+        memory: 'Synthetic earlier memory. '.repeat(2000),
+        history: Array.from({ length: 20 }, () => ({
+          role: 'assistant',
+          text: 'Synthetic older conversation. '.repeat(200),
+        })),
+        ...(id === 'fixture-mcp'
+          ? {
+              mcpServers: [
+                {
+                  connectionId: 'fixture',
+                  pathId: 'fixture',
+                  service: 'fixture',
+                  name: 'Synthetic MCP',
+                  accountName: 'Synthetic account',
+                  instructions: guide,
+                  tools: [],
+                },
+              ],
+            }
+          : {}),
+        ...(id === 'fixture-followup'
+          ? {
+              history: [
+                { role: 'user', text: 'Synthetic owner intent for the report.', unseen: false },
+                ...[1, 2, 3].map((index) => ({
+                  role: 'assistant',
+                  text: `Synthetic progress ${index}.`,
+                  unseen: true,
+                })),
+              ],
+            }
+          : {}),
+        ...(id === 'fixture-vision'
+          ? { attachments: [{ path: join(directory, 'synthetic.png'), mimeType: 'image/png' }] }
+          : {}),
+        publish: async (path) => {
+          const bytes = await readFile(join(directory, path));
+          published.push(bytes);
+          return {
+            id: randomUUID(),
+            name: path,
+            mimeType: 'text/plain',
+            size: bytes.length,
+            url: '/api/artifacts/fixture',
+          };
+        },
+      };
+      assert.equal((await runtime.runTurn(input)).status, 'succeeded');
+      assert.deepEqual(failures, []);
+      test.diagnostic(
+        JSON.stringify({
+          provider,
+          requests,
+          summaries,
+          largestRequestTokens: Math.max(...requestBudgets),
+        }),
+      );
+      assert.equal(requests, 5);
+      assert.equal(bodies.length, 5 + summaries);
+      assert.deepEqual(started, ['tool_search', 'skills', 'tool_search', 'share_file']);
+      assert.equal(published.length, 1);
+      assert.equal(published[0].toString(), 'Synthetic report bytes');
+      if (id === 'fixture-resumed')
+        assert.ok((await localText(join(directory, 'sessions/fixture'))).includes(earlier));
+      const before = bodies.length;
+      await assert.rejects(
+        runtime.runTurn({
+          ...input,
+          turnId: randomUUID(),
+          prompt: 'Oversized current request. '.repeat(5000),
+        }),
+      );
+      assert.equal(bodies.length, before);
+      assert.equal(published.length, 1);
+    });
+});
+
+test('small Pi sessions save full external output in the workspace and refuse nested Nod actions', async (t) => {
+  const { workspace, prefix, root } = await hostSandbox(t);
+  const directory = await mkdtemp(join(tmpdir(), 'nod-small-output-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { untrustedBlock } = await import('../src/shared/untrusted.ts');
+  const full = untrustedBlock('fixture_external', 'Synthetic output nívél π 🙂\n'.repeat(2000));
+  let captured: Parameters<typeof createAgentSession>[0];
+  let effects = 0;
+  const guarded: string[] = [];
+  const agent = createPiAgent({
+    provider: 'compatible',
+    resolve: async () => smallContextAccess('compatible', 'fixture-small', 8192),
+    sessionRoot: directory,
+    createSession: async (options) => {
+      captured = options;
+      return createAgentSession(options);
+    },
+  });
+  t.after(() => agent.dispose());
+  const session = await agent.open({
+    ...fakeExecution(randomUUID()),
+    systemPrompt: 'Synthetic fixture',
+    workspace,
+    runTool: async (name, _params, run) => {
+      guarded.push(name);
+      return run();
+    },
+    tools: [
+      {
+        name: 'fixture_external',
+        description: 'Read synthetic external data.',
+        parameters: { type: 'object', properties: {} },
+        deferred: { namespace: 'fixture', description: 'Synthetic external tools.' },
+        execute: async () => ({ content: [{ type: 'text', text: full }] }),
+      },
+      {
+        name: 'share_file',
+        description: 'Publish a synthetic file.',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => {
+          effects++;
+          return { content: [] };
+        },
+      },
+    ],
+    shouldStop: () => false,
+    onEvent: () => {},
+  });
+  const external = captured!.customTools!.find((tool) => tool.name === 'fixture_external')!;
+  const run = (tool: ToolDefinition, id: string) =>
+    tool.execute(id, {}, undefined, undefined, undefined as never);
+  const result = await run(external, 'direct');
+  const preview = result.content.find((part) => part.type === 'text')!.text;
+  assert.ok(preview.length < 2000);
+  assert.match(preview, /untrusted_tool_result/);
+  const saved = preview.match(/"workspaceFile":"([^"]+)"/)![1];
+  assert.ok(saved.startsWith(workspace.path + '/.nod/outputs/'));
+  assert.equal(await readFile(saved.replace(prefix, root), 'utf8'), full);
+  assert.equal(existsSync(prefix), false);
+  const nested = await run(external, 'parent/child');
+  assert.equal(nested.content[0].type === 'text' && nested.content[0].text, full);
+  const privateTool = captured!.customTools!.find((tool) => tool.name === 'share_file')!;
+  await assert.rejects(run(privateTool, 'parent/child'), /outside codemode/);
+  assert.equal(effects, 0);
+  await run(privateTool, 'direct');
+  assert.equal(effects, 1);
+  const read = captured!.customTools!.find((tool) => tool.name === 'read')!;
+  await read.execute('read', { path: saved, limit: 2 }, undefined, undefined, undefined as never);
+  assert.deepEqual(guarded, ['read']);
+  await session.dispose();
+});
+
 test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
   for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
@@ -880,7 +1263,7 @@ async function hostSandbox(t: test.TestContext) {
     );
     return result.content.map((part) => (part.type === 'text' ? part.text : part.type)).join('');
   };
-  return { prefix, root, bin, calls, tools, run };
+  return { prefix, root, bin, calls, tools, run, workspace };
 }
 
 test('native Pi tools run only through workspace exec on sandbox paths that do not exist on the host', async (t) => {
@@ -2620,7 +3003,10 @@ test('owner context stays out of the system prompt and compaction summaries and 
       shouldStop: () => false,
       onEvent: () => {},
     });
-    await session.prompt(`Synthetic request ${index}: ${'filler words '.repeat(200)}`, []);
+    await session.prompt(
+      `Synthetic request ${index}: ${'filler words '.repeat(index === 5 ? 1000 : 200)}`,
+      [],
+    );
     await session.dispose();
     await setTimeout(20);
     return bodies[start];
@@ -2648,7 +3034,7 @@ test('owner context stays out of the system prompt and compaction summaries and 
   current = agent();
   t.after(() => current.dispose());
   const requests = bodies.length;
-  promptTokens = 5_000;
+  promptTokens = 12_000;
   const five = await turn(forgotten, 5);
   assert.equal(copies(five), 3);
   prefixKept(four, five);
@@ -3978,6 +4364,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   let native = true;
   let rejectNative = false;
   let contractRejections = 0;
+  let smallCompanion = false;
   let jsonReply = false;
   let holdRead: Promise<Uint8Array> | undefined;
   const server = createServer((request, response) => {
@@ -3986,6 +4373,18 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     request.on('end', () => {
       bodies.push(JSON.parse(Buffer.concat(parts).toString()));
       const body = bodies.at(-1)!;
+      if (
+        smallCompanion &&
+        body.model === 'fixture-text-model' &&
+        Math.ceil(JSON.stringify(body).length / 3.5) +
+          ((body as { max_tokens?: number }).max_tokens ?? 0) >
+          8192
+      ) {
+        contractRejections++;
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'The text companion context is full.' } }));
+        return;
+      }
       if (
         body.model === 'gpt-audio-1.5' &&
         !body.messages.some(
@@ -4095,7 +4494,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
       ...definition.spec,
       id: 'fixture-text-model',
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      contextWindow: 20000,
+      contextWindow: 128000,
     },
   };
   const resolve = async (): Promise<import('../src/ports/models.ts').ModelAccess> => ({
@@ -4109,7 +4508,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
           spec: {
             ...definition.spec,
             baseUrl: `http://127.0.0.1:${address.port}/v1`,
-            contextWindow: 20000,
+            contextWindow: 128000,
           },
         }
       : textDefinition,
@@ -4135,11 +4534,15 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     }),
   );
   t.after(() => agent.dispose());
-  const open = (scope = execution) =>
+  const open = (
+    scope = execution,
+    instructions?: Pick<AgentSessionOptions, 'systemPrompt' | 'compactInstructions'>,
+  ) =>
     agent.open({
       ...scope,
       restricted: true,
       systemPrompt: 'Use the fixture tool if needed.',
+      ...instructions,
       workspace: recordingWorkspace().workspace,
       runTool: async (_name, _params, run) => run(),
       tools: [
@@ -4210,8 +4613,10 @@ test('native audio reaches the selected Pi model with tools and survives a reope
         JSON.stringify(body).includes('Internal transcription fixture words.') &&
         audio(body).length === 0,
     )
-  )
+  ) {
+    piSession!.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1000 } });
     await piSession!.compact();
+  }
   await compacting.dispose();
   promptTokens = 110;
   assert.ok(
@@ -4332,6 +4737,25 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   assert.equal(typedUsage?.model, 'fixture-text-model');
   assert.ok(Math.abs(typedUsage!.costUsd! - 0.000295) < 1e-9);
   assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  smallCompanion = true;
+  textDefinition.spec.contextWindow = 8192;
+  const beforeSmall = bodies.length;
+  const small = await open(fakeExecution(randomUUID()), {
+    systemPrompt: 'Large synthetic owner context. '.repeat(3000),
+    compactInstructions: { systemPrompt: 'Answer the synthetic typed request briefly.' },
+  });
+  await small.prompt('A typed request using the small text companion.', []);
+  await small.dispose();
+  assert.equal(bodies.length, beforeSmall + 1);
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  assert.equal(
+    events.findLast((event) => event.type === 'model_usage')?.model,
+    'fixture-text-model',
+  );
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  textDefinition.spec.contextWindow = 128000;
+  smallCompanion = false;
   const compactions = events.filter(
     (event) => event.type === 'provider_usage' && event.usage.operation === 'compaction',
   );
@@ -4376,7 +4800,13 @@ test('native audio reaches the selected Pi model with tools and survives a reope
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-native-context-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const native of [false, true]) {
+  for (const [native, contextWindow] of [
+    [false, 32_000],
+    [true, 32_000],
+    [false, 131_072],
+    [true, 131_072],
+  ] as const) {
+    const compact = contextWindow < 65_536;
     const prompts: Array<{
       text: string;
       audio?: import('../src/ports/agent.ts').AgentAudioInput;
@@ -4387,7 +4817,8 @@ test('the runtime sends a recording caption natively while retaining its trusted
       workspace: fakeWorkspace(),
       agent: {
         open: async (input) => ({
-          resumed: false,
+          resumed: compact,
+          contextWindow,
           readsAudio: native,
           abort() {},
           dispose() {},
@@ -4414,7 +4845,14 @@ test('the runtime sends a recording caption natively while retaining its trusted
     original.attachments = [attachment];
     original.readAudio = async () => Buffer.from('Never decoded by this port fixture');
     original.history = [
+      { role: 'user', text: 'Ancient transcript outside the compact window' },
+      { role: 'assistant', text: 'Ancient answer' },
       { role: 'user', text: 'Older transcript remains available', audioCaption: '' },
+      { role: 'assistant', text: 'Earlier answer' },
+      { role: 'user', text: 'Latest historical context' },
+    ];
+    original.relatedConversation = [
+      { role: 'user', text: 'Related conversation omitted when compact' },
     ];
     original.takeMessages = async () => [
       {
@@ -4429,9 +4867,23 @@ test('the runtime sends a recording caption natively while retaining its trusted
     assert.equal(prompts[0].text.includes('Private internal transcription'), !native);
     assert.equal(steered[0].text.includes('Second internal transcription'), !native);
     assert.ok(prompts[0].text.includes('Older transcript remains available'));
+    assert.equal(
+      prompts[0].text.includes('Ancient transcript outside the compact window'),
+      !compact,
+    );
+    assert.equal(prompts[0].text.includes('Related conversation omitted when compact'), !compact);
     if (native) {
       assert.deepEqual(prompts[0].audio?.files, [{ id, mimeType: 'audio/wav' }]);
       assert.ok(prompts[0].audio?.fallback.includes('Private internal transcription'));
+      assert.ok(prompts[0].audio?.fallback.includes('Older transcript remains available'));
+      assert.equal(
+        prompts[0].audio?.fallback.includes('Ancient transcript outside the compact window'),
+        !compact,
+      );
+      assert.equal(
+        prompts[0].audio?.fallback.includes('Related conversation omitted when compact'),
+        !compact,
+      );
       assert.ok(steered[0].audio?.fallback.includes('Second internal transcription'));
     } else assert.equal(prompts[0].audio, undefined);
     const textReply = {
