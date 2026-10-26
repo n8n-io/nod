@@ -1244,6 +1244,61 @@ test(
 );
 
 test(
+  'Telegram cleanup remains recoverable until the original message is restored',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+    const post = transport.post;
+    transport.post = async (input) => ({ id: (await post(input)).id });
+    let restoring: AbortSignal | undefined;
+    transport.progress = async (input) => {
+      assert.equal(input.status, null);
+      restoring = input.signal;
+      await new Promise<never>((_, reject) => {
+        input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true });
+      });
+    };
+    let channels = await create({ activity: async () => [] });
+    try {
+      receive('111', 'start', 'chat-owner');
+      await channels.drain();
+      const start = await turnOf('start');
+      const messageId = randomUUID();
+      await reply(start.turn_id, 'I will check the options.', messageId, 1);
+      await channels.drain();
+      await pool.query('UPDATE channel_outbox SET live_status=$2 WHERE message_id=$1', [
+        messageId,
+        'Checking options.',
+      ]);
+      await channels.drain();
+      await until(() => Boolean(restoring));
+      const savedStatus = async () =>
+        (
+          await pool.query('SELECT live_status FROM channel_outbox WHERE message_id=$1', [
+            messageId,
+          ])
+        ).rows[0].live_status;
+      assert.equal(await savedStatus(), 'Checking options.');
+      await channels.close();
+      assert.equal(restoring!.aborted, true);
+      assert.equal(await savedStatus(), 'Checking options.');
+      const restored: string[] = [];
+      transport.progress = async (input) => {
+        assert.equal(input.status, null);
+        assert.equal(await savedStatus(), 'Checking options.');
+        restored.push(input.messageId);
+      };
+      channels = await create({ activity: async () => [] });
+      await channels.drain();
+      await until(async () => (await savedStatus()) === null);
+      assert.deepEqual(restored, ['provider-1']);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
   'Telegram progress skips uncertain sends, split messages and attachments, and restores a persisted status after restart',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

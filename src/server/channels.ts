@@ -1309,7 +1309,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           : null;
       if (status === row.live_status) continue;
       const claimed = await pool.query(
-        `UPDATE channel_outbox o SET live_status=$3 FROM messages m,channel_inbox i,threads th
+        `UPDATE channel_outbox o SET live_status=COALESCE($3,o.live_status) FROM messages m,channel_inbox i,threads th
          WHERE o.message_id=$1 AND m.id=o.message_id AND m.owner_id=$2 AND i.source_id=o.source_id AND i.owner_id=$2
            AND th.id=m.thread_id AND th.owner_id=$2 AND o.state='sent'
            AND o.live_status IS NOT DISTINCT FROM $4
@@ -1326,15 +1326,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         ],
       );
       if (!claimed.rowCount) continue;
-      const retainStatus = () =>
-        pool.query(
-          'UPDATE channel_outbox SET live_status=$2 WHERE message_id=$1 AND live_status IS NULL',
-          [row.message_id, row.live_status],
-        );
-      if (presenceUnavailable() || !permitted(row)) {
-        if (status === null) await retainStatus();
-        continue;
-      }
+      if (presenceUnavailable() || !permitted(row)) continue;
       const controller = new AbortController();
       progressCall = { turnId: item?.turnId ?? '', controller };
       const signal = AbortSignal.any([
@@ -1358,8 +1350,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
           }),
         ]);
+        if (status === null)
+          await pool.query(
+            `UPDATE channel_outbox o SET live_status=NULL FROM messages m
+             WHERE o.message_id=$1 AND m.id=o.message_id AND m.owner_id=$2 AND o.live_status=$3`,
+            [row.message_id, ownerId, row.live_status],
+          );
       } catch (cause) {
-        if (status === null) await retainStatus();
         if (!signal.aborted) logFailure('channel_presence_failed', cause);
       } finally {
         progressCall = undefined;
