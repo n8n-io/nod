@@ -9,16 +9,16 @@ import appPages from '../../../src/shared/app-pages.json';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
     <meta name="referrer" content="no-referrer" />
-    <title>Open in nod</title>
+    <title>Open in Nod</title>
   </head>
   <body>
     <main>
-      <span class="brand">nod</span>
-      <h1>Open in nod</h1>
-      <p id="location">Open nod on your computer.</p>
-      <a id="open" hidden>Open in nod</a>
-      <p>On a phone? Open nod on the computer where you installed it, then go to the location above.</p>
-      <p id="fallback">If the link does not open nod, use the same location in the app.</p>
+      <span class="brand">Nod</span>
+      <h1>Open in Nod</h1>
+      <p id="location">Open Nod on your computer.</p>
+      <a id="open" hidden>Open in Nod</a>
+      <p>On a phone? Open Nod on the computer where you installed it, then go to the location above.</p>
+      <p id="fallback">If the link does not open Nod, use the same location in the app.</p>
     </main>
     <script define:vars={{ appPages }}>
       const path = window.location.hash.slice(1);
@@ -26,9 +26,9 @@ import appPages from '../../../src/shared/app-pages.json';
         const link = document.getElementById('open');
         link.href = `nod://open${path}`;
         link.hidden = false;
-        document.getElementById('location').textContent = `nod > ${appPages[path]}`;
+        document.getElementById('location').textContent = `Nod > ${appPages[path]}`;
       } else {
-        document.getElementById('location').textContent = 'This app link is not valid. Open nod on your computer.';
+        document.getElementById('location').textContent = 'This app link is not valid. Open Nod on your computer.';
         document.getElementById('fallback').hidden = true;
       }
     </script>

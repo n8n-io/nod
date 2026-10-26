@@ -1,26 +1,26 @@
 ---
 title: Saved browser sessions
-description: Keep a website signed in inside nod's private browser and reuse it in later tasks.
+description: Keep a website signed in inside Nod's private browser and reuse it in later tasks.
 sidebar:
   order: 8
 ---
 
-A saved browser session keeps a website signed in inside nod's private browser, so later tasks can reuse it. Use one for sign-ins a saved login can't handle, such as a magic link or a code on your phone.
+A saved browser session keeps a website signed in inside Nod's private browser, so later tasks can reuse it. Use one for sign-ins a saved login can't handle, such as a magic link or a code on your phone.
 
 ## Save a session
 
 1. In **Vault**, select **Add**, then **Website session**.
 2. Enter the **Website address** and, if you like, an **Account name**. Select **Continue in chat**.
-3. nod opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
-4. nod saves the session once it sees you're signed in.
+3. Nod opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
+4. Nod saves the session once it sees you're signed in.
 
-You can also ask nod in chat to connect to a website and save the session.
+You can also ask Nod in chat to connect to a website and save the session.
 
 ## Use a session
 
-When a task needs the website, nod opens the saved profile. It's the same permission check as a saved login: the server checks that your task needs this website and account, or nod asks "Use your saved session on example.com?". The check also considers the website the saved session belongs to, not only the page being opened; if a task needs a different site but not the saved-session website, nod asks you first and shows both.
+When a task needs the website, Nod opens the saved profile. It's the same permission check as a saved login: the server checks that your task needs this website and account, or Nod asks "Use your saved session on example.com?". The check also considers the website the saved session belongs to, not only the page being opened; if a task needs a different site but not the saved-session website, Nod asks you first and shows both.
 
-Opening a profile doesn't prove it's still signed in, so nod checks the page. If opening it lands on another website, such as a sign-in service, Vault shows **Sign-in needed** and a **Sign in again** button.
+Opening a profile doesn't prove it's still signed in, so Nod checks the page. If opening it lands on another website, such as a sign-in service, Vault shows **Sign-in needed** and a **Sign in again** button.
 
 A session opens in one browser at a time. While you're still signing in to it in the chat, other tasks can't open it, and they visit public pages without it.
 
@@ -39,22 +39,22 @@ Deleting a saved login keeps its browser session. The session remains in **Vault
 
 ## Passkeys and manual sign-in
 
-Passkeys are turned off in nod's browser, because your passkeys live on your own devices. A passkey request fails right away, so use another sign-in method. For a magic link or any step nod can't finish, nod asks you to take over its browser. See [nod's browser](/use/browser/).
+Passkeys are turned off in Nod's browser, because your passkeys live on your own devices. A passkey request fails right away, so use another sign-in method. For a magic link or any step Nod can't finish, Nod asks you to take over its browser. See [Nod's browser](/use/browser/).
 
 ## Saved session or saved login?
 
 |                 | Saved login                                           | Saved session                                 |
 | --------------- | ----------------------------------------------------- | --------------------------------------------- |
 | What's stored   | Username and password, encrypted by Vault             | The browser profile: cookies and site storage |
-| How you add it  | **Add → Login**, an import or the private form        | Sign in once in nod's browser                 |
-| How nod uses it | The server types the values into the fields nod picks | nod opens the signed-in profile               |
+| How you add it  | **Add → Login**, an import or the private form        | Sign in once in Nod's browser                 |
+| How Nod uses it | The server types the values into the fields Nod picks | Nod opens the signed-in profile               |
 | Where it works  | Fields on the login's exact origin                    | Any public website, never your local network  |
 | Best for        | Username and password sign-in                         | Sign-ins you do by hand, such as magic links  |
 
-Like the rest of nod's browser, a saved profile reaches only public addresses: never your computer, your local network or other containers.
+Like the rest of Nod's browser, a saved profile reaches only public addresses: never your computer, your local network or other containers.
 
 :::caution
-Once signed in, nod can act anywhere on that website. Vault doesn't review each click. A saved session is browser data kept with nod's other data, and Vault doesn't encrypt it, so protect the machine running nod and its backups.
+Once signed in, Nod can act anywhere on that website. Vault doesn't review each click. A saved session is browser data kept with Nod's other data, and Vault doesn't encrypt it, so protect the machine running Nod and its backups.
 :::
 
 ## Where this is enforced
@@ -65,5 +65,5 @@ Once signed in, nod can act anywhere on that website. Vault doesn't review each 
 
 - [Trust and Vault](/trust/)
 - [Vault and saved logins](/trust/vault/)
-- [nod's browser](/use/browser/)
+- [Nod's browser](/use/browser/)
 - [Security model and limits](/trust/security-model/)

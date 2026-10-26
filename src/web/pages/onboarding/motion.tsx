@@ -137,7 +137,7 @@ function Typing({ on = true }: { on?: boolean }) {
       className="ob-bubble ob-typing"
       data-on={on}
       role={on ? 'status' : undefined}
-      aria-label={on ? 'nod is typing' : undefined}
+      aria-label={on ? 'Nod is typing' : undefined}
       aria-hidden={!on}
     >
       <span />

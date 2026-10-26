@@ -153,7 +153,7 @@ function ConnectionSetup() {
             aria-describedby="server-token-help"
           />
           <p id="server-token-help" className="server-help">
-            Enter your server’s NOD_AUTH_TOKEN. nod saves it in your computer’s secure storage.
+            Enter your server’s NOD_AUTH_TOKEN. Nod saves it in your computer’s secure storage.
           </p>
           {error && (
             <p className="server-error" role="alert">
@@ -189,7 +189,7 @@ function ConnectionSetup() {
 function Startup() {
   const [status, setStatus] = useState<Status>(() =>
     !desktop
-      ? { phase: 'error', error: 'Open nod to finish setup.' }
+      ? { phase: 'error', error: 'Open Nod to finish setup.' }
       : parameters.has('unlocking')
         ? { phase: 'starting', unlockingKeys: true, platform: parameters.get('unlocking')! }
         : { phase: 'preparing' },
@@ -226,7 +226,7 @@ function Startup() {
       },
       () => {
         if (active && !receivedStatus)
-          setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
+          setStatus({ phase: 'error', error: 'Nod could not start. Try again.' });
       },
     );
     void Promise.all([desktop.getPreferences(), desktop.getSettings()])
@@ -264,7 +264,7 @@ function Startup() {
         ...previous,
         phase: 'error',
         unlockingKeys: false,
-        error: cause instanceof Error ? cause.message : 'nod could not start. Try again.',
+        error: cause instanceof Error ? cause.message : 'Nod could not start. Try again.',
       }));
     } finally {
       recoveryPending.current = false;
@@ -380,7 +380,7 @@ function Startup() {
   const working = busy || recovering;
   const error =
     !working && failure
-      ? failure.error || failure.message || 'nod could not start. Try again.'
+      ? failure.error || failure.message || 'Nod could not start. Try again.'
       : undefined;
   const progress =
     !failure &&
@@ -392,8 +392,8 @@ function Startup() {
       : undefined;
   const description = unlocking
     ? status.platform === 'darwin'
-      ? 'nod uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
-      : 'nod uses your system’s secure storage to protect your saved connections.'
+      ? 'Nod uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
+      : 'Nod uses your system’s secure storage to protect your saved connections.'
     : working
       ? firstSetup
         ? 'Preparing your workspace and browser.'
@@ -410,7 +410,7 @@ function Startup() {
         local={!status.remote}
         title={
           error
-            ? 'nod needs another try'
+            ? 'Nod needs another try'
             : status.remote
               ? 'Connecting to your server…'
               : startupMessage(active.stage)

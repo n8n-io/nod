@@ -827,7 +827,7 @@ test(
         );
       });
 
-      await t.test('nod never keeps a security code, even one saved before', async () => {
+      await t.test('Nod never keeps a security code, even one saved before', async () => {
         for (const response of [
           await app.inject({
             method: 'POST',

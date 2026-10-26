@@ -999,7 +999,7 @@ test(
         }
         return response === 'unsafe'
           ? '/credentials/credential-request'
-          : 'Continua na aplicação nod.';
+          : 'Continua na aplicação Nod.';
       },
     });
     const state = async (id: string) =>
@@ -1665,7 +1665,7 @@ test(
       transport: createChatSdkTransport(pool, telegramEnvironment),
       present: async (_threadId, input) => {
         if (input.kind === 'delivery' && input.attachments === 'pending')
-          return 'O ficheiro está disponível no nod.';
+          return 'O ficheiro está disponível no Nod.';
         if (presentationFails) throw new Error('Fixture presentation failure');
         return 'Ficheiro disponível na aplicação.';
       },

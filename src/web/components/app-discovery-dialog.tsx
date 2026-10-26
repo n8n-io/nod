@@ -448,7 +448,7 @@ export function AppDiscoveryDialog({
             ? 'Sign in to allow access to your account.'
             : paths.some((path) => path.kind === 'cli')
               ? 'Add your account securely. CLI tokens are saved without a setup check.'
-              : 'nod will check access before saving your connection.'}
+              : 'Nod will check access before saving your connection.'}
         </DialogDescription>
         {discovery?.setupText && <p>{discovery.setupText}</p>}
         {paths.map((path) => (

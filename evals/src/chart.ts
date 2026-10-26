@@ -70,7 +70,7 @@ function frame(runs: ChartRun[], title: string, subtitle: string, body: string, 
   const first = runs[0].summary.manifest;
   const judges = [...new Set(runs.map((run) => run.summary.manifest.judge.split('/').pop()!))];
   const scenarios = Math.max(...runs.map((run) => run.summary.scenarios.length));
-  return `<div class="card${runs.length > 8 ? ' compact' : ''}"><div><div class="eyebrow">nod capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
+  return `<div class="card${runs.length > 8 ? ' compact' : ''}"><div><div class="eyebrow">Nod capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
 }
 
 const colorOf = (run: ChartRun, runs: ChartRun[]) =>
@@ -153,7 +153,7 @@ function scoreboard(runs: ChartRun[]): Card {
     id: '01-scoreboard',
     html: frame(
       runs,
-      'Which model should run nod?',
+      'Which model should run Nod?',
       takeaways(runs),
       `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
       `Best value: cheapest per completed task within ${valueBand} points of the best · Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
@@ -669,7 +669,7 @@ export function cardPage(card: Card) {
   return `<!doctype html><html><meta charset="utf-8"><style>${css}</style>${card.html}<script>document.title=String(document.documentElement.scrollHeight)</script></html>`;
 }
 
-export function comparisonChart(runs: ChartRun[], title = 'nod capability evals') {
+export function comparisonChart(runs: ChartRun[], title = 'Nod capability evals') {
   const sections = cards(runs)
     .map((card) => `<div class="wrap">${card.html}</div>`)
     .join('');

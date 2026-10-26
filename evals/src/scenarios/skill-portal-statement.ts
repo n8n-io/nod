@@ -145,7 +145,7 @@ export default scenario({
           aspect: 'outcome',
           failure: 'incomplete',
           otherwise:
-            'A skill nod saved or patched in the third conversation now sends the next run to Billing, then Documents, instead of the old Account > More options > Data and documents route. Mentioning the old route as outdated is fine.',
+            'A skill Nod saved or patched in the third conversation now sends the next run to Billing, then Documents, instead of the old Account > More options > Data and documents route. Mentioning the old route as outdated is fine.',
         },
       ),
       check(

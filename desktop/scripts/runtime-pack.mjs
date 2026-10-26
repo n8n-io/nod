@@ -151,7 +151,7 @@ try {
     archive = saved.archive;
 } catch {}
 if (!archive) {
-  console.log('Creating the verified nod Runtime pack.');
+  console.log('Creating the verified Nod Runtime pack.');
   await rm(`${path}.tmp`, { force: true });
   const images = ['images/postgres.tar.zst', 'images/workspace.tar.zst', 'images/browser.tar.zst'];
   await create(

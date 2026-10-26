@@ -398,7 +398,7 @@ function Ideas({
       <p className="statement-summary">
         {first}
         <br />
-        {ask.length > 1 ? 'Hand it ' : 'Hand nod '}
+        {ask.length > 1 ? 'Hand it ' : 'Hand Nod '}
         {ask.map((kind, index) => (
           <Fragment key={kind}>
             {index > 0 && ', or '}
@@ -501,7 +501,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
         )}
       </header>
       {fresh ? (
-        <Ideas first="nod has nothing on its plate." ask={['task', 'schedule']} onAsk={onAsk} />
+        <Ideas first="Nod has nothing on its plate." ask={['task', 'schedule']} onAsk={onAsk} />
       ) : !tabbed ? (
         <Pending label="Loading tasks…" />
       ) : (
@@ -604,7 +604,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
                   )}
                   {desktopSettingsAvailable() && (
                     <p className="saved-plan-note schedule-availability">
-                      Scheduled tasks run only while your Mac is on and nod is open.
+                      Scheduled tasks run only while your Mac is on and Nod is open.
                     </p>
                   )}
                   {inactive.length > 0 && (

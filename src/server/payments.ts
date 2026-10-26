@@ -175,7 +175,7 @@ export async function createPayments(
     const cards = await options.cards();
     if (!cards.length)
       throw new PaymentError(
-        'Ask the owner to open nod on desktop and [add a card in Vault](/vault?add=card), then tell you to continue. Do not ask for card details in chat.',
+        'Ask the owner to open Nod on desktop and [add a card in Vault](/vault?add=card), then tell you to continue. Do not ask for card details in chat.',
       );
     const named = hint?.toLowerCase();
     const matches = named
@@ -194,7 +194,7 @@ export async function createPayments(
 
   async function enter(row: Row, card: VaultPaymentCard, securityCode: string) {
     let value: CardEntry['card'];
-    const message = `nod entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. nod submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
+    const message = `Nod entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. Nod submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
     await uses.run(
       {
         id: row.id,

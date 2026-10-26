@@ -1,11 +1,11 @@
 ---
 title: Deploy and operate
-description: Run one personal nod server, connect your devices, and keep its configuration and data safe.
+description: Run one personal Nod server, connect your devices, and keep its configuration and data safe.
 sidebar:
   order: 0
 ---
 
-Run one nod server for yourself, then use it from the web app, desktop app, Telegram, or WhatsApp.
+Run one Nod server for yourself, then use it from the web app, desktop app, Telegram, or WhatsApp.
 
 Each server has one assistant and one owner. Everyone with its access token can use that assistant and its connected accounts.
 
@@ -17,5 +17,5 @@ Each server has one assistant and one owner. Everyone with its access token can 
 - [Back up and update a server](/deploy/server-operations/): preserve your data, restore it, and manage updates.
 - [Configuration reference](/deploy/configuration/): environment variables, defaults, and precedence.
 - [The desktop app](/deploy/desktop-app/): local runtime, data storage, and updates.
-- [Analytics and recordings](/deploy/analytics/): what nod collects and how to control it.
+- [Analytics and recordings](/deploy/analytics/): what Nod collects and how to control it.
 - [Troubleshooting](/deploy/troubleshooting/): diagnose setup and runtime problems.

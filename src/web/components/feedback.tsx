@@ -356,7 +356,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
         if (controller.signal.aborted) return null;
         if (!feedbackReportData(snapshot.content))
           throw new Error(
-            'Update nod to prepare a redacted diagnostic report, or continue without one.',
+            'Update Nod to prepare a redacted diagnostic report, or continue without one.',
           );
         reportRef.current = snapshot;
         setReport(snapshot);

@@ -108,7 +108,7 @@ const [application] = await packager({
   electronVersion,
   platform: 'win32',
   arch: 'x64',
-  win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'nod', FileDescription: 'nod' },
+  win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Nod', FileDescription: 'Nod' },
   asar: false,
   prune: false,
   overwrite: true,

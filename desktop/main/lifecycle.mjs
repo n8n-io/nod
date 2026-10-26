@@ -18,7 +18,7 @@ export function createDesktopLifecycle({
   const controllers = new Set();
 
   function checkOpen(signal) {
-    if (closed || signal?.aborted) throw new Error('nod is closing.');
+    if (closed || signal?.aborted) throw new Error('Nod is closing.');
   }
 
   function report(value) {
@@ -118,7 +118,7 @@ export function createDesktopLifecycle({
   function install(installer, { warmup: prepare = true } = {}) {
     checkOpen();
     if (warming || starting || installing || runtime)
-      throw new Error('Wait for nod to finish its current setup step.');
+      throw new Error('Wait for Nod to finish its current setup step.');
     const controller = new AbortController();
     controllers.add(controller);
     installing = Promise.resolve()

@@ -24,12 +24,12 @@ const providers = [
   {
     id: 'telegram' as const,
     name: 'Telegram',
-    description: 'Chat with nod in Telegram.',
+    description: 'Chat with Nod in Telegram.',
   },
   {
     id: 'whatsapp' as const,
     name: 'WhatsApp',
-    description: 'Chat with nod in WhatsApp.',
+    description: 'Chat with Nod in WhatsApp.',
   },
 ];
 const channelStatus = {
@@ -146,7 +146,7 @@ export function ChannelSetupStep({
     <>
       <p>
         Use these same callback settings in Meta, then subscribe the app to messages. Expose only
-        this route; keep the rest of nod private.
+        this route; keep the rest of Nod private.
       </p>
       <Field
         label="Public HTTPS callback"
@@ -275,7 +275,7 @@ function ChannelCard({
                 <DialogTitle>Finish {provider.name} setup</DialogTitle>
                 <DialogDescription>
                   {setup?.webhookStatus === 'registration_pending'
-                    ? 'Restart nod to retry the saved setup.'
+                    ? 'Restart Nod to retry the saved setup.'
                     : 'Finish the callback in Meta and subscribe to messages.'}
                 </DialogDescription>
                 {setup?.webhookUrl && (
@@ -541,7 +541,7 @@ export function Channels() {
         >
           <DialogTitle>Disconnect {removing === 'whatsapp' ? 'WhatsApp' : 'Telegram'}?</DialogTitle>
           <DialogDescription>
-            nod will stop receiving messages here. You can connect again later.
+            Nod will stop receiving messages here. You can connect again later.
           </DialogDescription>
           {removeError && <Notice>{removeError}</Notice>}
           <div className="channel-remove-actions">
@@ -572,7 +572,7 @@ export function Channels() {
                 <img src={`/logos/${editing}.svg`} alt="" width={24} height={24} />
                 {selected?.provider.name}
               </DialogTitle>
-              <DialogDescription>Keep nod running to receive messages.</DialogDescription>
+              <DialogDescription>Keep Nod running to receive messages.</DialogDescription>
               <div className="channel-wizard-step" data-analytics-private>
                 <div className="channel-manage-identity">
                   <strong>
@@ -590,7 +590,7 @@ export function Channels() {
                     {telegramSetup?.pairedUser ||
                       telegramSetup?.pairedUsername ||
                       telegramSetup?.allowedUserId}{' '}
-                    can message nod through this bot.
+                    can message Nod through this bot.
                   </p>
                 )}
                 <div className="channel-wizard-actions">
@@ -706,7 +706,7 @@ export function Channels() {
               </DialogTitle>
               <DialogDescription>
                 {selected?.setup?.connectionState === 'connected'
-                  ? 'Keep nod running to receive messages.'
+                  ? 'Keep Nod running to receive messages.'
                   : 'Link an account with a QR code.'}
               </DialogDescription>
               <WhatsAppSetup
@@ -737,7 +737,7 @@ export function Channels() {
               <DialogTitle>{whatsappSteps[step]}</DialogTitle>
               <DialogDescription>
                 {step === 0
-                  ? 'Connect in a few small steps. nod checks your credentials before saving.'
+                  ? 'Connect in a few small steps. Nod checks your credentials before saving.'
                   : 'Credentials stay in this secure form, outside the conversation.'}
               </DialogDescription>
               {error && <Notice>{error}</Notice>}

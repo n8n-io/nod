@@ -1,7 +1,7 @@
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
-Name "nod"
+Name "Nod"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\nod"
 InstallDirRegKey HKCU "Software\nod" "InstallDir"
@@ -20,13 +20,13 @@ ShowInstDetails show
 
 Function .onInit
   ${IfNot} ${IsNativeAMD64}
-    MessageBox MB_ICONSTOP "nod needs Windows 11 on an x64 computer." /SD IDOK
+    MessageBox MB_ICONSTOP "Nod needs Windows 11 on an x64 computer." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
   ReadRegStr $0 HKLM "Software\Microsoft\Windows NT\CurrentVersion" "CurrentBuildNumber"
   ${If} $0 < 22000
-    MessageBox MB_ICONSTOP "nod needs Windows 11 or later." /SD IDOK
+    MessageBox MB_ICONSTOP "Nod needs Windows 11 or later." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
@@ -40,7 +40,7 @@ Function CheckInstallDirectory
     StrCmp $1 "." directory_continue
     StrCmp $1 ".." directory_continue
     FindClose $0
-    MessageBox MB_ICONSTOP "Choose an empty folder for nod. The selected folder contains other files." /SD IDOK
+    MessageBox MB_ICONSTOP "Choose an empty folder for Nod. The selected folder contains other files." /SD IDOK
     SetErrorLevel 1
     Abort
   directory_continue:
@@ -73,7 +73,7 @@ Section "nod"
     ClearErrors
     CopyFiles /SILENT "$EXEDIR\nod-Runtime-win32-x64.tar.gz" "$INSTDIR\resources\engine\windows-runtime\guest.tar.gz"
     IfErrors 0 runtime_copied
-      MessageBox MB_ICONSTOP "nod could not copy its runtime. Check free disk space, then run this installer again." /SD IDOK
+      MessageBox MB_ICONSTOP "Nod could not copy its runtime. Check free disk space, then run this installer again." /SD IDOK
       SetErrorLevel 1
       Abort
   runtime_copied:
@@ -82,7 +82,7 @@ Section "nod"
   CreateShortcut "$SMPROGRAMS\nod\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
   CreateShortcut "$DESKTOP\nod.lnk" "$INSTDIR\nod.exe"
   WriteRegStr HKCU "Software\nod" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayName" "nod"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayName" "Nod"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "Publisher" "n8n GmbH"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "UninstallString" '$"$INSTDIR\Uninstall.exe$"'

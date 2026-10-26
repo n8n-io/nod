@@ -1,15 +1,15 @@
 ---
 title: Approvals and the trust check
-description: Which app actions and browser steps nod runs directly, which wait for your yes, and how the nod server decides.
+description: Which app actions and browser steps Nod runs directly, which wait for your yes, and how the Nod server decides.
 sidebar:
   order: 5
 ---
 
-Before nod runs an action in a connected app, or a step in its browser that could send, submit or change something, the nod server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words or [your rules](#your-rules) ask for it. Otherwise nod asks you.
+Before Nod runs an action in a connected app, or a step in its browser that could send, submit or change something, the Nod server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words or [your rules](#your-rules) ask for it. Otherwise Nod asks you.
 
 ## Your request covers its steps
 
-Ask for an outcome and nod takes the steps it needs, in the apps, accounts and websites you named, up to the order, booking or message you asked for. You aren't asked about each step on the way.
+Ask for an outcome and Nod takes the steps it needs, in the apps, accounts and websites you named, up to the order, booking or message you asked for. You aren't asked about each step on the way.
 
 | You say                                          | Runs without asking                                                        | Waits for you                                                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -17,11 +17,11 @@ Ask for an outcome and nod takes the steps it needs, in the apps, accounts and w
 | "Book a table for two at Tasca tonight at 8"     | Picking the time, entering your name, confirming the booking               | A deposit paid by card, another restaurant                                                                  |
 | "Move my 3pm with Lena to Thursday and tell her" | Moving that event, emailing Lena the new time                              | Emailing anyone else, changing or cancelling another meeting                                                |
 
-Nothing past the outcome is covered: another website or recipient, a subscription or another purchase, a new account, publishing, deleting something you didn't name, changing your account or its settings, or sending your details for anything the job doesn't need. When nod proposes a plan and you say yes, your yes covers each step of that plan.
+Nothing past the outcome is covered: another website or recipient, a subscription or another purchase, a new account, publishing, deleting something you didn't name, changing your account or its settings, or sending your details for anything the job doesn't need. When Nod proposes a plan and you say yes, your yes covers each step of that plan.
 
-The same checker decides when nod changes its own schedules, notification settings, your rules or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it and its scheduled time, and background work against your [standing instruction](#standing-instructions). Saving a note has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Nod changes its own schedules, notification settings, your rules or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it and its scheduled time, and background work against your [standing instruction](#standing-instructions). Saving a note has its own rules: see [Memory](/how-it-works/memory/).
 
-Private preparation starts on its own for every connected app: it reads, prepares private drafts and may [nudge you](/use/nudges/). It never changes connected apps. A read through an app's own tools runs only when the checker's read-only check calls it a read, and private preparation skips a read instead of asking you. Other work nod starts on its own, which acts on a new email or app activity, runs only once you've told nod to do something on its own. It has only your standing instruction and [your rules](#your-rules) behind it. So the checker lets it read and draft, do what that instruction asks and what your rules allow. nod asks you about everything else, and whenever a rule says to ask first. nod doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
+Private preparation starts on its own for every connected app: it reads, prepares private drafts and may [nudge you](/use/nudges/). It never changes connected apps. A read through an app's own tools runs only when the checker's read-only check calls it a read, and private preparation skips a read instead of asking you. Other work Nod starts on its own, which acts on a new email or app activity, runs only once you've told Nod to do something on its own. It has only your standing instruction and [your rules](#your-rules) behind it. So the checker lets it read and draft, do what that instruction asks and what your rules allow. Nod asks you about everything else, and whenever a rule says to ask first. Nod doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
 ## What the checker sees
 
@@ -32,16 +32,16 @@ Reading your reply to a confirmation can use a decision model instead. See [Deci
 | It sees                                                                            | It never sees                                                               |
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | For main chat, your last five messages from the past day and the source request    | Tool results, web pages, emails or files                                    |
-| The nod message your latest one answered, not as proof of what you saw or approved | Anything nod read while working                                             |
+| The Nod message your latest one answered, not as proof of what you saw or approved | Anything Nod read while working                                             |
 | A scheduled run's instruction and run time, instead of your messages               | Task cards you tapped on your first chat, even when they started a schedule |
-| The action and its arguments as nod sends them                                     | Other people's words as yours                                               |
+| The action and its arguments as Nod sends them                                     | Other people's words as yours                                               |
 | For background work, your standing instruction, instead of your messages           |                                                                             |
 | [Your rules](#your-rules), for every action, wherever the work comes from          |                                                                             |
-| How a schedule or memory note nod would change stands now                          |                                                                             |
+| How a schedule or memory note Nod would change stands now                          |                                                                             |
 
-For a saved task, the checker sees your recent chat messages as they stood when the task started (the same ones the chat's check saw then, never later chat messages), the request that led to it with your answers to nod's questions, and recent owner messages addressed to that task. It does not use messages addressed only to another task. The nod message your latest one answered is the one you replied to, or else the latest nod message in that channel before you wrote, from the last 24 hours; a task's checker sees it only when it is that task's own message, so a yes nod passes on to a task never answers a question that task didn't ask. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
+For a saved task, the checker sees your recent chat messages as they stood when the task started (the same ones the chat's check saw then, never later chat messages), the request that led to it with your answers to Nod's questions, and recent owner messages addressed to that task. It does not use messages addressed only to another task. The Nod message your latest one answered is the one you replied to, or else the latest Nod message in that channel before you wrote, from the last 24 hours; a task's checker sees it only when it is that task's own message, so a yes Nod passes on to a task never answers a question that task didn't ask. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 
-Only your words carry authority. The checker never reads the web pages or emails nod read, so their text reaches it only where nod copies it into the action itself, such as an email body, or into a message of nod's that you answered. The checker is an AI model and can be wrong.
+Only your words carry authority. The checker never reads the web pages or emails Nod read, so their text reaches it only where Nod copies it into the action itself, such as an email body, or into a message of Nod's that you answered. The checker is an AI model and can be wrong.
 
 ## Because you said
 
@@ -57,7 +57,7 @@ Your rules, limits in your task request, a schedule's instructions or your stand
 | ------------------------------------------------ | ---------------- | --------------------------------------------- |
 | A conversation with you                          | Run              | Run if your request covers it                 |
 | A scheduled run                                  | Run              | Run if the schedule's instruction asks for it |
-| Background work nod starts, such as on new email | Run              | Run if your standing instruction asks for it  |
+| Background work Nod starts, such as on new email | Run              | Run if your standing instruction asks for it  |
 
 ```mermaid
 flowchart TD
@@ -66,24 +66,24 @@ flowchart TD
   check -- no --> ask[Ask you]:::accent
 ```
 
-If the checker can't answer, nod requires confirmation. If the model can't write or check that confirmation, the action stays blocked. nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
+If the checker can't answer, Nod requires confirmation. If the model can't write or check that confirmation, the action stays blocked. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
 
 ## Browser steps
 
 On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening a page, reading it, typing into a field without pressing Enter (including single characters pressed into a text field), and read-only scripts skip the checker. Typing skips it even on a page that saves as you type. A download from a link just follows its address. A download from a button is a click, so the checker decides it too.
 
-The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what nod typed or chose on that page. When a click on a submit button or its label, or Enter in a form field, would send a form, it also sees the method and address the browser would send it with, read from the exact element the click lands on. That shows where a vaguely labelled button really sends, as far as the address says what it does; the checker is also told that the page's scripts may handle the form instead. When the browser can't read the form, the checker is told it's unknown. A control that acts through page scripts without a form, such as a list that sends itself when you choose an option, shows no form, so the checker judges it by its label. It never sees the page's text. Following links, searching, filtering, opening or closing a popup, any choice on a cookie banner, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Cookie choices stay in nod's own browser, never yours, and nod picks the option that shares least. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, and changing your account or a setting that saves at once count as acting, and run only when your words ask for them or for an outcome they're part of. A control without a label runs only while nod is getting something done on that website for you, such as buying or booking there, and only when even the worst it could do stays within that. For a question or a lookup, nod asks.
+The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Nod typed or chose on that page. When a click on a submit button or its label, or Enter in a form field, would send a form, it also sees the method and address the browser would send it with, read from the exact element the click lands on. That shows where a vaguely labelled button really sends, as far as the address says what it does; the checker is also told that the page's scripts may handle the form instead. When the browser can't read the form, the checker is told it's unknown. A control that acts through page scripts without a form, such as a list that sends itself when you choose an option, shows no form, so the checker judges it by its label. It never sees the page's text. Following links, searching, filtering, opening or closing a popup, any choice on a cookie banner, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Cookie choices stay in Nod's own browser, never yours, and Nod picks the option that shares least. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, and changing your account or a setting that saves at once count as acting, and run only when your words ask for them or for an outcome they're part of. A control without a label runs only while Nod is getting something done on that website for you, such as buying or booking there, and only when even the worst it could do stays within that. For a question or a lookup, Nod asks.
 
-When the checker asks, the question names what the page shows, such as the amount and payee: the question writer and its fact check read the page's visible text, which the checker itself never sees. Your yes approves that one step. nod runs it once, only while the browser is still on the same page, the control is still there and it still sends the same form. If the page moved on, nothing runs and nod looks again. A subagent can't ask you, so it hands the step back to the main task.
+When the checker asks, the question names what the page shows, such as the amount and payee: the question writer and its fact check read the page's visible text, which the checker itself never sees. Your yes approves that one step. Nod runs it once, only while the browser is still on the same page, the control is still there and it still sends the same form. If the page moved on, nothing runs and Nod looks again. A subagent can't ask you, so it hands the step back to the main task.
 
 ## Standing instructions
 
-Tell nod what to do on its own when something arrives, and background work does it without asking. For example: "Whenever Ana sends an invoice, forward it to accounting@acme.com." Without one, nod still prepares private work from your apps and may nudge you, but it takes no action in your connected apps on its own.
+Tell Nod what to do on its own when something arrives, and background work does it without asking. For example: "Whenever Ana sends an invoice, forward it to accounting@acme.com." Without one, Nod still prepares private work from your apps and may nudge you, but it takes no action in your connected apps on its own.
 
-- **nod offers.** When you act on something background work brought you, such as asking nod to reply, and it will come up again, nod offers once to do it without asking next time.
-- **It sits with what nod watches for.** nod keeps it next to what you've said is worth interrupting you for. When nod changes it for you, the same checker sees what you set before, so nod asks before it adds anything you didn't ask for.
-- **The checker sees only the instruction, your rules and the action.** It never sees the email or update that started the work. An action that matches the instruction runs, unless one of your rules says to ask first. Anything else, such as a forward to a different address, asks you. It never covers a change to nod's own schedules, settings, limits or memory.
-- **See, change or stop it in Usage**, or tell nod, for example "stop forwarding Ana's invoices". The next action is checked against what you set. To stop private preparation too, tell nod "Pause preparation".
+- **Nod offers.** When you act on something background work brought you, such as asking Nod to reply, and it will come up again, Nod offers once to do it without asking next time.
+- **It sits with what Nod watches for.** Nod keeps it next to what you've said is worth interrupting you for. When Nod changes it for you, the same checker sees what you set before, so Nod asks before it adds anything you didn't ask for.
+- **The checker sees only the instruction, your rules and the action.** It never sees the email or update that started the work. An action that matches the instruction runs, unless one of your rules says to ask first. Anything else, such as a forward to a different address, asks you. It never covers a change to Nod's own schedules, settings, limits or memory.
+- **See, change or stop it in Usage**, or tell Nod, for example "stop forwarding Ana's invoices". The next action is checked against what you set. To stop private preparation too, tell Nod "Pause preparation".
 
 :::caution[Name the action and the target]
 Anyone can send you an email that claims to be from Ana. A standing instruction runs for anything that matches it, so say exactly what to do and where. Then a fake invoice can only reach accounting.
@@ -91,19 +91,19 @@ Anyone can send you an email that claims to be from Ana. A standing instruction 
 
 ## Your rules
 
-Tell nod once how it should work for you, and the checker holds every chat, task, scheduled run and background run to it. For example: "Always ask me before you send email outside my company" or "You can reply to my landlord about repairs without asking."
+Tell Nod once how it should work for you, and the checker holds every chat, task, scheduled run and background run to it. For example: "Always ask me before you send email outside my company" or "You can reply to my landlord about repairs without asking."
 
-- **A rule to ask first wins.** nod asks before anything the rule names, even when your request covers it, reads and drafts included. Your yes runs that one action.
-- **A rule to go ahead covers only what it says.** It counts as your words for that action and target, and never for a change to nod's own schedules, settings, rules, limits or memory.
-- **nod offers.** When you approve something nod asked about in a chat or task and it will come up again, nod offers once to stop asking for it.
-- **Changes are checked.** When nod changes your rules for you, the checker sees what they said before, so nod asks before it adds anything you didn't ask for.
-- **See, change or clear them in Usage**, or tell nod, for example "you don't need to ask before paying my rent anymore".
+- **A rule to ask first wins.** Nod asks before anything the rule names, even when your request covers it, reads and drafts included. Your yes runs that one action.
+- **A rule to go ahead covers only what it says.** It counts as your words for that action and target, and never for a change to Nod's own schedules, settings, rules, limits or memory.
+- **Nod offers.** When you approve something Nod asked about in a chat or task and it will come up again, Nod offers once to stop asking for it.
+- **Changes are checked.** When Nod changes your rules for you, the checker sees what they said before, so Nod asks before it adds anything you didn't ask for.
+- **See, change or clear them in Usage**, or tell Nod, for example "you don't need to ask before paying my rent anymore".
 
-Your standing instruction says what nod does on its own when something arrives. Your rules say what nod may do without asking, and what it must ask about, wherever the work comes from. Owners without rules get the same check as before.
+Your standing instruction says what Nod does on its own when something arrives. Your rules say what Nod may do without asking, and what it must ask about, wherever the work comes from. Owners without rules get the same check as before.
 
 ## The confirmation
 
-The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why nod is asking, preserving the material facts in your conversation language. It names the website, account and recipient as the action does, not by what you called them, and adds nothing from the conversation, such as that it repeats an earlier attempt, or guesses about what the action might cause. So a lookalike site can't hide behind the name you used. There are no language-specific confirmation templates or yes/no word lists.
+The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Nod is asking, preserving the material facts in your conversation language. It names the website, account and recipient as the action does, not by what you called them, and adds nothing from the conversation, such as that it repeats an earlier attempt, or guesses about what the action might cause. So a lookalike site can't hide behind the name you used. There are no language-specific confirmation templates or yes/no word lists.
 
 Before showing it, a separate fact check by your selected model compares the question with those frozen facts without seeing the conversation. The writer and the fact check receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. When the fact check rejects a question, the writer gets one fresh attempt, checked the same way. A second rejection, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
 
@@ -114,32 +114,32 @@ Generating a question doesn't approve anything. The server checks the task again
 - Your reply answers the newest question you'd seen, not one that arrived after it.
 - A later status message in the same reply channel blocks a bare yes. A status in another channel does not block it. On web, a message that arrived after your displayed view does not replace the question you saw. Reply directly to the question to select it.
 - A separate check reads only your reply, never the question or the action, and decides whether it says yes, no or something else. It uses a decision model when one applies, otherwise your selected model. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
-- A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and nod treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
-- A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question. If the action can no longer run or it fails, the task continues with the reason and doesn't run it again. If nod tries the same action again for that request, it gets the first result, or a refusal while your answer is pending, after a no, or while the outcome is uncertain.
+- A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Nod treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
+- A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question. If the action can no longer run or it fails, the task continues with the reason and doesn't run it again. If Nod tries the same action again for that request, it gets the first result, or a refusal while your answer is pending, after a no, or while the outcome is uncertain.
 - Schedule edits and cancellations apply only to the reviewed version and need a fresh review if the schedule changes.
-- Within one task, including any subagents it starts, nod asks one question at a time. While it waits for your answer, app actions that task started after the question don't run, and nod can try them again after you answer. Separate tasks, such as two scheduled runs, can each wait on their own question.
+- Within one task, including any subagents it starts, Nod asks one question at a time. While it waits for your answer, app actions that task started after the question don't run, and Nod can try them again after you answer. Separate tasks, such as two scheduled runs, can each wait on their own question.
 
 ```mermaid
 sequenceDiagram
   actor You
-  participant nod
+  participant Nod
   participant Server
   participant App as Slack
-  You->>nod: Tell the team the report is ready
-  nod->>Server: Post in the team channel
+  You->>Nod: Tell the team the report is ready
+  Nod->>Server: Post in the team channel
   Server->>Server: Checker: not clearly asked
   Server-->>You: Slack: send message? Account, fields, why
   You->>Server: yes
   Server->>App: Run the saved action once
-  App-->>nod: Result, marked as data
+  App-->>Nod: Result, marked as data
 ```
 
 :::note[Asked once]
-nod doesn't add its own confirmation on top of the trust check or payment approval. The trust check asks you whenever your words don't cover an action; nod itself asks only when the account, target or action is unclear.
+Nod doesn't add its own confirmation on top of the trust check or payment approval. The trust check asks you whenever your words don't cover an action; Nod itself asks only when the account, target or action is unclear.
 :::
 
 :::caution[What the trust check doesn't cover]
-It checks connected-app actions, browser steps that could submit or change something, nod's own changes and [sign-ins](/trust/vault/). Card entry always goes through [payment approval](/trust/payments/). The checker judges a browser step by the label the website gives the control and, for a form, the address it sends to. A button that acts through page scripts instead of a form shows only its label, so a deceptive site can still mislabel it. Your request covers the steps it needs on the website you named, so a page could steer nod to another step there that also fits, such as adding a second item to the basket; payment approval shows the total before any card is used. Opening a link nod found counts as reading. The checker is a best-effort judge and can be wrong.
+It checks connected-app actions, browser steps that could submit or change something, Nod's own changes and [sign-ins](/trust/vault/). Card entry always goes through [payment approval](/trust/payments/). The checker judges a browser step by the label the website gives the control and, for a form, the address it sends to. A button that acts through page scripts instead of a form shows only its label, so a deceptive site can still mislabel it. Your request covers the steps it needs on the website you named, so a page could steer Nod to another step there that also fits, such as adding a second item to the basket; payment approval shows the total before any card is used. Opening a link Nod found counts as reading. The checker is a best-effort judge and can be wrong.
 :::
 
 ## Where this is enforced

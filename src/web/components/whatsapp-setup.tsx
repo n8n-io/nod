@@ -157,7 +157,7 @@ export function WhatsAppSetup({
         >
           {!selfChatOnly && (
             <fieldset disabled={busy} className="channel-modes">
-              <legend>Choose how you will message nod</legend>
+              <legend>Choose how you will message Nod</legend>
               <label>
                 <input
                   type="radio"
@@ -182,7 +182,7 @@ export function WhatsAppSetup({
             <>
               <p>
                 Register a second number in WhatsApp or the WhatsApp Business app. You will link
-                that account to nod.
+                that account to Nod.
               </p>
               <Field
                 label="Your personal WhatsApp number"
@@ -203,7 +203,7 @@ export function WhatsAppSetup({
             </>
           ) : (
             <p>
-              Use <strong>Message yourself</strong> to chat with nod. Other chats stay outside nod.
+              Use <strong>Message yourself</strong> to chat with Nod. Other chats stay outside Nod.
             </p>
           )}
           <p>This uses an unofficial connection. WhatsApp may restrict your account.</p>
@@ -264,7 +264,7 @@ export function WhatsAppSetup({
                     'Open WhatsApp'
                   )}
                   {setup?.linkMode === 'self-chat'
-                    ? ', select Message yourself, and send nod a message.'
+                    ? ', select Message yourself, and send Nod a message.'
                     : ' on your phone and send a message to the linked number.'}
                 </p>
               </>
@@ -281,7 +281,7 @@ export function WhatsAppSetup({
                       size={196}
                       marginSize={4}
                       level="M"
-                      title="Link WhatsApp to nod"
+                      title="Link WhatsApp to Nod"
                     />
                   </div>
                 ) : (
@@ -292,7 +292,7 @@ export function WhatsAppSetup({
               <p>
                 {state === 'connecting'
                   ? 'Connecting to WhatsApp…'
-                  : 'WhatsApp is disconnected. nod is trying to connect again.'}
+                  : 'WhatsApp is disconnected. Nod is trying to connect again.'}
               </p>
             ) : (
               <Notice>

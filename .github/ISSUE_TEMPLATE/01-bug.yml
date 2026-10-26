@@ -1,5 +1,5 @@
 name: Bug report
-description: Report something in nod that doesn't work as described
+description: Report something in Nod that doesn't work as described
 labels: [bug]
 body:
   - type: markdown
@@ -12,7 +12,7 @@ body:
     id: description
     attributes:
       label: What happened?
-      description: What nod did, including any error message.
+      description: What Nod did, including any error message.
     validations:
       required: true
   - type: textarea
@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       description: Use synthetic data where you can.
       placeholder: |
-        1. Ask nod to ...
+        1. Ask Nod to ...
         2. Approve ...
         3. See ...
     validations:
@@ -43,7 +43,7 @@ body:
   - type: dropdown
     id: install
     attributes:
-      label: How do you run nod?
+      label: How do you run Nod?
       options:
         - Desktop app
         - From source (pnpm start)
@@ -54,8 +54,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: nod version
-      description: 'Desktop: nod → About nod. Source: `git rev-parse --short HEAD`.'
+      label: Nod version
+      description: 'Desktop: About in the app menu. Source: `git rev-parse --short HEAD`.'
       placeholder: ex. 0.1.10 or 6c3af62
     validations:
       required: true

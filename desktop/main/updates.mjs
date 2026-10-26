@@ -298,7 +298,7 @@ export function createDesktopUpdater({
       return ready;
     },
     check() {
-      if (disposed) return Promise.reject(new Error('nod is closing.'));
+      if (disposed) return Promise.reject(new Error('Nod is closing.'));
       if (ready) return Promise.resolve(ready);
       if (checking) return checking;
       checking = (async () => {
@@ -330,7 +330,7 @@ export function createDesktopUpdater({
               );
             const unavailable = () =>
               finish(new Error('The selected desktop update is unavailable.'));
-            const aborted = () => finish(new Error('nod is closing.'));
+            const aborted = () => finish(new Error('Nod is closing.'));
             const timeout = setTimeout(
               () => finish(new Error('The desktop update download timed out.')),
               downloadTimeout,

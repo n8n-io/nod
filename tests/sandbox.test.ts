@@ -365,7 +365,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
         throw new Error('Existing command was not cancelled.');
       }),
     ]);
-    await assert.rejects(execute(session, 'later'), /Restart nod/);
+    await assert.rejects(execute(session, 'later'), /Restart Nod/);
     assert.equal(processes.length, 2);
     assert.equal(failureSettled, false);
     acknowledge();

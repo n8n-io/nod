@@ -1,13 +1,13 @@
 ---
 title: Host your own server
-description: Run one nod server with Docker, protect it with a token, and connect through the web, desktop app, Telegram, or WhatsApp.
+description: Run one Nod server with Docker, protect it with a token, and connect through the web, desktop app, Telegram, or WhatsApp.
 sidebar:
   order: 1
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-Run nod on a Linux server or Mac mini, then use the same assistant from your other devices.
+Run Nod on a Linux server or Mac mini, then use the same assistant from your other devices.
 
 One server belongs to one person. Its access token grants full access to that person's assistant and connected accounts. There is no registration or multi-user setup.
 
@@ -24,7 +24,7 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
 
 ## Install a prebuilt bundle
 
-Download a `server-<commit>` release from the private [nod releases](https://github.com/n8n-io/nod/releases), when one is available. Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
+Download a `server-<commit>` release from the private [Nod releases](https://github.com/n8n-io/nod/releases), when one is available. Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
 
 For a revision without a server release, use a successful **Self-host bundle** [workflow run](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Workflow artifacts expire after 14 days; approved release assets remain available beyond that window. Both paths check each architecture natively and validate its standalone installer. Keep the downloaded bundle with your backups.
 
@@ -61,7 +61,7 @@ To configure a domain before the first start, run `sh setup.sh`, set `NOD_PUBLIC
 
 <Steps>
 
-1. Get nod's source and open the server folder.
+1. Get Nod's source and open the server folder.
 
    ```sh title="Terminal"
    git clone https://github.com/n8n-io/nod.git
@@ -137,15 +137,15 @@ The public URL must be an origin: scheme, hostname, and optional port. Paths, qu
 
 You can use your own HTTPS reverse proxy instead of the HTTPS profile, including an origin with a custom port such as `https://nod.example.com:8443`. Forward requests to the stack's loopback port `4310`, or the port you set in `PORT`.
 
-Preserve the public `Host` header and support WebSockets and streaming responses. Set `NOD_PUBLIC_URL` to that exact HTTPS origin. nod does not trust forwarded headers to decide which origin is allowed.
+Preserve the public `Host` header and support WebSockets and streaming responses. Set `NOD_PUBLIC_URL` to that exact HTTPS origin. Nod does not trust forwarded headers to decide which origin is allowed.
 
 Keep the backend port private. Never expose PostgreSQL, the browser, the workspace, or the Docker connection.
 
-nod allows five minutes to receive a request body. This does not limit the duration of assistant responses or event streams. Configure your proxy's request limits to suit your connection and expected uploads.
+Nod allows five minutes to receive a request body. This does not limit the duration of assistant responses or event streams. Configure your proxy's request limits to suit your connection and expected uploads.
 
 ## Connect the desktop app
 
-Open **Server connection** in the nod app menu or tray. On first launch, you can also choose **Connect to a server**. Enter the server address and the value of `NOD_AUTH_TOKEN`.
+Open **Server connection** in the Nod app menu or tray. On first launch, you can also choose **Connect to a server**. Enter the server address and the value of `NOD_AUTH_TOKEN`.
 
 Use the HTTPS address, or `http://localhost:4310` while your SSH tunnel is open. The app uses the server's conversation, files, models, and connected accounts. Closing the app does not stop the server.
 
@@ -157,11 +157,11 @@ Model and app connections run on the server too. Use addresses the server can re
 
 ## Connect Telegram or WhatsApp
 
-Open **Channels** in nod and follow [Telegram and WhatsApp](/use/channels/). Leave that channel's environment variables blank or unset to configure it in the app. Both share the server's assistant.
+Open **Channels** in Nod and follow [Telegram and WhatsApp](/use/channels/). Leave that channel's environment variables blank or unset to configure it in the app. Both share the server's assistant.
 
 - Telegram polling and the WhatsApp QR connection need outbound internet access. They can work without a public domain.
 - Telegram webhooks and Meta's WhatsApp Cloud API need a public HTTPS address.
-- Private sign-in and payment steps stay in nod's web or desktop app.
+- Private sign-in and payment steps stay in Nod's web or desktop app.
 
 For environment-managed channels, see the [configuration reference](/deploy/configuration/#channels).
 
@@ -170,7 +170,7 @@ For environment-managed channels, see the [configuration reference](/deploy/conf
 ```mermaid
 flowchart LR
   client[Web or desktop app]:::accent --> proxy[HTTPS proxy]
-  proxy --> server[nod server]:::accent
+  proxy --> server[Nod server]:::accent
   channels[Telegram or WhatsApp] --> server
   server --> db[(PostgreSQL)]
   server --> runtime[Restricted Docker connection]

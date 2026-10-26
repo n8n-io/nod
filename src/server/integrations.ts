@@ -61,7 +61,7 @@ import {
 import { logFailure } from './failure-log.ts';
 
 const unverifiedAccount =
-  "nod can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
+  "Nod can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
 
 const slugSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/);
 type Slug = z.infer<typeof slugSchema>;
@@ -705,7 +705,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 : 'pending',
           supportsTriggers: supported,
           description: changed
-            ? "nod's app connection settings changed since this account was connected. Connect it again to use it."
+            ? "Nod's app connection settings changed since this account was connected. Connect it again to use it."
             : row?.inbox_reconnect_required
               ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
               : service.description,

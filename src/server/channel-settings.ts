@@ -646,9 +646,9 @@ export async function createChannelSettings(
           webhook_failed:
             'Telegram did not confirm the webhook registration. Check the public URL and try again.',
           activation_pending:
-            'The setup was saved and the bot token is valid, but nod could not start receiving messages. Retry the connection to continue.',
+            'The setup was saved and the bot token is valid, but Nod could not start receiving messages. Retry the connection to continue.',
           server_managed:
-            'This channel is managed by the server environment. Update it there and restart nod.',
+            'This channel is managed by the server environment. Update it there and restart Nod.',
           pairing_unavailable:
             'This channel setup step is no longer available. Refresh Channels and try again.',
         };

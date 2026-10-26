@@ -415,7 +415,7 @@ export function ModelSettings({
         <div className="model-current">
           <div className="model-current-label" data-analytics-public>
             <strong>Your model</strong>
-            <span>nod uses it for every reply</span>
+            <span>Nod uses it for every reply</span>
           </div>
           <ModelPicker manageConnections={false} surface="settings" />
         </div>
@@ -588,7 +588,7 @@ export function ModelSettings({
                   {provider !== 'compatible' && <ModelKeyHelp provider={provider} />}
                   {provider === 'compatible' && (
                     <p className="model-key-note">
-                      nod also uses this model to decide when to ask you before acting. Smaller
+                      Nod also uses this model to decide when to ask you before acting. Smaller
                       models decide less reliably.
                     </p>
                   )}
@@ -719,7 +719,7 @@ export function ModelSettings({
       {signIn && (
         <div className="model-sign-in">
           <p>
-            Complete sign-in in the browser, then return to nod. If the browser ends on a page that
+            Complete sign-in in the browser, then return to Nod. If the browser ends on a page that
             does not load, copy its full address and paste it below.
           </p>
           <Button type="button" variant="outline" size="sm" onClick={flow.reopen}>

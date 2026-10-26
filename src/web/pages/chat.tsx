@@ -74,7 +74,7 @@ function Welcome() {
     </div>
   );
 }
-function Working({ item, label = 'nod is working' }: { item?: Activity; label?: string }) {
+function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: string }) {
   const detail = item?.step || item?.site;
   const text = item?.title || detail;
   return (
@@ -135,7 +135,7 @@ function TaskCards({
   return (
     <article
       className="message message-assistant"
-      aria-label="nod"
+      aria-label="Nod"
       data-message-id={id}
       tabIndex={-1}
     >

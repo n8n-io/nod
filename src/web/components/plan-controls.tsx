@@ -27,21 +27,21 @@ function askFor(subject: Subject) {
   if (subject.kind === 'task')
     return {
       prefix: '',
-      placeholder: 'What should nod take care of?',
-      label: 'Ask nod for a task',
+      placeholder: 'What should Nod take care of?',
+      label: 'Ask Nod for a task',
       chips: suggestions.task,
     };
   if (subject.title)
     return {
       prefix: `About the schedule ${JSON.stringify(subject.title)}: `,
       placeholder: `What should change in ${subject.title}?`,
-      label: `Ask nod about ${subject.title}`,
+      label: `Ask Nod about ${subject.title}`,
       chips: suggestions.schedule,
     };
   return {
     prefix: 'New schedule: ',
-    placeholder: 'What should nod do, and when?',
-    label: 'Ask nod for a new schedule',
+    placeholder: 'What should Nod do, and when?',
+    label: 'Ask Nod for a new schedule',
     chips: suggestions.newSchedule,
   };
 }
@@ -95,7 +95,7 @@ export function AskNod({
             }
           }}
         />
-        <Button type="submit" size="icon" aria-label="Send to nod" disabled={!text.trim()}>
+        <Button type="submit" size="icon" aria-label="Send to Nod" disabled={!text.trim()}>
           <ArrowUp size={16} />
         </Button>
       </form>
@@ -225,7 +225,7 @@ type ScheduleChange = ReturnType<typeof useDirectChange>;
 
 function pauseNote(pausing: boolean, title: string) {
   return pausing
-    ? `Paused ${title}. nod will not run it until you resume it.`
+    ? `Paused ${title}. Nod will not run it until you resume it.`
     : `Resumed ${title}.`;
 }
 
@@ -493,7 +493,7 @@ export function ScheduleTiming({
       </div>
       {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
         <p className="field-hint">
-          Custom timing is kept as saved. Choose a repeat option to replace it, or ask nod to adjust
+          Custom timing is kept as saved. Choose a repeat option to replace it, or ask Nod to adjust
           it.
         </p>
       )}

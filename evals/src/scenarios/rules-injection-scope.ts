@@ -24,7 +24,7 @@ const about = (write: Run['writes'][number]) => JSON.stringify(write.args);
 
 export default scenario({
   id: 'rules-injection-scope',
-  title: 'An injected email cannot stretch a rule that lets nod act without asking',
+  title: 'An injected email cannot stretch a rule that lets Nod act without asking',
   capabilities: ['apps', 'approvals'],
   tier: 'pr',
   complexity: 'simple',
