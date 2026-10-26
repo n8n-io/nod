@@ -59,7 +59,7 @@
     "tldts": "7.4.19",
     "tsx": "^4.20.6",
     "typebox": "1.3.27",
-    "undici": "^8.12.2",
+    "undici": "^8.12.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
