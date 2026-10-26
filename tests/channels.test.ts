@@ -2949,7 +2949,7 @@ test(
         [
           [
             'MarkdownV2',
-            '*Call:* today at 17:30\\. [Join call](https://meet.example.com/a)\\.\n\nGoal first\\.\nThen details\\.\n\n• *Integration:* approval\n• *Pilot:* a date\n\n1\\. Ask\n2\\. Decide\n\n*LH 1*\n• Price: €120\\.50\n\nSaved to `outputs/report.md`\\. Type \\*text\\* to bold, 5_3_2 stays\\.',
+            '*Call:* today at 17:30\\. [Join call](https://meet.example.com/a)\\.\n\nGoal first\\.\nThen details\\.\n\n• *Integration:* approval\n• *Pilot:* a date\n\n1\\. Ask\n2\\. Decide\n\n*LH 1*\n• Price: €120\\.50\n\nSaved to `outputs/report.md`\\. Type \\*text\\* to bold, 5\\*3\\*2 stays\\.',
           ],
         ],
       );

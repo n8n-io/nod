@@ -74,7 +74,7 @@ function render(root: Root, syntax: Syntax, source?: string) {
       to !== undefined &&
       /[\p{L}\p{N}]/u.test(`${source[from - 1] ?? ''}${source[to] ?? ''}`)
     )
-      return source.slice(from, to);
+      return syntax.text(source.slice(from, to));
     const content = inline(node.children as Node[], new Set([...open, marker]));
     const core = content.trim();
     if (open.has(marker) || !core) return content;
@@ -192,7 +192,9 @@ function render(root: Root, syntax: Syntax, source?: string) {
 }
 
 export function telegramText(markdown: string | Root) {
-  return render(typeof markdown === 'string' ? parseMarkdown(markdown) : markdown, telegram);
+  return typeof markdown === 'string'
+    ? render(parseMarkdown(markdown), telegram, markdown)
+    : render(markdown, telegram);
 }
 
 export function whatsappText(markdown: string) {

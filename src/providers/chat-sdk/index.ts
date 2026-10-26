@@ -38,6 +38,10 @@ const telegramReaction = z.object({
     .max(10),
 });
 class TelegramMarkdown extends TelegramFormatConverter {
+  override fromMarkdown(markdown: string) {
+    return telegramText(markdown);
+  }
+
   override fromAst(ast: Root) {
     return telegramText(ast);
   }
