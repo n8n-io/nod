@@ -8,12 +8,14 @@ import { Button, Field, Input, Notice } from './ui';
 
 export function VoiceConnections({
   voices,
+  provider,
   onRefresh,
   onConnected,
   onBusyChange,
   disabled = false,
 }: {
   voices: readonly SpeechVoice[];
+  provider: 'elevenlabs' | 'openrouter' | 'openai';
   onRefresh(): Promise<void>;
   onConnected(): void;
   onBusyChange(busy: boolean): void;
@@ -46,8 +48,7 @@ export function VoiceConnections({
   }
   const directConnections =
     models.data?.connections.filter((connection) => connection.provider === 'elevenlabs') ?? [];
-  const providers = ['elevenlabs', 'openrouter', 'openai'] as const;
-  function connected(provider: (typeof providers)[number]) {
+  function connected(provider: 'elevenlabs' | 'openrouter' | 'openai') {
     return (
       voices.some(
         (voice) =>
@@ -69,11 +70,10 @@ export function VoiceConnections({
     <div className="voice-connections">
       {!models.data && models.loading ? (
         <p className="field-hint" role="status">
-          Loading voice services…
+          Loading connection…
         </p>
       ) : (
-        models.data &&
-        providers.map((provider) => (
+        models.data && (
           <section className="voice-connect-option" key={provider}>
             <div className="voice-connect-heading">
               {provider === 'elevenlabs' ? (
@@ -329,7 +329,7 @@ export function VoiceConnections({
               </div>
             )}
           </section>
-        ))
+        )
       )}
       {models.error && (
         <Notice>

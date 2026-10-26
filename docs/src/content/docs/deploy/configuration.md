@@ -90,7 +90,7 @@ The [provider settings table](/connect/models/#set-connections-in-server-setting
 
 Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Other connections use the selected model for confirmation replies and their smaller background model, when available, for email checks. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
-Voice reuses OpenRouter and OpenAI API keys saved in **Models**. You can also connect these services or ElevenLabs under **Settings → General → Voice → Assistant voice → Add voices**. Set `ELEVENLABS_API_KEY` for a server-managed ElevenLabs connection; it supplies speech without adding a chat model. Allow Text to Speech, Speech to Text, and Voices read on the key.
+Voice reuses OpenRouter and OpenAI API keys saved in **Models**. To connect these services or ElevenLabs, open **Settings → General → Voice**, choose a **Voice provider**, then select **Connect** beside it. **Manage** opens an existing connection. Set `ELEVENLABS_API_KEY` for a server-managed ElevenLabs connection; it supplies speech without adding a chat model. Allow Text to Speech, Speech to Text, and Voices read on the key.
 
 Selecting an ElevenLabs account voice uses ElevenLabs for transcription and replies. Otherwise, cloud transcription uses OpenAI, then OpenRouter, then ElevenLabs, depending on which connection is available. You can also [download local voices](#local-speech) without an API connection.
 
@@ -230,7 +230,7 @@ The self-hosting stack sets these names to `nod-workspace-<project>` and `nod-br
 
 ## Local speech
 
-Select **Download voices** in **Settings → General → Voice** to prepare local speech, or enable it from chat. Nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English, Spanish, French, Hindi, Italian or Brazilian Portuguese. When you enable local audio without a connected speech service, Nod picks a voice matching your browser’s language when one is available. If you connect to a remote Nod server, inference runs on that server.
+In **Settings → General → Voice**, choose **Free voices**, then **Set up → Download voices**, or enable local speech from chat. Nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English, Spanish, French, Hindi, Italian or Brazilian Portuguese. When you enable local audio without a connected speech service, Nod picks a voice matching your browser’s language when one is available. If you connect to a remote Nod server, inference runs on that server.
 
 The default voice uses OpenRouter, then OpenAI, then ElevenLabs, then local speech, depending on which connection is available. Selecting a local voice explicitly uses local speech for both transcription and replies. Nod does not change providers automatically after a failed paid request.
 

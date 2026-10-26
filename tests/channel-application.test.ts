@@ -27,6 +27,7 @@ import {
   type createPreferencesStore,
 } from '../src/server/preferences.ts';
 import { speechVoices } from '../src/shared/speech.ts';
+import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 
 test('speech settings explicitly refresh account voices and keep other voices usable during a provider outage', async (t) => {
   let version = 1;
@@ -434,6 +435,133 @@ test('analytics drops revoked owner queues while preserving another owner and re
     [local],
   );
 });
+
+test(
+  'saved voice changes reach the next explicit and automatic audio delivery',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 25_000,
+      env: { ...serviceEnvironment(), TEST_DATABASE_URL: process.env.TEST_DATABASE_URL },
+      input: String.raw`
+        import assert from 'node:assert/strict';
+        import { randomUUID } from 'node:crypto';
+        import { mkdtemp, rm } from 'node:fs/promises';
+        import { tmpdir } from 'node:os';
+        import { join } from 'node:path';
+        import { setTimeout as delay } from 'node:timers/promises';
+        import pg from 'pg';
+        const repo = process.cwd();
+        const db = process.env.TEST_DATABASE_URL;
+        const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
+        const schema = 'test_voice_selection_' + suffix;
+        const bossSchema = 'test_voice_selection_boss_' + suffix;
+        const admin = new pg.Pool({ connectionString: db });
+        await admin.query('CREATE SCHEMA ' + schema);
+        const url = new URL(db);
+        url.searchParams.set('options', '-c search_path=' + schema);
+        process.env.DATABASE_URL = url.href;
+        process.env.PGBOSS_SCHEMA = bossSchema;
+        const data = await mkdtemp(join(tmpdir(), 'nod-voice-selection-'));
+        process.env.NOD_DATA_ROOT = data;
+        const { createApplication } = await import(repo + '/src/server/composition.ts');
+        const { pool } = await import(repo + '/src/server/db.ts');
+        const { port } = await import(repo + '/src/server/config.ts');
+        const { accessCookie, accessKey } = await import(repo + '/src/server/access.ts');
+        const { fakeComputer, fakeWorkspace } = await import(repo + '/tests/runtime-fixtures.ts');
+        const { createIntegrationFixture } = await import(repo + '/scripts/e2e-fixtures.ts');
+        const { createElevenLabsSpeechProvider } = await import(repo + '/src/providers/elevenlabs/speech.ts');
+        const calls = [];
+        let release;
+        let entered;
+        let gate;
+        const provider = createElevenLabsSpeechProvider({
+          apiKey: async () => 'synthetic-only-key',
+          configured: () => true,
+          fetch: async (input, options) => {
+            const url = new URL(String(input));
+            assert.equal(url.origin, 'https://api.elevenlabs.io');
+            if (url.pathname === '/v2/voices') return Response.json({ voices: [{ voice_id: 'fixture_alpha', name: 'Alpha' }, { voice_id: 'fixture_beta', name: 'Beta' }], has_more: false });
+            assert.match(url.pathname, /^\/v1\/text-to-speech\/fixture_(alpha|beta)$/);
+            calls.push({ voice: url.pathname.split('/').at(-1), text: JSON.parse(options.body).text });
+            return new Response(Buffer.from('synthetic-generated-audio'), { headers: { 'Content-Type': 'audio/mpeg' } });
+          },
+        });
+        let application;
+        try {
+          application = await createApplication({
+            agent: { open: async (options) => ({ resumed: false, abort() {}, dispose() {}, prompt: async (text) => {
+              const request = JSON.parse(text.split('Request data (JSON):\n')[1].split('\n')[0]).currentInstruction;
+              if (request === 'held') { entered(); await gate; }
+              const name = request === 'automatic' ? 'send_message' : 'create_audio';
+              const tool = options.tools.find(tool => tool.name === name);
+              assert.ok(tool);
+              await tool.execute({ text: 'Synthetic ' + request, ...(request === 'stale-extra' ? { voice: 'elevenlabs-direct:fixture_alpha' } : {}) });
+              options.onEvent({ type: 'final', text: '' });
+            } }), dispose() {} },
+            computer: fakeComputer(), workspace: fakeWorkspace(),
+            integrations: createIntegrationFixture('http://localhost:4320').provider,
+            memoryCurator: { id: 'fixture', configured: true, curate: async () => ({}) },
+            speech: provider,
+            keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
+            model: { provider: 'fixture', name: 'fixture', configured: true },
+          }, { channels: false, heartbeat: false });
+          const headers = { host: 'localhost:' + port, origin: 'http://localhost:' + port, cookie: accessCookie(port) + '=' + await accessKey(data) };
+          const save = async (speechVoice, speechReply = 'auto') => {
+            const response = await application.app.inject({ method: 'PATCH', url: '/api/preferences', headers, payload: { speechVoice, speechReply } });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json().speechVoice, speechVoice);
+          };
+          const send = async (text) => {
+            const response = await application.app.inject({ method: 'POST', url: '/api/messages', headers, payload: { clientMessageId: randomUUID(), text } });
+            assert.equal(response.statusCode, 200, response.body);
+            const id = response.json().turnId;
+            return id;
+          };
+          const settle = async (id) => {
+            for (let index = 0; index < 400; index++) {
+              const row = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [id])).rows[0];
+              assert.notEqual(row.status, 'failed', row.error);
+              if (row.status === 'succeeded') {
+                const messages = (await pool.query("SELECT attachments FROM messages WHERE turn_id=$1 AND role='assistant'", [id])).rows;
+                assert.ok(messages.some(row => row.attachments.some(file => file.mimeType === 'audio/mpeg')));
+                return;
+              }
+              await delay(20);
+            }
+            assert.fail('Synthetic turn did not finish.');
+          };
+          for (const [text, voice] of [['first', 'fixture_alpha'], ['next', 'fixture_beta'], ['stale-extra', 'fixture_beta']]) {
+            await save('elevenlabs-direct:' + voice);
+            const id = await send(text);
+            await settle(id);
+            assert.equal(calls.at(-1).voice, voice);
+          }
+          await save('elevenlabs-direct:fixture_alpha');
+          const held = new Promise(resolve => { entered = resolve; });
+          gate = new Promise(resolve => { release = resolve; });
+          const pending = await send('held');
+          await held;
+          await save('elevenlabs-direct:fixture_beta');
+          release();
+          await settle(pending);
+          assert.equal(calls.at(-1).voice, 'fixture_beta');
+          await save('elevenlabs-direct:fixture_alpha', 'always');
+          await settle(await send('automatic'));
+          assert.equal(calls.at(-1).voice, 'fixture_alpha');
+        } finally {
+          release?.();
+          await application?.app.close();
+          await pool.end();
+          await admin.query('DROP SCHEMA IF EXISTS ' + bossSchema + ' CASCADE; DROP SCHEMA IF EXISTS ' + schema + ' CASCADE');
+          await admin.end();
+          await rm(data, { recursive: true, force: true });
+        }
+      `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  },
+);
 
 test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',
