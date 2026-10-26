@@ -2761,6 +2761,42 @@ test(
                   const hidden = (await read(foreign)).records[0];
                   assert.equal(hidden.available, false);
                   assert.equal(JSON.stringify(hidden).includes('Foreign content'), false);
+                  let token = (await reader.sources())[0].changeToken;
+                  let version = first.version;
+                  for (const [field, value] of Object.entries({
+                    title: 'Updated review',
+                    done_when: 'Updated completion condition',
+                    now_text: 'The required details are ready',
+                    result: 'Updated result',
+                    updated_at: '2026-10-27T12:00:00.000Z',
+                  })) {
+                    await db.pool.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`, [own, value]);
+                    const current = (await read(own)).records[0];
+                    const changed = (await reader.sources())[0].changeToken;
+                    assert.notEqual(current.version, version, field);
+                    assert.notEqual(changed, token, field);
+                    version = current.version;
+                    token = changed;
+                  }
+                  await db.pool.query(
+                    "UPDATE tasks SET updated_at=now()-interval '10 minutes' WHERE id=$1",
+                    [own],
+                  );
+                  const since = new Date(Date.now() - 60000).toISOString();
+                  const renamed = await request('PATCH', `/api/tasks/${own}`, {
+                    title: 'Renamed review',
+                  });
+                  assert.equal(renamed.statusCode, 200);
+                  const changed = await reader.read(
+                    'tasks',
+                    { since },
+                    new AbortController().signal,
+                  );
+                  assert.ok(
+                    changed.records.some(
+                      (record) => record.id === own && record.data.title === 'Renamed review',
+                    ),
+                  );
                   await db.pool.query(
                     "UPDATE tasks SET state='done',result='Reviewed',updated_at=now()+interval '1 second' WHERE id=$1",
                     [own],
@@ -5322,3 +5358,42 @@ test('the dispatch classifier keeps ordinary work when unclear or failing and ne
   assert.equal(inputs.length, 4);
   assert.deepEqual(inputs.at(-1), { notificationRule: rule, rules });
 });
+
+test(
+  'a cancelled transaction stops waiting for a database connection and releases a late client',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const { transaction } = await import('../src/server/transaction.ts');
+    const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+    const held = await pool.connect();
+    const controller = new AbortController();
+    const reason = new Error('Synthetic Stop');
+    let ran = false;
+    const pending = transaction(
+      async () => {
+        ran = true;
+      },
+      pool,
+      controller.signal,
+    );
+    const rejected = assert.rejects(pending, (error) => error === reason);
+    try {
+      assert.equal(pool.waitingCount, 1);
+      controller.abort(reason);
+      assert.equal(
+        await Promise.race([rejected.then(() => true), delay(1000).then(() => false)]),
+        true,
+      );
+      assert.equal(ran, false);
+    } finally {
+      const removed = new Promise<void>((resolve) => pool.once('remove', () => resolve()));
+      held.release();
+      await rejected;
+      await removed;
+      assert.equal(pool.totalCount, 0);
+      await pool.query('SELECT 1');
+      await pool.end();
+    }
+    assert.equal(ran, false);
+  },
+);

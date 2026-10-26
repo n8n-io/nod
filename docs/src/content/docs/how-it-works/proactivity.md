@@ -36,6 +36,8 @@ Every connected account is a source. No setup or opt-in is needed.
 | Work nod saved for you                                               | Task state, results and waiting conditions                           | When a task changes                                                 |
 | Every other app, including MCP and HTTP connections you added to nod | The account's own read tools, the same ones nod uses in chat         | Every 30 minutes, all due accounts in one run                       |
 
+The saved-work change check includes every field that its reader returns. Changes to a task's title, completion condition, progress, or result trigger a new assessment.
+
 For an app without its own reader, the worker searches that account's tools, picks one and fills its arguments. The server checks the arguments against the tool's schema, then Trust's read-only check must classify the call as a read. Anything that would create, change, send or delete, a draft included, never runs.
 
 An owner instruction that tells nod to act on its own, such as "forward Ana's invoices to accounting", switches every source to ordinary background work while it's set, where Trust checks every action. Your selected model classifies the instruction once per version; a failed or unclear answer keeps ordinary work.

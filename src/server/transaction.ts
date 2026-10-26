@@ -14,7 +14,20 @@ export async function transaction<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   signal?.throwIfAborted();
-  const client = await database.connect();
+  let onAbort = () => {};
+  const client = await Promise.race([
+    new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(signal?.reason);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }),
+    database.connect().then((client) => {
+      if (signal?.aborted) {
+        client.release(true);
+        signal.throwIfAborted();
+      }
+      return client;
+    }),
+  ]).finally(() => signal?.removeEventListener('abort', onAbort));
   let stopped = false;
   const stop = () => {
     stopped = true;
