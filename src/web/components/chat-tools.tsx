@@ -190,14 +190,16 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           >
             {mode === 'find'
               ? results.map((message) => {
-                  const match = message.text
-                    .toLocaleLowerCase()
-                    .indexOf(query.trim().toLocaleLowerCase());
+                  const text = message.audioCaption ?? message.text;
+                  const match = text.toLocaleLowerCase().indexOf(query.trim().toLocaleLowerCase());
                   const start = Math.max(0, match - 60);
                   const snippet =
                     match < 0 && message.snippet
                       ? message.snippet
-                      : `${start > 0 ? '…' : ''}${message.text.slice(start, start + 220)}${message.text.length > start + 220 ? '…' : ''}`;
+                      : text
+                        ? `${start > 0 ? '…' : ''}${text.slice(start, start + 220)}${text.length > start + 220 ? '…' : ''}`
+                        : message.attachments.map((item) => item.name).join(', ') ||
+                          'Audio message';
                   return (
                     <button
                       type="button"

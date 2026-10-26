@@ -32,10 +32,12 @@ const inputs = [
   'src/providers/docker/save-video.py',
 ];
 const windowsInputs = [
+  'desktop/licenses/speech.md',
   'desktop/runtime/Dockerfile.windows',
   'desktop/runtime/windows-guest.py',
   'desktop/scripts/engine-dependencies.mjs',
   'desktop/scripts/prepare-windows-runtime.mjs',
+  'desktop/scripts/speech-sources.mjs',
 ];
 export const browserEntries = [
   'src/providers/container-browser/worker.ts',

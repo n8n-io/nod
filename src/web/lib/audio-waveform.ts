@@ -343,12 +343,193 @@ function boundedM4a(bytes: Uint8Array, view: DataView) {
   return total <= data.end - data.start;
 }
 
+function boundedWebm(bytes: Uint8Array, view: DataView) {
+  type Element = { id: number; start: number; end: number; unknown: boolean };
+  const invalid = () => {
+    throw new Error('Waveform unavailable.');
+  };
+  let elements = 0;
+  const vint = (offset: number, id = false) => {
+    let length = 1;
+    while (length <= 8 && !(bytes[offset] & (1 << (8 - length)))) length++;
+    if (length > (id ? 4 : 8) || offset + length > bytes.length) invalid();
+    let value = id ? bytes[offset] : bytes[offset] & ((1 << (8 - length)) - 1);
+    let unknown = !id && value === (1 << (8 - length)) - 1;
+    for (let index = 1; index < length; index++) {
+      value = value * 256 + bytes[offset + index];
+      unknown &&= bytes[offset + index] === 255;
+    }
+    if (!unknown && !Number.isSafeInteger(value)) invalid();
+    return { value, length, unknown };
+  };
+  const read = (offset: number, end: number): Element => {
+    if (++elements > 300_000) invalid();
+    const id = vint(offset, true);
+    const size = vint(offset + id.length);
+    const start = offset + id.length + size.length;
+    const stop = size.unknown ? end : start + size.value;
+    if (start > end || stop > end || stop < start) invalid();
+    return { id: id.value, start, end: stop, unknown: size.unknown };
+  };
+  const children = (parent: Element) => {
+    if (parent.unknown) invalid();
+    const result: Element[] = [];
+    for (let offset = parent.start; offset < parent.end;) {
+      const child = read(offset, parent.end);
+      if (child.unknown || result.length >= 128) invalid();
+      result.push(child);
+      offset = child.end;
+    }
+    return result;
+  };
+  const one = (items: Element[], id: number) => {
+    const found = items.filter((item) => item.id === id);
+    if (found.length !== 1) invalid();
+    return found[0];
+  };
+  const uint = (element: Element) => {
+    if (element.end - element.start < 1 || element.end - element.start > 6) invalid();
+    let value = 0;
+    for (let offset = element.start; offset < element.end; offset++)
+      value = value * 256 + bytes[offset];
+    return value;
+  };
+  const text = (element: Element) => {
+    if (element.end - element.start > 16) invalid();
+    return String.fromCharCode(...bytes.subarray(element.start, element.end));
+  };
+  const float = (element: Element) => {
+    const length = element.end - element.start;
+    if (![4, 8].includes(length)) invalid();
+    return length === 4 ? view.getFloat32(element.start) : view.getFloat64(element.start);
+  };
+  const header = read(0, bytes.length);
+  if (header.id !== 0x1a45dfa3 || text(one(children(header), 0x4282)) !== 'webm') return false;
+  const segment = read(header.end, bytes.length);
+  if (segment.id !== 0x18538067 || segment.end !== bytes.length) return false;
+  let scale = 1_000_000;
+  let info = false;
+  let track = 0;
+  let packets = 0;
+  let milliseconds = 0;
+  for (let offset = segment.start; offset < segment.end;) {
+    const element = read(offset, segment.end);
+    if (element.unknown && element.id !== 0x1f43b675) return false;
+    if (element.id === 0x1549a966) {
+      if (info || packets) return false;
+      info = true;
+      const entries = children(element);
+      const scales = entries.filter((item) => item.id === 0x2ad7b1);
+      if (scales.length > 1) return false;
+      if (scales.length) scale = uint(scales[0]);
+      if (!scale || scale > 1_000_000_000) return false;
+      const durations = entries.filter((item) => item.id === 0x4489);
+      if (durations.length > 1) return false;
+      if (durations.length) {
+        const duration = (float(durations[0]) * scale) / 1_000_000;
+        if (!Number.isFinite(duration) || duration <= 0 || duration > 600_000) return false;
+      }
+    } else if (element.id === 0x1654ae6b) {
+      if (track || packets) return false;
+      const entries = children(one(children(element), 0xae));
+      if (uint(one(entries, 0x83)) !== 2 || text(one(entries, 0x86)) !== 'A_OPUS') return false;
+      if (entries.some((item) => [0x6d80, 0x23314f, 0x537f].includes(item.id))) return false;
+      for (const item of entries) {
+        if (item.id === 0x23e383 && (!uint(item) || uint(item) > 120_000_000)) return false;
+        if ([0x56aa, 0x56bb].includes(item.id) && uint(item) > 1_500_000_000) return false;
+      }
+      track = uint(one(entries, 0xd7));
+      if (!track) return false;
+      const privateData = one(entries, 0x63a2);
+      const head = bytes.subarray(privateData.start, privateData.end);
+      if (
+        head.length !== 19 ||
+        String.fromCharCode(...head.subarray(0, 8)) !== 'OpusHead' ||
+        head[8] !== 1 ||
+        ![1, 2].includes(head[9]) ||
+        head[18] !== 0
+      )
+        return false;
+      const audio = children(one(entries, 0xe1));
+      const channels = audio.filter((item) => item.id === 0x9f);
+      if (channels.length > 1 || (channels.length ? uint(channels[0]) : 1) !== head[9])
+        return false;
+      for (const item of audio) {
+        if (![0xb5, 0x78b5].includes(item.id)) continue;
+        const rate = float(item);
+        if (!Number.isFinite(rate) || rate < 8000 || rate > 192000) return false;
+      }
+    } else if (element.id === 0x1f43b675) {
+      if (!info || !track) return false;
+      let timestamp: number | undefined;
+      let cursor = element.start;
+      while (cursor < element.end) {
+        const child = read(cursor, element.end);
+        if (element.unknown && [0x1f43b675, 0x1c53bb6b, 0x1254c367].includes(child.id)) break;
+        if (child.unknown) return false;
+        if (child.id === 0xe7) {
+          if (timestamp !== undefined) return false;
+          timestamp = uint(child);
+          if ((timestamp * scale) / 1_000_000 > 600_000) return false;
+        } else if (child.id === 0xa3 || child.id === 0xa0) {
+          if (timestamp === undefined) return false;
+          let block = child;
+          if (child.id === 0xa0) {
+            const entries = children(child);
+            block = one(entries, 0xa1);
+            for (const item of entries) {
+              if (item.id === 0x75a2 && uint(item) > 120_000_000) return false;
+              if (item.id === 0x9b && (uint(item) * scale) / 1_000_000 > 120) return false;
+              if (![0xa1, 0x75a2, 0x9b].includes(item.id)) return false;
+            }
+          }
+          const number = vint(block.start);
+          const start = block.start + number.length;
+          if (number.unknown || number.value !== track || start + 3 >= block.end) return false;
+          if (bytes[start + 2] & 6) return false;
+          const time = ((timestamp + view.getInt16(start)) * scale) / 1_000_000;
+          const toc = bytes[start + 3];
+          const config = toc >> 3;
+          const frameMs =
+            config >= 16
+              ? 2.5 * 2 ** (config & 3)
+              : config >= 12
+                ? 10 * 2 ** (config & 1)
+                : (config & 3) === 3
+                  ? 60
+                  : 10 * 2 ** (config & 3);
+          const code = toc & 3;
+          if (code === 3 && start + 4 >= block.end) return false;
+          const count = code === 0 ? 1 : code === 3 ? bytes[start + 4] & 63 : 2;
+          const duration = count * frameMs;
+          milliseconds += duration;
+          if (
+            !count ||
+            duration > 120 ||
+            milliseconds > 600_000 ||
+            time < -1500 ||
+            time + duration > 600_000 ||
+            ++packets > 240_000
+          )
+            return false;
+        } else if (![0xec, 0xbf, 0xa7, 0xab].includes(child.id)) return false;
+        cursor = child.end;
+      }
+      offset = cursor;
+      continue;
+    } else if (![0xec, 0xbf, 0x114d9b74, 0x1c53bb6b, 0x1254c367].includes(element.id)) return false;
+    offset = element.end;
+  }
+  return packets > 0;
+}
+
 function boundedAudio(bytes: Uint8Array) {
   if (bytes.length < 12) return false;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   try {
     if (view.getUint32(0) === 0x4f676753) return boundedOpus(bytes);
     if (view.getUint32(0) === 0x52494646) return boundedWav(bytes, view);
+    if (view.getUint32(0) === 0x1a45dfa3) return boundedWebm(bytes, view);
     if (view.getUint32(4) === 0x66747970) return boundedM4a(bytes, view);
     return boundedMp3(bytes);
   } catch {
@@ -376,7 +557,7 @@ export function loadAudioWaveform(
       size <= 0 ||
       size > limit ||
       !Number.isFinite(duration) ||
-      duration <= 0 ||
+      duration < 0 ||
       duration > 600
     )
       throw new Error('Waveform unavailable.');
@@ -416,7 +597,10 @@ export function loadAudioWaveform(
       return Math.sqrt(sum / Math.max(1, count));
     });
     const top = Math.max(...values) || 1;
-    return values.map((value) => Math.max(0.08, value / top));
+    return {
+      peaks: values.map((value) => Math.max(0.08, value / top)),
+      duration: decoded.duration,
+    };
   });
   previous = load.then(
     () => {},

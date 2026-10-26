@@ -55,6 +55,17 @@ test(
         created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
       )`,
     );
+    await admin.query(`
+      CREATE TABLE ${schema}.preferences (
+        owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
+        quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
+        quiet_hours_enabled boolean NOT NULL DEFAULT true, locale text,
+        hour_cycle text NOT NULL DEFAULT 'auto',
+        speech_reply text NOT NULL DEFAULT 'voice' CHECK (speech_reply IN ('voice','always','never'))
+      );
+      INSERT INTO ${schema}.preferences(owner_id,speech_reply)
+        VALUES ('speech-existing-voice','voice'),('speech-existing-always','always'),('speech-existing-never','never');
+    `);
     const environment = {
       DATABASE_URL: process.env.DATABASE_URL,
       PGBOSS_SCHEMA: process.env.PGBOSS_SCHEMA,
@@ -199,12 +210,47 @@ test(
       retry: thread.retryCredentials,
     });
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
+    const { createSpeech } = await import('../src/server/speech.ts');
+    const transcriptions: Array<{ bytes: Buffer; name: string; signal?: AbortSignal }> = [];
+    const spoken: string[] = [];
+    const privateAudioCodes: string[] = [];
+    let transcript = 'Synthetic spoken request';
+    let transcriptionError: Error | undefined;
+    let transcriptionGate: Promise<void> | undefined;
+    let synthesisGate: Promise<void> | undefined;
+    let synthesisError: Error | undefined;
+    let audioReplyMode: 'auto' | 'voice' | 'always' | 'never' = 'never';
+    let speechReady = true;
+    let chatReady = true;
+    const speech = createSpeech({
+      id: 'fixture',
+      get configured() {
+        return speechReady;
+      },
+      async transcribe(audio, signal) {
+        transcriptions.push({ bytes: Buffer.from(audio.bytes), name: audio.name, signal });
+        await transcriptionGate;
+        if (transcriptionError) throw transcriptionError;
+        return transcript;
+      },
+      async synthesize(text) {
+        spoken.push(text);
+        await synthesisGate;
+        if (synthesisError) throw synthesisError;
+        return {
+          bytes: Buffer.from('Synthetic generated audio'),
+          mimeType: 'audio/ogg',
+          fileName: 'reply.ogg',
+        };
+      },
+    });
     const verification = await createChatVerification(db.pool, {
       ownerId,
       keyStore: { getKey: async () => fixtureKey },
       refresh() {},
-      submitCode: async () => {
-        throw new Error('Unused fixture capability.');
+      submitCode: async (_owner, _turn, code) => {
+        privateAudioCodes.push(code);
+        return { status: 'submitted' };
       },
     });
     const approvals = await createApprovals(
@@ -280,6 +326,8 @@ test(
     const onboarding = onboardingFor(ownerId);
     await onboarding.initialize();
     const app = await createApp({
+      speech,
+      verification,
       analytics: captureAnalytics,
       computer: fakeComputer({
         discard: async (threadId) => {
@@ -287,7 +335,7 @@ test(
         },
       }),
       submitMessage: userMessages.submit,
-      configuration: () => ({ ...configuration(), llmReady: true }),
+      configuration: () => ({ ...configuration(), llmReady: chatReady }),
       planningTasks: onboarding.planning,
       receipts: async () => ({}),
     });
@@ -341,6 +389,7 @@ test(
     const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
+    let inspectAudioContext: ((context: RuntimeContext) => Promise<void>) | undefined;
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<
       string,
@@ -378,11 +427,8 @@ test(
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimitReached: async () => limitReached,
-      speech: {
-        synthesize: async () => {
-          throw new Error('Unused fixture');
-        },
-      },
+      speech,
+      audioReplies: async () => audioReplyMode,
       requestCredential: async () => {
         throw new Error('Unused fixture');
       },
@@ -410,6 +456,45 @@ test(
       artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
+        if (inspectAudioContext && context.audioCaption !== undefined)
+          await inspectAudioContext(context);
+        if (
+          ['audio-explicit-fixture', 'Answer in audio notes.', 'And the next option?'].includes(
+            context.prompt,
+          )
+        )
+          await context.createAudio!('Synthetic explicit voice reply');
+        if (context.prompt === 'audio-follow-up-fixture') {
+          await context.reply('The synthetic answer is ready.');
+          await context.reply('Should I compare the other options?');
+          return { status: 'succeeded', spokenReply: 'The synthetic answer is ready.' };
+        }
+        if (context.prompt === 'audio-workspace-link-fixture') {
+          await writeFile(join(context.workspacePath, 'spoken-update.txt'), 'Synthetic update');
+          const reply = `Read [the update](/workspace/${context.threadId}/spoken-update.txt).`;
+          await context.reply(reply);
+          await context.reply('Should I compare the other options?');
+          return { status: 'succeeded', spokenReply: reply };
+        }
+        if (context.prompt.startsWith('audio-question-')) {
+          await context.reply('Synthetic progress before the question.');
+          const kind = context.prompt.slice('audio-question-'.length);
+          return {
+            status: kind === 'credentials' ? 'waiting_credentials' : 'waiting_user',
+            ...(kind === 'approval' || kind === 'credentials' ? { waitingFor: kind } : {}),
+            ...(kind === 'handoff' ? { handoffBrowserId: context.threadId } : {}),
+            message: 'Which account should I use?',
+            spokenReply: 'Synthetic progress before the question.',
+          };
+        }
+        if (context.prompt === 'audio-format-fixture') {
+          await context.reply('See **the update** at [the source](https://example.test/details).');
+          return { status: 'succeeded' };
+        }
+        if (context.prompt === 'audio-long-fixture') {
+          await context.reply('Synthetic long paragraph. '.repeat(200));
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'presentation-source-fixture') {
           await context.reply('The two-step synthetic process.', undefined, undefined, {
             version: 1,
@@ -574,6 +659,27 @@ test(
         headers: { ...headers, 'content-type': 'application/json' },
         payload: JSON.stringify(payload),
       });
+    const audioRequest = (
+      message: Record<string, unknown>,
+      bytes = Buffer.from('Synthetic recording'),
+      mimeType = 'audio/webm',
+    ) => {
+      const boundary = 'synthetic-audio-boundary';
+      return {
+        method: 'POST' as const,
+        url: '/api/messages/audio',
+        headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+        payload: Buffer.concat([
+          Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${JSON.stringify(message)}\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.webm"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+          ),
+          bytes,
+          Buffer.from(`\r\n--${boundary}--\r\n`),
+        ]),
+      };
+    };
+    const sendAudio = (...input: Parameters<typeof audioRequest>) =>
+      app.inject(audioRequest(...input));
     const counts = async () => ({
       turns: (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0].count,
       messages: (await db.pool.query('SELECT count(*)::int AS count FROM messages')).rows[0].count,
@@ -851,6 +957,242 @@ test(
             409,
           );
           assert.deepEqual(await counts(), oneMore);
+        },
+      );
+
+      await t.test(
+        'speech and proactive preferences persist independently for one owner',
+        async () => {
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const foreign = createPreferencesStore(db.pool, 'speech-foreign-owner');
+          const original = await preferences.get();
+          try {
+            await preferences.update({
+              speechVoice: 'kokoro:bf_emma',
+              speechReply: 'never',
+              proactivePaused: true,
+            });
+            assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
+            assert.equal((await preferences.get()).speechReply, 'never');
+            assert.equal((await preferences.get()).proactivePaused, true);
+            assert.equal((await foreign.get()).speechVoice, null);
+            assert.equal((await foreign.get()).speechReply, 'auto');
+            assert.equal((await foreign.get()).proactivePaused, false);
+            assert.equal((await foreign.update({ quietHoursEnabled: false })).speechReply, 'auto');
+            for (const mode of ['voice', 'always', 'never'] as const)
+              assert.equal(
+                (await createPreferencesStore(db.pool, `speech-existing-${mode}`).get())
+                  .speechReply,
+                mode,
+              );
+            await preferences.update({ speechReply: 'auto' });
+            assert.equal((await preferences.get()).speechReply, 'auto');
+            assert.equal((await preferences.get()).proactivePaused, true);
+            await preferences.update({ proactivePaused: false });
+            assert.equal((await preferences.get()).proactivePaused, false);
+            assert.equal((await preferences.get()).speechReply, 'auto');
+            assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
+            await preferences.update({ quietHoursEnabled: false });
+            assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
+            assert.equal((await preferences.get()).proactivePaused, false);
+            await assert.rejects(
+              preferences.update({ speechVoice: 'https://foreign.example/voice' }),
+            );
+            assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
+            await preferences.update({ proactivePaused: true });
+            await preferences.update({ speechVoice: null, speechReply: 'voice' });
+            assert.equal((await preferences.get()).speechVoice, null);
+            assert.equal((await preferences.get()).speechReply, 'voice');
+            assert.equal((await preferences.get()).proactivePaused, true);
+            assert.equal((await foreign.get()).speechVoice, null);
+            assert.equal((await foreign.get()).speechReply, 'auto');
+            assert.equal((await foreign.get()).proactivePaused, false);
+          } finally {
+            await preferences.update(original);
+          }
+        },
+      );
+
+      await t.test(
+        'web audio intake binds one transcription to an owned message and refuses uncertain replay',
+        async () => {
+          const message = {
+            threadId,
+            clientMessageId: randomUUID(),
+            text: 'Context for the recording',
+          };
+          const before = transcriptions.length;
+          const accepted = await sendAudio(message);
+          assert.equal(accepted.statusCode, 200, accepted.body);
+          const receipt = accepted.json<SubmitMessageResponse>();
+          assert.equal(receipt.audioCaption, message.text);
+          const visible = (await request('GET', '/api/state'))
+            .json()
+            .messages.find((entry: { id: string }) => entry.id === receipt.messageId);
+          assert.equal(visible.audioCaption, message.text);
+          const stored = (
+            await db.pool.query('SELECT text,attachments FROM messages WHERE id=$1', [
+              receipt.messageId,
+            ])
+          ).rows[0];
+          assert.equal(stored.text, 'Context for the recording\n\nSynthetic spoken request');
+          assert.equal(stored.attachments.length, 1);
+          assert.deepEqual(
+            await localArtifacts.readArtifact(stored.attachments[0].id),
+            Buffer.from('Synthetic recording'),
+          );
+          speechReady = false;
+          chatReady = false;
+          try {
+            assert.deepEqual((await sendAudio(message)).json(), receipt);
+          } finally {
+            speechReady = true;
+            chatReady = true;
+          }
+          assert.equal(transcriptions.length, before + 1);
+          assert.equal(
+            (await sendAudio(message, Buffer.from('Changed recording'))).statusCode,
+            409,
+          );
+          assert.equal(transcriptions.length, before + 1);
+          chatReady = false;
+          try {
+            const noModel = await sendAudio({ threadId, clientMessageId: randomUUID() });
+            assert.equal(noModel.statusCode, 400);
+            assert.equal(noModel.json().retryable, true);
+            assert.equal(transcriptions.length, before + 1);
+          } finally {
+            chatReady = true;
+          }
+          assert.equal(
+            (
+              await sendAudio(
+                { threadId, clientMessageId: randomUUID() },
+                Buffer.alloc(25 * 1024 * 1024 + 1),
+              )
+            ).statusCode,
+            413,
+          );
+          assert.equal(transcriptions.length, before + 1);
+          const unknown = { threadId, clientMessageId: randomUUID() };
+          transcriptionError = new Error('Synthetic uncertain provider failure');
+          const failed = await sendAudio(unknown);
+          assert.equal(failed.statusCode, 400);
+          assert.equal(failed.json().retryable, true);
+          transcriptionError = undefined;
+          const uncertain = await sendAudio(unknown);
+          assert.equal(uncertain.statusCode, 409);
+          assert.equal(uncertain.json().retryable, undefined);
+          assert.equal(transcriptions.length, before + 2);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [unknown.clientMessageId]))
+              .rowCount,
+            0,
+          );
+          const foreign = randomUUID();
+          await db.pool.query(
+            "INSERT INTO artifacts(id,owner_id,name,mime_type,size,storage_path) VALUES($1,'foreign-owner','foreign.txt','text/plain',1,'unread')",
+            [foreign],
+          );
+          assert.equal(
+            (await sendAudio({ threadId, clientMessageId: randomUUID(), attachmentIds: [foreign] }))
+              .statusCode,
+            400,
+          );
+          assert.equal(transcriptions.length, before + 2);
+          assert.equal(
+            (
+              await sendAudio(
+                { threadId, clientMessageId: randomUUID() },
+                Buffer.from('Not audio'),
+                'text/plain',
+              )
+            ).statusCode,
+            400,
+          );
+          assert.equal(
+            (await sendAudio({ threadId: randomUUID(), clientMessageId: randomUUID() })).statusCode,
+            409,
+          );
+          assert.equal(transcriptions.length, before + 2);
+          let releaseTranscription!: () => void;
+          transcriptionGate = new Promise<void>((resolve) => {
+            releaseTranscription = resolve;
+          });
+          const concurrent = { threadId, clientMessageId: randomUUID() };
+          const pending = sendAudio(concurrent).then((response) => response);
+          try {
+            await waitFor(() => transcriptions.length === before + 3);
+            assert.equal((await sendAudio(concurrent)).statusCode, 409);
+            assert.equal(transcriptions.length, before + 3);
+          } finally {
+            transcriptionGate = undefined;
+            releaseTranscription();
+          }
+          const finished = await pending;
+          assert.equal(finished.statusCode, 200, finished.body);
+          assert.equal(finished.json().audioCaption, '');
+          const recordingOnly = (await request('GET', '/api/state'))
+            .json()
+            .messages.find((entry: { id: string }) => entry.id === finished.json().messageId);
+          assert.equal(recordingOnly.audioCaption, '');
+          assert.deepEqual((await sendAudio(concurrent)).json(), finished.json());
+          assert.equal(transcriptions.length, before + 3);
+        },
+      );
+
+      await t.test(
+        'disconnecting an audio request cancels intake and leaves an uncertain receipt across app instances',
+        async () => {
+          const multipart = (await import('@fastify/multipart')).default;
+          const { registerAudioMessages } = await import('../src/server/audio-messages.ts');
+          const isolated = Fastify({ forceCloseConnections: true });
+          await isolated.register(multipart);
+          registerAudioMessages(isolated, {
+            speech,
+            verification,
+            artifacts: localArtifacts,
+            submitMessage: userMessages.submit,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+          });
+          const address = await isolated.listen({ host: '127.0.0.1', port: 0 });
+          let releaseTranscription!: () => void;
+          transcriptionGate = new Promise<void>((resolve) => {
+            releaseTranscription = resolve;
+          });
+          const message = { threadId, clientMessageId: randomUUID() };
+          const outgoing = audioRequest(message);
+          const controller = new AbortController();
+          const before = transcriptions.length;
+          const pending = fetch(`${address}${outgoing.url}`, {
+            method: 'POST',
+            headers: { 'content-type': outgoing.headers['content-type'] },
+            body: outgoing.payload,
+            signal: controller.signal,
+          }).catch((error) => error);
+          try {
+            await waitFor(() => transcriptions.length > before);
+            controller.abort();
+            assert.ok((await pending) instanceof Error);
+            await isolated.close();
+            releaseTranscription();
+            transcriptionGate = undefined;
+            await delay(30);
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+            const rejected = await sendAudio(message);
+            assert.equal(rejected.statusCode, 409);
+            assert.equal(rejected.json().retryable, undefined);
+            assert.equal(transcriptions.length, before + 1);
+          } finally {
+            controller.abort();
+            releaseTranscription();
+            transcriptionGate = undefined;
+            await isolated.close();
+          }
         },
       );
 
@@ -1195,6 +1537,351 @@ test(
       );
 
       await t.test(
+        'native audio reads only attached recordings in the active owned turn',
+        async () => {
+          const message = {
+            threadId,
+            clientMessageId: randomUUID(),
+            text: 'Context for the recording',
+          };
+          let readOwnedAudio = false;
+          inspectAudioContext = async (context) => {
+            assert.equal(context.audioCaption, message.text);
+            assert.equal(context.prompt, 'Context for the recording\n\nSynthetic spoken request');
+            const file = context.attachments.find((item) => item.mimeType.startsWith('audio/'))!;
+            assert.ok(file.id);
+            const audio = { id: file.id!, mimeType: file.mimeType };
+            assert.deepEqual(
+              await context.readAudio!(audio, context.signal),
+              Buffer.from('Synthetic recording'),
+            );
+            await assert.rejects(
+              context.readAudio!({ ...audio, mimeType: 'audio/wav' }, context.signal),
+            );
+            const otherThread = randomUUID();
+            await db.pool.query(
+              'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())',
+              [otherThread, ownerId],
+            );
+            const other = await localArtifacts.storeArtifact(
+              Buffer.from('Other conversation'),
+              'other.wav',
+              'audio/wav',
+              otherThread,
+            );
+            await assert.rejects(
+              context.readAudio!({ id: other.id, mimeType: other.mimeType }, context.signal),
+            );
+            const foreignAudio = randomUUID();
+            await db.pool.query(
+              "INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path) VALUES($1,'foreign-audio-owner',$2,'foreign.wav','audio/wav',1,'unread')",
+              [foreignAudio, otherThread],
+            );
+            await assert.rejects(
+              context.readAudio!({ id: foreignAudio, mimeType: 'audio/wav' }, context.signal),
+            );
+            await assert.rejects(context.readAudio!(audio, AbortSignal.abort()));
+            await db.pool.query('UPDATE artifacts SET deleting_at=now() WHERE id=$1', [audio.id]);
+            try {
+              await assert.rejects(context.readAudio!(audio, context.signal));
+            } finally {
+              await db.pool.query('UPDATE artifacts SET deleting_at=NULL WHERE id=$1', [audio.id]);
+            }
+            readOwnedAudio = true;
+          };
+          try {
+            const accepted = await sendAudio(message);
+            assert.equal(accepted.statusCode, 200, accepted.body);
+            const receipt = accepted.json<SubmitMessageResponse>();
+            await waitFor(settled(receipt.turnId));
+            inspectAudioContext = undefined;
+            assert.equal(await turnStatus(receipt.turnId), 'succeeded');
+            assert.equal(readOwnedAudio, true);
+            const completedAudio = ran(receipt.turnId)!;
+            await assert.rejects(
+              completedAudio.readAudio!(
+                {
+                  id: completedAudio.attachments[0].id!,
+                  mimeType: completedAudio.attachments[0].mimeType,
+                },
+                new AbortController().signal,
+              ),
+            );
+          } finally {
+            inspectAudioContext = undefined;
+          }
+        },
+      );
+
+      await t.test(
+        'stopping all work cancels pending audio before transcription can create a turn',
+        async () => {
+          await waitFor(settledThread);
+          let releaseTranscription!: () => void;
+          transcriptionGate = new Promise<void>((resolve) => {
+            releaseTranscription = resolve;
+          });
+          const message = { threadId, clientMessageId: randomUUID() };
+          const before = transcriptions.length;
+          const pending = sendAudio(message).then((response) => response);
+          try {
+            await waitFor(() => transcriptions.length > before);
+            const stopped = await request('POST', '/api/thread/stop');
+            assert.equal(stopped.statusCode, 200, stopped.body);
+            assert.equal(transcriptions.at(-1)?.signal?.aborted, true);
+            const response = await pending;
+            assert.equal(response.statusCode, 409, response.body);
+            assert.equal(response.json().retryable, undefined);
+            transcriptionGate = undefined;
+            releaseTranscription();
+            await delay(30);
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+            assert.equal((await sendAudio(message)).statusCode, 409);
+            assert.equal(transcriptions.length, before + 1);
+            const following = await sendAudio({ threadId, clientMessageId: randomUUID() });
+            assert.equal(following.statusCode, 200, following.body);
+          } finally {
+            transcriptionGate = undefined;
+            releaseTranscription();
+            await pending;
+          }
+        },
+      );
+
+      await t.test(
+        'audio admission stays closed while stop or reset waits for the thread lock',
+        async () => {
+          for (const operation of ['stop', 'reset']) {
+            await waitFor(settledThread);
+            const blocker = await db.pool.connect();
+            await blocker.query('BEGIN');
+            await thread.lockThread(blocker);
+            const pid = (await blocker.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+            const before = transcriptions.length;
+            const message = { threadId, clientMessageId: randomUUID() };
+            const stopping = request(
+              'POST',
+              operation === 'stop' ? '/api/thread/stop' : '/api/conversation/reset',
+              operation === 'stop' ? undefined : { threadId: randomUUID() },
+            ).then((response) => response);
+            let pending: ReturnType<typeof sendAudio> | undefined;
+            try {
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                      [pid],
+                    )
+                  ).rowCount,
+                ),
+              );
+              pending = sendAudio(message).then((response) => response);
+              const response = await Promise.race([pending, delay(1_000).then(() => undefined)]);
+              assert.equal(response?.statusCode, 409, response?.body);
+              assert.equal(transcriptions.length, before);
+            } finally {
+              await blocker.query('ROLLBACK');
+              blocker.release();
+              assert.equal((await stopping).statusCode, operation === 'stop' ? 200 : 409);
+              await pending;
+            }
+            const following = await sendAudio(message);
+            assert.equal(following.statusCode, 200, following.body);
+            await waitFor(settled(following.json().turnId));
+          }
+        },
+      );
+
+      await t.test(
+        'reset cancels audio intake whose multipart thread has not been read',
+        async () => {
+          await waitFor(settledThread);
+          const multipart = (await import('@fastify/multipart')).default;
+          const { registerAudioMessages } = await import('../src/server/audio-messages.ts');
+          const isolated = Fastify();
+          await isolated.register(multipart);
+          let reading = false;
+          let releaseRead!: () => void;
+          let releaseReset!: () => void;
+          const readGate = new Promise<void>((resolve) => {
+            releaseRead = resolve;
+          });
+          const resetGate = new Promise<void>((resolve) => {
+            releaseReset = resolve;
+          });
+          const intake = registerAudioMessages(isolated, {
+            speech,
+            verification: {
+              ...verification,
+              async pending(channel) {
+                reading = true;
+                await readGate;
+                return verification.pending(channel);
+              },
+            },
+            artifacts: localArtifacts,
+            submitMessage: userMessages.submit,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+          });
+          const message = { threadId, clientMessageId: randomUUID() };
+          const before = transcriptions.length;
+          const pending = isolated.inject(audioRequest(message)).then((response) => response);
+          let resetting: Promise<void> | undefined;
+          try {
+            await waitFor(() => reading);
+            resetting = intake.pause(() => resetGate, threadId);
+            releaseRead();
+            const response = await pending;
+            assert.equal(response.statusCode, 409, response.body);
+            assert.equal(transcriptions.length, before);
+            assert.equal(
+              (
+                await db.pool.query('SELECT 1 FROM audio_messages WHERE message_id=$1', [
+                  message.clientMessageId,
+                ])
+              ).rowCount,
+              0,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+          } finally {
+            releaseRead();
+            releaseReset();
+            await resetting;
+            await pending;
+            await isolated.close();
+            await waitFor(settledThread);
+          }
+        },
+      );
+
+      await t.test(
+        'stopping a deferred private audio reservation prevents code delivery',
+        async () => {
+          await waitFor(settledThread);
+          const waiting = await thread.submitUserMessage('ask-credentials');
+          await waitFor(settled(waiting.turnId));
+          let releaseKey!: () => void;
+          let requestedKey = false;
+          const keyGate = new Promise<void>((resolve) => {
+            releaseKey = resolve;
+          });
+          const codes: string[] = [];
+          const delayedVerification = await createChatVerification(db.pool, {
+            ownerId,
+            keyStore: {
+              getKey: async () => {
+                requestedKey = true;
+                await keyGate;
+                return fixtureKey;
+              },
+            },
+            refresh() {},
+            submitCode: async (_owner, _turn, code) => {
+              codes.push(code);
+              return { status: 'submitted' };
+            },
+          });
+          const isolated = await createApp({
+            speech,
+            verification: delayedVerification,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+          });
+          transcript = '382916';
+          const message = { threadId, clientMessageId: randomUUID() };
+          const pending = isolated.inject(audioRequest(message)).then((response) => response);
+          let stopping: typeof pending | undefined;
+          try {
+            await waitFor(() => requestedKey);
+            stopping = isolated
+              .inject({ method: 'POST', url: '/api/thread/stop', headers })
+              .then((response) => response);
+            await waitFor(() => Boolean(transcriptions.at(-1)?.signal?.aborted));
+            releaseKey();
+            assert.equal((await stopping).statusCode, 200);
+            assert.equal((await pending).statusCode, 409);
+            assert.deepEqual(codes, []);
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+            assert.equal((await isolated.inject(audioRequest(message))).statusCode, 409);
+            assert.deepEqual(codes, []);
+          } finally {
+            releaseKey();
+            await stopping;
+            await pending;
+            transcript = 'Synthetic spoken request';
+            await isolated.close();
+            await db.pool.query(
+              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+              [waiting.turnId],
+            );
+          }
+        },
+      );
+
+      await t.test(
+        'spoken verification codes reach private entry without saving their recording or transcript',
+        async () => {
+          await waitFor(settledThread);
+          const waiting = await thread.submitUserMessage('ask-credentials');
+          await waitFor(settled(waiting.turnId));
+          const before = (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0]
+            .n;
+          transcript = '739218';
+          chatReady = false;
+          try {
+            const message = {
+              threadId,
+              clientMessageId: randomUUID(),
+            };
+            const accepted = await sendAudio(
+              message,
+              Buffer.from('Synthetic private code recording'),
+            );
+            assert.equal(accepted.statusCode, 200, accepted.body);
+            assert.equal(accepted.json().verificationStatus, 'submitted');
+            assert.equal(privateAudioCodes.at(-1), '739218');
+            assert.equal(
+              (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
+              before,
+            );
+            assert.equal(
+              (
+                await db.pool.query(
+                  "SELECT 1 FROM messages WHERE text LIKE '%739218%' UNION ALL SELECT 1 FROM turns WHERE prompt LIKE '%739218%' UNION ALL SELECT 1 FROM audio_messages WHERE response::text LIKE '%739218%'",
+                )
+              ).rowCount,
+              0,
+            );
+            const calls = transcriptions.length;
+            assert.deepEqual(
+              (await sendAudio(message, Buffer.from('Synthetic private code recording'))).json(),
+              accepted.json(),
+            );
+            assert.equal(transcriptions.length, calls);
+          } finally {
+            transcript = 'Synthetic spoken request';
+            chatReady = true;
+            await db.pool.query(
+              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+              [waiting.turnId],
+            );
+          }
+        },
+      );
+
+      await t.test(
         'upload retention rolls back with a failed message and deduplicates retries',
         async () => {
           const artifact = await localArtifacts.storeUpload(
@@ -1275,6 +1962,504 @@ test(
             );
           } finally {
             await db.pool.query('UPDATE artifacts SET deleting_at=NULL WHERE id=$1', [artifact.id]);
+          }
+        },
+      );
+
+      await t.test(
+        'audio stays private while verification is pending regardless of transcript language',
+        async (t) => {
+          for (const fixture of [
+            { language: 'English', text: 'one two three four five six', multiple: false },
+            { language: 'Portuguese', text: 'um dois três quatro cinco seis', multiple: false },
+            { language: 'Arabic', text: 'واحد اثنان ثلاثة أربعة خمسة ستة', multiple: true },
+          ]) {
+            await t.test(fixture.language, async () => {
+              await waitFor(settledThread);
+              const waiting = await thread.submitUserMessage('ask-credentials');
+              await waitFor(settled(waiting.turnId));
+              if (fixture.multiple) {
+                const second = randomUUID();
+                await db.pool.query(
+                  `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+                   VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
+                  [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+                );
+              }
+              const artifactsBefore = (
+                await db.pool.query('SELECT count(*)::int AS n FROM artifacts')
+              ).rows[0].n;
+              const privateBefore = privateAudioCodes.length;
+              const message = { threadId, clientMessageId: randomUUID() };
+              transcript = fixture.text;
+              try {
+                const response = await sendAudio(message);
+                assert.equal(response.statusCode, 409, response.body);
+                assert.equal(privateAudioCodes.length, privateBefore);
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                      [message.clientMessageId],
+                    )
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM messages WHERE text LIKE $1 UNION ALL SELECT 1 FROM turns WHERE prompt LIKE $1 UNION ALL SELECT 1 FROM audio_messages WHERE response::text LIKE $1',
+                      [`%${fixture.text}%`],
+                    )
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
+                  artifactsBefore,
+                );
+                const calls = transcriptions.length;
+                assert.equal((await sendAudio(message)).statusCode, 409);
+                assert.equal(transcriptions.length, calls);
+              } finally {
+                transcript = 'Synthetic spoken request';
+                await db.pool.query(
+                  "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                  [waiting.turnId],
+                );
+                await waitFor(settledThread);
+              }
+            });
+          }
+        },
+      );
+
+      await t.test(
+        'spoken verification stays bound to intake requests when they close or become unambiguous',
+        async () => {
+          for (const multiple of [false, true]) {
+            await waitFor(settledThread);
+            const waiting = await thread.submitUserMessage('ask-credentials');
+            await waitFor(settled(waiting.turnId));
+            const requestId = (
+              await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
+                waiting.turnId,
+              ])
+            ).rows[0].id;
+            if (multiple) {
+              const second = randomUUID();
+              await db.pool.query(
+                `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+                 VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
+                [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+              );
+            }
+            let releaseTranscription!: () => void;
+            transcriptionGate = new Promise<void>((resolve) => {
+              releaseTranscription = resolve;
+            });
+            transcript = '482613';
+            const before = transcriptions.length;
+            const privateBefore = privateAudioCodes.length;
+            const artifactsBefore = (
+              await db.pool.query('SELECT count(*)::int AS n FROM artifacts')
+            ).rows[0].n;
+            const message = { threadId, clientMessageId: randomUUID() };
+            const pending = sendAudio(message).then((response) => response);
+            try {
+              await waitFor(() => transcriptions.length > before);
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE id=$1",
+                [requestId],
+              );
+              transcriptionGate = undefined;
+              releaseTranscription();
+              const response = await pending;
+              assert.equal(response.statusCode, 409, response.body);
+              assert.equal(response.json().retryable, undefined);
+              assert.equal(privateAudioCodes.length, privateBefore);
+              assert.equal(
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                    [message.clientMessageId],
+                  )
+                ).rowCount,
+                0,
+              );
+              assert.equal(
+                (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
+                artifactsBefore,
+              );
+              assert.equal((await sendAudio(message)).statusCode, 409);
+              assert.equal(transcriptions.length, before + 1);
+            } finally {
+              transcriptionGate = undefined;
+              releaseTranscription();
+              await pending;
+              transcript = 'Synthetic spoken request';
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                [waiting.turnId],
+              );
+            }
+          }
+        },
+      );
+
+      await t.test(
+        'spoken replies follow the owner preference once and preserve text on failure or stop',
+        async () => {
+          await waitFor(settledThread);
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic voice request'),
+            'voice.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const assistantMessages = async (turnId: string) =>
+            (
+              await db.pool.query(
+                "SELECT id,text,attachments,reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at,id",
+                [turnId],
+              )
+            ).rows;
+          let releaseSynthesis: (() => void) | undefined;
+          const previousRead = dependencies.readArtifact;
+          try {
+            audioReplyMode = 'voice';
+            const before = spoken.length;
+            const request = await thread.submitUserMessage('audio-format-fixture', [clip]);
+            await waitFor(settled(request.turnId));
+            assert.deepEqual(runs.find((run) => run.turnId === request.turnId)!.speech, {
+              mode: 'voice',
+              available: true,
+            });
+            assert.equal(spoken.length, before + 1);
+            assert.equal(spoken.at(-1), 'See the update at the source.');
+            const messages = await assistantMessages(request.turnId);
+            assert.equal(messages.length, 2);
+            assert.equal(messages[1].attachments.length, 1);
+            assert.equal(messages[1].reply_to_message_id, messages[0].id);
+            assert.deepEqual(
+              await localArtifacts.readArtifact(messages[1].attachments[0].id),
+              Buffer.from('Synthetic generated audio'),
+            );
+            const explicit = await thread.submitUserMessage('audio-explicit-fixture', [clip]);
+            await waitFor(settled(explicit.turnId));
+            assert.equal(spoken.length, before + 2);
+            const text = await thread.submitUserMessage('audio-text-fixture');
+            await waitFor(settled(text.turnId));
+            assert.equal(spoken.length, before + 2);
+            audioReplyMode = 'always';
+            const always = await thread.submitUserMessage('audio-always-fixture');
+            await waitFor(settled(always.turnId));
+            assert.equal(spoken.length, before + 3);
+            const background = await thread.enqueueTurn('audio-background-fixture', {
+              source: 'event',
+            });
+            await waitFor(settled(background));
+            assert.equal(spoken.length, before + 3);
+            const long = await thread.submitUserMessage('audio-long-fixture');
+            await waitFor(settled(long.turnId));
+            assert.equal(spoken.length, before + 3);
+            const followUp = await thread.submitUserMessage('audio-follow-up-fixture');
+            await waitFor(settled(followUp.turnId));
+            assert.equal(spoken.at(-1), 'The synthetic answer is ready.');
+            const followUpMessages = await assistantMessages(followUp.turnId);
+            assert.equal(followUpMessages.length, 3);
+            assert.equal(followUpMessages[2].reply_to_message_id, followUpMessages[0].id);
+            dependencies.readArtifact = async (workspace, path) => {
+              assert.equal(workspace, threadId);
+              assert.equal(path, 'spoken-update.txt');
+              return readFile(join(root, 'workspaces', workspace, path));
+            };
+            for (const mode of ['voice', 'always'] as const) {
+              audioReplyMode = mode;
+              const beforePublishedReply = spoken.length;
+              const linked = await thread.submitUserMessage(
+                'audio-workspace-link-fixture',
+                mode === 'voice' ? [clip] : [],
+              );
+              await waitFor(settled(linked.turnId));
+              assert.equal(await turnStatus(linked.turnId), 'succeeded');
+              assert.equal(spoken.length, beforePublishedReply + 1);
+              assert.equal(spoken.at(-1), 'Read spoken-update.txt.');
+              const linkedMessages = await assistantMessages(linked.turnId);
+              assert.equal(linkedMessages.length, 3);
+              const published = linkedMessages[0].attachments[0];
+              assert.equal(published.name, 'spoken-update.txt');
+              assert.equal(linkedMessages[0].text, `Read [spoken-update.txt](${published.url}).`);
+              assert.equal(
+                (await localArtifacts.readArtifact(published.id)).toString(),
+                'Synthetic update',
+              );
+              assert.equal(linkedMessages[2].reply_to_message_id, linkedMessages[0].id);
+              assert.deepEqual(
+                await localArtifacts.readArtifact(linkedMessages[2].attachments[0].id),
+                Buffer.from('Synthetic generated audio'),
+              );
+            }
+            synthesisError = new Error('Synthetic unavailable voice');
+            const failure = await thread.submitUserMessage('audio-failure-fixture');
+            await waitFor(settled(failure.turnId));
+            assert.equal(await turnStatus(failure.turnId), 'succeeded');
+            assert.equal((await assistantMessages(failure.turnId)).length, 1);
+            synthesisError = undefined;
+            synthesisGate = new Promise<void>((resolve) => {
+              releaseSynthesis = resolve;
+            });
+            const stopped = await thread.submitUserMessage('audio-stop-fixture');
+            await waitFor(() => spoken.at(-1) === 'done: audio-stop-fixture');
+            await thread.stopThread();
+            audioReplyMode = 'never';
+            const following = await thread.submitUserMessage('audio-after-stop-fixture');
+            await waitFor(settled(following.turnId), 5000);
+            assert.equal(await turnStatus(stopped.turnId), 'cancelled');
+            releaseSynthesis!();
+            releaseSynthesis = undefined;
+            synthesisGate = undefined;
+            await delay(30);
+            assert.equal((await assistantMessages(stopped.turnId)).length, 1);
+          } finally {
+            dependencies.readArtifact = previousRead;
+            audioReplyMode = 'never';
+            synthesisError = undefined;
+            synthesisGate = undefined;
+            releaseSynthesis?.();
+          }
+        },
+      );
+
+      await t.test(
+        'Auto leaves spoken delivery to the agent while preserving conversation, ownership and stop',
+        async () => {
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic voice request'),
+            'auto.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const audioMessages = async (id: string) =>
+            (
+              await db.pool.query(
+                "SELECT m.id,m.owner_id,m.attachments FROM messages m WHERE turn_id=$1 AND role='assistant' AND jsonb_array_length(attachments)>0",
+                [id],
+              )
+            ).rows;
+          let release: (() => void) | undefined;
+          try {
+            audioReplyMode = 'auto';
+            const before = spoken.length;
+            const initial = await thread.submitUserMessage('Answer in audio notes.');
+            await waitFor(settled(initial.turnId));
+            assert.equal(spoken.length, before + 1);
+            const messages = await audioMessages(initial.turnId);
+            assert.equal(messages.length, 1);
+            assert.equal(messages[0].owner_id, ownerId);
+            assert.deepEqual(
+              await localArtifacts.readArtifact(messages[0].attachments[0].id),
+              Buffer.from('Synthetic generated audio'),
+            );
+            const followUp = await thread.submitUserMessage('And the next option?');
+            await waitFor(settled(followUp.turnId));
+            const context = runs.find((run) => run.turnId === followUp.turnId)!;
+            assert.deepEqual(context.speech, { mode: 'auto', available: true });
+            assert.ok(
+              context.history.some(
+                (message) => message.role === 'user' && message.text === 'Answer in audio notes.',
+              ),
+            );
+            assert.equal(spoken.length, before + 2);
+            assert.equal((await audioMessages(followUp.turnId)).length, 1);
+            const text = await thread.submitUserMessage('Send the command as text.', [clip]);
+            await waitFor(settled(text.turnId));
+            assert.equal(spoken.length, before + 2);
+            assert.equal((await audioMessages(text.turnId)).length, 0);
+            speechReady = false;
+            const unavailable = await thread.submitUserMessage('Synthetic unavailable voice.');
+            await waitFor(settled(unavailable.turnId));
+            assert.deepEqual(runs.find((run) => run.turnId === unavailable.turnId)!.speech, {
+              mode: 'auto',
+              available: false,
+            });
+            assert.equal(spoken.length, before + 2);
+            speechReady = true;
+            audioReplyMode = 'never';
+            const requested = await thread.submitUserMessage('audio-explicit-fixture');
+            await waitFor(settled(requested.turnId));
+            assert.equal(spoken.length, before + 3);
+            assert.equal((await audioMessages(requested.turnId)).length, 1);
+            audioReplyMode = 'auto';
+            synthesisGate = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            const stopped = await thread.submitUserMessage('audio-explicit-fixture');
+            await waitFor(() => spoken.length === before + 4);
+            await thread.stopThread();
+            release!();
+            synthesisGate = undefined;
+            const following = await thread.submitUserMessage('Continue in text.');
+            await waitFor(settled(following.turnId));
+            assert.equal(await turnStatus(stopped.turnId), 'cancelled');
+            assert.equal((await audioMessages(stopped.turnId)).length, 0);
+            assert.equal(spoken.length, before + 4);
+          } finally {
+            release?.();
+            synthesisGate = undefined;
+            speechReady = true;
+            audioReplyMode = 'never';
+          }
+        },
+      );
+
+      await t.test(
+        'spoken replies preserve audio from any message joined into a running turn',
+        async (t) => {
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic batched voice request'),
+            'batch.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const manage = dependencies.manage;
+          dependencies.manage = async () => ({});
+          audioReplyMode = 'voice';
+          try {
+            for (const initialAudio of [true, false]) {
+              const prompt = `steer-audio-batch-${initialAudio}`;
+              await t.test(initialAudio ? 'initial audio' : 'queued audio', async () => {
+                await waitFor(settledThread);
+                block(prompt);
+                try {
+                  const before = spoken.length;
+                  const first = await thread.submitUserMessage(prompt, initialAudio ? [clip] : []);
+                  await waitFor(() => Boolean(ran(first.turnId)));
+                  const queued = [];
+                  if (!initialAudio)
+                    queued.push(await thread.submitUserMessage('Synthetic queued voice', [clip]));
+                  queued.push(await thread.submitUserMessage('Synthetic trailing text'));
+                  release(prompt);
+                  await waitFor(settled(first.turnId));
+                  assert.deepEqual(
+                    taken.get(first.turnId)!.map(({ id }) => id),
+                    queued.map(({ messageId }) => messageId),
+                  );
+                  assert.equal(spoken.length, before + 1);
+                  assert.equal(spoken.at(-1), `done: ${prompt}`);
+                  const replies = (
+                    await db.pool.query(
+                      "SELECT id,attachments,reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at,id",
+                      [first.turnId],
+                    )
+                  ).rows;
+                  assert.equal(replies.length, 2);
+                  assert.equal(replies[1].reply_to_message_id, replies[0].id);
+                  assert.equal(replies[1].attachments.length, 1);
+                  assert.deepEqual(
+                    await localArtifacts.readArtifact(replies[1].attachments[0].id),
+                    Buffer.from('Synthetic generated audio'),
+                  );
+                  for (const message of queued) assert.equal(ran(message.turnId), undefined);
+                } finally {
+                  release(prompt);
+                }
+              });
+            }
+          } finally {
+            audioReplyMode = 'never';
+            dependencies.manage = manage;
+          }
+        },
+      );
+
+      await t.test(
+        'spoken clarification stays with its waiting question and preserves reply routing, failure and stop',
+        async () => {
+          await waitFor(settledThread);
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic clarification request'),
+            'question.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const questionMessages = async (turnId: string) =>
+            (
+              await db.pool.query(
+                "SELECT m.id,m.text,m.attachments,m.xmin=u.xmin AS together FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.turn_id=$1 AND m.role='assistant' ORDER BY m.created_at,m.id",
+                [turnId],
+              )
+            ).rows;
+          let releaseSynthesis: (() => void) | undefined;
+          try {
+            audioReplyMode = 'voice';
+            const before = spoken.length;
+            const question = await thread.submitUserMessage('audio-question-fixture', [clip]);
+            await waitFor(settled(question.turnId));
+            assert.equal(await turnStatus(question.turnId), 'waiting');
+            assert.equal(spoken.length, before + 1);
+            assert.equal(spoken.at(-1), 'Which account should I use?');
+            const messages = await questionMessages(question.turnId);
+            assert.equal(messages.length, 2);
+            assert.equal(messages[0].attachments.length, 0);
+            assert.equal(messages[1].text, 'Which account should I use?');
+            assert.equal(messages[1].together, true);
+            assert.equal(messages[1].attachments.length, 1);
+            assert.deepEqual(
+              await localArtifacts.readArtifact(messages[1].attachments[0].id),
+              Buffer.from('Synthetic generated audio'),
+            );
+            const answer = await thread.submitUserMessage('Use the work account.');
+            await waitFor(settled(answer.turnId));
+            assert.equal(
+              (await db.pool.query('SELECT parent_turn_id FROM turns WHERE id=$1', [answer.turnId]))
+                .rows[0].parent_turn_id,
+              question.turnId,
+            );
+            assert.equal(spoken.length, before + 1);
+            for (const kind of ['approval', 'credentials', 'handoff']) {
+              const excluded = await thread.submitUserMessage(`audio-question-${kind}`, [clip]);
+              await waitFor(settled(excluded.turnId));
+              assert.equal(spoken.length, before + 1);
+              assert.ok(
+                (await questionMessages(excluded.turnId)).every(
+                  (message) => !message.attachments.length,
+                ),
+              );
+            }
+            synthesisError = new Error('Synthetic unavailable question voice');
+            const failed = await thread.submitUserMessage('audio-question-fixture', [clip]);
+            await waitFor(settled(failed.turnId));
+            const failedQuestion = (await questionMessages(failed.turnId)).at(-1);
+            assert.equal(await turnStatus(failed.turnId), 'waiting');
+            assert.equal(failedQuestion.text, 'Which account should I use?');
+            assert.equal(failedQuestion.attachments.length, 0);
+            assert.equal(failedQuestion.together, true);
+            synthesisError = undefined;
+            synthesisGate = new Promise<void>((resolve) => {
+              releaseSynthesis = resolve;
+            });
+            const calls = spoken.length;
+            const stopped = await thread.submitUserMessage('audio-question-fixture', [clip]);
+            await waitFor(() => spoken.length === calls + 1);
+            await thread.stopThread();
+            audioReplyMode = 'never';
+            const following = await thread.submitUserMessage('After the stopped question.');
+            await waitFor(settled(following.turnId), 5000);
+            releaseSynthesis!();
+            releaseSynthesis = undefined;
+            synthesisGate = undefined;
+            await delay(30);
+            assert.equal(await turnStatus(stopped.turnId), 'cancelled');
+            const stoppedMessages = await questionMessages(stopped.turnId);
+            assert.equal(stoppedMessages.length, 1);
+            assert.equal(stoppedMessages[0].text, 'Synthetic progress before the question.');
+            assert.equal(stoppedMessages[0].attachments.length, 0);
+          } finally {
+            audioReplyMode = 'never';
+            synthesisError = undefined;
+            synthesisGate = undefined;
+            releaseSynthesis?.();
           }
         },
       );
@@ -2222,9 +3407,30 @@ test(
             if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
             else process.env.NODE_ENV = previousNodeEnv;
           }
+          let releaseAudio!: () => void;
+          transcriptionGate = new Promise<void>((resolve) => {
+            releaseAudio = resolve;
+          });
+          const pendingAudioId = randomUUID();
+          const beforeAudio = transcriptions.length;
+          const pendingAudio = sendAudio({
+            threadId: firstThreadId,
+            clientMessageId: pendingAudioId,
+          }).then((response) => response);
+          await waitFor(() => transcriptions.length > beforeAudio);
           const reset = await request('POST', '/api/conversation/reset', {
             threadId: firstThreadId,
           });
+          const audioAborted = transcriptions.at(-1)?.signal?.aborted;
+          transcriptionGate = undefined;
+          releaseAudio();
+          assert.equal((await pendingAudio).statusCode, 409);
+          assert.equal(audioAborted, true);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [pendingAudioId])).rowCount,
+            0,
+          );
+
           assert.equal(reset.statusCode, 200, reset.body);
           freshThread = reset.json<{ ok: boolean; threadId: string }>().threadId;
           assert.notEqual(freshThread, firstThreadId);

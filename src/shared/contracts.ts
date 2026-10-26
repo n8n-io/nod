@@ -21,6 +21,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  audioCaption?: string;
   turnId: string | null;
   createdAt: string;
   attachments: Artifact[];
@@ -45,6 +46,7 @@ export interface SubmitMessageResponse {
   turnId: string;
   messageId: string;
   messageText?: string;
+  audioCaption?: string;
   verificationStatus?: 'pending' | 'submitted' | 'unavailable';
 }
 export interface VerificationRequest {
@@ -351,7 +353,10 @@ export interface ScheduleHistory {
   nextCursor: string | null;
 }
 export type HourCycle = 'auto' | 'h12' | 'h23';
+export type SpeechReplyMode = 'auto' | 'voice' | 'always' | 'never';
 export interface Preferences {
+  speechVoice?: string | null;
+  speechReply?: SpeechReplyMode;
   notificationRule: string;
   rules: string;
   timeZone: string | null;

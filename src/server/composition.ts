@@ -10,7 +10,7 @@ import {
   type RuntimeObservation,
 } from '../ports/agent.ts';
 import {
-  apiKeyModelProviders,
+  apiKeyConnectionProviders,
   lightestEffort,
   modelProviderInfo,
   modelProviders,
@@ -43,7 +43,8 @@ import type { PasswordManager } from '../ports/password-manager.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, DecisionQuestion, ModelReview } from '../ports/decisions.ts';
 import { createDecisionModel } from '../providers/decisions.ts';
-import type { SpeechProvider } from '../ports/speech.ts';
+import type { SpeechProvider, LocalSpeechControls } from '../ports/speech.ts';
+import { createLocalSpeechProvider } from '../providers/local-speech/index.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
@@ -81,7 +82,13 @@ import {
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
-import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
+import { createElevenLabsSpeechProvider } from '../providers/elevenlabs/speech.ts';
+import {
+  createOpenRouterTranscriptionProvider,
+  createOpenRouterSpeechProvider,
+} from '../providers/openrouter/speech.ts';
+import { createPreferencesStore } from './preferences.ts';
+import { registerSpeechSettings } from './speech-settings.ts';
 import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress, modelKeyCredential } from './models.ts';
@@ -196,6 +203,8 @@ export interface ApplicationAdapters {
   computer: Computer;
   workspace: Workspace;
   speech: SpeechProvider;
+  localSpeech?: LocalSpeechControls;
+  speechInputFormat?: (voice: string | null) => 'wav' | undefined;
   integrations: IntegrationProvider;
   observations?: ObservationProvider[];
   keyStore: CredentialKeyStore;
@@ -233,7 +242,7 @@ export function modelEnvironment(
     model: env.LLM_MODEL || undefined,
     credentials: {
       ...Object.fromEntries(
-        apiKeyModelProviders.flatMap((id) => {
+        apiKeyConnectionProviders.flatMap((id) => {
           const key = env[modelProviderInfo[id].env]?.trim();
           if (!key) return [];
           return [
@@ -302,19 +311,26 @@ export function createDefaultAdapters(
     bootstrap,
     changed: refresh,
   });
+  const localSpeech = createLocalSpeechProvider({ cacheDir: join(dataRoot, 'speech') });
+  const voicePreferences = createPreferencesStore(pool, ownerId);
   const openAISpeech = createOpenAISpeechProvider({
-    apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
-    configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
+    apiKey: () => models.apiKey('openai'),
+    configured: () => models.hasApiKey('openai'),
     speechModel: env.TTS_MODEL,
     transcriptionModel: env.STT_MODEL,
     voice: env.TTS_VOICE,
   });
+  const openRouterSpeech = createOpenRouterSpeechProvider({
+    apiKey: () => models.apiKey('openrouter'),
+    configured: () => models.hasApiKey('openrouter'),
+  });
+  const elevenLabsSpeech = createElevenLabsSpeechProvider({
+    apiKey: () => models.apiKey('elevenlabs'),
+    configured: () => models.hasApiKey('elevenlabs'),
+  });
   const openRouterTranscription = createOpenRouterTranscriptionProvider({
-    apiKey: () =>
-      env.OPENROUTER_API_KEY
-        ? Promise.resolve(env.OPENROUTER_API_KEY)
-        : models.apiKey('openrouter'),
-    configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+    apiKey: () => models.apiKey('openrouter'),
+    configured: () => models.hasApiKey('openrouter'),
     model:
       env.STT_MODEL && (env.STT_MODEL.includes('/') ? env.STT_MODEL : `openai/${env.STT_MODEL}`),
   });
@@ -338,7 +354,18 @@ export function createDefaultAdapters(
     },
     resolve: async () => {
       const access = await models.resolve();
-      return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
+      return {
+        ...access,
+        effort: lightestEffort(access.definition.choice.efforts),
+        ...(access.textModel
+          ? {
+              textModel: {
+                ...access.textModel,
+                effort: lightestEffort(access.textModel.definition.choice.efforts),
+              },
+            }
+          : {}),
+      };
     },
     configured: () => models.configured,
     traces,
@@ -393,18 +420,90 @@ export function createDefaultAdapters(
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
+    localSpeech,
+    speechInputFormat: (voice) => {
+      const { connections, selection } = models.view();
+      const selected = connections
+        .find((connection) => connection.id === selection?.connectionId)
+        ?.models.find((model) => model.id === selection?.modelId);
+      return selected?.audio ||
+        voice?.startsWith('local:') ||
+        (!openAISpeech.configured &&
+          !openRouterTranscription.configured &&
+          !elevenLabsSpeech.configured)
+        ? 'wav'
+        : undefined;
+    },
     speech: {
       ...openAISpeech,
+      get defaultVoice() {
+        return openRouterSpeech.configured
+          ? openRouterSpeech.defaultVoice
+          : openAISpeech.configured
+            ? openAISpeech.defaultVoice
+            : elevenLabsSpeech.configured
+              ? elevenLabsSpeech.defaultVoice
+              : localSpeech.defaultVoice;
+      },
       get configured() {
-        return openAISpeech.configured;
+        return (
+          openRouterSpeech.configured ||
+          openAISpeech.configured ||
+          elevenLabsSpeech.configured ||
+          localSpeech.configured
+        );
       },
       get transcriptionConfigured() {
-        return openAISpeech.configured || openRouterTranscription.configured;
+        return (
+          openAISpeech.configured ||
+          openRouterTranscription.configured ||
+          elevenLabsSpeech.configured ||
+          localSpeech.transcriptionConfigured === true
+        );
       },
-      transcribe: (audio, signal, report) =>
-        openAISpeech.configured
-          ? openAISpeech.transcribe!(audio, signal, report)
-          : openRouterTranscription.transcribe(audio, signal, report),
+      get voices() {
+        return [
+          ...(elevenLabsSpeech.configured ? (elevenLabsSpeech.voices ?? []) : []),
+          ...(openRouterSpeech.configured ? (openRouterSpeech.voices ?? []) : []),
+          ...(openAISpeech.configured ? (openAISpeech.voices ?? []) : []),
+          ...(localSpeech.configured ? (localSpeech.voices ?? []) : []),
+        ];
+      },
+      refreshVoices: (signal, force) => elevenLabsSpeech.refreshVoices!(signal, force),
+      synthesize: (text, signal, report, options) => {
+        const selected = options?.voice?.startsWith('local:')
+          ? localSpeech
+          : options?.voice?.startsWith('elevenlabs-direct:')
+            ? elevenLabsSpeech
+            : options?.voice?.startsWith('openai:')
+              ? openAISpeech
+              : options?.voice
+                ? openRouterSpeech
+                : openRouterSpeech.configured
+                  ? openRouterSpeech
+                  : openAISpeech.configured
+                    ? openAISpeech
+                    : elevenLabsSpeech.configured
+                      ? elevenLabsSpeech
+                      : localSpeech;
+        return selected.synthesize(text, signal, report, options);
+      },
+      transcribe: async (audio, signal, report) => {
+        const voice = (await voicePreferences.get()).speechVoice;
+        const local = voice?.startsWith('local:');
+        signal?.throwIfAborted();
+        return local
+          ? localSpeech.transcribe!(audio, signal, report)
+          : voice?.startsWith('elevenlabs-direct:')
+            ? elevenLabsSpeech.transcribe!(audio, signal, report)
+            : openAISpeech.configured
+              ? openAISpeech.transcribe!(audio, signal, report)
+              : openRouterTranscription.configured
+                ? openRouterTranscription.transcribe(audio, signal, report)
+                : elevenLabsSpeech.configured
+                  ? elevenLabsSpeech.transcribe!(audio, signal, report)
+                  : localSpeech.transcribe!(audio, signal, report);
+      },
     },
     integrations,
     integrationBrowser,
@@ -725,7 +824,27 @@ async function initializeApplication(
       adapters.observe?.(turnId, event);
     },
   });
-  const speech = createSpeech(ledger.speech(adapters.speech));
+  const speechPreferences = createPreferencesStore(pool, ownerId);
+  const speechProvider = ledger.speech(adapters.speech);
+  const speech = createSpeech({
+    ...speechProvider,
+    get configured() {
+      return speechProvider.configured;
+    },
+    get transcriptionConfigured() {
+      return speechProvider.transcriptionConfigured;
+    },
+    get voices() {
+      return speechProvider.voices;
+    },
+    get defaultVoice() {
+      return speechProvider.defaultVoice;
+    },
+    async synthesize(text, signal, report, options) {
+      const voice = options?.voice ?? (await speechPreferences.get()).speechVoice;
+      return speechProvider.synthesize(text, signal, report, voice ? { voice } : undefined);
+    },
+  });
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
@@ -1516,6 +1635,7 @@ async function initializeApplication(
         return result;
       },
       speech,
+      audioReplies: async () => (await speechPreferences.get()).speechReply,
       manage: async (turn, action, args, { admit, ...provenance }) => {
         if (action === 'prepared_list')
           return untrustedBlock('prepared work', JSON.stringify(await proactivity.prepared(args)));
@@ -1813,6 +1933,8 @@ async function initializeApplication(
     admission,
     artifacts,
     submitMessage: userMessages.submit,
+    speech,
+    attributeAudioUsage: ledger.attributeMediaUsage,
     verification: chatVerification,
     taskLedger: tasks.read,
     activity: activity.current,
@@ -1882,6 +2004,12 @@ async function initializeApplication(
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
   ledger.registerRoutes(app);
+  registerSpeechSettings(app, {
+    speech,
+    preferences: speechPreferences,
+    local: adapters.localSpeech,
+    inputFormat: adapters.speechInputFormat,
+  });
   if (adapters.linkPreviews) {
     const previews = adapters.linkPreviews;
     createLinkPreviews({
@@ -2063,6 +2191,7 @@ async function initializeApplication(
     for (const close of [
       () => adapters.integrationBrowser?.close(),
       () => adapters.passwordManager?.close(),
+      () => adapters.localSpeech?.close(),
       () => channels?.close(),
       () => activity.close(),
       () => stopThreadWorkers(),

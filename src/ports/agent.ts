@@ -4,7 +4,12 @@ import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { DiscoveredTool } from './discovered.ts';
 import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
-import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
+import type {
+  AgentReactionResult,
+  Artifact,
+  MessageReaction,
+  SpeechReplyMode,
+} from '../shared/contracts.ts';
 import type { ProactiveIssue } from '../shared/proactivity.ts';
 
 export interface ModelUsageObservation {
@@ -104,6 +109,7 @@ export interface RuntimeContext {
   sessionId: string;
   resumed?: boolean;
   prompt: string;
+  audioCaption?: string;
   background?: boolean;
   channel?: string;
   timeZone?: string;
@@ -116,11 +122,19 @@ export interface RuntimeContext {
   connectedApps?: ConnectedApp[];
   mcpServers?: ConnectedMcpServer[];
   currentMessageId?: string;
+  speech?: { mode: SpeechReplyMode; available: boolean };
   firstConversationTurn?: boolean;
-  replyTo?: { id: string; role: string; text: string; attachments?: MessageAttachment[] };
+  replyTo?: {
+    id: string;
+    role: string;
+    text: string;
+    audioCaption?: string;
+    attachments?: MessageAttachment[];
+  };
   history: Array<{
     role: string;
     text: string;
+    audioCaption?: string;
     createdAt?: string | Date;
     reaction?: string | null;
     attachments?: MessageAttachment[];
@@ -150,6 +164,8 @@ export interface RuntimeContext {
   workspacePath: string;
   signal: AbortSignal;
   attachments: Array<{
+    id?: string;
+    input?: boolean;
     path: string;
     mimeType: string;
     workspaceFile?: string;
@@ -180,6 +196,7 @@ export interface RuntimeContext {
   ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
+  readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
   readWorkspaceFile?(path: string, maxBytes: number): Promise<Uint8Array>;
   publishScreenshot?(bytes: Uint8Array, name?: string): Promise<Artifact>;
   publishBrowserFile?(file: {
@@ -226,6 +243,7 @@ export interface RuntimeContext {
     Array<{
       id: string;
       text: string;
+      audioCaption?: string;
       replyTo?: RuntimeContext['replyTo'];
       attachments: RuntimeContext['attachments'];
     }>
@@ -237,6 +255,7 @@ export interface RuntimeResult {
   message?: string;
   handoffBrowserId?: string;
   result?: string;
+  spokenReply?: string;
 }
 export interface AgentImage {
   type: 'image';
@@ -272,6 +291,14 @@ export type AgentEvent =
   | { type: 'final'; text: string }
   | ModelUsageObservation
   | { type: 'error'; message: string };
+export interface AgentAudio {
+  id: string;
+  mimeType: string;
+}
+export interface AgentAudioInput {
+  files: AgentAudio[];
+  fallback: string;
+}
 export interface AgentSessionOptions extends ExecutionScope {
   restricted?: boolean;
   ephemeral?: boolean;
@@ -289,13 +316,15 @@ export interface AgentSessionOptions extends ExecutionScope {
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;
-  nextMessages?(): Promise<Array<{ text: string; images: AgentImage[] }>>;
+  readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
+  nextMessages?(): Promise<Array<{ text: string; images: AgentImage[]; audio?: AgentAudioInput }>>;
 }
 export interface AgentSession {
   resumed: boolean;
   readsImages?: boolean;
+  readsAudio?: boolean;
   contextWindow?: number;
-  prompt(text: string, images: AgentImage[]): Promise<void>;
+  prompt(text: string, images: AgentImage[], audio?: AgentAudioInput): Promise<void>;
   abort(): void | Promise<void>;
   dispose(): void | Promise<void>;
 }

@@ -34,6 +34,7 @@ async function fixture(
     tools: Map<string, AgentTool>,
     emit: (event: AgentEvent) => void,
     options: AgentSessionOptions,
+    request: string,
   ) => Promise<void>,
   overrides: Partial<RuntimeContext> = {},
   runtimeOptions: Partial<Parameters<typeof createAgentRuntime>[0]> = {},
@@ -67,11 +68,12 @@ async function fixture(
     open: async (options) => {
       return {
         resumed: false,
-        prompt: async () => {
+        prompt: async (request) => {
           await run(
             new Map(options.tools.map((tool) => [tool.name, tool])),
             options.onEvent,
             options,
+            request,
           );
         },
         abort: () => {
@@ -109,6 +111,62 @@ async function fixture(
 async function call(tools: Map<string, AgentTool>, name: string, args: Record<string, unknown>) {
   return tools.get(name)!.execute(args);
 }
+
+test('a chosen audio reply reaches the speech tool without repeating an internal progress note', async () => {
+  const spoken: string[] = [];
+  const result = await fixture(
+    async (tools, emit, _options, request) => {
+      const data = JSON.parse(request.split('Request data (JSON):\n')[1].split('\n\n')[0]);
+      assert.deepEqual(data.speech, { mode: 'auto', available: true });
+      assert.equal(data.currentInstruction, 'Answer in audio notes.');
+      emit({ type: 'message_start' });
+      emit({ type: 'message_end', status: 'succeeded' });
+      emit({ type: 'message_start' });
+      emit({ type: 'text_delta', text: 'Preparing a synthetic voice note.' });
+      emit({ type: 'message_end', status: 'succeeded' });
+      await call(tools, 'create_audio', { text: 'The synthetic answer is ready.' });
+    },
+    {
+      prompt: 'Answer in audio notes.',
+      speech: { mode: 'auto', available: true },
+      createAudio: async (text) => {
+        spoken.push(text);
+        return {
+          id: randomUUID(),
+          name: 'reply.ogg',
+          mimeType: 'audio/ogg',
+          size: 20,
+          url: '/api/artifacts/fixture',
+        };
+      },
+    },
+  );
+  assert.deepEqual(spoken, ['The synthetic answer is ready.']);
+  assert.deepEqual(result.replies, []);
+  assert.equal(result.result.status, 'succeeded');
+});
+
+test('speech failure stays available to the agent for a text fallback without retrying', async () => {
+  let attempted = 0;
+  const result = await fixture(
+    async (tools, emit, _options, request) => {
+      const data = JSON.parse(request.split('Request data (JSON):\n')[1].split('\n\n')[0]);
+      assert.deepEqual(data.speech, { mode: 'auto', available: false });
+      await assert.rejects(call(tools, 'create_audio', { text: 'The synthetic answer.' }));
+      emit({ type: 'final', text: 'The synthetic answer is ready. Voice is unavailable.' });
+    },
+    {
+      speech: { mode: 'auto', available: false },
+      createAudio: async () => {
+        attempted++;
+        throw new Error('Synthetic speech unavailable');
+      },
+    },
+  );
+  assert.equal(attempted, 1);
+  assert.deepEqual(result.replies, ['The synthetic answer is ready. Voice is unavailable.']);
+  assert.equal(result.result.status, 'succeeded');
+});
 
 test('mail that grants account access stays out of app tool results and workspace files', async () => {
   const secrets = [
@@ -856,6 +914,7 @@ test('a subagent cannot hand over its browser to the owner', async () => {
   let refused = false;
   const result = await fixture(async (tools, emit, execution) => {
     if (execution.parentRunId) {
+      assert.equal(tools.has('create_audio'), false);
       await assert.rejects(
         call(tools, 'browser', { action: 'handoff', text: 'Complete sign-in.' }),
         /subagent cannot hand over/,

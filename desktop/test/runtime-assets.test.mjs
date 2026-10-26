@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
 import { copyBundleSource, copyEngineDependencies } from '../scripts/engine-dependencies.mjs';
+import { copySpeechSources } from '../scripts/speech-sources.mjs';
 import {
   assetHash,
   ensureRuntimeAssets,
@@ -42,6 +43,68 @@ import {
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
+
+test('speech distribution includes matching source and license and rejects changed archives', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-sources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dependency = join(root, 'node_modules', '@spelling-creator', 'spellophone');
+  await mkdir(dependency, { recursive: true });
+  await mkdir(join(root, 'desktop', 'licenses'), { recursive: true });
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '0.2.1' }));
+  await writeFile(join(dependency, 'LICENSE'), 'Synthetic license fixture');
+  await writeFile(join(root, 'desktop', 'licenses', 'speech.md'), 'Synthetic source notice');
+  const bytes = Buffer.from('Synthetic corresponding source archive');
+  const archives = [
+    {
+      file: 'source.tar.gz',
+      url: 'https://source.example.invalid/pinned-source',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    },
+  ];
+  const target = join(root, 'engine');
+  const cacheDir = join(root, 'cache');
+  let calls = 0;
+  const download = async (url, options) => {
+    calls++;
+    assert.equal(url, archives[0].url);
+    assert.equal(options.redirect, 'error');
+    return new Response(bytes);
+  };
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  const sources = join(target, 'licenses', 'speech');
+  assert.deepEqual(await readFile(join(sources, 'source.tar.gz')), bytes);
+  assert.equal(await readFile(join(sources, 'GPL-3.0.txt'), 'utf8'), 'Synthetic license fixture');
+  assert.equal(await readFile(join(sources, 'NOTICE.md'), 'utf8'), 'Synthetic source notice');
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  assert.equal(calls, 1);
+  await writeFile(join(cacheDir, 'source.tar.gz'), 'corrupt');
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      cacheDir,
+      archives,
+      fetch: async () => new Response('corrupt'),
+    }),
+    /checksum mismatch/,
+  );
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      cacheDir,
+      archives,
+      fetch: async () => new Response(Buffer.alloc(200)),
+    }),
+    /too large/,
+  );
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '9.0.0' }));
+  await assert.rejects(
+    copySpeechSources({ root, target, cacheDir, archives, fetch: download }),
+    /do not match/,
+  );
+});
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));
@@ -1418,6 +1481,7 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
         'synthetic-extension': '1.0.0',
         'synthetic-linux': '1.0.0',
         '@synthetic/intel': '1.0.0',
+        'onnxruntime-node': '1.0.0',
       },
       devDependencies: { 'synthetic-tool': '1.0.0' },
     }),
@@ -1448,6 +1512,16 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
       JSON.stringify({ name, os: name.includes('linux') ? ['linux'] : ['darwin'], cpu: ['x64'] }),
     );
   }
+  const inference = join(source, 'node_modules', 'onnxruntime-node');
+  await mkdir(inference, { recursive: true });
+  await writeFile(join(inference, 'package.json'), JSON.stringify({ name: 'onnxruntime-node' }));
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    for (const arch of ['arm64', 'x64']) {
+      const directory = join(inference, 'bin', 'napi-v3', platform, arch);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'onnxruntime_binding.node'), 'synthetic native binary');
+    }
+  }
   await copyEngineDependencies({ root: source, target });
   for (const path of [
     'synthetic-linux',
@@ -1455,8 +1529,42 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'synthetic-tool',
     'synthetic-helper',
     '.bin/tool',
+    'onnxruntime-node/bin/napi-v3/linux',
+    'onnxruntime-node/bin/napi-v3/win32',
+    'onnxruntime-node/bin/napi-v3/darwin/x64',
   ])
     await assert.rejects(stat(join(target, 'node_modules', path)), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(
+      join(
+        target,
+        'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
+      ),
+      'utf8',
+    ),
+    'synthetic native binary',
+  );
+  const windowsTarget = join(root, 'windows-application');
+  await copyEngineDependencies({
+    root: source,
+    target: windowsTarget,
+    platform: 'win32',
+    arch: 'x64',
+  });
+  assert.ok(
+    (
+      await stat(
+        join(
+          windowsTarget,
+          'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
+        ),
+      )
+    ).isFile(),
+  );
+  await assert.rejects(
+    stat(join(windowsTarget, 'node_modules/onnxruntime-node/bin/napi-v3/darwin')),
+    { code: 'ENOENT' },
+  );
   assert.equal(
     JSON.parse(
       await readFile(
@@ -2899,7 +3007,12 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     }),
     windowsBefore,
   );
-  for (const path of [...windowsCopies, 'desktop/scripts/prepare-windows-runtime.mjs']) {
+  for (const path of [
+    ...windowsCopies,
+    'desktop/scripts/prepare-windows-runtime.mjs',
+    'desktop/scripts/speech-sources.mjs',
+    'desktop/licenses/speech.md',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n# synthetic runtime change\n`);

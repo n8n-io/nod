@@ -9,7 +9,7 @@ Chat is where you give Nod work, answer its questions and get the results.
 
 Nod keeps one ongoing conversation with you. The desktop app, the web app, Telegram and WhatsApp all add to that same conversation, so Nod remembers what you said in any of them.
 
-Nod follows your conversation language, including questions, confirmations and connection instructions. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, Nod writes in English. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. What Nod reads on websites, in email and in documents comes back translated. It keeps the original wording only in quotes, such as a menu or button name you need to find, with a short translation when the meaning isn't clear. Region, date format and time zone are separate preferences.
+Nod follows your latest clear message's language, spoken or typed, including questions, confirmations and connection instructions. An explicit language request takes precedence. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, Nod writes in English. Asking for an email or document in a different language applies to that output; a neutral acknowledgement such as "OK" keeps the preceding language. What Nod reads on websites, in email and in documents comes back translated. It keeps the original wording only in quotes, such as a menu or button name you need to find, with a short translation when the meaning isn't clear. Voice, region, date format and time zone are separate preferences.
 
 ## Send a message
 
@@ -31,6 +31,32 @@ Select a passage in a message, then **Reply to selection** to quote it. The quot
 Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Select **Commands**, or press Command/Ctrl+K outside an editor, to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
 
 An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. Nod does not repeat it automatically.
+
+## Send an audio message
+
+Select **Record an audio message** beside the send button and allow microphone access. Select **Send** when you finish. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
+
+Use the arrow beside the microphone to choose an input. Nod remembers your choice in this browser. If that microphone is disconnected, Nod uses your system default.
+
+Your message shows the recording and any caption you typed. Nod keeps an internal transcript for private verification and action authorization; the generated transcript is not shown in the message. Models marked **Audio input**, currently **GPT Audio 1.5** through an OpenAI API connection, also receive the actual recording. Text-only models use the transcript. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
+
+An audio model's **Text support** label shows its companion from the same connection. Requests to the selected model without recordings, including a new text conversation, trust checks and session summaries, use that companion. Background work can still use a smaller model from the same connection. Follow-ups that still include recent recordings use the audio model. Your saved model selection stays unchanged. An audio model is unavailable when its connection has no text companion.
+
+With **Auto**, Nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.
+
+In **Settings → General → Voice**, choose a **Voice provider**, then open **Assistant voice** to compare samples and choose a voice. Set **Spoken replies** to **Auto**, **When I send audio**, **Always**, or **Off**. Auto is the default for new settings; existing choices stay unchanged. Off stops automatic spoken replies, but you can still explicitly request an audio file.
+
+**Automatic** uses the first connected speech service in this order: OpenRouter, OpenAI, ElevenLabs, then downloaded free voices. It uses that service's default voice; it does not match a voice to the conversation language. **Assistant voice** shows the current voice and provider, with a sample you can play. This default can change when your connections or provider's voice list change. To keep a particular voice, choose its provider, then select the voice. Your chat model stays unchanged. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
+
+Native audio keeps the two most recent recording messages available across follow-ups and session compaction. Older recordings remain saved and their transcripts provide conversation context. Each recording is limited to five minutes and 25 MB. Browser recordings are converted to WAV for compatible models; externally uploaded native audio supports WAV, WebM, Ogg and MP3. Audio input uses the selected model's API credits, separately from your chosen spoken-reply voice.
+
+Existing API connections make their voices available automatically. Select a provider to see its connection status. If it isn't connected, sign in to OpenRouter for ElevenLabs and Kokoro voices, or connect ElevenLabs or OpenAI with an API key. OpenRouter doesn't need a separate ElevenLabs key. For local speech, select **Free voices → Download voices**. Setup stays on this page, and your connected chat model stays selected.
+
+A direct ElevenLabs connection brings in voices saved in your account. Give the key Text to Speech, Speech to Text, and Voices read access. Select **Browse voices** to add or create voices on ElevenLabs, then **Refresh voices** to see them in Nod. Saved keys have a **Disconnect** action. Samples and replies use the selected provider’s credits.
+
+ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Pick a voice that matches your conversation; changing a voice doesn't change the language Nod writes in.
+
+Under **Free voices**, select **Download voices** for a one-time download of about 180 MB, with no account needed. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices. Downloads need an internet connection; downloaded voices run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
 
 ## See visual answers
 

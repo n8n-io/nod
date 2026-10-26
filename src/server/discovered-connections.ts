@@ -326,19 +326,23 @@ export async function createDiscoveredConnections(
       slug: string;
       name: string;
       completed: boolean;
+      expired: boolean;
       link_hash: string | null;
       oauth_status: ProposalRow['oauth_status'];
     }>(
-      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash,oauth_status
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,
+       expires_at<=now() AS expired,link_hash,oauth_status
        FROM discovered_connection_proposals WHERE owner_id=$1
-       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))
-       AND (expires_at>now() OR oauth_status='connected')`,
+       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))`,
       [owner, requested, hashes],
     );
     return result.rows.map(({ oauth_status, ...row }) => ({
       ...row,
       ...(row.link_hash && hashes.includes(row.link_hash)
-        ? { available: oauth_status === 'pending' || oauth_status === 'completing' }
+        ? {
+            available:
+              !row.expired && (oauth_status === 'pending' || oauth_status === 'completing'),
+          }
         : {}),
     }));
   }

@@ -52,6 +52,7 @@ import {
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
+import { recordingSource } from '../lib/recording';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -302,7 +303,14 @@ export function Chat({
   const sendCount = useRef(0);
   const pendingSends = useRef(0);
   const outstandingSends = useRef(0);
-  const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
+  const retry = useRef<{
+    id: string;
+    threadId: string;
+    signature: string;
+    recording?: File;
+    body: string;
+  } | null>(null);
+  const recordingIds = useRef(new WeakMap<File, string>());
   const handledRequest = useRef<string | null>(null);
   const requestedSends = useRef<Array<{ text: string; result?: ComposerSendResult }>>([]);
   const historyVersion = useRef(0);
@@ -589,6 +597,7 @@ export function Chat({
     reply.id === taskReply.current
       ? 'task_reply'
       : 'composer',
+    recording?: File,
   ): Promise<ComposerSendResult> {
     if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
     const captureAnalytics = analyticsForCurrentSession();
@@ -612,6 +621,9 @@ export function Chat({
     const masked = verificationRequests.every((request) => request.kind === 'payment')
       ? 'Security code sent securely.'
       : 'Verification code sent securely.';
+    const recordingKey = recording && recordingSource(recording);
+    if (recordingKey && !recordingIds.current.has(recordingKey))
+      recordingIds.current.set(recordingKey, crypto.randomUUID());
     const signature = privateVerification
       ? null
       : JSON.stringify([
@@ -619,14 +631,17 @@ export function Chat({
           attachments.map((item) => item.id),
           reply?.id ?? null,
           reply?.text ?? null,
+          recordingKey ? recordingIds.current.get(recordingKey) : null,
         ]);
     if (privateVerification) retry.current = null;
-    const id =
+    const previousAttempt =
       signature !== null &&
       retry.current?.threadId === sentThread &&
       retry.current.signature === signature
-        ? retry.current.id
-        : crypto.randomUUID();
+        ? retry.current
+        : null;
+    const id = previousAttempt?.id ?? crypto.randomUUID();
+    const submittedRecording = previousAttempt?.recording ?? recording;
     const previous = sendQueue.current;
     let finished!: (sent: boolean) => void;
     sendQueue.current = new Promise<boolean>((resolve) => {
@@ -636,6 +651,8 @@ export function Chat({
     pendingSends.current++;
     outstandingSends.current++;
     let failed = false;
+    let retryableFailure = false;
+    let submittedBody = previousAttempt?.body;
     if (reply) {
       taskReply.current = null;
       setReplyTo(null);
@@ -643,7 +660,7 @@ export function Chat({
     const message: Message = {
       id,
       role: 'user',
-      text: privateVerification ? masked : value,
+      text: privateVerification ? masked : value || (recording ? 'Audio message' : ''),
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -669,17 +686,17 @@ export function Chat({
       if (!(await previous)) {
         failed = true;
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
-        return { sent: false, restoreText: !privateVerification || !explicitVerification };
+        return {
+          sent: false,
+          restoreText: !privateVerification || !explicitVerification,
+          restoreRecording: !privateVerification,
+        };
       }
       const replaySession = analyticsReplaySession();
-      const response = await apiResponse('/api/messages', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(replaySession ? { 'x-nod-replay-session': replaySession } : {}),
-        },
-        body: JSON.stringify({
+      const repliedMessage = replyId ? allMessages.find((item) => item.id === replyId) : null;
+      const messageBody =
+        submittedBody ??
+        JSON.stringify({
           threadId: sentThread,
           clientMessageId: id,
           text: value,
@@ -687,21 +704,39 @@ export function Chat({
           ...(replyId
             ? {
                 replyToMessageId: replyId,
-                ...(reply && allMessages.find((item) => item.id === replyId)?.text !== reply.text
+                ...(reply && (repliedMessage?.audioCaption ?? repliedMessage?.text) !== reply.text
                   ? { replyQuote: reply.text.slice(0, 4000) }
                   : {}),
               }
             : {}),
           ...(seenMessageId ? { seenMessageId } : {}),
           ...(verificationRequestId ? { verificationRequestId } : {}),
-        }),
+        });
+      submittedBody = messageBody;
+      let body: string | FormData = messageBody;
+      if (submittedRecording) {
+        body = new FormData();
+        body.append('message', messageBody);
+        body.append('file', submittedRecording);
+      }
+      const response = await apiResponse(recording ? '/api/messages/audio' : '/api/messages', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          ...(!recording ? { 'Content-Type': 'application/json' } : {}),
+          ...(replaySession ? { 'x-nod-replay-session': replaySession } : {}),
+        },
+        body,
       });
       const result = (await response.json()) as Partial<SubmitMessageResponse> & {
         error?: string;
+        attachments?: Artifact[];
+        retryable?: boolean;
       };
       verificationStatus = result.verificationStatus;
       privateVerification ||= verificationStatus !== undefined;
       if (!response.ok) {
+        retryableFailure = result.retryable === true;
         if (response.status === 409 && verificationStatus === undefined) void refresh();
         throw new Error(result.error || 'The message could not be sent.');
       }
@@ -711,7 +746,7 @@ export function Chat({
       const turnId = result.turnId;
       if (!privateVerification)
         captureAnalytics('nod_chat_message_sent', {
-          has_attachments: attachments.length > 0,
+          has_attachments: attachments.length > 0 || Boolean(recording),
           is_reply: Boolean(replyId),
           source,
         });
@@ -731,6 +766,10 @@ export function Chat({
                   ...item.message,
                   turnId,
                   text: messageText,
+                  ...(typeof result.audioCaption === 'string'
+                    ? { audioCaption: result.audioCaption }
+                    : {}),
+                  ...(result.attachments ? { attachments: result.attachments } : {}),
                 },
               }
             : item,
@@ -747,8 +786,17 @@ export function Chat({
         return { sent: true };
       }
       failed = true;
+      if (retryableFailure && recordingKey) recordingIds.current.delete(recordingKey);
       retry.current =
-        !privateVerification && signature !== null ? { id, threadId: sentThread, signature } : null;
+        !privateVerification && !retryableFailure && signature !== null && submittedBody
+          ? {
+              id,
+              threadId: sentThread,
+              signature,
+              recording: submittedRecording,
+              body: submittedBody,
+            }
+          : null;
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
       setError(
         privateVerification
@@ -758,7 +806,11 @@ export function Chat({
           : errorMessage(cause),
       );
       captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
-      return { sent: false, restoreText: !privateVerification || !explicitVerification };
+      return {
+        sent: false,
+        restoreText: !privateVerification || !explicitVerification,
+        restoreRecording: !privateVerification,
+      };
     } finally {
       outstandingSends.current--;
       finished(!failed);
@@ -1156,7 +1208,12 @@ export function Chat({
                         message.turnId || persistedIds.has(message.id)
                           ? (quote?: string) => {
                               taskReply.current = null;
-                              setReplyTo(quote?.trim() ? { ...message, text: quote } : message);
+                              setReplyTo({
+                                ...message,
+                                text: quote?.trim()
+                                  ? quote
+                                  : (message.audioCaption ?? message.text),
+                              });
                               composer.current?.focus();
                             }
                           : undefined
@@ -1264,7 +1321,8 @@ export function Chat({
           )}
           <div hidden={!state.configuration.llmReady && !working && !sending}>
             <Composer
-              key={threadId}
+              key={`${ownerId}.${threadId}`}
+              active={visible}
               ref={composer}
               draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
               privateReply={Boolean(state.verificationRequests?.length)}
@@ -1277,7 +1335,9 @@ export function Chat({
                 taskReply.current = null;
                 setReplyTo(null);
               }}
-              onSend={send}
+              onSend={(value, attachments, recording) =>
+                send(value, attachments, replyTo, undefined, recording)
+              }
               onStop={
                 working ||
                 state.tasks?.some((task) =>

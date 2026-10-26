@@ -10,6 +10,7 @@ import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
 import { usePrivateEntry } from './private-entry';
+import { Button } from './ui';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2 };
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
@@ -175,24 +176,29 @@ function SetupAction({
   const entry = usePrivateEntry();
   if (setup === 'app')
     return (
-      <button
-        type="button"
-        data-setup={setup}
-        className="setup-app-card"
-        disabled={app?.available === false}
-        onClick={(event) => {
-          captureAnalytics('nod_setup_link_clicked', { setup });
-          onConnect(href, event.currentTarget);
-        }}
-      >
+      <div className="setup-app-card">
         {app ? (
           <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={28} />
         ) : (
           <Icon size={28} aria-hidden="true" />
         )}
         <span className="setup-app-name">{app?.name ?? label.replace(/^Connect\s+/i, '')}</span>
-        <span className="setup-app-action">{app?.available === false ? 'Expired' : 'Connect'}</span>
-      </button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-setup={setup}
+          className="setup-app-action"
+          disabled={app?.available === false}
+          aria-label={`${app?.available === false ? 'Expired' : 'Connect'} ${app?.name ?? label.replace(/^Connect\s+/i, '')}`}
+          onClick={(event) => {
+            captureAnalytics('nod_setup_link_clicked', { setup });
+            onConnect(href, event.currentTarget);
+          }}
+        >
+          {app?.available === false ? 'Expired' : 'Connect'}
+        </Button>
+      </div>
     );
   return (
     <a

@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  FileAudio,
   FileImage,
   KeyRound,
   Plus,
@@ -45,7 +46,7 @@ import {
   SearchField,
 } from './ui';
 
-const modelProviderLogos: Record<ModelProvider, string> = {
+const modelProviderLogos: Partial<Record<ModelProvider, string>> = {
   openai: 'models/openai',
   anthropic: 'models/anthropic',
   google: 'models/google',
@@ -101,7 +102,7 @@ export function ModelProviderLogo({
       style={{
         width: size,
         height: size,
-        maskImage: `url('/logos/${modelProviderLogos[provider]}.svg')`,
+        maskImage: `url('/logos/${modelProviderLogos[provider] ?? 'server'}.svg')`,
       }}
       aria-hidden="true"
     />
@@ -386,6 +387,9 @@ export function ModelSettings({
   }, [dirty, onDirtyChange]);
   if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
   const data = models.data;
+  const selectedModel = data.connections
+    .find((connection) => connection.id === data.selection?.connectionId)
+    ?.models.find((model) => model.id === data.selection?.modelId);
   const busy = models.busy || signingIn || !!signIn;
   const searching = showProviders || !!providerSearch.trim();
   const listedProviders = modelProviders.filter((provider) =>
@@ -415,7 +419,13 @@ export function ModelSettings({
         <div className="model-current">
           <div className="model-current-label" data-analytics-public>
             <strong>Your model</strong>
-            <span>Nod uses it for every reply</span>
+            <span>
+              {selectedModel?.audio
+                ? selectedModel.textModelName
+                  ? `Text support: ${selectedModel.textModelName}`
+                  : 'Text model unavailable'
+                : 'Nod uses it for every reply'}
+            </span>
           </div>
           <ModelPicker manageConnections={false} surface="settings" />
         </div>
@@ -772,7 +782,8 @@ export function ModelSettings({
           </a>
         </p>
         <p className="model-footnote">
-          Voice input uses an OpenAI or OpenRouter API key. Voice replies need OpenAI.
+          Voice uses an OpenAI API key, OpenRouter, or free local voices. Set it up in Settings →
+          General → Voice.
         </p>
       </details>
     </div>
@@ -860,7 +871,11 @@ export function ModelPicker({
               ? 'Choose a model'
               : 'Connect a model'
         }
-        title={model ? `${model.name} · ${connectionName(connection!)}` : undefined}
+        title={
+          model
+            ? `${model.name} · ${connectionName(connection!)}${model.audio ? ` · ${model.textModelName ? `Text support: ${model.textModelName}` : 'Text model unavailable'}` : ''}`
+            : undefined
+        }
         disabled={models.loading}
       >
         {model ? (
@@ -921,7 +936,7 @@ export function ModelPicker({
                   key={`${source.id}:${item.id}`}
                   className="model-option"
                   aria-pressed={active}
-                  disabled={models.busy}
+                  disabled={models.busy || (item.audio && !item.textModelName)}
                   onClick={() => void choose(source, item.id, recommended)}
                 >
                   <ModelProviderLogo provider={source.provider} size={24} />
@@ -943,6 +958,19 @@ export function ModelPicker({
                           <FileImage size={14} />
                           Reads images
                         </span>
+                      )}
+                      {item.audio && (
+                        <>
+                          <span className="model-option-capability">
+                            <FileAudio size={14} />
+                            Audio input
+                          </span>
+                          <span>
+                            {item.textModelName
+                              ? `Text support: ${item.textModelName}`
+                              : 'Text model unavailable'}
+                          </span>
+                        </>
                       )}
                       {!sharedThinking && item.efforts.some((effort) => effort !== 'off') && (
                         <span className="model-option-capability">

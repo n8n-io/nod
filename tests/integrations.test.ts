@@ -5171,12 +5171,58 @@ test(
         return response.json();
       };
       assert.ok(id);
+      const visibleProposals = await proposalStatus(
+        [setupHash(id), setupHash(foreignProposal), setupHash(expiredProposal), '0'.repeat(64)],
+        [id, foreignProposal, expiredProposal, randomUUID()],
+      );
+      assert.deepEqual(visibleProposals.completed, []);
+      assert.equal(visibleProposals.apps.length, 2);
       assert.deepEqual(
-        await proposalStatus(
-          [setupHash(id), setupHash(foreignProposal), setupHash(expiredProposal), '0'.repeat(64)],
-          [id, foreignProposal, expiredProposal, randomUUID()],
+        visibleProposals.apps.find((row: { hash: string }) => row.hash === setupHash(id)),
+        { hash: setupHash(id), slug: 'fixture-app', name: result.name },
+      );
+      assert.deepEqual(
+        visibleProposals.apps.find(
+          (row: { hash: string }) => row.hash === setupHash(expiredProposal),
         ),
-        { completed: [], apps: [{ hash: setupHash(id), slug: 'fixture-app', name: result.name }] },
+        {
+          hash: setupHash(expiredProposal),
+          slug: 'fixture-app',
+          name: result.name,
+          available: false,
+        },
+      );
+      const expiredLinkHash = createHash('sha256')
+        .update('https://fixture.example/expired-authorization')
+        .digest('hex');
+      await pool.query(
+        "UPDATE discovered_connection_proposals SET link_hash=$2,oauth_status='pending' WHERE id=$1",
+        [expiredProposal, expiredLinkHash],
+      );
+      assert.deepEqual(await proposalStatus([expiredLinkHash], []), {
+        completed: [],
+        apps: [
+          {
+            hash: expiredLinkHash,
+            slug: 'fixture-app',
+            name: result.name,
+            available: false,
+          },
+        ],
+      });
+      assert.equal(
+        (await app.inject({ url: `/api/apps/discovery/${expiredProposal}` })).statusCode,
+        404,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/discovery/${expiredProposal}/complete`,
+            payload: { token: 'synthetic-expired-token', accountName: 'Expired fixture account' },
+          })
+        ).statusCode,
+        404,
       );
       assert.deepEqual(await proposalStatus(['0'.repeat(64)], [id]), {
         completed: [],

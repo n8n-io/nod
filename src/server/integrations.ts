@@ -2238,15 +2238,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 .connectionStatus?.(configuredOwner, pairingUrl)
                 .catch(() => undefined)
             : undefined;
-        const discoveredLinks = discovered.flatMap(({ id, link_hash, available, ...service }) => {
-          const proposalHash = createHash('sha256').update(`/apps?connect=${id}`).digest('hex');
-          return [
-            ...(link_hash && hashes.includes(link_hash)
-              ? [{ ...service, hash: link_hash, available }]
-              : []),
-            ...(hashes.includes(proposalHash) ? [{ ...service, hash: proposalHash }] : []),
-          ];
-        });
+        const discoveredLinks = discovered.flatMap(
+          ({ id, link_hash, available, expired, ...service }) => {
+            const proposalHash = createHash('sha256').update(`/apps?connect=${id}`).digest('hex');
+            return [
+              ...(link_hash && hashes.includes(link_hash)
+                ? [{ ...service, hash: link_hash, available }]
+                : []),
+              ...(hashes.includes(proposalHash)
+                ? [{ ...service, hash: proposalHash, ...(expired ? { available: false } : {}) }]
+                : []),
+            ];
+          },
+        );
         const apps = [...links.rows, ...discoveredLinks]
           .filter((link) => !link.completed)
           .filter(({ hash }) => hashes.includes(hash))

@@ -1,4 +1,5 @@
 import { ModelSettings } from './models';
+import { VoiceSettings } from './voice-settings';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   ChartColumn,
@@ -352,10 +353,12 @@ export function AccountSettings({
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const pending = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
-  pending.current = modelDirty || preferencesDirty || memoryDirty || native.busy || account.saving;
+  pending.current =
+    modelDirty || preferencesDirty || voiceBusy || memoryDirty || native.busy || account.saving;
   const [error, setError] = useState('');
   const close = () => {
     if (pending.current) setError('Save or cancel your changes first.');
@@ -494,11 +497,11 @@ export function AccountSettings({
             className="account-settings-close"
             variant="ghost"
             aria-label="Close settings"
-            title="Close settings (Esc)"
+            title="Close settings (ESC)"
             onClick={close}
           >
             <X size={18} aria-hidden="true" />
-            <kbd aria-hidden="true">Esc</kbd>
+            <kbd aria-hidden="true">ESC</kbd>
           </Button>
         </div>
       </header>
@@ -621,6 +624,7 @@ export function AccountSettings({
                     onChange={native.save}
                   />
                 )}
+                {open && <VoiceSettings onBusyChange={setVoiceBusy} />}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>
                   <h2 id={`${id}-privacy`} data-analytics-public>

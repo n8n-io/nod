@@ -49,6 +49,7 @@ const parentTools = new Set([
   'browser_session',
   'ask_user',
   'send_message',
+  'create_audio',
   'manage_apps',
   'task',
 ]);
@@ -383,8 +384,10 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
+          if (name === 'create_audio') deliveredMessage = true;
           if (
             name === 'send_message' ||
+            name === 'create_audio' ||
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;
@@ -648,7 +651,7 @@ export function createAgentRuntime(dependencies: {
         if (!trimmed) throw new Error('Write the follow-up line.');
         if (!deliveredMessage)
           throw new Error(
-            'Deliver the requested result with send_message before offering a follow-up.',
+            'Deliver the requested result with send_message or create_audio before offering a follow-up.',
           );
         if (followUps.length) return 'A follow-up is already queued.';
         followUps.push(trimmed);
@@ -740,6 +743,13 @@ export function createAgentRuntime(dependencies: {
         }
         return { images, omitted };
       };
+      const nativeAudio = (attachments: RuntimeContext['attachments'], fallback: string) => {
+        if (!session?.readsAudio || !context.readAudio) return;
+        const files = attachments.flatMap(({ id, mimeType, input }) =>
+          input && id && mimeType.startsWith('audio/') ? [{ id, mimeType }] : [],
+        );
+        return files.length ? { files, fallback } : undefined;
+      };
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
@@ -749,6 +759,7 @@ export function createAgentRuntime(dependencies: {
         compactInstructions,
         tools,
         workspace,
+        ...(context.readAudio ? { readAudio: context.readAudio } : {}),
         timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => {
@@ -773,9 +784,20 @@ export function createAgentRuntime(dependencies: {
                 message.text,
                 budget,
               );
+              const fallback = instruct(steeredInstruction(message, omitted, analysis));
+              const audio = nativeAudio(message.attachments, fallback);
               messages.push({
-                text: instruct(steeredInstruction(message, omitted, analysis)),
+                text: audio
+                  ? instruct(
+                      steeredInstruction(
+                        { ...message, text: message.audioCaption ?? message.text },
+                        omitted,
+                        analysis,
+                      ),
+                    )
+                  : fallback,
                 images,
+                ...(audio ? { audio } : {}),
               });
             }
             if (messages.length) {
@@ -850,23 +872,30 @@ export function createAgentRuntime(dependencies: {
       const resumed = session.resumed;
       const compact = Boolean(session.contextWindow && session.contextWindow < 65_536);
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
+      const requestContext = compact
+        ? {
+            ...context,
+            history: compactHistory(context.history),
+            relatedConversation: undefined,
+            tasks: [],
+          }
+        : context;
+      const fallback = instruct(
+        firstInstruction(requestContext, resumed && !compact, omitted, analysis),
+      );
+      const audio = nativeAudio(context.attachments, fallback);
+      const nativeContext = audio
+        ? {
+            ...requestContext,
+            prompt: context.audioCaption ?? context.prompt,
+          }
+        : requestContext;
       await session!.prompt(
-        instruct(
-          firstInstruction(
-            compact
-              ? {
-                  ...context,
-                  history: compactHistory(context.history),
-                  relatedConversation: undefined,
-                  tasks: [],
-                }
-              : context,
-            resumed && !compact,
-            omitted,
-            analysis,
-          ),
-        ),
+        audio
+          ? instruct(firstInstruction(nativeContext, resumed && !compact, omitted, analysis))
+          : fallback,
         images,
+        audio,
       );
       await pendingReplies;
       signal.throwIfAborted();
@@ -887,6 +916,7 @@ export function createAgentRuntime(dependencies: {
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult
           : undefined;
+      const spokenReply = result?.trim() || lastReply;
       if (status === 'succeeded' && followUps.length) {
         if (result) {
           await deliverReply(result);
@@ -902,6 +932,7 @@ export function createAgentRuntime(dependencies: {
       return {
         status,
         ...(result ? { result } : {}),
+        ...(spokenReply ? { spokenReply } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
         ...(handoffBrowserId ? { handoffBrowserId } : {}),
