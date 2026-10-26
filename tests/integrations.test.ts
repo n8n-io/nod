@@ -1226,6 +1226,10 @@ test(
           assert.equal(authorizations, variant === 'authorize-failure' ? 1 : 0);
         } else {
           assert.equal(first.statusCode, 200, first.body);
+          assert.deepEqual(first.json().account, {
+            name: original.account_name,
+            email: original.account_email,
+          });
           assert.deepEqual(
             (await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [oldId]))
               .rows[0],
@@ -4555,12 +4559,13 @@ test(
   'managed reconnect preserves the owned connection and watch preference until matching consent completes',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    for (const [watch, active] of [
-      [false, false],
-      [true, false],
-      [true, true],
+    for (const [watch, active, storedEmail] of [
+      [false, false, true],
+      [true, false, true],
+      [true, true, true],
+      [false, true, false],
     ])
-      await t.test(`watch ${watch}, active ${active}`, async (t) => {
+      await t.test(`watch ${watch}, active ${active}, stored email ${storedEmail}`, async (t) => {
         const f = await managedReconnectFixture(t, watch);
         f.accounts.get('old-account')!.status = active ? 'ACTIVE' : 'EXPIRED';
         await f.pool.query('UPDATE app_connections SET turn_id=$2,account_active=$3 WHERE id=$1', [
@@ -4568,6 +4573,10 @@ test(
           randomUUID(),
           active,
         ]);
+        if (!storedEmail)
+          await f.pool.query('UPDATE app_connections SET account_email=NULL WHERE id=$1', [
+            f.connectionId,
+          ]);
         const before = await f.row();
         const saved = (await f.integrations.list()).find(
           (row) => row.connectionId === f.connectionId,
@@ -4578,7 +4587,8 @@ test(
         assert.equal(connectedGmail(saved), active);
         const response = await f.reconnect();
         assert.equal(response.statusCode, 200, response.body);
-        assert.doesNotMatch(response.body, /original-gmail-auth|work@example|private/);
+        assert.deepEqual(response.json().account, { name: 'Work', email: 'work@example.test' });
+        assert.doesNotMatch(response.body, /original-gmail-auth|old-account|private/);
         const pending = await f.row();
         for (const key of [
           'id',
@@ -4826,7 +4836,11 @@ test(
       JSON.stringify(response),
       /https:\/\/proxy\.fixture\.invalid\/connect\/replacement-1/,
     );
-    assert.doesNotMatch(JSON.stringify(response), /original-gmail-auth|old-account|work@example/);
+    assert.ok(response && !Array.isArray(response) && 'account' in response);
+    assert.deepEqual(response.account, { name: 'Work', email: 'work@example.test' });
+    assert.ok('operation' in response);
+    assert.equal(response.operation, 'reconnect');
+    assert.doesNotMatch(JSON.stringify(response), /original-gmail-auth|old-account|private/);
     assert.equal((await f.row()).id, f.connectionId);
     assert.equal((await f.row()).turn_id, turn.turnId);
     assert.equal((await f.pool.query('SELECT count(*) FROM app_connections')).rows[0].count, '1');
