@@ -54,7 +54,6 @@ Recordings mask all text and inputs by default and block the selectors listed in
 
 - A new surface that shows content from the owner, nod, an app or a website must be blocked. Add its class to `blocked`, or put `data-analytics-private` on its root.
 - Put `data-analytics-public` only around static product labels. Never wrap a value that can come from the owner, a server or an error message, such as a hostname or a provider error.
-- Extend the replay privacy test in `tests/vault.test.ts` when you add a blocked surface. It renders real components with synthetic private text and checks the recording.
 
 ## Change or remove an event
 

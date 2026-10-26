@@ -9,7 +9,7 @@ This page explains what happens inside a turn: the Pi session, the tools the mod
 
 The short version: `src/runtime` runs each turn in a Pi session. Every tool call goes through one turn guard. Results from the outside world reach the model wrapped as untrusted data.
 
-nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
+nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
 
 Replies, task updates, questions and confirmations share one writing rule. They use short paragraphs with blank lines between them. Long answers are allowed when useful. They use lists and headings when those help you read. A confirmation asks once and separates the necessary details into short paragraphs.
 
