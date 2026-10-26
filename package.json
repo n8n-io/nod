@@ -53,7 +53,7 @@
     "pg": "^8.23.1",
     "pg-boss": "12.38.0",
     "pi-web-access": "0.41.0",
-    "posthog-node": "5.56.1",
+    "posthog-node": "5.57.0",
     "react": "^19.3.1",
     "tar": "7.5.22",
     "tldts": "7.4.18",
