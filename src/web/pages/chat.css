@@ -341,6 +341,18 @@
   display: flex;
   align-items: center;
   gap: 0;
+  border-radius: var(--radius-full);
+  transition: background 0.15s;
+}
+.composer-microphone:has(.button:not(:disabled):is(:hover, :focus-visible), [data-state='open']) {
+  background: var(--hover);
+}
+.composer-microphone:has(.button:not(:disabled):is(:hover, :focus-visible), [data-state='open'])
+  .button:not(:disabled) {
+  color: var(--foreground);
+}
+.composer-microphone .button:hover:not(:disabled) {
+  background: transparent;
 }
 .microphone-picker-trigger {
   width: 24px;
@@ -374,7 +386,7 @@
 }
 .voice-recorder-actions {
   display: grid;
-  grid-template-columns: 32px 112px;
+  grid-template-columns: 32px 136px;
   align-items: center;
   flex: none;
   margin-left: auto;
@@ -466,7 +478,8 @@
   background: var(--accent);
 }
 .voice-recorder-preview {
-  width: 112px;
+  width: 136px;
+  padding-inline: 8px;
   flex-shrink: 0;
 }
 .recording-preview {

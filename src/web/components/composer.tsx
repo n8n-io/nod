@@ -779,6 +779,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="Choose files"
               onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
             />
+          </div>
+          <div className="composer-right">
             {!hasRecording && (
               <Button
                 type="button"
@@ -791,8 +793,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <Paperclip size={16} />
               </Button>
             )}
-          </div>
-          <div className="composer-right">
             {recorder.phase === 'idle' && !showAudioSetup && (
               <div className="composer-microphone">
                 <Button
