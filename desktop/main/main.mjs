@@ -1412,7 +1412,7 @@ async function removeAllData() {
     type: 'warning',
     message: 'Remove all Nod data?',
     detail:
-      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. Nod then quits.',
+      'Nod will delete your conversations, files, memory, logins, cards and settings from this computer. It will then restart and open setup.',
     buttons: ['Remove all data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -1428,6 +1428,7 @@ async function removeAllData() {
     await browser.clearStorageData();
     await browser.clearCache();
     await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
+    app.relaunch();
     app.exit();
   }, 'Nod could not remove all its data.');
 }
