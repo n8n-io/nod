@@ -12,7 +12,7 @@ import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
-import { transaction } from './transaction.ts';
+import { afterRollback, transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
@@ -1220,37 +1220,54 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     presentation?: Presentation,
   ) => {
     const created = new Map<string, Artifact>();
-    await current(async (client) => {
-      const files = new Map(attachments.map((file) => [file.id, file]));
-      const references = replyFileReferences(text);
-      const replacements: Array<{ start: number; end: number; artifact: Artifact }> = [];
-      for (const reference of references) {
-        const path = posix.resolve(`/workspace/${threadId}`, reference.path);
-        let artifact = created.get(path) ?? published.get(path);
-        if (!artifact) {
-          const read = dependencies.readArtifact;
-          if (!read) throw new Error('Workspace file delivery is unavailable.');
-          artifact = await artifacts.publishArtifact(threadId, path, undefined, read, client);
-          created.set(path, artifact);
+    const cleanup: Array<() => Promise<void>> = [];
+    let rolledBack = false;
+    try {
+      await current(async (client) => {
+        afterRollback(client, () => {
+          rolledBack = true;
+        });
+        const files = new Map(attachments.map((file) => [file.id, file]));
+        const references = replyFileReferences(text);
+        const replacements: Array<{ start: number; end: number; artifact: Artifact }> = [];
+        for (const reference of references) {
+          const path = posix.resolve(`/workspace/${threadId}`, reference.path);
+          let artifact = created.get(path) ?? published.get(path);
+          if (!artifact) {
+            const read = dependencies.readArtifact;
+            if (!read) throw new Error('Workspace file delivery is unavailable.');
+            artifact = await artifacts.publishArtifact(
+              threadId,
+              path,
+              undefined,
+              read,
+              client,
+              (remove) => cleanup.push(remove),
+            );
+            created.set(path, artifact);
+          }
+          files.set(artifact.id, artifact);
+          replacements.push({ ...reference, artifact });
         }
-        files.set(artifact.id, artifact);
-        replacements.push({ ...reference, artifact });
-      }
-      for (const { start, end, artifact } of replacements.reverse()) {
-        const label = artifact.name.replace(/([\\`*_<>\[\]])/g, '\\$1');
-        text = `${text.slice(0, start)}[${label}](${artifact.url})${text.slice(end)}`;
-      }
-      signal.throwIfAborted();
-      await insertAssistantMessage(
-        client,
-        ref,
-        text,
-        [...files.values()],
-        streamId,
-        replyToMessageId,
-        presentation,
-      );
-    });
+        for (const { start, end, artifact } of replacements.reverse()) {
+          const label = artifact.name.replace(/([\\`*_<>\[\]])/g, '\\$1');
+          text = `${text.slice(0, start)}[${label}](${artifact.url})${text.slice(end)}`;
+        }
+        signal.throwIfAborted();
+        await insertAssistantMessage(
+          client,
+          ref,
+          text,
+          [...files.values()],
+          streamId,
+          replyToMessageId,
+          presentation,
+        );
+      });
+    } catch (error) {
+      if (rolledBack) await Promise.allSettled(cleanup.map((remove) => remove()));
+      throw error;
+    }
     for (const [path, artifact] of created) published.set(path, artifact);
     refresh();
   };

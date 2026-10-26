@@ -27,14 +27,19 @@ export function replyFileReferences(text: string) {
           ? node.url
           : undefined;
     if (value !== undefined) {
-      const path = value.replace(/^sandbox:/, '');
+      let path = value.replace(/^sandbox:/, '');
       if (!path.startsWith('/workspace/') || path.endsWith('/')) continue;
       if (node.type === 'inlineCode' && !/^\/workspace\/[^/]+\/.+/.test(path)) continue;
+      if (node.type !== 'inlineCode') {
+        try {
+          path = decodeURIComponent(path.replace(/%(?![\da-f]{2})/gi, '%25'));
+        } catch {}
+      }
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined)
         references.push({
-          path: node.type === 'inlineCode' ? path : decodeURIComponent(path),
+          path,
           start,
           end,
         });
@@ -295,6 +300,7 @@ export function createArtifactService(options: {
       purpose?: 'attachment' | 'publication',
     ) => Promise<Uint8Array>,
     database?: Pick<PoolClient, 'query'>,
+    onCreated?: (cleanup: () => Promise<void>) => void,
   ) {
     z.uuid().parse(threadId);
     if (!path || path.length > 4096 || path.includes('\0') || path.includes('\\'))
@@ -313,6 +319,7 @@ export function createArtifactService(options: {
       mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
       threadId,
       database,
+      onCreated,
     );
   }
   async function readThreadArtifacts(

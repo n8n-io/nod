@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -78,6 +78,7 @@ test(
     const sent: Array<{ chat: string; name: string; mimeType: string; bytes: Buffer }> = [];
     const fetchLocal = globalThis.fetch.bind(globalThis);
     const captured = new Map<string, Artifact>();
+    const publicationPaths = new Map<string, string>();
     const held = new Map<string, RuntimeContext>();
     const release = new Map<string, () => void>();
     const runtimes = new Map<string, ReturnType<typeof createAgentRuntime>>();
@@ -289,6 +290,14 @@ test(
         },
         artifacts: {
           ...localArtifacts,
+          async publishArtifact(...args) {
+            const artifact = await localArtifacts.publishArtifact(...args);
+            const row = (
+              await args[4]!.query('SELECT storage_path FROM artifacts WHERE id=$1', [artifact.id])
+            ).rows[0];
+            publicationPaths.set(artifact.name, row.storage_path);
+            return artifact;
+          },
           async storeArtifact(...args) {
             const artifact = await localArtifacts.storeArtifact(...args);
             const publication = args[3] ? publications.get(args[3]) : undefined;
@@ -498,10 +507,10 @@ test(
           const notes = Buffer.from('Synthetic map links');
           const local = join(dataRoot, 'workspaces', context.threadId);
           await writeFile(join(local, 'calendar.ics'), calendar);
-          await writeFile(join(local, 'map links.txt'), notes);
+          await writeFile(join(local, 'map links 100%.txt'), notes);
           await writeFile(join(local, 'private.txt'), 'Private working file');
           await context.reply(
-            `Your files:\n- \`${root}/calendar.ics\`\n- [Map links](sandbox:${root}/map%20links.txt)\n\n` +
+            `Your files:\n- \`${root}/calendar.ics\`\n- [Map links](sandbox:${root}/map%20links%20100%.txt)\n\n` +
               `Example only:\n\`\`\`text\n${root}/private.txt\n\`\`\``,
           );
           const messages = (
@@ -513,7 +522,7 @@ test(
           const files = messages[0].attachments as Artifact[];
           assert.deepEqual(
             files.map((file) => file.name),
-            ['calendar.ics', 'map links.txt'],
+            ['calendar.ics', 'map links 100%.txt'],
           );
           for (const [index, bytes] of [calendar, notes].entries()) {
             const response = await app.inject({ method: 'GET', url: files[index].url, headers });
@@ -535,9 +544,23 @@ test(
             ).rowCount,
             0,
           );
+          await assert.rejects(readFile(publicationPaths.get('uncommitted.txt')!), {
+            code: 'ENOENT',
+          });
           await assert.rejects(
-            context.reply(`Foreign: \`/workspace/${randomUUID()}/private.txt\``),
+            context.reply(`\`${root}/uncommitted.txt\``, undefined, randomUUID()),
           );
+          await assert.rejects(readFile(publicationPaths.get('uncommitted.txt')!), {
+            code: 'ENOENT',
+          });
+          const foreign = randomUUID();
+          await mkdir(join(dataRoot, 'workspaces', foreign));
+          await writeFile(
+            join(dataRoot, 'workspaces', foreign, 'private.txt'),
+            'Foreign workspace',
+          );
+          await assert.rejects(context.reply(`Foreign: \`/workspace/${foreign}/private.txt\``));
+          await writeFile(join(dataRoot, 'workspaces', 'private.txt'), 'Outside workspace');
           await assert.rejects(context.reply(`Escape: \`${root}/../private.txt\``));
           assert.equal(
             (
