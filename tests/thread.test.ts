@@ -4357,27 +4357,66 @@ test(
               async () => {
                 await reset();
                 const originalContext = dependencies.proactivity;
+                const originalCheckIn = dependencies.checkIn;
                 dependencies.proactivity = engine.context;
+                dependencies.checkIn = ledger.checkIn;
                 let child: RuntimeContext | undefined;
+                const runtime = createAgentRuntime({
+                  agent: ledger.agent({
+                    open: async (input) => ({
+                      resumed: false,
+                      abort() {},
+                      dispose() {},
+                      async prompt() {
+                        const tool = (name: string) =>
+                          input.tools.find((tool) => tool.name === name)!;
+                        await tool('task').execute({
+                          action: 'start',
+                          key: randomUUID(),
+                          title: 'Synthetic independent action',
+                          message: 'Synthetic action prepared.',
+                          doneWhen: 'The synthetic action is complete.',
+                          brief: 'Synthetic child work',
+                          now: 'Check the synthetic target.',
+                        });
+                        input.onEvent({
+                          type: 'model_usage',
+                          id: randomUUID(),
+                          provider: 'fixture',
+                          model: 'fixture',
+                          inputTokens: 1,
+                          outputTokens: 1,
+                          cacheReadTokens: 0,
+                          cacheWriteTokens: 0,
+                          totalTokens: 2,
+                          costUsd: 6,
+                          costSource: 'sdk_estimate',
+                          createdAt: new Date().toISOString(),
+                        });
+                        await assert.rejects(tool('read_source').execute({ sourceId }), /check-in/);
+                        await tool('ask_user').execute({
+                          question: 'The synthetic check used six dollars. Continue?',
+                        });
+                      },
+                    }),
+                    dispose() {},
+                  }),
+                  computer: fakeComputer(),
+                  workspace: fakeWorkspace(),
+                });
                 inspectObserver = async (context) => {
                   if (context.taskContext?.title === 'Synthetic independent action') {
                     child = context;
                     return { status: 'succeeded' };
                   }
-                  if (context.prompt === 'ask-question')
-                    await context.task!({
-                      action: 'start',
-                      key: randomUUID(),
-                      title: 'Synthetic independent action',
-                      message: 'Synthetic action prepared.',
-                      doneWhen: 'The synthetic action is complete.',
-                      brief: 'Synthetic child work',
-                      now: 'Check the synthetic target.',
-                    });
+                  if (context.prompt === 'Synthetic observer check-in') {
+                    assert.deepEqual(context.checkIn, { budgetUsd: 5, spentUsd: 0 });
+                    return runtime.runTurn(context);
+                  }
                 };
                 try {
                   await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
-                  const paused = await thread.enqueueTurn('ask-question', {
+                  const paused = await thread.enqueueTurn('Synthetic observer check-in', {
                     source: 'event',
                     background: true,
                     proactive: true,
@@ -4387,6 +4426,7 @@ test(
                   await waitFor(settled(child!.turnId));
                   assert.notEqual(child!.sessionId, ran(paused)!.sessionId);
                   assert.equal(await turnStatus(paused), 'waiting');
+                  assert.equal((await ledger.checkIn(ran(paused)!.sessionId, paused))?.spentUsd, 6);
                   await transaction(
                     (client) => engine.signal(sourceId, client, 'Synthetic later activity'),
                     db.pool,
@@ -4404,6 +4444,7 @@ test(
                   await waitFor(settled(answer.turnId));
                   assert.equal(ran(answer.turnId)!.sessionId, ran(paused)!.sessionId);
                   assert.ok(ran(answer.turnId)!.proactivity);
+                  assert.equal(ran(answer.turnId)!.checkIn?.spentUsd, 0);
                   const next = await engine.due();
                   assert.ok(next && next !== paused);
                   await waitFor(settled(next));
@@ -4411,6 +4452,8 @@ test(
                 } finally {
                   inspectObserver = undefined;
                   dependencies.proactivity = originalContext;
+                  dependencies.checkIn = originalCheckIn;
+                  await runtime.dispose();
                 }
               },
             );
