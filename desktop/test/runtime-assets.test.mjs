@@ -3158,6 +3158,11 @@ test(
     await removeAllData();
     assert.equal(exited, false);
     assert.equal(existsSync(profiles[0]), true);
+    assert.equal(await readFile(join(profiles[0], 'desktop-runtime/state.json'), 'utf8'), '{}');
+    assert.equal(await readFile(join(computer(profiles[0]), 'nod/lima.yaml'), 'utf8'), '{}');
+    assert.equal(storageCleared, false);
+    assert.equal(cacheCleared, false);
+    assert.equal(relaunched, false);
     response = 0;
     await removeAllData();
     assert.equal(exited, true);

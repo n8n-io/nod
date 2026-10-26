@@ -1412,7 +1412,7 @@ async function removeAllData() {
     type: 'warning',
     message: 'Remove all data and start over?',
     detail:
-      'This permanently deletes your conversations, files, memory, saved logins, cards, model and app connections, and settings from this computer. You cannot undo this.\n\nNod stays installed and restarts automatically. You will need to complete setup again.',
+      'This permanently deletes your conversations, unsent drafts, files, memory, saved logins, cards, model and app connections, and settings from this computer. You cannot undo this.\n\nNod stays installed and restarts automatically. You will need to complete setup again.',
     buttons: ['Remove all data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
