@@ -146,6 +146,29 @@ function scenarioSummary(
   };
 }
 
+function scenarioSummaries(
+  k: number,
+  attempts: AttemptResult[],
+  succeeded: (item: AttemptResult) => boolean,
+) {
+  const grouped = new Map<string, AttemptResult[]>();
+  for (const attempt of attempts)
+    grouped.set(attempt.scenario, [...(grouped.get(attempt.scenario) ?? []), attempt]);
+  return [...grouped.values()].map((items) => scenarioSummary(k, items, succeeded));
+}
+
+export const requiredScenarios = (k: number, attempts: AttemptResult[]) =>
+  scenarioSummaries(k, attempts, fullyTrusted);
+
+export function costPerRequiredPass(attempts: AttemptResult[]) {
+  const done = attempts.filter(
+    (item) => item.stance === 'regression' && item.status !== 'incomplete',
+  );
+  const cost = sum(done.map((item) => item.costUsd));
+  const passed = done.filter(fullyTrusted).length;
+  return cost !== null && passed ? cost / passed : null;
+}
+
 function efficiency(attempts: AttemptResult[]): Efficiency {
   const done = attempts.filter((item) => item.status !== 'incomplete');
   const passed = done.filter(completedTask).length;
@@ -279,14 +302,11 @@ export function summarize(manifest: RunManifest, attempts: AttemptResult[]): Run
     attempts.map((item) => [`${item.scenario}.${item.attempt}`, item.status]),
   );
   const slots = planned ?? [...recorded.keys()];
-  const grouped = new Map<string, AttemptResult[]>();
-  for (const attempt of attempts)
-    grouped.set(attempt.scenario, [...(grouped.get(attempt.scenario) ?? []), attempt]);
-  const scenarios = [...grouped.values()].map((items) => scenarioSummary(manifest.k, items));
+  const scenarios = scenarioSummaries(manifest.k, attempts, completedTask);
   const regression = scenarios.filter((item) => item.stance === 'regression');
-  const combined = [...grouped.values()]
-    .map((items) => scenarioSummary(manifest.k, items, fullyTrusted))
-    .filter((item) => item.stance === 'regression');
+  const combined = requiredScenarios(manifest.k, attempts).filter(
+    (item) => item.stance === 'regression',
+  );
   const names = [...new Set(scenarios.flatMap((item) => item.capabilities))] as Capability[];
   const failing = attempts
     .filter((item) => item.status === 'fail')

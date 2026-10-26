@@ -1,4 +1,4 @@
-import { band, passAtK, passPowK } from './aggregate.ts';
+import { band, costPerRequiredPass, passAtK, passPowK, requiredScenarios } from './aggregate.ts';
 import { insights, label, valueBand, type ChartRun } from './insights.ts';
 import { colorFor, displayName } from './names.ts';
 import { trustLabels } from './report.ts';
@@ -70,7 +70,13 @@ function frame(runs: ChartRun[], title: string, subtitle: string, body: string, 
   const first = runs[0].summary.manifest;
   const judges = [...new Set(runs.map((run) => run.summary.manifest.judge.split('/').pop()!))];
   const scenarios = Math.max(...runs.map((run) => run.summary.scenarios.length));
-  return `<div class="card${runs.length > 8 ? ' compact' : ''}"><div><div class="eyebrow">Nod capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
+  const unfinished = runs
+    .filter((run) => run.summary.coverage.incomplete || run.summary.coverage.missing.length)
+    .map((run) => {
+      const coverage = run.summary.coverage;
+      return `${label(run, runs)}: ${coverage.completed}/${coverage.expected ?? '?'} completed, ${coverage.incomplete} incomplete, ${coverage.missing.length} not run`;
+    });
+  return `<div class="card${runs.length > 8 ? ' compact' : ''}"><div><div class="eyebrow">Nod capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div>${unfinished.length ? `<p>${esc(unfinished.join('; '))}</p>` : ''}</div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
 }
 
 const colorOf = (run: ChartRun, runs: ChartRun[]) =>
@@ -134,9 +140,9 @@ function honestRange(run: ChartRun) {
 function scoreboard(runs: ChartRun[]): Card {
   const found = insights(runs);
   const k = runs[0].summary.manifest.k;
-  const rows = sorted(runs, (run) => run.summary.regression.percent)
+  const rows = sorted(runs, (run) => run.summary.combined.percent)
     .map((run) => {
-      const r = run.summary.regression;
+      const r = run.summary.combined;
       const badges = (found.badges.get(run) ?? [])
         .map(
           (text) =>
@@ -146,7 +152,7 @@ function scoreboard(runs: ChartRun[]): Card {
       const color = colorOf(run, runs);
       return `<tr><td style="width:430px"><span class="dot" style="background:${color};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}<div style="margin:6px 0 0 30px">${badges}</div></td>
 <td style="width:330px"><div style="display:flex;align-items:center;gap:14px"><div class="track" style="height:22px;width:170px;flex:none"><div class="fill" style="width:${(r.percent ?? 0) * 100}%;background:${color}"></div></div><span style="font-size:32px;font-weight:780">${pct(r.percent)}</span></div></td>
-<td style="white-space:nowrap">${honestRange(run)}</td><td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(run.summary.efficiency.costPerPass)}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
+<td style="white-space:nowrap">${honestRange(run)}</td><td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(costPerRequiredPass(run.attempts))}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
     })
     .join('');
   return {
@@ -155,8 +161,8 @@ function scoreboard(runs: ChartRun[]): Card {
       runs,
       'Which model should run Nod?',
       takeaways(runs),
-      `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
-      `Best value: cheapest per completed task within ${valueBand} points of the best · Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
+      `<table class="score"><thead><tr><th>Model</th><th>All required checks</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
+      `Best value: cheapest per all-required pass within ${valueBand} points of the best · Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
     ),
   };
 }
@@ -167,18 +173,18 @@ function passRate(runs: ChartRun[]): Card {
     id: '02-pass-rate',
     html: frame(
       runs,
-      'Share of tasks completed',
+      'Share passing all required checks',
       best
-        ? `Every attempt is a real task run end to end. ${label(best.run, runs)} completes ${pct(best.value)}. Lines show the 95% interval, so overlapping lines are a tie.`
+        ? `Every attempt is a real task run end to end. ${label(best.run, runs)} passes all required checks on ${pct(best.value)}. Lines show the 95% interval, so overlapping lines are a tie.`
         : 'Share of attempts where every required check passed.',
       `${barRows(
         runs,
-        (run) => run.summary.regression.percent,
+        (run) => run.summary.combined.percent,
         (run) => ({
-          low: run.summary.regression.interval?.low,
-          high: run.summary.regression.interval?.high,
-          text: pct(run.summary.regression.percent),
-          small: `${run.summary.regression.passed}/${run.summary.regression.total}`,
+          low: run.summary.combined.interval?.low,
+          high: run.summary.combined.interval?.high,
+          text: pct(run.summary.combined.percent),
+          small: `${run.summary.combined.passed}/${run.summary.combined.total}`,
         }),
         1,
       )}<div class="axis"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>`,
@@ -188,13 +194,15 @@ function passRate(runs: ChartRun[]): Card {
 
 function curves(runs: ChartRun[]): Card {
   const k = Math.max(1, Math.min(...runs.map((run) => run.summary.manifest.repeat)));
+  const scenarios = new Map(runs.map((run) => [run, requiredScenarios(k, run.attempts)]));
   const mean = (values: Array<number | null>) => {
     const known = values.filter((value): value is number => value !== null);
     return known.length ? known.reduce((a, b) => a + b, 0) / known.length : null;
   };
   const at = (run: ChartRun, n: number, kind: 'at' | 'pow') =>
     mean(
-      run.summary.scenarios
+      scenarios
+        .get(run)!
         .filter((item) => item.stance === 'regression')
         .map((item) => (kind === 'at' ? passAtK : passPowK)(item.attempts, item.passed, n)),
     );
@@ -304,7 +312,7 @@ function scatter(
   const pad = { left: 70, right: 60, top: 20, bottom: 66 };
   const points = runs.flatMap((run) => {
     const x = axis.x(run);
-    const y = run.summary.regression.percent;
+    const y = run.summary.combined.percent;
     return x === null || y === null || x <= 0 ? [] : [{ run, x, y }];
   });
   if (!points.length) return { id, html: frame(runs, title, subtitle, '<p>No data.</p>') };
@@ -452,7 +460,7 @@ function latency(runs: ChartRun[]): Card {
 function cost(runs: ChartRun[]): Card {
   const max = Math.max(
     ...runs.map(
-      (run) => run.summary.efficiency.costPerPass ?? run.summary.efficiency.costPerAttempt ?? 0,
+      (run) => costPerRequiredPass(run.attempts) ?? run.summary.efficiency.costPerAttempt ?? 0,
     ),
     0.01,
   );
@@ -462,19 +470,19 @@ function cost(runs: ChartRun[]): Card {
     html: frame(
       runs,
       'What a successful task costs',
-      `${cheapest ? `${label(cheapest.run, runs)} is cheapest at ${money(cheapest.value)} per completed task. ` : ''}Cost per success is total spend divided by tasks that actually passed, so failures are paid for too.`,
+      `${cheapest ? `${label(cheapest.run, runs)} is cheapest at ${money(cheapest.value)} per all-required pass. ` : ''}Cost per success is total spend divided by regression attempts that passed every required check, so failures are paid for too.`,
       barRows(
         runs,
-        (run) => run.summary.efficiency.costPerPass,
+        (run) => costPerRequiredPass(run.attempts),
         (run) => ({
-          text: money(run.summary.efficiency.costPerPass),
+          text: money(costPerRequiredPass(run.attempts)),
           small: `${money(run.summary.efficiency.costPerAttempt)} per try · ${Math.round((run.summary.efficiency.tokensPerAttempt ?? 0) / 1000)}k tokens`,
         }),
         max,
         1,
         430,
       ),
-      'agent cost only; judge cost not included',
+      'completed regression attempts only; agent cost includes failed attempts, excludes judge cost',
     ),
   };
 }
@@ -488,13 +496,21 @@ function heat(rate: number | null) {
 }
 
 function scenarioGrid(runs: ChartRun[]): Card {
+  const scenarios = new Map(
+    runs.map((run) => [run, requiredScenarios(run.summary.manifest.k, run.attempts)]),
+  );
   const ids = [
-    ...new Set(runs.flatMap((run) => run.summary.scenarios.map((item) => item.scenario))),
+    ...new Set(
+      runs.flatMap((run) => [
+        ...(run.summary.manifest.scenarioIds ?? []),
+        ...scenarios.get(run)!.map((item) => item.scenario),
+      ]),
+    ),
   ].sort((a, b) => {
     const mean = (id: string) =>
       runs.reduce(
         (sum, run) =>
-          sum + (run.summary.scenarios.find((item) => item.scenario === id)?.passAt1 ?? 0),
+          sum + (scenarios.get(run)!.find((item) => item.scenario === id)?.passAt1 ?? 0),
         0,
       );
     return mean(a) - mean(b);
@@ -505,12 +521,15 @@ function scenarioGrid(runs: ChartRun[]): Card {
   const rows = ids
     .map((id) => {
       const level = band(
-        runs[0].summary.scenarios.find((item) => item.scenario === id)?.passAt1 ?? null,
-        runs[0].summary.manifest.repeat,
+        scenarios.get(runs[0])!.find((item) => item.scenario === id)?.passAt1 ?? null,
+        scenarios.get(runs[0])!.find((item) => item.scenario === id)?.attempts ?? 0,
       );
-      return `<div class="sn">${esc(id)}${level === 'frontier' ? ' <span class="pill f" style="margin-left:8px">hard</span>' : ''}</div>${runs
+      const gap = runs.some(
+        (run) => scenarios.get(run)!.find((item) => item.scenario === id)?.stance === 'gap',
+      );
+      return `<div class="sn">${esc(id)}${gap ? ' (known gap)' : ''}${level === 'frontier' ? ' <span class="pill f" style="margin-left:8px">hard</span>' : ''}</div>${runs
         .map((run) => {
-          const row = run.summary.scenarios.find((item) => item.scenario === id);
+          const row = scenarios.get(run)!.find((item) => item.scenario === id);
           const c = heat(row?.passAt1 ?? null);
           return `<div class="cell" style="height:${rowHeight}px;background:${c.bg};color:${c.fg}">${row ? `${row.passed}/${row.attempts}` : '-'}</div>`;
         })
@@ -522,7 +541,7 @@ function scenarioGrid(runs: ChartRun[]): Card {
     html: frame(
       runs,
       'Where each model wins and loses',
-      'Passed attempts per task, hardest first. Green means it gets the task right every time, red means never.',
+      'Passed attempts per task, hardest first. Every required check must pass. Known gaps are shown separately from headline scores.',
       `${header}${rows}</div>`,
     ),
   };
@@ -559,7 +578,7 @@ function capabilities(runs: ChartRun[]): Card {
     ),
   }));
   const right = [
-    { name: 'completes the task', values: runs.map((run) => run.summary.regression.percent) },
+    { name: 'task completion', values: runs.map((run) => run.summary.regression.percent) },
     ...trustIds.map((id) => ({
       name: trustLabels[id] ?? id,
       values: runs.map(
@@ -572,8 +591,8 @@ function capabilities(runs: ChartRun[]): Card {
     html: frame(
       runs,
       'Strengths, and how it feels to use',
-      'Left: pass rate by capability. Right: the trust profile, covering honesty, voice and proactivity on every task.',
-      `<div class="two${runs.length > 8 ? ' stack' : ''}"><div><div class="panel-title">By capability</div>${grid(left, pct)}</div><div><div class="panel-title">Trust profile</div>${grid(right, pct)}</div></div>`,
+      'Left: task completion by capability, excluding product checks. Right: the trust profile, covering honesty, voice and proactivity on every task.',
+      `<div class="two${runs.length > 8 ? ' stack' : ''}"><div><div class="panel-title">Task completion by capability</div>${grid(left, pct)}</div><div><div class="panel-title">Trust profile</div>${grid(right, pct)}</div></div>`,
     ),
   };
 }
@@ -608,7 +627,7 @@ function judges(runs: ChartRun[]): Card[] {
   const rows = compared
     .map(
       (run) =>
-        `<tr><td style="width:430px"><span class="dot" style="background:${colorOf(run, runs)};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}</td>${cell(run.summary.regression.percent, run.alt!.regression.percent)}${cell(run.summary.trust.trustedRate, run.alt!.trust.trustedRate)}${cell(run.summary.combined.percent, run.alt!.combined.percent)}</tr>`,
+        `<tr><td style="width:430px"><span class="dot" style="background:${colorOf(run, runs)};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}</td>${cell(run.summary.combined.percent, run.alt!.combined.percent)}${cell(run.summary.regression.percent, run.alt!.regression.percent)}${cell(run.summary.trust.trustedRate, run.alt!.trust.trustedRate)}</tr>`,
     )
     .join('');
   return [
@@ -617,8 +636,8 @@ function judges(runs: ChartRun[]): Card[] {
       html: frame(
         runs,
         'Do two independent judges agree?',
-        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. On average the two judges differ by ${gap(compared, (summary) => summary.regression.percent)} points on tasks completed and ${gap(compared, (summary) => summary.trust.trustedRate)} points on honesty, so read the honesty column as a range.`,
-        `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>Done and honest</th></tr></thead><tbody>${rows}</tbody></table>`,
+        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. On average the two judges differ by ${gap(compared, (summary) => summary.combined.percent)} points on all required checks and ${gap(compared, (summary) => summary.trust.trustedRate)} points on honesty, so read the honesty column as a range.`,
+        `<table class="score"><thead><tr><th>Model</th><th>All required checks</th><th>Task completion</th><th>Honest</th></tr></thead><tbody>${rows}</tbody></table>`,
         `First number: ${firstJudge} as judge. Second: ${secondJudge}. Badge: gap of 10 points or more.`,
       ),
     },
@@ -627,7 +646,7 @@ function judges(runs: ChartRun[]): Card[] {
 
 export function cards(input: ChartRun[]): Card[] {
   const runs = [...input].sort(
-    (a, b) => (b.summary.regression.percent ?? -1) - (a.summary.regression.percent ?? -1),
+    (a, b) => (b.summary.combined.percent ?? -1) - (a.summary.combined.percent ?? -1),
   );
   return [
     scoreboard(runs),
@@ -637,11 +656,11 @@ export function cards(input: ChartRun[]): Card[] {
       runs,
       '04-cost-vs-quality',
       'Quality for the price',
-      'Each dot is a model. Up is more tasks completed, left is cheaper per success. The dotted line connects models nobody beats on both.',
+      'Each dot is a model. Up is more attempts passing all required checks, left is cheaper per success. The dotted line connects models nobody beats on both.',
       {
-        x: (run) => run.summary.efficiency.costPerPass,
+        x: (run) => costPerRequiredPass(run.attempts),
         format: money,
-        label: 'cost per completed task',
+        label: 'cost per all-required pass',
         log: true,
       },
     ),

@@ -15,10 +15,10 @@ export interface Suite {
 const others = (eligible: ChartRun[], best: ChartRun) => {
   const rest = eligible
     .filter((run) => run !== best)
-    .map((run) => run.summary.regression.percent)
+    .map((run) => run.summary.combined.percent)
     .filter((value): value is number => value !== null);
   return rest.length
-    ? `The rest finish between ${pct(Math.min(...rest))} and ${pct(Math.max(...rest))}.`
+    ? `The rest pass between ${pct(Math.min(...rest))} and ${pct(Math.max(...rest))}.`
     : '';
 };
 
@@ -29,15 +29,15 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
     lead: (runs) => {
       const found = insights(runs);
       return found.best
-        ? `${label(found.best.run, runs)} completes the most tasks (${pct(found.best.value)}). ${others(found.eligible, found.best.run)}`
-        : 'How often each model finishes the task.';
+        ? `${label(found.best.run, runs)} passes the most attempts with every required check (${pct(found.best.value)}). ${others(found.eligible, found.best.run)}`
+        : 'How often each model passes every required check.';
     },
   },
   {
     id: '03-pass-at-k',
     kicker: '2 · Capable is not the same as reliable',
     lead: (runs) =>
-      `Given ${runs[0].summary.manifest.k} tries, every model gets most tasks right once. Getting them right every time is much harder, and that is what trust needs.`,
+      `Compare passing all required checks at least once in ${runs[0].summary.manifest.k} tries with passing every try.`,
   },
   {
     id: '04-cost-vs-quality',
@@ -45,8 +45,8 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
     lead: (runs) => {
       const found = insights(runs);
       return found.value && found.cheapest
-        ? `${label(found.value.run, runs)} is the best value at ${money(found.value.value)} per finished task. ${label(found.cheapest.run, runs)} is the cheapest at ${money(found.cheapest.value)}.`
-        : 'Quality against cost per finished task.';
+        ? `${label(found.value.run, runs)} is the best value at ${money(found.value.value)} per all-required pass. ${label(found.cheapest.run, runs)} is the cheapest at ${money(found.cheapest.value)}.`
+        : 'Quality against cost per all-required pass.';
     },
   },
   {
@@ -93,8 +93,8 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
   const attempts = runs.reduce(
     (sum, run) =>
       sum +
-      run.summary.regression.total +
-      run.summary.regression.incomplete +
+      run.summary.combined.total +
+      run.summary.combined.incomplete +
       run.summary.gap.total +
       run.summary.gap.incomplete,
     0,
@@ -112,7 +112,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     ? notes.learned
     : [
         found.best
-          ? `${label(found.best.run, runs)} finishes the most tasks, at ${pct(found.best.value)}.`
+          ? `${label(found.best.run, runs)} passes the most attempts with every required check, at ${pct(found.best.value)}.`
           : '',
       ].filter(Boolean);
   const chips: Array<[string, string]> = [
@@ -133,7 +133,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     ],
     [
       `Tried ${repeat} times`,
-      `pass@${k}: gets it right at least once. pass^${k}: gets it right every time.`,
+      `Among ${k} tries, pass@${k} passes every required check at least once. pass^${k} passes every time.`,
     ],
   ];
   const body = sections

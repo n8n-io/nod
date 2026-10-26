@@ -43,9 +43,13 @@ import { decide, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
 import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
+import { cards, comparisonChart } from '../src/chart.ts';
+import { storyCard } from '../src/story.ts';
+import { facts, leaderboard } from '../src/writeup.ts';
+import { meetsMinimumPassRate } from '../src/commands.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
-import { changes } from '../src/report.ts';
+import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
@@ -597,6 +601,163 @@ test('the headline excludes incomplete attempts and known gaps, and flags contam
   assert.equal(bad.contaminated, true);
 });
 
+test('reports count required honesty failures in headlines, scenario rows and repeat rates', () => {
+  const attempts = ['alpha', 'beta'].flatMap((scenario) =>
+    Array.from({ length: 3 }, (_, index) =>
+      attempt(scenario, scenario === 'alpha' && index === 1 ? 'fail' : 'pass', {
+        attempt: index + 1,
+        checks:
+          scenario === 'alpha' && index === 1
+            ? [failedCheck('product')]
+            : [{ ...failedCheck('product'), required: false }],
+      }),
+    ),
+  );
+  const summary = summarize({ ...manifest, scenarioIds: ['alpha', 'beta'] }, attempts);
+  const original = structuredClone({ summary, attempts });
+  const run = { summary, attempts };
+  const reports = [terminal(summary, attempts), markdown([run]), compareTable([run])];
+  for (const report of reports) {
+    assert.match(report, /83%[^\n]*5\/6/);
+    assert.match(report, /alpha[^\n]*2\/3/);
+    assert.match(report, /beta[^\n]*3\/3/);
+    assert.match(report, /pass@(?:3|k)[^\n]*100%/);
+    assert.match(report, /pass\^(?:3|k)[^\n]*50%/);
+    assert.match(report, /task completion[^\n]*100%/i);
+  }
+  assert.match(reports[0], /alpha[^\n]*✓✗✓[^\n]*2\/3[^\n]*discriminator/);
+  assert.match(reports[1], /alpha[^\n]*✓✗✓[^\n]*2\/3/);
+  const page = html(summary, attempts);
+  assert.match(page, /<h2>83%[^<]*5\/6[^<]*pass@3 100%[^<]*pass\^3 50%<\/h2>/);
+  assert.match(page, /<h3>alpha <small>2\/3/);
+  assert.match(page, /task completion[^<]*100%/i);
+  const listed = runsTable([{ label: manifest.label, manifest, summary }]);
+  assert.match(listed, /83% \(5\/6\)/);
+  assert.equal(summary.regression.passed, 6);
+  assert.deepEqual({ summary, attempts }, original);
+});
+
+test('report comparisons measure required-check changes only on unchanged scenarios', () => {
+  const make = (failed: boolean, fingerprint = 'x') => {
+    const attempts = Array.from({ length: 3 }, (_, index) =>
+      attempt('alpha', failed && index === 1 ? 'fail' : 'pass', {
+        attempt: index + 1,
+        fingerprint,
+        checks: failed && index === 1 ? [failedCheck('product')] : [],
+      }),
+    );
+    return { summary: summarize(manifest, attempts), attempts };
+  };
+  for (const render of [compareTable, markdown]) {
+    const report = render([make(false), make(true)]);
+    assert.match(report, /alpha[^\n]*3\/3[^\n]*2\/3/);
+    assert.match(report, /Difference -33 points/);
+    assert.doesNotMatch(render([make(false), make(true, 'changed')]), /Difference/);
+  }
+});
+
+test('the CLI minimum pass rate includes required honesty checks and excludes gaps and incomplete attempts', () => {
+  const attempts = [
+    attempt('alpha', 'pass'),
+    attempt('alpha', 'fail', { attempt: 2, checks: [failedCheck('product')] }),
+    attempt('alpha', 'incomplete', { attempt: 3, blame: 'infra' }),
+    attempt('gap', 'pass', { stance: 'gap' }),
+  ];
+  const summary = summarize(manifest, attempts);
+  assert.equal(summary.regression.percent, 1);
+  assert.equal(meetsMinimumPassRate(summary, 0.8), false);
+  assert.equal(meetsMinimumPassRate(summary, 0.5), true);
+  assert.equal(meetsMinimumPassRate(summary), true);
+  assert.equal(meetsMinimumPassRate(summarize(manifest, attempts.slice(2)), 0), false);
+  const allFailed = summarize(manifest, [
+    attempt('alpha', 'fail', { checks: [failedCheck('task')] }),
+  ]);
+  assert.equal(meetsMinimumPassRate(allFailed), true);
+  assert.equal(meetsMinimumPassRate(allFailed, 0.1), false);
+});
+
+test('chart rankings, costs and repeat rates use required-check successes', () => {
+  const make = (honestyFailure: boolean) => {
+    const attempts = ['alpha', 'beta'].flatMap((scenario) =>
+      Array.from({ length: 3 }, (_, index) =>
+        attempt(scenario, honestyFailure && scenario === 'alpha' && index === 1 ? 'fail' : 'pass', {
+          attempt: index + 1,
+          checks:
+            honestyFailure && scenario === 'alpha' && index === 1 ? [failedCheck('product')] : [],
+        }),
+      ),
+    );
+    return {
+      summary: summarize(
+        { ...manifest, label: honestyFailure ? 'failed-honesty' : 'passed' },
+        attempts,
+      ),
+      attempts,
+    };
+  };
+  const failed = make(true);
+  const passed = make(false);
+  const ranked = insights([failed, passed]);
+  assert.equal(ranked.best?.run, passed);
+  assert.equal(ranked.reliable?.run, passed);
+  assert.equal(ranked.value?.run, passed);
+  assert.equal(ranked.best?.value, 1);
+  assert.equal(insights([failed]).reliable?.value, 0.5);
+  assert.ok(Math.abs(insights([failed]).cheapest!.value - 0.12) < 1e-9);
+  const rendered = new Map(cards([failed]).map((card) => [card.id, card.html]));
+  assert.match(rendered.get('01-scoreboard')!, />83%<[^]*>50%<[^]*>\$0\.12</);
+  assert.match(rendered.get('02-pass-rate')!, />83%<small>5\/6<\/small>/);
+  assert.match(rendered.get('03-pass-at-k')!, /50% <span[^>]*>to<\/span> 100%/);
+  assert.match(rendered.get('07-scenarios')!, /alpha[^]*>2\/3</);
+  assert.match(rendered.get('06-cost')!, /\$0\.12/);
+  assert.match(comparisonChart([failed]), />83%<small>5\/6<\/small>/);
+  assert.match(storyCard([failed], { total: 2, calibrating: 0, gaps: 0 }).html, /83%/);
+  assert.match(leaderboard([failed]), /83%\s+50%\s+\$0\.12/);
+  assert.match(facts([failed]).join('\n'), /83%/);
+});
+
+test('reports separate known gaps and incomplete coverage from required-check pass rates', () => {
+  const attempts = [
+    attempt('alpha', 'pass'),
+    attempt('alpha', 'incomplete', { attempt: 2, blame: 'infra' }),
+    attempt('gap', 'fail', { stance: 'gap', checks: [failedCheck('product')] }),
+  ];
+  const summary = summarize({ ...manifest, scenarioIds: ['alpha', 'gap', 'missing'] }, attempts);
+  const run = { summary, attempts };
+  for (const report of [terminal(summary, attempts), markdown([run]), compareTable([run])]) {
+    assert.match(report, /100%[^\n]*1\/1/);
+    assert.match(report, /alpha[^\n]*1\/1/);
+    assert.match(report, /gap[^\n]*0\/1/);
+    assert.match(report, /pass@(?:3|k)[^\n]*n\/a/);
+    assert.match(report, /pass\^(?:3|k)[^\n]*n\/a/);
+  }
+  assert.match(terminal(summary, attempts), /Known gaps[^\n]*0\/1/);
+  assert.match(markdown([run]), /Incomplete run: 2\/9[^\n]*1 incomplete[^\n]*6 not run/);
+  assert.match(compareTable([run]), /missing[^\n]*not run/);
+  const page = html(summary, attempts);
+  assert.match(page, /<h2>100%[^<]*1\/1[^<]*pass@3 n\/a[^<]*pass\^3 n\/a<\/h2>/);
+  assert.match(page, /<h3>gap <small>0\/1[^<]*known gap/);
+  assert.match(page, /2\/9 attempts completed; 1 incomplete; 6 not run/);
+  assert.match(runsTable([{ label: manifest.label, manifest, summary }]), /100% \(1\/1\)/);
+  const rendered = new Map(cards([run]).map((card) => [card.id, card.html]));
+  assert.match(rendered.get('02-pass-rate')!, />100%<small>1\/1<\/small>/);
+  assert.match(rendered.get('01-scoreboard')!, /<td>n\/a<\/td><td>n\/a<\/td>/);
+  assert.match(rendered.get('07-scenarios')!, /gap \(known gap\)[^]*>0\/1</);
+  assert.match(rendered.get('07-scenarios')!, /missing[^]*>-<\/div>/);
+  assert.match(comparisonChart([run]), /2\/9 completed, 1 incomplete, 6 not run/);
+  assert.match(
+    storyCard([run], { total: 3, calibrating: 0, gaps: 1 }).html,
+    /2\/9 completed, 1 incomplete, 6 not run/,
+  );
+  assert.match(leaderboard([run]), /100%\s+n\/a\s+\$0\.10/);
+  assert.equal(insights([run]).best, undefined);
+  const unstarted = {
+    summary: summarize({ ...manifest, scenarioIds: ['alpha'] }, []),
+    attempts: [],
+  };
+  assert.equal(insights([unstarted]).best, undefined);
+});
+
 test('amounts are read in the formats assistants actually write', () => {
   assert.ok(mentions('Total €1,850.00 overdue', 1850));
   assert.ok(mentions('Total 1.850,00 EUR', 1850));
@@ -803,7 +964,8 @@ test('model rankings ignore runs that are contaminated or only partly run', () =
       attempts: [],
       summary: {
         manifest: { model: 'openai/m', label: 'l' },
-        regression: { percent, total: 30, incomplete, passPowK: percent },
+        combined: { percent, total: 30, incomplete, passPowK: percent },
+        coverage: { missing: [] },
         efficiency: { costPerPass: 0.1, seconds: { p50: 60 } },
         trust: { safetyIncidents: 0 },
         contaminated: false,
@@ -813,11 +975,13 @@ test('model rankings ignore runs that are contaminated or only partly run', () =
   const good = run(0.6);
   const flaky = run(0.9, {}, 20);
   const partial = run(0.95, {
-    regression: { percent: 0.95, total: 10, incomplete: 0, passPowK: 0.95 },
+    combined: { percent: 0.95, total: 10, incomplete: 0, passPowK: 0.95 },
   });
+  const missing = run(1, { coverage: { missing: ['s.3'] } });
   const ranked = insights([good, run(0.9, { contaminated: true }), flaky, partial]);
   assert.equal(ranked.best?.run, good);
   assert.equal(insights([run(0.9, { contaminated: true })]).best, undefined);
+  assert.equal(insights([missing]).best, undefined);
 });
 
 test('scenario API calls use authenticated local transport and refuse outside targets', async (t) => {

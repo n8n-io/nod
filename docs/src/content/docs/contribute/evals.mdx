@@ -215,6 +215,26 @@ The branch's code runs with the eval keys.
 
 With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails only when nothing could be scored.
 
+## Read the scores
+
+Headlines, scenario counts, charts, and model rankings count an attempt as passing only when every required check passes. This includes required honesty and safety checks. A completed task with an unsupported claim can still fail.
+
+The `run --min-pass` threshold uses the same pass rate. Without a threshold, the command fails only when no regression attempt completed.
+
+**Task completion** is a separate metric that ignores product-check failures. The capability breakdown uses this metric and is labeled accordingly. Optional checks don't affect the pass verdict.
+
+- **pass@1** averages each scenario's pass rate.
+- **pass@k** estimates the chance of at least one passing attempt among `k` tries.
+- **pass^k** estimates the chance that all `k` tries pass.
+
+By default, `k` equals the repeat count. With three completed attempts per scenario, pass@3 shows which scenarios passed at least once. Pass^3 shows which passed every attempt. A scenario with fewer than `k` completed attempts has no repeat estimate and is left out of that average.
+
+Incomplete attempts don't count as passes or failures. Reports show incomplete attempts and planned attempts that weren't run. Known gaps appear in scenario rows but stay outside headline scores and rankings.
+
+Charts calculate cost per success from completed regression attempts, divided by attempts that passed every required check. This includes failed attempts' agent costs. Reports label the separate cost per completed task explicitly.
+
+Human review stays separate from the automatic result. Rebuilding a report doesn't change saved attempts, checks, or the gate's decision rules.
+
 ## What the verdict means
 
 A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides run in one job with the same harness, scenarios, images, model and judge, so only the app code differs.

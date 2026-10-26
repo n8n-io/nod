@@ -1,4 +1,4 @@
-import { band, pairedChange } from './aggregate.ts';
+import { band, pairedChange, requiredScenarios } from './aggregate.ts';
 import type { GateResult } from './gate.ts';
 import { agreement } from './review.ts';
 import type { AttemptResult, Reviews, RunSummary } from './results.ts';
@@ -23,26 +23,32 @@ const coverage = (summary: RunSummary) =>
   `${summary.coverage.completed}/${summary.coverage.expected ?? '?'} attempts completed; ${summary.coverage.incomplete} incomplete; ${summary.coverage.missing.length} not run`;
 
 export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews: Reviews = {}) {
-  const { manifest, regression, gap } = summary;
+  const { manifest, regression, combined } = summary;
+  const scenarios = requiredScenarios(manifest.k, attempts);
+  const gaps = scenarios.filter((item) => item.stance === 'gap');
+  const gap = {
+    passed: gaps.reduce((total, item) => total + item.passed, 0),
+    total: gaps.reduce((total, item) => total + item.attempts, 0),
+  };
   const lines: string[] = [];
   lines.push(
     '',
     `Run ${manifest.label}  ·  agent ${manifest.model}  ·  judge ${manifest.judge}  ·  ${manifest.ref ?? manifest.commit.slice(0, 7)}${manifest.dirty ? '+local changes' : ''}`,
     coverage(summary),
     '',
-    regression.total
-      ? `${pct(regression.percent)} of regression attempts pass  (${regression.passed}/${regression.total}, 95% interval ${pct(regression.interval!.low)}–${pct(regression.interval!.high)})`
+    combined.total
+      ? `${pct(combined.percent)} of regression attempts pass all required checks  (${combined.passed}/${combined.total}, 95% interval ${pct(combined.interval!.low)}–${pct(combined.interval!.high)})`
       : 'No completed regression attempts.',
-    `  checks passed ${pct(regression.unitPass)}`,
+    `  checks passed ${pct(combined.unitPass)}`,
     manifest.k > 1
-      ? `  pass@1 ${pct(regression.passAt1)}   pass@${manifest.k} ${pct(regression.passAtK)}   pass^${manifest.k} ${pct(regression.passPowK)}   (${manifest.repeat} attempts per scenario)`
+      ? `  pass@1 ${pct(combined.passAt1)}   pass@${manifest.k} ${pct(combined.passAtK)}   pass^${manifest.k} ${pct(combined.passPowK)}   (${manifest.repeat} attempts per scenario)`
       : `  ${manifest.repeat} attempt per scenario`,
   );
   if (summary.coverage.missing.length)
     lines.push(`  Attempts not run: ${summary.coverage.missing.join(', ')}`);
-  if (regression.incomplete)
+  if (combined.incomplete)
     lines.push(
-      `  ${regression.incomplete} attempt${regression.incomplete === 1 ? '' : 's'} incomplete (harness, mock or provider fault), not counted`,
+      `  ${combined.incomplete} attempt${combined.incomplete === 1 ? '' : 's'} incomplete (harness, mock or provider fault), not counted`,
     );
   if (summary.contaminated)
     lines.push(
@@ -50,8 +56,8 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
     );
   if (gap.total) lines.push(`  Known gaps (not gating): ${gap.passed}/${gap.total} attempts pass`);
   lines.push('');
-  const width = Math.max(...summary.scenarios.map((item) => item.scenario.length), 8);
-  for (const item of summary.scenarios.sort((a, b) => a.scenario.localeCompare(b.scenario))) {
+  const width = Math.max(...scenarios.map((item) => item.scenario.length), 8);
+  for (const item of scenarios.sort((a, b) => a.scenario.localeCompare(b.scenario))) {
     const marks = attempts
       .filter((attempt) => attempt.scenario === item.scenario)
       .sort((a, b) => a.attempt - b.attempt)
@@ -64,7 +70,7 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
     );
   }
   lines.push('', 'Trust profile (what users feel):');
-  lines.push(`  ${'completes the task'.padEnd(36)} ${pct(regression.percent).padStart(4)}`);
+  lines.push(`  ${'task completion'.padEnd(36)} ${pct(regression.percent).padStart(4)}`);
   for (const line of summary.trust.lines)
     lines.push(
       `  ${(trustLabels[line.id] ?? line.id).padEnd(36)} ${pct(line.rate).padStart(4)}   (${line.applicable} judged)`,
@@ -99,8 +105,8 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
       `Human review: ${human.reviewed} attempts reviewed, you agreed with the automatic verdict on ${human.agree} (kappa ${human.kappa === null ? 'n/a' : human.kappa.toFixed(2)}).`,
       ...human.disagreements.map((item) => `  disagreement: ${item}`),
     );
-  lines.push('', 'By capability:');
-  for (const item of summary.capabilities.sort((a, b) => (a.passAt1 ?? 0) - (b.passAt1 ?? 0)))
+  lines.push('', 'Task completion by capability:');
+  for (const item of [...summary.capabilities].sort((a, b) => (a.passAt1 ?? 0) - (b.passAt1 ?? 0)))
     lines.push(
       `  ${item.capability.padEnd(14)} ${pct(item.passAt1).padStart(4)}  (${item.scenarios} scenarios)`,
     );
@@ -121,7 +127,7 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
     'Latency and cost (per attempt):',
     `  task time          p50 ${secs(e.seconds.p50)}   p90 ${secs(e.seconds.p90)}`,
     `  first reply        p50 ${secs(e.firstReplySeconds.p50)}   p90 ${secs(e.firstReplySeconds.p90)}`,
-    `  agent cost         ${money(e.costPerAttempt)} per attempt   ${money(e.costPerPass)} per passing attempt`,
+    `  agent cost         ${money(e.costPerAttempt)} per attempt   ${money(e.costPerPass)} per completed task`,
     `  tokens ${e.tokensPerAttempt === null ? 'n/a' : Math.round(e.tokensPerAttempt).toLocaleString('en-US')}   tool calls ${e.toolCallsPerAttempt === null ? 'n/a' : e.toolCallsPerAttempt.toFixed(1)}   tool errors ${e.toolErrorRate === null ? 'n/a' : pct(e.toolErrorRate)}`,
     '',
     `Wall time ${minutes(summary.seconds)} (summed over attempts)  ·  agent cost ${money(summary.costUsd)}  ·  judge and simulated user ${money(e.judgeCostUsd)}`,
@@ -130,7 +136,7 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
   return lines.join('\n');
 }
 
-type Loaded = { summary: RunSummary; attempts?: AttemptResult[] };
+type Loaded = { summary: RunSummary; attempts: AttemptResult[] };
 
 function metrics(runs: Loaded[]): Array<[string, string[]] | undefined> {
   const each = (cell: (summary: RunSummary) => string) => runs.map((run) => cell(run.summary));
@@ -151,22 +157,23 @@ function metrics(runs: Loaded[]): Array<[string, string[]] | undefined> {
       ),
     ],
     [
-      'pass rate',
+      'all required checks',
       each(
         (summary) =>
-          `${pct(summary.regression.percent)} (${summary.regression.passed}/${summary.regression.total})`,
+          `${pct(summary.combined.percent)} (${summary.combined.passed}/${summary.combined.total})`,
       ),
     ],
     [
       '95% interval',
       each((summary) =>
-        summary.regression.interval
-          ? `${pct(summary.regression.interval.low)}–${pct(summary.regression.interval.high)}`
+        summary.combined.interval
+          ? `${pct(summary.combined.interval.low)}–${pct(summary.combined.interval.high)}`
           : 'n/a',
       ),
     ],
-    ['checks passed', each((summary) => pct(summary.regression.unitPass))],
-    ['pass@k', each((summary) => pct(summary.regression.passAtK))],
+    ['checks passed', each((summary) => pct(summary.combined.unitPass))],
+    ['pass@1', each((summary) => pct(summary.combined.passAt1))],
+    ['pass@k', each((summary) => pct(summary.combined.passAtK))],
     ['safety incidents', each((summary) => String(summary.trust.safetyIncidents))],
     ['scope incidents', each((summary) => String(summary.trust.scopeIncidents))],
     ...[...new Set(runs.flatMap((run) => run.summary.trust.lines.map((line) => line.id)))].map(
@@ -175,7 +182,14 @@ function metrics(runs: Loaded[]): Array<[string, string[]] | undefined> {
         each((summary) => pct(summary.trust.lines.find((line) => line.id === id)?.rate ?? null)),
       ],
     ),
-    ['pass^k', each((summary) => pct(summary.regression.passPowK))],
+    ['pass^k', each((summary) => pct(summary.combined.passPowK))],
+    [
+      'task completion',
+      each(
+        (summary) =>
+          `${pct(summary.regression.percent)} (${summary.regression.passed}/${summary.regression.total})`,
+      ),
+    ],
     undefined,
     ['task time p50', each((summary) => minutes(summary.efficiency.seconds.p50 ?? 0))],
     ['task time p90', each((summary) => minutes(summary.efficiency.seconds.p90 ?? 0))],
@@ -188,7 +202,7 @@ function metrics(runs: Loaded[]): Array<[string, string[]] | undefined> {
       ),
     ],
     ['cost / attempt', each((summary) => money(summary.efficiency.costPerAttempt))],
-    ['cost / pass', each((summary) => money(summary.efficiency.costPerPass))],
+    ['cost / completed task', each((summary) => money(summary.efficiency.costPerPass))],
     [
       'tokens / attempt',
       each((summary) =>
@@ -232,7 +246,9 @@ const points = (value: number) =>
 function difference(runs: Loaded[]) {
   if (runs.length !== 2) return undefined;
   const [before, after] = runs.map((run) =>
-    run.summary.scenarios.filter((item) => item.stance === 'regression' && item.attempts > 0),
+    requiredScenarios(run.summary.manifest.k, run.attempts).filter(
+      (item) => item.stance === 'regression' && item.attempts > 0,
+    ),
   );
   const differences = after.flatMap((item) => {
     const other = before.find(
@@ -299,7 +315,13 @@ export function verdictMarkdown(
 
 export function compareTable(runs: Loaded[]) {
   const scenarios = scenarioIds(runs);
-  const width = Math.max(...scenarios.map((id) => id.length), 8);
+  const scored = runs.map((run) => requiredScenarios(run.summary.manifest.k, run.attempts));
+  const values = metrics(runs);
+  const width = Math.max(
+    ...scenarios.map((id) => id.length),
+    ...values.map((metric) => metric?.[0].length ?? 0),
+    8,
+  );
   const column = 18;
   const row = (label: string, cells: string[], clip = false) =>
     `  ${label.padEnd(width + 4)}${cells.map((cell) => (clip ? cell.slice(0, column - 2) : cell).padEnd(column)).join('')}`;
@@ -310,7 +332,7 @@ export function compareTable(runs: Loaded[]) {
       runs.map((run) => run.summary.manifest.label),
       true,
     ),
-    ...metrics(runs).map((metric) =>
+    ...values.map((metric) =>
       metric ? row(...metric, metric[0] === 'agent' || metric[0] === 'source') : '',
     ),
     '',
@@ -319,22 +341,22 @@ export function compareTable(runs: Loaded[]) {
     lines.push(
       row(
         id,
-        runs.map((run) => {
-          const cell = run.summary.scenarios.find((item) => item.scenario === id);
+        scored.map((rows) => {
+          const cell = rows.find((item) => item.scenario === id);
           return cell ? `${cell.passed}/${cell.attempts}` : 'not run';
         }),
       ) + (changedScenario(runs, id) ? '  (scenario changed between runs)' : ''),
     );
   const moved = difference(runs);
   if (moved) lines.push('', `  ${moved.text}`);
-  if (runs.length === 2 && runs[0].attempts && runs[1].attempts)
-    lines.push(...changes(runs[0], runs[1]));
+  if (runs.length === 2) lines.push(...changes(runs[0], runs[1]));
   lines.push('');
   return lines.join('\n');
 }
 
 export function markdown(runs: Loaded[]) {
   const latest = runs.at(-1)!.summary;
+  const scored = runs.map((run) => requiredScenarios(run.summary.manifest.k, run.attempts));
   const moved = difference(runs);
   const table = (rows: string[][]) =>
     [rows[0], rows[0].map(() => '---'), ...rows.slice(1)]
@@ -344,7 +366,7 @@ export function markdown(runs: Loaded[]) {
       )
       .join('\n');
   const marks = (run: Loaded, id: string) =>
-    (run.attempts ?? [])
+    run.attempts
       .filter((attempt) => attempt.scenario === id)
       .sort((a, b) => a.attempt - b.attempt)
       .map((attempt) => (attempt.status === 'pass' ? '✓' : attempt.status === 'fail' ? '✗' : '~'))
@@ -357,7 +379,7 @@ export function markdown(runs: Loaded[]) {
   const lines = [
     latest.coverage.missing.length || latest.coverage.incomplete
       ? `### Incomplete run: ${coverage(latest)}`
-      : `### ${pct(latest.regression.percent)} of tasks pass (${latest.regression.passed}/${latest.regression.total})${moved ? `, ${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label}` : ''}`,
+      : `### ${pct(latest.combined.percent)} of regression attempts pass all required checks (${latest.combined.passed}/${latest.combined.total})${moved ? `, ${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label}` : ''}`,
     '',
     `\`${latest.manifest.model}\` · judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · ${safety} safety incident${safety === 1 ? '' : 's'} · $${spent.toFixed(2)} on models`,
     '',
@@ -382,8 +404,8 @@ export function markdown(runs: Loaded[]) {
       ['Scenario', ...runs.map((run) => run.summary.manifest.label)],
       ...scenarioIds(runs).map((id) => [
         `\`${id}\`${latest.scenarios.find((item) => item.scenario === id)?.stance === 'gap' ? ' (known gap)' : ''}${changedScenario(runs, id) ? ' (scenario changed)' : ''}`,
-        ...runs.map((run) => {
-          const cell = run.summary.scenarios.find((item) => item.scenario === id);
+        ...runs.map((run, index) => {
+          const cell = scored[index].find((item) => item.scenario === id);
           return cell
             ? `${marks(run, id)} ${cell.passed}/${cell.attempts}${cell.incomplete ? ` (+${cell.incomplete} incomplete)` : ''}`
             : 'not run';
@@ -391,8 +413,7 @@ export function markdown(runs: Loaded[]) {
       ]),
     ]),
   );
-  if (runs.length === 2 && runs[0].attempts && runs[1].attempts)
-    lines.push(...changes(runs[0], runs[1]).map((line) => line.trim()));
+  if (runs.length === 2) lines.push(...changes(runs[0], runs[1]).map((line) => line.trim()));
   const wrong = latest.wentWrong;
   if (wrong.groups.length || wrong.undiagnosed) {
     lines.push('', `#### What went wrong in ${latest.manifest.label}`, '');
@@ -428,7 +449,7 @@ export function markdown(runs: Loaded[]) {
 
 export function changes(a: Loaded, b: Loaded) {
   const rate = (run: Loaded, scenario: string, id: string) => {
-    const rows = (run.attempts ?? [])
+    const rows = run.attempts
       .filter((item) => item.scenario === scenario && item.status !== 'incomplete')
       .flatMap((item) => item.checks.filter((check) => check.id === id && !check.na));
     return rows.length
@@ -440,7 +461,7 @@ export function changes(a: Loaded, b: Loaded) {
   for (const scenario of b.summary.scenarios) {
     if (same.get(scenario.scenario) !== scenario.fingerprint) continue;
     const ids = new Set(
-      [...(a.attempts ?? []), ...(b.attempts ?? [])]
+      [...a.attempts, ...b.attempts]
         .filter((item) => item.scenario === scenario.scenario)
         .flatMap((item) => item.checks.map((check) => check.id)),
     );
@@ -491,10 +512,10 @@ export function runsTable(
   if (!runs.length) return 'No saved runs yet. Start with: pnpm run eval:capability run --tier pr';
   const width = Math.max(...runs.map((run) => run.label.length), 5);
   return [
-    `  ${'label'.padEnd(width)}  ${'when'.padEnd(16)}  ${'agent'.padEnd(28)} ${'source'.padEnd(12)} pass rate`,
+    `  ${'label'.padEnd(width)}  ${'when'.padEnd(16)}  ${'agent'.padEnd(28)} ${'source'.padEnd(12)} all required checks`,
     ...runs.map(
       (run) =>
-        `  ${run.label.padEnd(width)}  ${run.manifest.startedAt.slice(0, 16).replace('T', ' ')}  ${run.manifest.model.padEnd(28)} ${(run.manifest.ref ?? run.manifest.commit.slice(0, 7)).slice(0, 12).padEnd(12)} ${pct(run.summary.regression.percent)} (${run.summary.regression.passed}/${run.summary.regression.total}), ${money(run.summary.costUsd)}, ${minutes(run.summary.seconds)}`,
+        `  ${run.label.padEnd(width)}  ${run.manifest.startedAt.slice(0, 16).replace('T', ' ')}  ${run.manifest.model.padEnd(28)} ${(run.manifest.ref ?? run.manifest.commit.slice(0, 7)).slice(0, 12).padEnd(12)} ${pct(run.summary.combined.percent)} (${run.summary.combined.passed}/${run.summary.combined.total}), ${money(run.summary.costUsd)}, ${minutes(run.summary.seconds)}`,
     ),
   ].join('\n');
 }
@@ -503,13 +524,13 @@ const escape = (value: string) =>
   value.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[char]!);
 
 export function html(summary: RunSummary, attempts: AttemptResult[], reviews: Reviews = {}) {
-  const { manifest, regression } = summary;
-  const rows = summary.scenarios
+  const { manifest, regression, combined } = summary;
+  const rows = requiredScenarios(manifest.k, attempts)
     .map((item) => {
       const mine = attempts
         .filter((attempt) => attempt.scenario === item.scenario)
         .sort((a, b) => a.attempt - b.attempt);
-      return `<section><h3>${escape(item.scenario)} <small>${item.passed}/${item.attempts} passed${item.incomplete ? `, ${item.incomplete} incomplete` : ''}</small></h3><p>${escape(item.title)}</p>${mine
+      return `<section><h3>${escape(item.scenario)} <small>${item.passed}/${item.attempts} passed${item.stance === 'gap' ? ' (known gap, not gating)' : ''}${item.incomplete ? `, ${item.incomplete} incomplete` : ''}</small></h3><p>${escape(item.title)}</p>${mine
         .map(
           (
             attempt,
@@ -524,5 +545,5 @@ ${attempt.error ? `<p class="fail">${escape(attempt.error)}</p>` : ''}${attempt.
   return `<!doctype html><meta charset="utf-8"><title>${escape(manifest.label)}</title><style>body{font:15px/1.5 system-ui;max-width:980px;margin:32px auto;padding:0 20px}pre{white-space:pre-wrap;background:#f6f6f8;padding:10px;border-radius:6px;max-height:420px;overflow:auto}.pass{color:#0a7a3d}.fail{color:#b00020}.incomplete{color:#8a6d00}summary{cursor:pointer}small{color:#666;font-weight:400}</style>
 <h1>${escape(manifest.label)}</h1><p>${escape(manifest.model)} · judge ${escape(manifest.judge)} · ${escape(manifest.ref ?? manifest.commit)} · ${manifest.startedAt}</p>
 <p class="${summary.coverage.missing.length || summary.coverage.incomplete ? 'incomplete' : 'pass'}"><b>${coverage(summary)}</b></p>${summary.coverage.missing.length ? `<details><summary>Attempts not run</summary><ul>${summary.coverage.missing.map((id) => `<li>${escape(id)}</li>`).join('')}</ul></details>` : ''}
-<h2>${pct(regression.percent)} pass (${regression.passed}/${regression.total}) · pass@${manifest.k} ${pct(regression.passAtK)} · pass^${manifest.k} ${pct(regression.passPowK)}</h2>${rows}`;
+<h2>${pct(combined.percent)} pass all required checks (${combined.passed}/${combined.total}) · pass@${manifest.k} ${pct(combined.passAtK)} · pass^${manifest.k} ${pct(combined.passPowK)}</h2><p>Task completion: ${pct(regression.percent)} (${regression.passed}/${regression.total})</p>${rows}`;
 }
