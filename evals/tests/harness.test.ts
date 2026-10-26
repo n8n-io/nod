@@ -2161,6 +2161,8 @@ test('the stack records tool calls, model usage and the main prompts of every tu
 
 test('persisted background sessions and child captures count each request and tool once', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'eval-accounting-'));
+  const source = `${'a'.repeat(7500)}The synthetic ticket is refundable until Friday.${'b'.repeat(2500)}`;
+  const request = `${'c'.repeat(1000)}Preserve the existing Friday deadline.${'d'.repeat(1000)}`;
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(join(directory, 'background'));
   await writeFile(
@@ -2226,7 +2228,7 @@ test('persisted background sessions and child captures count each request and to
       type: 'tool_start',
       id: 'call',
       name: runId === 'background' ? 'sign_in' : 'apps',
-      input: { action: runId },
+      input: { action: runId, ...(runId === 'child' ? { request } : {}) },
       startedAt: new Date(index).toISOString(),
     });
     capture.observe(turnId, {
@@ -2234,7 +2236,7 @@ test('persisted background sessions and child captures count each request and to
       type: 'tool_end',
       id: 'call',
       name: runId === 'background' ? 'sign_in' : 'apps',
-      output: runId,
+      output: runId === 'child' ? source : runId,
       status: 'succeeded',
       durationMs: 1,
       finishedAt: new Date(10).toISOString(),
@@ -2270,12 +2272,35 @@ test('persisted background sessions and child captures count each request and to
         rows: sql.includes('FROM model_usage')
           ? ledger
           : sql.includes('FROM turns')
-            ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
+            ? [
+                {
+                  id: 'background',
+                  background: true,
+                  source: 'event',
+                  status: 'succeeded',
+                  started_at: new Date(0),
+                },
+                {
+                  id: 'resumed',
+                  background: true,
+                  source: 'event',
+                  status: 'succeeded',
+                  started_at: new Date(4),
+                },
+                {
+                  id: 'chat',
+                  background: false,
+                  source: 'user',
+                  status: 'succeeded',
+                  started_at: new Date(2),
+                },
+              ]
             : sql.includes('FROM messages')
               ? [
                   { role: 'user', text: 'Check today.', created_at: '2026-10-22T21:40:00Z' },
                   {
                     role: 'assistant',
+                    turn_id: 'chat',
                     text: 'The call has ended.',
                     created_at: '2026-10-22T21:41:00Z',
                     presentation: { type: 'booking', title: 'Synthetic booking' },
@@ -2322,11 +2347,38 @@ test('persisted background sessions and child captures count each request and to
     run.tools.map((tool) => [tool.turnId, tool.input.action, tool.output]),
     [
       ['background', 'background', 'background'],
-      ['background', 'child', 'child'],
+      ['background', 'child', source],
       ['chat', 'chat', 'chat'],
       ['resumed', 'resumed', 'resumed'],
     ],
   );
+  assert.deepEqual(
+    run.tools.map((tool) => [tool.sessionId, tool.runId, tool.parentRunId, tool.finishedAt]),
+    [
+      ['background', undefined, undefined, 0],
+      ['background', 'child', 'background', 10],
+      ['chat', undefined, undefined, 2],
+      ['background', undefined, undefined, 4],
+    ],
+  );
+  const transcript = run.transcript();
+  assert.ok(transcript.includes(source));
+  assert.ok(transcript.includes(JSON.stringify({ action: 'child', request })));
+  assert.match(
+    transcript,
+    /\[1970-01-01T00:00:00\.010Z\] TOOL RESULT apps .*"toolCallId":"call".*"sessionId":"background".*"runId":"child".*"parentRunId":"background".*"background":true.*"source":"event"/,
+  );
+  const childInput = transcript.indexOf(JSON.stringify({ action: 'child', request }));
+  const interveningResult = transcript.indexOf('[1970-01-01T00:00:00.004Z] TOOL RESULT apps');
+  const childResult = transcript.indexOf('[1970-01-01T00:00:00.010Z] TOOL RESULT apps');
+  assert.ok(childInput >= 0 && childInput < interveningResult);
+  assert.ok(interveningResult < childResult);
+  assert.match(transcript, /ASSISTANT .*"turnId":"chat".*"background":false/);
+  assert.doesNotMatch(transcript, /characters omitted/);
+  const bounded = run.transcript(6000);
+  assert.ok(bounded.length <= 6000);
+  assert.match(bounded, /characters omitted/);
+  assert.ok(!bounded.includes(source));
   assert.deepEqual(run.modelErrors, ['Synthetic model failure']);
   assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
   ledger[0].cost_usd = null;
