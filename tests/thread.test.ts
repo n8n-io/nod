@@ -129,13 +129,16 @@ test(
           "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'user','Legacy sent file',$3,$4)",
           [randomUUID(), ownerId, legacyThread, JSON.stringify([{ id: ids[1] }])],
         );
-        const started = Date.now();
+        const started = (await db.pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
         await db.initializeDatabase();
-        const migrated = (await db.pool.query('SELECT id,expires_at,deleting_at FROM artifacts'))
-          .rows;
+        const migrated = (
+          await db.pool.query(
+            'SELECT id,expires_at,deleting_at,clock_timestamp() AS checked_at FROM artifacts',
+          )
+        ).rows;
         const pending = migrated.find((row) => row.id === ids[0]);
-        assert.ok(pending.expires_at.getTime() >= started + 24 * 60 * 60_000);
-        assert.ok(pending.expires_at.getTime() <= Date.now() + 24 * 60 * 60_000);
+        assert.ok(pending.expires_at.getTime() >= started.getTime() + 24 * 60 * 60_000);
+        assert.ok(pending.expires_at.getTime() <= pending.checked_at.getTime() + 24 * 60 * 60_000);
         for (const row of migrated) {
           assert.equal(row.deleting_at, null);
           if (row.id !== ids[0]) assert.equal(row.expires_at, null);

@@ -606,6 +606,103 @@ test(
       },
     );
 
+    await t.test('renewal and retention require available backing files', async (t) => {
+      const owner = 'availability-owner';
+      const service = create(owner);
+      const available = await service.storeUpload(
+        Buffer.from('valid bytes'),
+        'valid',
+        'text/plain',
+      );
+      const retained = await service.storeArtifact(
+        Buffer.from('retained bytes'),
+        'retained',
+        'text/plain',
+      );
+      const legacy = await service.storeUpload(Buffer.from('legacy bytes'), 'legacy', 'text/plain');
+      const legacyPath = join(root, 'artifacts', legacy.id);
+      await rename(path(owner, legacy.id), legacyPath);
+      await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
+        owner,
+        legacy.id,
+        legacyPath,
+      ]);
+      const mutations: Record<string, (file: string) => Promise<unknown>> = {
+        missing: unlink,
+        truncated: (file) => writeFile(file, 'short'),
+        oversized: (file) => writeFile(file, 'longer than the original bytes'),
+        symlink: async (file) => {
+          await unlink(file);
+          await symlink(path(owner, available.id), file);
+        },
+        directory: async (file) => {
+          await unlink(file);
+          await mkdir(file);
+        },
+      };
+      const rejected: Array<typeof available> = [];
+      for (const [name, mutate] of Object.entries(mutations)) {
+        const file = await service.storeUpload(Buffer.from('valid bytes'), name, 'text/plain');
+        await mutate(path(owner, file.id));
+        rejected.push(file);
+      }
+      await age(
+        owner,
+        rejected.map((file) => file.id),
+      );
+      const expires = (
+        await database.query('SELECT id,expires_at FROM artifacts WHERE owner_id=$1 ORDER BY id', [
+          owner,
+        ])
+      ).rows;
+      await t.test('renewal omits unusable files without extending their leases', async () => {
+        const result = await service.renewUploads(
+          [...rejected, available, retained, legacy].map((file) => file.id),
+        );
+        assert.deepEqual(
+          result.map((file) => file.id).sort(),
+          [available.id, retained.id, legacy.id].sort(),
+        );
+        for (const file of rejected)
+          assert.deepEqual(
+            (
+              await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+                owner,
+                file.id,
+              ])
+            ).rows[0].expires_at,
+            expires.find((row) => row.id === file.id).expires_at,
+          );
+      });
+      await t.test('retention rejects unusable files in the caller transaction', async () => {
+        const client = await database.connect();
+        try {
+          for (const file of rejected) {
+            await client.query('BEGIN');
+            await assert.rejects(service.retainArtifacts([file.id], client), {
+              message: 'An attachment is unavailable.',
+              statusCode: 400,
+            });
+            await client.query('ROLLBACK');
+          }
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+        }
+      });
+      const moved = directory(owner) + '-moved';
+      await rename(directory(owner), moved);
+      await symlink(moved, directory(owner));
+      try {
+        assert.deepEqual(await service.renewUploads([available.id, retained.id, legacy.id]), [
+          legacy,
+        ]);
+      } finally {
+        await unlink(directory(owner));
+        await rename(moved, directory(owner));
+      }
+    });
+
     await t.test(
       'uncommitted writers stay protected and rolled-back files are reclaimed after restart',
       async () => {

@@ -113,6 +113,16 @@ export function createArtifactService(options: {
     if (row.deleting_at) throw unavailable();
     return storagePath(row);
   }
+  async function checkFile(row: Record<string, any>) {
+    try {
+      const path = checkRow(row);
+      await checkDirectory(dirname(path));
+      const file = await lstat(path);
+      if (!file.isFile() || file.size !== row.size) throw unavailable();
+    } catch {
+      throw unavailable();
+    }
+  }
   function ownedIds(ids: string[], maximum?: number) {
     const parsed = z.array(z.uuid()).safeParse(ids);
     if (!parsed.success || (maximum !== undefined && ids.length > maximum)) throw unavailable();
@@ -211,19 +221,19 @@ export function createArtifactService(options: {
           'SELECT * FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleting_at IS NULL ORDER BY id FOR UPDATE',
           [options.ownerId, unique],
         )
-      ).rows.filter((row) => {
+      ).rows;
+      const available = [];
+      for (const row of rows) {
         try {
-          checkRow(row);
-          return true;
-        } catch {
-          return false;
-        }
-      });
+          await checkFile(row);
+          available.push(row);
+        } catch {}
+      }
       await client.query(
         "UPDATE artifacts SET expires_at=clock_timestamp()+interval '24 hours' WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND expires_at IS NOT NULL AND deleting_at IS NULL",
-        [options.ownerId, rows.map((row) => row.id)],
+        [options.ownerId, available.map((row) => row.id)],
       );
-      return rows.map(artifactView);
+      return available.map(artifactView);
     });
   }
   async function retainArtifacts(ids: string[], client: Pick<PoolClient, 'query'>) {
@@ -236,7 +246,7 @@ export function createArtifactService(options: {
       )
     ).rows;
     if (rows.length !== unique.length) throw unavailable();
-    for (const row of rows) checkRow(row);
+    for (const row of rows) await checkFile(row);
     await client.query(
       'UPDATE artifacts SET expires_at=NULL WHERE owner_id=$1 AND id=ANY($2::uuid[])',
       [options.ownerId, unique],
