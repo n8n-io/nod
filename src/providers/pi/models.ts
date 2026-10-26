@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import {
   getSupportedThinkingLevels,
+  getSystemMessageText,
+  hasApi,
   type Api,
   type Model,
   type CredentialStore,
@@ -967,6 +969,76 @@ export async function createPiModelRuntime(
         const body = (changed ?? payload) as Record<string, unknown>;
         if (access.provider === 'openrouter')
           body.provider = { require_parameters: true, allow_fallbacks: false };
+        if (
+          access.provider === 'openai' &&
+          !subscription &&
+          hasApi(target, 'openai-responses') &&
+          target.compat?.supportsExplicitPromptCacheMode &&
+          options?.cacheRetention !== 'none' &&
+          Array.isArray(body.input)
+        ) {
+          const initial = context.messages[0];
+          const prefix =
+            initial?.role === 'system'
+              ? (initial.sections?.preamble ?? getSystemMessageText(initial))
+              : context.systemPrompt;
+          if (prefix) {
+            const messages = body.input as Array<{ role?: string; content?: unknown }>;
+            const index = messages.findIndex(
+              (message) =>
+                ['system', 'developer'].includes(message.role ?? '') &&
+                typeof message.content === 'string' &&
+                message.content.startsWith(prefix),
+            );
+            if (index !== -1) {
+              const text = messages[index]!.content as string;
+              body.input = messages.map((message, at) =>
+                at === index
+                  ? {
+                      ...message,
+                      content: [
+                        {
+                          type: 'input_text',
+                          text: prefix,
+                          prompt_cache_breakpoint: { mode: 'explicit' },
+                        },
+                        ...(text.length > prefix.length
+                          ? [{ type: 'input_text', text: text.slice(prefix.length) }]
+                          : []),
+                      ],
+                    }
+                  : message,
+              );
+            }
+          }
+        }
+
+        if (
+          access.provider === 'anthropic' &&
+          !subscription &&
+          hasApi(target, 'anthropic-messages') &&
+          options?.cacheRetention !== 'none' &&
+          Array.isArray(body.system)
+        ) {
+          const initial = context.messages[0];
+          const prefix =
+            initial?.role === 'system'
+              ? (initial.sections?.preamble ?? getSystemMessageText(initial))
+              : context.systemPrompt;
+          if (prefix)
+            body.system = body.system.flatMap((part: Record<string, unknown>) =>
+              part.type === 'text' &&
+              typeof part.text === 'string' &&
+              part.cache_control &&
+              part.text.startsWith(prefix) &&
+              part.text.length > prefix.length
+                ? [
+                    { ...part, text: prefix },
+                    { ...part, text: part.text.slice(prefix.length), cache_control: undefined },
+                  ]
+                : [part],
+            );
+        }
 
         return body;
       },

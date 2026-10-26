@@ -338,6 +338,75 @@ function recordingWorkspace() {
   };
 }
 
+test('Pi runs independent public web reads together through the tool guard', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-web-parallel-'));
+  let calls = 0;
+  let active = 0;
+  let maximum = 0;
+  let release!: () => void;
+  const both = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const timer = globalThis.setTimeout(release, 1000);
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      let requests = 0;
+      result.session.agent.streamFunction = () => {
+        const message = fauxAssistantMessage(
+          requests++
+            ? 'Done.'
+            : ['one', 'two'].map((name) => ({
+                type: 'toolCall' as const,
+                id: name,
+                name: 'fetch_content',
+                arguments: { url: `https://example.com/${name}` },
+              })),
+          { stopReason: requests === 1 ? 'toolUse' : 'stop' },
+        );
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'start', partial: message });
+        stream.push({ type: 'done', reason: requests === 1 ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    const session = await agent.open({
+      ...fakeExecution(randomUUID()),
+      ...sandbox,
+      ephemeral: true,
+      systemPrompt: 'Read the two public pages.',
+      tools: [],
+      shouldStop: () => false,
+      onEvent: () => {},
+      runTool: async (name) => {
+        assert.equal(name, 'fetch_content');
+        calls += 1;
+        active += 1;
+        maximum = Math.max(maximum, active);
+        if (calls === 2) release();
+        await both;
+        active -= 1;
+        return { content: [{ type: 'text', text: 'Synthetic page' }] };
+      },
+    });
+    await session.prompt('Read both pages.', []);
+    assert.equal(calls, 2);
+    assert.equal(maximum, 2);
+    await session.dispose();
+  } finally {
+    globalThis.clearTimeout(timer);
+    release();
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Pi sessions use native tools on the sandbox workspace plus Nod tools', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-native-'));
   const { workspace, scripts } = recordingWorkspace();
@@ -2466,6 +2535,188 @@ test('owner context stays out of the system prompt and compaction summaries and 
   assert.ok(!JSON.stringify(recorded).includes('Jordi Fixture'));
   assert.ok(!JSON.stringify(recorded).includes('Oat flat white'));
   assert.equal(recorded[0].metadata.session_id, execution.sessionId);
+});
+
+test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('No live catalog request is allowed.');
+    },
+  });
+  const definition = (await backend.catalog('openai', 'api_key')).find(
+    ({ choice }) => choice.id === 'gpt-6.1-sol',
+  )!;
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'openai',
+    method: 'api_key',
+    definition,
+    effort: 'low',
+    read: async () => ({ type: 'api_key', key: 'fixture-key' }),
+  });
+  const prefix = 'Shared synthetic instructions. '.repeat(300);
+  const bodies: Array<Record<string, any>> = [];
+  for (const [path, cacheRetention] of [
+    ['/workspace/first', undefined],
+    ['/workspace/second', undefined],
+    ['/workspace/second', 'none'],
+    [undefined, undefined],
+  ] as const) {
+    const result = await runtime.completeSimple(
+      model,
+      path
+        ? {
+            messages: [
+              {
+                role: 'system',
+                content: '',
+                sections: { preamble: prefix, cwd: `<cwd>\n${path}\n</cwd>` },
+                timestamp: 1,
+              },
+              { role: 'user', content: 'Synthetic request', timestamp: 1 },
+            ],
+          }
+        : {
+            systemPrompt: prefix,
+            messages: [{ role: 'user', content: 'Synthetic request', timestamp: 1 }],
+          },
+      {
+        cacheRetention,
+        fetch: async (_input, init) => {
+          bodies.push(JSON.parse(String(init?.body)));
+          return Response.json({ error: { message: 'Synthetic failure' } }, { status: 503 });
+        },
+      },
+    );
+    assert.equal(result.stopReason, 'error');
+  }
+  const instructions = bodies.map((body) =>
+    body.input.find((message: { role?: string }) => message.role === 'developer'),
+  );
+  assert.deepEqual(instructions[0].content[0], instructions[1].content[0]);
+  assert.deepEqual(instructions[0].content[0], {
+    type: 'input_text',
+    text: prefix,
+    prompt_cache_breakpoint: { mode: 'explicit' },
+  });
+  for (const [index, path] of ['/workspace/first', '/workspace/second'].entries()) {
+    assert.equal(
+      instructions[index].content.map((part: { text: string }) => part.text).join(''),
+      `${prefix}\n\n<cwd>\n${path}\n</cwd>`,
+    );
+    assert.notEqual(bodies[index].prompt_cache_options?.mode, 'explicit');
+  }
+  assert.equal(typeof instructions[2].content, 'string');
+  assert.ok(!JSON.stringify(bodies[2]).includes('prompt_cache_breakpoint'));
+  assert.deepEqual(instructions[3].content, [instructions[0].content[0]]);
+  assert.equal(bodies.length, 4);
+});
+
+test('Anthropic cache boundaries preserve the shared text, workspace suffix, lifetime and marker budget', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('No live catalog request is allowed.');
+    },
+  });
+  const definition = (await backend.catalog('anthropic', 'api_key')).find(
+    ({ choice }) => choice.id === 'claude-opus-5-5',
+  )!;
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'anthropic',
+    method: 'api_key',
+    definition,
+    effort: 'high',
+    read: async () => ({ type: 'api_key', key: 'fixture-key' }),
+  });
+  const { systemPrompt } = await import('../src/runtime/prompt.ts');
+  const task = {
+    id: 'first-task',
+    title: 'Synthetic task',
+    brief: '',
+    doneWhen: 'Done',
+    revision: 1,
+  };
+  const prefix = systemPrompt(
+    { ...sandbox.workspace, path: '/workspace/first' },
+    undefined,
+    task,
+    true,
+  );
+  assert.equal(
+    prefix,
+    systemPrompt(
+      { ...sandbox.workspace, path: '/workspace/second' },
+      undefined,
+      { ...task, id: 'second-task' },
+      true,
+    ),
+  );
+  const bodies: Array<Record<string, any>> = [];
+  for (const [path, cacheRetention] of [
+    ['/workspace/first', undefined],
+    ['/workspace/second', undefined],
+    ['/workspace/first', 'long'],
+    ['/workspace/second', 'none'],
+    [undefined, undefined],
+  ] as const) {
+    const result = await runtime.completeSimple(
+      model,
+      path
+        ? {
+            messages: [
+              {
+                role: 'system',
+                content: '',
+                sections: { preamble: prefix, cwd: `<cwd>\n${path}\n</cwd>` },
+                timestamp: 1,
+              },
+              { role: 'user', content: 'Synthetic request', timestamp: 1 },
+            ],
+          }
+        : {
+            systemPrompt: prefix,
+            messages: [{ role: 'user', content: 'Synthetic request', timestamp: 1 }],
+          },
+      {
+        cacheRetention,
+        fetch: async (_input, init) => {
+          bodies.push(JSON.parse(String(init?.body)));
+          return Response.json(
+            { error: { type: 'api_error', message: 'Synthetic failure' } },
+            { status: 503 },
+          );
+        },
+      },
+    );
+    assert.equal(result.stopReason, 'error');
+  }
+  assert.equal(bodies.length, 5);
+  assert.deepEqual(bodies[0].system[0], bodies[1].system[0]);
+  assert.deepEqual(bodies[0].system[0], {
+    type: 'text',
+    text: prefix,
+    cache_control: { type: 'ephemeral' },
+  });
+  for (const [index, path] of [
+    '/workspace/first',
+    '/workspace/second',
+    '/workspace/first',
+  ].entries()) {
+    assert.equal(bodies[index].system.length, 2);
+    assert.equal(
+      bodies[index].system.map((part: { text: string }) => part.text).join(''),
+      `${prefix}\n\n<cwd>\n${path}\n</cwd>`,
+    );
+    assert.equal('cache_control' in bodies[index].system[1], false);
+    assert.equal(JSON.stringify(bodies[index]).split('"cache_control"').length - 1, 2);
+  }
+  assert.deepEqual(bodies[2].system[0].cache_control, { type: 'ephemeral', ttl: '1h' });
+  assert.equal(bodies[3].system.length, 1);
+  assert.ok(!JSON.stringify(bodies[3]).includes('cache_control'));
+  assert.deepEqual(bodies[4].system, [bodies[0].system[0]]);
 });
 
 test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {

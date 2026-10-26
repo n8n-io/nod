@@ -425,7 +425,12 @@ export function createPiAgent(options: {
             ...registered,
             definition: {
               ...registered.definition,
-              ...(web ? { parameters: webParameters(registered.definition.parameters) } : {}),
+              ...(web
+                ? {
+                    parameters: webParameters(registered.definition.parameters),
+                    executionMode: 'parallel' as const,
+                  }
+                : {}),
               ...(search
                 ? {
                     description:
