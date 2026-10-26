@@ -111,6 +111,16 @@ export interface MessagingTransport {
     threadId: string;
     messageId: string;
     status?: string;
+    signal?: AbortSignal;
+  }): Promise<void>;
+  progress?(input: {
+    channelId: string;
+    accountId: string;
+    threadId: string;
+    messageId: string;
+    text: string;
+    status: string | null;
+    signal: AbortSignal;
   }): Promise<void>;
   close(): Promise<void>;
 }

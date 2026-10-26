@@ -231,6 +231,7 @@ export async function main(args: Args) {
         root,
         label: text(args, 'label') ?? new Date().toISOString().replace(/[:.]/g, '-'),
         repeat: whole(args, 'repeat', 3),
+        caseIds: text(args, 'scenario')?.split(','),
       });
       console.log(JSON.stringify(result, null, 2));
       return;

@@ -20,6 +20,14 @@ import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
 
+async function until(check: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 3000;
+  while (!(await check())) {
+    if (Date.now() >= deadline) assert.fail('The channel did not reach the expected state.');
+    await sleep(10);
+  }
+}
+
 test(
   'managed channels shadow saved credentials, refuse changes and restore saved configuration when removed',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -719,7 +727,7 @@ test(
 );
 
 test(
-  'presence shows Telegram typing with the live step as a draft, and WhatsApp typing on the inbound message',
+  'Telegram progress edits a replyable message without generation drafts, and both channels keep typing',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const schema = `test_channel_presence_${randomUUID().replaceAll('-', '')}`;
@@ -740,7 +748,9 @@ test(
             ok: true,
             result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
           });
-        const method = /(sendChatAction|sendMessageDraft|\/messages)$/.exec(target)?.[1];
+        const method = /(sendChatAction|sendMessageDraft|editMessageText|\/messages)$/.exec(
+          target,
+        )?.[1];
         if (method) {
           const body = JSON.parse(String(init?.body));
           calls.push([
@@ -774,9 +784,20 @@ test(
         threadId: 'whatsapp:555000:351910000000',
         messageId: 'wamid.fixture',
       });
-      assert.deepEqual(calls, [
+      assert.equal(
+        calls.some((call) => (call as unknown[])[0] === 'sendMessageDraft'),
+        false,
+      );
+      const edits = {
+        ...telegram,
+        messageId: '123456:42',
+        text: 'I will check the train options.',
+        signal: new AbortController().signal,
+      };
+      await transport.progress!({ ...edits, status: 'Checking seats & fares.' });
+      await transport.progress!({ ...edits, status: null });
+      assert.deepEqual(calls.slice(0, 3), [
         ['sendChatAction', { chat_id: '123456', action: 'typing' }],
-        ['sendMessageDraft', { chat_id: '123456', draft_id: 1, text: 'Trip: Checking seats.' }],
         ['sendChatAction', { chat_id: '123456', action: 'typing' }],
         [
           '/messages',
@@ -788,6 +809,22 @@ test(
           },
         ],
       ]);
+      assert.equal(calls.length, 5);
+      for (const call of calls.slice(3) as Array<[string, Record<string, unknown>]>) {
+        const [method, { text, ...body }] = call;
+        assert.equal(method, 'editMessageText');
+        assert.deepEqual(body, {
+          chat_id: '123456',
+          message_id: 42,
+          parse_mode: 'MarkdownV2',
+          link_preview_options: { is_disabled: true },
+        });
+        assert.ok(typeof text === 'string' && text.startsWith('I will check the train options\\.'));
+      }
+      const liveText = (calls[3] as [string, { text: string }])[1].text;
+      const restoredText = (calls[4] as [string, { text: string }])[1].text;
+      assert.match(liveText, /\n>Checking seats & fares\\\./);
+      assert.equal(restoredText, 'I will check the train options\\.');
     } finally {
       await transport.close();
       await pool.end();
@@ -929,6 +966,7 @@ test(
       await reply(a1.turn_id, 'On it.', 'ffffffff-0000-4000-8000-0000000000a1', 1);
       live = [work('web', 'A synthetic web step.'), work(a1.channel, 'Checking synthetic seats.')];
       await channels.drain();
+      await until(() => shown.length === 1);
       assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'On it.' }]);
       assert.deepEqual(shown, [
         { after: 1, threadId: 'chat-a1', messageId: 'a1', status: 'Checking synthetic seats.' },
@@ -938,6 +976,7 @@ test(
       t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
       t.mock.timers.tick(61_000);
       await channels.drain();
+      await until(() => shown.length === 2);
       t.mock.timers.reset();
       assert.deepEqual(shown.at(-1), {
         after: 1,
@@ -950,6 +989,7 @@ test(
         work(b1.channel, null),
       ];
       await channels.drain();
+      await until(() => shown.length === 4);
       assert.deepEqual(shown.slice(2), [
         {
           after: 1,
@@ -961,12 +1001,307 @@ test(
       ]);
       live = [work(a1.channel, 'Opening http://localhost:5678/home to build it.')];
       await channels.drain();
+      await until(() => shown.length === 5);
       assert.deepEqual(shown.at(-1), { after: 1, threadId: 'chat-a1', messageId: 'a1' });
       live = [];
       await channels.drain();
       live = [work(b1.channel, null)];
       await channels.drain();
+      await until(() => shown.length === 6);
       assert.equal(shown.length, 6);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'replyable Telegram progress preserves independent task targets and restores only finished work',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const fixture = await outboxFixture(t);
+    const { pool, posts, receive, turnOf, reply, create, transport } = fixture;
+    const post = transport.post;
+    transport.post = async (input) => {
+      const result = await post(input);
+      return { id: result.id, ids: [result.id] };
+    };
+    const edits: Array<Parameters<NonNullable<MessagingTransport['progress']>>[0]> = [];
+    transport.progress = async (input) => {
+      edits.push(input);
+    };
+    const submitted: Array<{ text: string; target?: string }> = [];
+    let live: LiveWork[] = [];
+    const channels = await create({
+      activity: async () => live,
+      submit: async (text, sourceId, client, channel, _messageId, _answer, target) => {
+        submitted.push({ text, target });
+        const id = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [id, fixture.threadId, sourceId, channel],
+        );
+        return id;
+      },
+    });
+    const work = (turnId: string, channel: string, messageId: string, step: string): LiveWork => ({
+      turnId,
+      channel,
+      messageId,
+      taskId: randomUUID(),
+      title: 'Fixture task',
+      step,
+      site: null,
+      since: new Date().toISOString(),
+    });
+    try {
+      receive('111', 'first', 'chat-owner');
+      receive('111', 'second', 'chat-owner');
+      receive('222', 'other', 'chat-other');
+      await channels.drain();
+      const first = await turnOf('first');
+      const second = await turnOf('second');
+      const other = await turnOf('other');
+      const firstMessage = randomUUID();
+      const secondMessage = randomUUID();
+      const otherMessage = randomUUID();
+      await reply(first.turn_id, 'I will compare the trains.', firstMessage, 1);
+      await reply(second.turn_id, 'I will check the warranty.', secondMessage, 2);
+      await reply(other.turn_id, 'I will check the calendar.', otherMessage, 3);
+      await channels.drain();
+      live = [
+        work(first.turn_id, first.channel, firstMessage, 'Checking fares.'),
+        work(second.turn_id, second.channel, secondMessage, 'Reading the warranty.'),
+      ];
+      await channels.drain();
+      await until(() => edits.length === 2);
+      assert.deepEqual(
+        edits.map((edit) => edit.messageId),
+        ['provider-1', 'provider-2'],
+      );
+      assert.ok(edits.every((edit) => edit.threadId === 'chat-owner' && edit.status));
+      assert.equal(posts.length, 3);
+      receive('111', 'correction', 'chat-owner', 'Use the later train.', 'provider-1');
+      receive('111', 'unrelated', 'chat-owner', 'What is tomorrow’s weather?');
+      await channels.drain();
+      assert.deepEqual(submitted.slice(-2), [
+        { text: 'Use the later train.', target: firstMessage },
+        { text: 'What is tomorrow’s weather?', target: undefined },
+      ]);
+      await reply(first.turn_id, 'The train options are ready.', randomUUID(), 4);
+      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.turn_id]);
+      live = live.slice(1);
+      await channels.drain();
+      await until(() => edits.length === 3);
+      assert.equal(edits[2]!.messageId, 'provider-1');
+      assert.equal(edits[2]!.status, null);
+      assert.equal(edits[2]!.text, 'I will compare the trains.');
+      assert.equal(posts.length, 4);
+      live = [{ ...live[0]!, step: 'Checking the claim form.' }];
+      await channels.drain();
+      await until(() => edits.length === 4);
+      assert.equal(edits[3]!.messageId, 'provider-2');
+      assert.ok(edits[3]!.status?.includes('claim form'));
+      live = [];
+      await channels.drain();
+      await until(() => edits.length === 5);
+      assert.equal(edits[4]!.messageId, 'provider-2');
+      assert.equal(edits[4]!.status, null);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM channel_outbox WHERE live_status IS NOT NULL')).rowCount,
+        0,
+      );
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'a pending Telegram status edit never blocks corrections, and stopping aborts it before cleanup',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+    const post = transport.post;
+    transport.post = async (input) => ({ id: (await post(input)).id });
+    let editing: AbortSignal | undefined;
+    const edits: Array<string | null> = [];
+    transport.progress = async (input) => {
+      edits.push(input.status);
+      if (!input.status) return;
+      editing = input.signal;
+      await new Promise<never>((_, reject) => {
+        input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true });
+      });
+    };
+    let live: LiveWork[] = [];
+    const channels = await create({ activity: async () => live });
+    try {
+      receive('111', 'start', 'chat-owner');
+      await channels.drain();
+      const start = await turnOf('start');
+      const messageId = randomUUID();
+      await reply(start.turn_id, 'I will compare options.', messageId, 1);
+      await channels.drain();
+      live = [
+        {
+          turnId: start.turn_id,
+          channel: start.channel,
+          messageId,
+          taskId: null,
+          title: null,
+          step: 'Reading the options.',
+          site: null,
+          since: new Date().toISOString(),
+        },
+      ];
+      await channels.drain();
+      await until(() => Boolean(editing));
+      receive('111', 'correction', 'chat-owner', 'Use the other date.', 'provider-1');
+      await channels.drain();
+      assert.ok((await turnOf('correction')).turn_id);
+      assert.equal(editing!.aborted, false);
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [start.turn_id]);
+      live = [];
+      await channels.drain();
+      await until(() => editing!.aborted && edits.at(-1) === null);
+      assert.equal(edits.length, 2);
+      await channels.drain();
+      assert.equal(edits.length, 2);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'channel close and replacement abort pending Telegram edits and preserve cleanup for the same account',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const mode of ['close', 'replace'])
+      await t.test(mode, async (t) => {
+        const { pool, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+        const post = transport.post;
+        transport.post = async (input) => ({ id: (await post(input)).id });
+        let editing: AbortSignal | undefined;
+        transport.progress = async (input) => {
+          editing = input.signal;
+          await new Promise<never>((_, reject) => {
+            input.signal.addEventListener('abort', () => reject(input.signal.reason), {
+              once: true,
+            });
+          });
+        };
+        let live: LiveWork[] = [];
+        const channels = await create({ activity: async () => live });
+        const restored: string[] = [];
+        try {
+          receive('111', 'start', 'chat-owner');
+          await channels.drain();
+          const start = await turnOf('start');
+          const messageId = randomUUID();
+          await reply(start.turn_id, 'I will check the options.', messageId, 1);
+          await channels.drain();
+          live = [
+            {
+              turnId: start.turn_id,
+              channel: start.channel,
+              messageId,
+              taskId: null,
+              title: null,
+              step: 'Reading options.',
+              site: null,
+              since: new Date().toISOString(),
+            },
+          ];
+          await channels.drain();
+          await until(() => Boolean(editing));
+          if (mode === 'close') await channels.close();
+          else {
+            live = [];
+            await channels.replaceTransport({
+              ...transport,
+              progress: async (input) => {
+                assert.equal(input.status, null);
+                restored.push(input.messageId);
+              },
+            });
+            await until(() => restored.length === 1);
+            assert.deepEqual(restored, ['provider-1']);
+          }
+          assert.equal(editing!.aborted, true);
+          const saved = (
+            await pool.query('SELECT live_status FROM channel_outbox WHERE message_id=$1', [
+              messageId,
+            ])
+          ).rows[0];
+          assert.equal(saved.live_status === null, mode === 'replace');
+        } finally {
+          await channels.close();
+        }
+      });
+  },
+);
+
+test(
+  'Telegram progress skips uncertain sends, split messages and attachments, and restores a persisted status after restart',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+    const post = transport.post;
+    transport.post = async (input) => {
+      if (input.text === 'Uncertain acknowledgement.') throw new Error('Fixture lost response.');
+      const result = await post(input);
+      return input.text === 'Split acknowledgement.' ? result : { id: result.id };
+    };
+    const edits: Array<{ id: string; status: string | null }> = [];
+    transport.progress = async (input) => {
+      edits.push({ id: input.messageId, status: input.status });
+    };
+    let live: LiveWork[] = [];
+    let channels = await create({ activity: async () => live });
+    try {
+      receive('111', 'start', 'chat-owner');
+      await channels.drain();
+      const start = await turnOf('start');
+      const ids = Array.from({ length: 4 }, () => randomUUID());
+      for (const [index, text] of [
+        'Uncertain acknowledgement.',
+        'Split acknowledgement.',
+        'An attachment.',
+        'An ordinary acknowledgement.',
+      ].entries())
+        await reply(start.turn_id, text, ids[index]!, index + 1);
+      await pool.query('UPDATE messages SET attachments=$2 WHERE id=$1', [
+        ids[2],
+        JSON.stringify([{ id: randomUUID() }]),
+      ]);
+      await channels.drain();
+      live = ids.map((messageId) => ({
+        turnId: start.turn_id,
+        channel: start.channel,
+        messageId,
+        taskId: null,
+        title: null,
+        step: 'Checking a source.',
+        site: null,
+        since: new Date().toISOString(),
+      }));
+      await channels.drain();
+      await until(() => edits.length === 1);
+      assert.equal(edits[0]!.id, 'provider-2');
+      await channels.close();
+      live = [];
+      channels = await create({ activity: async () => live });
+      await channels.drain();
+      await until(() => edits.length === 2);
+      assert.equal(edits[1]!.id, edits[0]!.id);
+      assert.equal(edits[1]!.status, null);
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [ids[0]])).rows[0]
+          .state,
+        'uncertain',
+      );
     } finally {
       await channels.close();
     }

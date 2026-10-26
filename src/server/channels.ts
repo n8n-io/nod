@@ -326,6 +326,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}';
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS claim_id uuid;
+  ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS live_status text;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
@@ -1256,7 +1257,117 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   const presence = new Map<string, { at: number; status: string }>();
-  async function presenceStep() {
+  let presenceRunning: Promise<void> | undefined;
+  let nextPresence: LiveWork[] | undefined;
+  let progressCall: { turnId: string; controller: AbortController } | undefined;
+  let presenceCall: { turnIds: string[]; controller: AbortController } | undefined;
+  const presenceUnavailable = () =>
+    closed || replacing || options.admission?.paused || options.admission?.closed;
+
+  async function progressStep(work: LiveWork[]) {
+    if (!transport.progress || presenceUnavailable()) return;
+    const targets = new Map(
+      work
+        .filter((item) => item.messageId && item.channel.startsWith('telegram:'))
+        .map((item) => [item.messageId!, item]),
+    );
+    const { rows } = await pool.query<
+      ChannelIdentity & {
+        message_id: string;
+        provider_message_id: string;
+        thread_id: string;
+        text: string;
+        live_status: string | null;
+      }
+    >(
+      `SELECT o.message_id,o.provider_message_id,o.live_status,i.provider,i.account_id,i.sender_id,i.thread_id,m.text
+       FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+       JOIN messages m ON m.id=o.message_id AND m.owner_id=i.owner_id
+       JOIN threads th ON th.id=m.thread_id AND th.owner_id=m.owner_id
+       WHERE m.owner_id=$1 AND i.provider='telegram' AND o.state='sent'
+         AND (th.archived_at IS NULL OR o.live_status IS NOT NULL)
+         AND cardinality(o.provider_message_ids)=1 AND m.attachments='[]'::jsonb
+         AND m.presentation IS NULL AND o.presentation IS NULL
+         AND (o.live_status IS NOT NULL OR o.message_id=ANY($2::uuid[]))`,
+      [ownerId, [...targets.keys()]],
+    );
+    for (const row of rows) {
+      if (presenceUnavailable()) return;
+      if (!permitted(row)) continue;
+      const item = targets.get(row.message_id);
+      if (item && item.channel !== conversationChannel(row)) continue;
+      const original = channelText(row.text);
+      const current = channelText([item?.title, item?.step].filter(Boolean).join(': '));
+      const status =
+        item &&
+        !original.secureAction &&
+        !original.artifact &&
+        original.text.length <= 2500 &&
+        !current.secureAction &&
+        !current.artifact
+          ? Array.from(current.text).slice(0, 1000).join('') || null
+          : null;
+      if (status === row.live_status) continue;
+      const claimed = await pool.query(
+        `UPDATE channel_outbox o SET live_status=$3 FROM messages m,channel_inbox i,threads th
+         WHERE o.message_id=$1 AND m.id=o.message_id AND m.owner_id=$2 AND i.source_id=o.source_id AND i.owner_id=$2
+           AND th.id=m.thread_id AND th.owner_id=$2 AND o.state='sent'
+           AND o.live_status IS NOT DISTINCT FROM $4
+           AND ($3::text IS NULL OR (th.archived_at IS NULL AND EXISTS (SELECT 1 FROM turns u WHERE u.id=$5 AND u.owner_id=$2
+             AND u.thread_id=m.thread_id AND u.channel=$6 AND u.status IN ('queued','running'))))
+         RETURNING o.message_id`,
+        [
+          row.message_id,
+          ownerId,
+          status,
+          row.live_status,
+          item?.turnId ?? null,
+          item?.channel ?? null,
+        ],
+      );
+      if (!claimed.rowCount) continue;
+      const retainStatus = () =>
+        pool.query(
+          'UPDATE channel_outbox SET live_status=$2 WHERE message_id=$1 AND live_status IS NULL',
+          [row.message_id, row.live_status],
+        );
+      if (presenceUnavailable() || !permitted(row)) {
+        if (status === null) await retainStatus();
+        continue;
+      }
+      const controller = new AbortController();
+      progressCall = { turnId: item?.turnId ?? '', controller };
+      const signal = AbortSignal.any([
+        receiving.signal,
+        controller.signal,
+        AbortSignal.timeout(5000),
+      ]);
+      try {
+        await Promise.race([
+          transport.progress({
+            channelId: row.provider,
+            accountId: row.account_id,
+            threadId: row.thread_id,
+            messageId: row.provider_message_id,
+            text: original.text,
+            status,
+            signal,
+          }),
+          new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(signal.reason);
+            else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+        ]);
+      } catch (cause) {
+        if (status === null) await retainStatus();
+        if (!signal.aborted) logFailure('channel_presence_failed', cause);
+      } finally {
+        progressCall = undefined;
+      }
+    }
+  }
+
+  async function presenceStep(work: LiveWork[]) {
     if (
       closed ||
       replacing ||
@@ -1266,7 +1377,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     )
       return;
     const live = new Map<string, string>();
-    for (const item of await options.activity())
+    for (const item of work)
       if (item.channel !== 'web')
         live.set(item.channel, [item.title, item.step].filter(Boolean).join(': '));
     for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
@@ -1292,9 +1403,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         (last?.status === status && Date.now() - last.at < settings.presenceMs)
       )
         continue;
-      if (closed || replacing) return;
+      if (presenceUnavailable()) return;
       presence.set(channel, { at: Date.now(), status });
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      const controller = new AbortController();
+      presenceCall = {
+        turnIds: work.filter((item) => item.channel === channel).map((item) => item.turnId),
+        controller,
+      };
+      const signal = AbortSignal.any([
+        receiving.signal,
+        controller.signal,
+        AbortSignal.timeout(5000),
+      ]);
       try {
         await Promise.race([
           transport.presence({
@@ -1303,22 +1423,53 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             threadId: row.thread_id,
             messageId: row.source_id.slice(prefix.length),
             ...(status ? { status } : {}),
+            signal,
           }),
-          new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('Presence did not answer in time.')), 5000);
+          new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(signal.reason);
+            else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
           }),
         ]);
       } catch (cause) {
-        logFailure('channel_presence_failed', cause);
+        if (!signal.aborted) logFailure('channel_presence_failed', cause);
       } finally {
-        clearTimeout(timer);
+        presenceCall = undefined;
       }
     }
+  }
+
+  async function requestPresence() {
+    if (!options.activity || presenceUnavailable()) return;
+    const work = await options.activity();
+    if (presenceUnavailable()) return;
+    nextPresence = work;
+    if (progressCall?.turnId && !work.some((item) => item.turnId === progressCall!.turnId))
+      progressCall.controller.abort();
+    if (presenceCall && !work.some((item) => presenceCall!.turnIds.includes(item.turnId)))
+      presenceCall.controller.abort();
+    if (presenceRunning) return;
+    const release = options.admission?.enter();
+    if (options.admission && !release) return;
+    presenceRunning = (async () => {
+      while (nextPresence && !presenceUnavailable()) {
+        const current = nextPresence;
+        nextPresence = undefined;
+        await progressStep(current);
+        if (!nextPresence && !presenceUnavailable()) await presenceStep(current);
+      }
+    })()
+      .catch((cause) => logFailure('channel_presence_failed', cause))
+      .finally(() => {
+        presenceRunning = undefined;
+        release?.();
+      });
   }
 
   function drain() {
     if (closed || replacing || options.admission?.paused || options.admission?.closed)
       return Promise.resolve();
+    if (presenceRunning)
+      void requestPresence().catch((cause) => logFailure('channel_presence_failed', cause));
     drainRequested = true;
     if (running) return running;
     const release = options.admission?.enter();
@@ -1358,11 +1509,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             }
             if (outbox) outbox = await attempt(outboxStep);
           }
-          try {
-            await presenceStep();
-          } catch (cause) {
-            logFailure('channel_presence_failed', cause);
-          }
+          void requestPresence().catch((cause) => logFailure('channel_presence_failed', cause));
         }
       } finally {
         lastError = processingFailed
@@ -1391,6 +1538,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     clearInterval(timer);
     unsubscribe();
     await running;
+    await presenceRunning;
     await Promise.allSettled(pendingMedia.values());
     await transport.close();
   }
@@ -1404,6 +1552,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     receiving.abort();
     try {
       await running;
+      await presenceRunning;
       await Promise.allSettled(pendingMedia.values());
       await transport.close();
       transport = next;

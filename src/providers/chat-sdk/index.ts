@@ -51,12 +51,37 @@ class Telegram extends TelegramAdapter {
     return chunks(text).flatMap(fit);
   }
 
-  draft(threadId: string, text: string) {
-    return this.telegramFetch('sendMessageDraft', {
-      chat_id: this.decodeThreadId(threadId).chatId,
-      draft_id: 1,
-      text: Array.from(text).slice(0, 4096).join(''),
-    });
+  typing(threadId: string, signal?: AbortSignal) {
+    return this.telegramFetch(
+      'sendChatAction',
+      { chat_id: this.decodeThreadId(threadId).chatId, action: 'typing' },
+      { signal },
+    );
+  }
+
+  async progress(input: Parameters<NonNullable<MessagingTransport['progress']>>[0]) {
+    const chatId = this.decodeThreadId(input.threadId).chatId;
+    const { messageId } = this.decodeCompositeMessageId(input.messageId, chatId);
+    const markdown = input.status
+      ? `${input.text}\n\n> **Live status**\n> ${input.status.replaceAll('\n', '\n> ')}`
+      : input.text;
+    if (!this.fits(markdown, 4096)) throw new Error('The Telegram status is too long.');
+    input.signal.throwIfAborted();
+    try {
+      await this.telegramFetch(
+        'editMessageText',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          text: convertEmojiPlaceholders(this.formatConverter.fromMarkdown(markdown), 'gchat'),
+          parse_mode: 'MarkdownV2',
+          link_preview_options: { is_disabled: true },
+        },
+        { signal: input.signal },
+      );
+    } catch (error) {
+      if (!(error instanceof Error && /message is not modified/i.test(error.message))) throw error;
+    }
   }
 }
 
@@ -549,10 +574,18 @@ export function createChatSdkTransport(
         throw new Error('Channel is not configured.');
       await bot.initialize();
       if (input.channelId === 'telegram' && telegram) {
-        await telegram.startTyping(input.threadId);
-        if (input.status) await telegram.draft(input.threadId, input.status);
+        await telegram.typing(input.threadId, input.signal);
       }
       if (input.channelId === 'whatsapp' && whatsapp) await whatsapp.typing(input.messageId);
+    },
+    async progress(input) {
+      if (
+        !telegram ||
+        input.channelId !== 'telegram' ||
+        input.accountId !== env.TELEGRAM_BOT_TOKEN!.split(':')[0]
+      )
+        throw new Error('Channel is not configured.');
+      await telegram.progress(input);
     },
     async post(input) {
       if (
