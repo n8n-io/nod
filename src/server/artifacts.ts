@@ -10,6 +10,38 @@ import { fileBytes, fileName } from '../shared/files.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+
+const replyParser = unified().use(remarkParse);
+
+export function replyFileReferences(text: string) {
+  if (!text.includes('/workspace/')) return [];
+  const nodes = [...replyParser.parse(text).children];
+  const references: Array<{ path: string; start: number; end: number }> = [];
+  for (const node of nodes) {
+    const value =
+      node.type === 'inlineCode'
+        ? node.value
+        : node.type === 'link' || node.type === 'image'
+          ? node.url
+          : undefined;
+    if (value !== undefined) {
+      const path = value.replace(/^sandbox:/, '');
+      if (!path.startsWith('/workspace/') || path.endsWith('/')) continue;
+      if (node.type === 'inlineCode' && !/^\/workspace\/[^/]+\/.+/.test(path)) continue;
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        references.push({
+          path: node.type === 'inlineCode' ? path : decodeURIComponent(path),
+          start,
+          end,
+        });
+    } else if ('children' in node) nodes.push(...node.children);
+  }
+  return references.sort((a, b) => a.start - b.start);
+}
 
 const mimeTypes: Record<string, string> = {
   '.txt': 'text/plain',
