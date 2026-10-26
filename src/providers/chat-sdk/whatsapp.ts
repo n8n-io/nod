@@ -13,7 +13,6 @@ import makeWASocket, {
   type WAMessage,
 } from '@whiskeysockets/baileys';
 import { randomUUID } from 'node:crypto';
-import { parseMarkdown, type Root } from 'chat';
 import { splitMessage } from '@chat-adapter/whatsapp';
 import type { ChannelSession, ChannelSessionStore } from '../../ports/channel-session.ts';
 import { MessagingAttachmentError } from '../../ports/messaging.ts';
@@ -26,6 +25,7 @@ import type {
 } from '../../ports/messaging.ts';
 import type { ChannelLinkStatus } from '../../shared/contracts.ts';
 import { contactAttachment, locationAttachment } from './content.ts';
+import { whatsappText } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
 
 const silent: SocketConfig['logger'] = {
@@ -44,57 +44,6 @@ const numberOf = (jid: string | null | undefined) => {
   return /^\d{7,15}@s\.whatsapp\.net$/.test(normalized) ? normalized.split('@')[0] : undefined;
 };
 const qrLifetimeMs = 60_000;
-
-export function whatsappText(text: string) {
-  type Node = Root | Root['children'][number];
-  function render(node: Node): string {
-    const children =
-      'children' in node ? node.children.map((child) => render(child as Node)).join('') : '';
-    const value = 'value' in node ? String(node.value) : '';
-    switch (node.type) {
-      case 'root':
-        return children.trim();
-      case 'paragraph':
-        return `${children}\n\n`;
-      case 'strong':
-      case 'heading':
-        return `*${children.trim()}*${node.type === 'heading' ? '\n\n' : ''}`;
-      case 'emphasis':
-        return `_${children}_`;
-      case 'delete':
-        return `~${children}~`;
-      case 'code':
-        return `\`\`\`\n${value}\n\`\`\`\n\n`;
-      case 'inlineCode':
-        return `\`\`\`${value}\`\`\``;
-      case 'link':
-        return `${children} (${node.url})`;
-      case 'image':
-        return `${node.alt || 'Image'} (${node.url})`;
-      case 'listItem':
-        return `- ${children.trim()}\n`;
-      case 'list':
-        return `${children}\n`;
-      case 'blockquote':
-        return `${children
-          .trim()
-          .split('\n')
-          .map((line) => `> ${line}`)
-          .join('\n')}\n\n`;
-      case 'break':
-        return '\n';
-      case 'tableCell':
-        return `${children.trim()} | `;
-      case 'tableRow':
-        return `${children.trim()}\n`;
-      case 'table':
-        return `${children}\n`;
-      default:
-        return value || children;
-    }
-  }
-  return render(parseMarkdown(text));
-}
 
 type Socket = Pick<
   WASocket,

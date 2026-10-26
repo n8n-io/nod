@@ -1599,9 +1599,9 @@ test(
             ok: true,
             result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
           });
-        if (/\/send(?:Rich)?Message$/.test(target)) {
+        if (target.endsWith('/sendMessage')) {
           const body = JSON.parse(String(init?.body));
-          texts.push(String(body.rich_message?.markdown ?? body.text));
+          texts.push(String(body.text).replace(/\\([^\p{L}\p{N}\s])/gu, '$1'));
           return Response.json({
             ok: true,
             result: {
