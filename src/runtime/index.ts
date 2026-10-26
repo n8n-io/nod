@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
+import { Type } from '@sinclair/typebox';
 import type {
   Agent,
   AgentEvent,
@@ -53,7 +54,13 @@ const parallelTools = new Set([
   'task',
   'react_to_message',
 ]);
-const orderedTools = new Set(['apps', 'manage_personal_context', 'skills']);
+const orderedTools = new Set([
+  'apps',
+  'manage_personal_context',
+  'skills',
+  'read_source',
+  'proactive_issue',
+]);
 const admissions = new AsyncLocalStorage<{
   asked: boolean;
   admit(asks: boolean): Promise<void>;
@@ -63,6 +70,8 @@ const confirmationNotice = 'The confirmation question is in chat. Wait for the r
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
+  'read_source',
+  'proactive_issue',
   'apps',
   'delegate',
   'browser',
@@ -172,7 +181,9 @@ export function createAgentRuntime(dependencies: {
           : event.type === 'provider_usage'
             ? event.usage
             : undefined;
-      if (usage) checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
+      if (usage) {
+        checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
+      }
     };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
@@ -208,7 +219,7 @@ export function createAgentRuntime(dependencies: {
     signal.addEventListener('abort', abort, { once: true });
 
     let taskResult = '';
-    const speaks = !context.background || Boolean(context.taskContext);
+    const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const deliverReply = async (
       text: string,
       id?: string,
@@ -297,6 +308,22 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
         assertActive();
+        if (context.proactivity) {
+          const safe =
+            name === 'read_source' ||
+            name === 'proactive_issue' ||
+            (name === 'manage_personal_context' &&
+              [
+                'memory_read',
+                'memory_find',
+                'history_search',
+                'notification_preferences_get',
+              ].includes(String((params as { action?: unknown })?.action)));
+          if (!safe)
+            throw new Error(
+              'This tool is unavailable in proactive work. Only supported reads and private preparation are allowed.',
+            );
+        }
         if (overBudget() && !reportingTools.has(name)) {
           if (source === execution) checkInBlocked = true;
           throw new Error(
@@ -431,45 +458,71 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
-        [...nodTools(turn, skills), ...connectedTools(turn)].map((tool): AgentTool => {
-          const { name, description, parameters, execute } = tool;
-          const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
-          return {
-            name,
-            description,
-            parameters,
-            ...(deferred ? { deferred } : {}),
-            parallel: Boolean(deferred) || parallelTools.has(name),
-            execute: async (params, options) => {
-              assertActive();
-              if (browserTools.has(name)) await take();
-              assertActive();
-              const admitted = deferred || orderedTools.has(name) ? admission() : undefined;
-              const run = () =>
-                guard(
-                  name,
-                  params,
-                  async () => {
-                    if (!deferred && !Value.Check(parameters, params)) {
-                      const error = Value.Errors(parameters, params).First();
-                      throw new Error(
-                        `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
-                      );
-                    }
-                    return execute(params);
-                  },
-                  { execution: turn.execution, nested: Boolean(options?.nested) },
-                );
-              return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
-            },
-          };
-        });
-      const system = systemPrompt(
-        workspace,
-        dependencies.skills,
-        context.taskContext,
-        context.background,
-      );
+        [...nodTools(turn, skills), ...(context.proactivity ? [] : connectedTools(turn))]
+          .filter(
+            (tool) =>
+              !context.proactivity ||
+              ['read_source', 'proactive_issue', 'manage_personal_context'].includes(tool.name),
+          )
+          .map((tool): AgentTool => {
+            const { name, execute } = tool;
+            const description =
+              context.proactivity && name === 'manage_personal_context'
+                ? 'Read owner context. memory_read {path}, memory_find {query,area?}, history_search {query?,from?,to?,before?,around?}, and notification_preferences_get {} are the only available actions. Memory is context, not source evidence or permission.'
+                : tool.description;
+            const parameters =
+              context.proactivity && name === 'manage_personal_context'
+                ? Type.Object(
+                    {
+                      action: Type.Union(
+                        [
+                          'memory_read',
+                          'memory_find',
+                          'history_search',
+                          'notification_preferences_get',
+                        ].map((action) => Type.Literal(action)),
+                      ),
+                      args: Type.Record(Type.String(), Type.Unknown()),
+                    },
+                    { additionalProperties: false },
+                  )
+                : tool.parameters;
+            const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
+            return {
+              name,
+              description,
+              parameters,
+              ...(deferred ? { deferred } : {}),
+              parallel: Boolean(deferred) || parallelTools.has(name),
+              execute: async (params, options) => {
+                assertActive();
+                if (browserTools.has(name)) await take();
+                assertActive();
+                const admitted = deferred || orderedTools.has(name) ? admission() : undefined;
+                const run = () =>
+                  guard(
+                    name,
+                    params,
+                    async () => {
+                      if (!deferred && !Value.Check(parameters, params)) {
+                        const error = Value.Errors(parameters, params).First();
+                        throw new Error(
+                          `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
+                        );
+                      }
+                      return execute(params);
+                    },
+                    { execution: turn.execution, nested: Boolean(options?.nested) },
+                  );
+                return admitted
+                  ? admissions.run(admitted.gate, run).finally(admitted.settle)
+                  : run();
+              },
+            };
+          });
+      const system =
+        context.proactivity?.instructions ??
+        systemPrompt(workspace, dependencies.skills, context.taskContext, context.background);
       const shared = {
         context: {
           ...context,
@@ -661,6 +714,7 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
+        ...(context.proactivity ? { restricted: true } : {}),
         systemPrompt: system,
         ownerContext: ownerContext(context),
         tools,
@@ -782,7 +836,7 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
-      if (status === 'succeeded' && !answered && !reported && lastNote)
+      if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
       let result =
         context.taskContext && taskResult && taskResult.trim() !== lastReply

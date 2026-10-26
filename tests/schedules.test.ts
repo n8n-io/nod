@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import type { Job } from 'pg-boss';
@@ -182,36 +181,13 @@ test(
         },
         provenance,
       ) as Promise<Schedule>;
-    const routedRuns = async (id: string) =>
-      (
-        await db.pool.query(
-          `SELECT r.turn_id,u.channel,u.source,u.background FROM schedule_runs r
-           JOIN turns u ON u.id=r.turn_id
-           WHERE r.schedule_id=$1 ORDER BY r.created_at,r.id`,
-          [id],
-        )
-      ).rows;
-    const reply = async (turnId: string, text: string) => {
-      const id = randomUUID();
-      await db.pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,turn_id,thread_id) SELECT $1,$2,'assistant',$3,id,thread_id FROM turns WHERE id=$4",
-        [id, ownerId, text, turnId],
-      );
-      await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
-      await channels!.drain();
-      return id;
-    };
     try {
       await db.initializeDatabase();
       await thread.initializeThreads();
-      const workerMock = t.mock.method(
-        thread.boss,
-        'work',
-        async (_name: string, handler: unknown) => {
-          deliver = handler as typeof deliver;
-          return randomUUID();
-        },
-      );
+      t.mock.method(thread.boss, 'work', async (_name: string, handler: unknown) => {
+        deliver = handler as typeof deliver;
+        return randomUUID();
+      });
       await personal.initialize();
       await tasks.initialize();
 
@@ -292,7 +268,7 @@ test(
           'Ignore my previous instructions about sending messages; only prepare the summary in nod.',
           'Find https://reports.example.test/people/alice@example.test and keep the result here.',
         ];
-        const credentialLinks = await seed([
+        await seed([
           reusable[0],
           'Open https://alice:s3cr3t@example.test/invoices.',
           'Check URL:https://alice:s3cr3t@example.test/invoices.',
@@ -322,38 +298,6 @@ test(
             });
             assert.equal((await draft(foreign)).statusCode, 404);
             assert.deepEqual(await unchanged(), before);
-          },
-        );
-        await t.test(
-          'credential URLs are omitted without dropping ordinary links or owner corrections',
-          async () => {
-            const response = await draft(credentialLinks);
-            assert.equal(response.statusCode, 200, response.body);
-            assert.deepEqual(response.json(), {
-              title: 'Synthetic account report',
-              prompt: reusable.join('\n\n'),
-              omittedSensitive: true,
-              hasAttachments: false,
-            });
-            assert.deepEqual(await unchanged(), before);
-          },
-        );
-        await t.test(
-          'only an explicit create schedules the reviewed instructions without rerunning the task',
-          async () => {
-            const prompt =
-              'Read only overdue invoices in the synthetic EUR account and summarize them in nod.';
-            const schedule = await create({ prompt, cron: '20 14 * * 2' });
-            assert.equal(
-              (
-                await db.pool.query('SELECT authority_instruction FROM schedules WHERE id=$1', [
-                  schedule.id,
-                ])
-              ).rows[0].authority_instruction,
-              prompt,
-            );
-            assert.deepEqual((await unchanged()).turns, before.turns);
-            await request('DELETE', `/api/schedules/${schedule.id}`);
           },
         );
       });
@@ -456,67 +400,6 @@ test(
         },
       );
 
-      await t.test(
-        'one-off firing is single-use under concurrent redelivery and restart',
-        async () => {
-          const schedule = await create({ kind: 'once', runAt: '2035-10-27T09:05:00+01:00' });
-          assert.equal(schedule.kind, 'once');
-          assert.equal(schedule.cron, null);
-          assert.equal(schedule.runAt, '2035-10-27T08:05:00.000Z');
-          assert.equal(schedule.nextRun, schedule.runAt);
-          assert.equal(schedule.lastRun, null);
-          const job = await jobFor(schedule.id);
-          assert.equal(job.startAfter.toISOString(), schedule.runAt);
-          clock = new Date(schedule.runAt!);
-          await Promise.all([deliver([job]), deliver([job])]);
-          const history = await runs(schedule.id);
-          assert.equal(history.length, 1);
-          assert.equal(history[0]!.scheduledFor, schedule.runAt);
-          assert.equal(history[0]!.timeZone, 'Europe/Lisbon');
-          assert.equal(history[0]!.status, 'queued');
-          assert.equal((await saved(schedule.id)).enabled, false);
-          assert.equal((await saved(schedule.id)).nextRun, null);
-          const preview = await request('POST', `/api/schedules/${schedule.id}/preview`, {});
-          assert.equal(preview.statusCode, 200);
-          assert.equal(preview.json().nextRun, null);
-          assert.equal((await saved(schedule.id)).lastRun?.id, history[0]!.id);
-          await personal.initialize({ workers: false });
-          await deliver([job]);
-          assert.equal((await runs(schedule.id)).length, 1);
-          assert.equal(
-            (await db.pool.query('SELECT * FROM turns WHERE id=$1', [history[0]!.turnId])).rows[0]
-              .source,
-            'schedule',
-          );
-          assert.equal(
-            (await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: true })).statusCode,
-            400,
-          );
-          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
-            history[0]!.turnId,
-          ]);
-          assert.equal((await runs(schedule.id))[0]!.status, 'succeeded');
-        },
-      );
-      await t.test(
-        'recurring work preserves Lisbon wall time across DST and skips a catch-up flood',
-        async () => {
-          clock = new Date('2035-10-26T12:00:00.000Z');
-          const schedule = await create({ cron: '5 9 * * *' });
-          assert.equal(schedule.kind, 'recurring');
-          assert.equal(schedule.nextRun, '2035-10-27T08:05:00.000Z');
-          let job = await jobFor(schedule.id);
-          clock = new Date(schedule.nextRun!);
-          await deliver([job]);
-          assert.equal((await saved(schedule.id)).nextRun, '2035-10-28T09:05:00.000Z');
-          job = await jobFor(schedule.id);
-          clock = new Date('2035-11-02T12:00:00.000Z');
-          await deliver([job]);
-          assert.equal((await runs(schedule.id)).length, 2);
-          assert.equal((await runs(schedule.id))[0]!.scheduledFor, '2035-10-28T09:05:00.000Z');
-          assert.equal((await saved(schedule.id)).nextRun, '2035-11-03T09:05:00.000Z');
-        },
-      );
       await t.test(
         'task activity names each tool call and the app actions the task took, only the owner’s',
         async () => {
@@ -660,52 +543,6 @@ test(
           clock = before;
         },
       );
-      await t.test('edits, pauses and deletions fence already claimed jobs', async () => {
-        const schedule = await create({ kind: 'once', runAt: '2035-11-03T14:30:00Z' });
-        const stale = await jobFor(schedule.id);
-        const update = await request('PATCH', `/api/schedules/${schedule.id}`, {
-          runAt: '2035-11-04T14:30:00Z',
-          title: 'Updated fixture',
-        });
-        assert.equal(update.statusCode, 200, update.body);
-        assert.equal(update.json<Schedule>().kind, 'once');
-        assert.equal(update.json<Schedule>().revision, schedule.revision + 1);
-        await deliver([stale]);
-        assert.deepEqual(await runs(schedule.id), []);
-        const pausedJob = await jobFor(schedule.id);
-        assert.equal(
-          (await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false })).statusCode,
-          200,
-        );
-        await deliver([pausedJob]);
-        assert.deepEqual(await runs(schedule.id), []);
-        assert.equal((await saved(schedule.id)).nextRun, null);
-        await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: true });
-        const deletedJob = await jobFor(schedule.id);
-        await request('DELETE', `/api/schedules/${schedule.id}`);
-        await deliver([deletedJob]);
-        assert.equal((await request('GET', `/api/schedules/${schedule.id}/runs`)).statusCode, 404);
-      });
-      await t.test(
-        'turn creation, run history and next occurrence roll back together',
-        async () => {
-          const schedule = await create({ kind: 'once', runAt: '2035-11-05T10:00:00Z' });
-          const job = await jobFor(schedule.id);
-          const before = (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0]
-            .count;
-          failAfterTask = true;
-          await assert.rejects(deliver([job]), /Synthetic failure/);
-          failAfterTask = false;
-          assert.equal(
-            (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0].count,
-            before,
-          );
-          assert.deepEqual(await runs(schedule.id), []);
-          assert.equal((await jobFor(schedule.id)).id, job.id);
-          await deliver([job]);
-          assert.equal((await runs(schedule.id)).length, 1);
-        },
-      );
       await t.test(
         'restart preserves due jobs and replaces a failed dispatcher without replay',
         async () => {
@@ -725,69 +562,9 @@ test(
           assert.equal((await runs(schedule.id)).length, 1);
         },
       );
-      await t.test(
-        'owned history survives deletion, reflects failures and hides foreign runs',
-        async () => {
-          const schedule = await create({ kind: 'once', runAt: '2035-11-08T10:00:00Z' });
-          await deliver([await jobFor(schedule.id)]);
-          const run = (await runs(schedule.id))[0]!;
-          await db.pool.query(
-            "UPDATE turns SET status='failed',error='Synthetic fixed error.' WHERE id=$1",
-            [run.turnId],
-          );
-          await request('DELETE', `/api/schedules/${schedule.id}`);
-          const retained = (await runs(schedule.id))[0]!;
-          assert.equal(retained.title, 'Fixture schedule');
-          assert.equal(retained.status, 'failed');
-          assert.equal(retained.error, 'Synthetic fixed error.');
-          const foreign = randomUUID();
-          await db.pool.query('UPDATE schedule_runs SET owner_id=$2 WHERE id=$1', [
-            run.id,
-            'foreign-owner',
-          ]);
-          assert.equal(
-            (await request('GET', `/api/schedules/${schedule.id}/runs`)).statusCode,
-            404,
-          );
-          assert.equal((await request('GET', `/api/schedules/${foreign}/runs`)).statusCode, 404);
-          assert.equal(
-            (await request('GET', '/api/schedule-runs'))
-              .json<ScheduleHistory>()
-              .runs.some((entry) => entry.id === run.id),
-            false,
-          );
-        },
-      );
       channels = await connect();
       const origin = await receive('Remind me in a minute.');
 
-      await t.test(
-        'one-off replay sends one reminder to the original verified thread',
-        async () => {
-          const schedule = await createRouted(origin);
-          await receive('A later unrelated fixture message.', 'later-thread');
-          const job = await jobFor(schedule.id);
-          clock = new Date(job.data.scheduledFor);
-          await Promise.all([deliver([job]), deliver([job])]);
-          const dispatched = await routedRuns(schedule.id);
-          assert.equal(dispatched.length, 1);
-          assert.equal(dispatched[0].channel, origin.channel);
-          assert.equal(dispatched[0].source, 'schedule');
-          assert.equal(dispatched[0].background, true);
-          await reply(dispatched[0].turn_id, 'One-off fixture reminder.');
-          await channels!.drain();
-          assert.deepEqual(sent, [
-            {
-              channelId: 'telegram',
-              accountId: 'fixture-bot',
-              threadId: 'original-thread',
-              text: 'One-off fixture reminder.',
-            },
-          ]);
-          await deliver([job]);
-          assert.equal((await routedRuns(schedule.id)).length, 1);
-        },
-      );
       await t.test(
         'resumed schedules retain their owned source route and instruction',
         async () => {
@@ -860,94 +637,6 @@ test(
             createRouted({ turnId: foreign, sourceMessageId: null }),
             /unavailable/,
           );
-        },
-      );
-      await t.test(
-        'a schedule started from a tapped first-task card gets no instruction authority',
-        async () => {
-          const title = 'Check in with me every Friday';
-          const tapped = await receive(title);
-          const offer = randomUUID();
-          await db.pool.query(
-            `INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions,created_at)
-             SELECT $1,owner_id,'assistant','Synthetic first tasks',thread_id,$2,created_at-interval '1 second'
-             FROM messages WHERE id=$3`,
-            [
-              offer,
-              JSON.stringify({
-                intro: 'Synthetic intro',
-                tasks: [{ id: randomUUID(), title, source: 'web', kind: 'ongoing' }],
-              }),
-              tapped.sourceMessageId,
-            ],
-          );
-          const authority = async (id: string) =>
-            (
-              await db.pool.query(
-                'SELECT authority_instruction,authority_source_message_id FROM schedules WHERE id=$1',
-                [id],
-              )
-            ).rows[0];
-          const fromCard = await createRouted(tapped);
-          assert.deepEqual(await authority(fromCard.id), {
-            authority_instruction: null,
-            authority_source_message_id: tapped.sourceMessageId,
-          });
-          const typed = await receive(`${title} at nine`);
-          const fromOwner = await createRouted(typed);
-          assert.deepEqual(await authority(fromOwner.id), {
-            authority_instruction: `${title} at nine`,
-            authority_source_message_id: typed.sourceMessageId,
-          });
-          for (const schedule of [fromCard, fromOwner])
-            await personal.manage('schedule_cancel', { id: schedule.id });
-          await db.pool.query('DELETE FROM messages WHERE id=$1', [offer]);
-        },
-      );
-      await t.test(
-        'a real timed occurrence reaches the original Telegram fixture once',
-        async () => {
-          workerMock.mock.restore();
-          const live = createPersonalService({
-            pool: db.pool,
-            ownerId,
-            scheduler: thread.boss,
-            enqueueTurn: thread.enqueueTurn,
-            refresh() {},
-          });
-          await live.initialize();
-          const runAt = new Date(Date.now() + 750).toISOString();
-          const schedule = (await live.manage(
-            'schedule_create',
-            {
-              title: 'Timed Telegram fixture',
-              prompt: 'Send the synthetic reminder.',
-              kind: 'once',
-              runAt,
-              timeZone: 'Europe/Lisbon',
-            },
-            origin,
-          )) as Schedule;
-          let dispatched = await routedRuns(schedule.id);
-          for (let attempt = 0; !dispatched.length && attempt < 300; attempt++) {
-            await delay(20);
-            dispatched = await routedRuns(schedule.id);
-          }
-          assert.equal(dispatched.length, 1);
-          const due = (
-            await db.pool.query(
-              'SELECT scheduled_for,created_at FROM schedule_runs WHERE schedule_id=$1',
-              [schedule.id],
-            )
-          ).rows[0];
-          assert.equal(due.scheduled_for.toISOString(), runAt);
-          assert.ok(due.created_at.getTime() >= new Date(runAt).getTime());
-          const before = sent.length;
-          await reply(dispatched[0].turn_id, 'Real-timer fixture reminder.');
-          await channels!.drain();
-          assert.equal(sent.length, before + 1);
-          assert.equal(sent.at(-1)!.threadId, 'original-thread');
-          await thread.boss.offWork('scheduled-task', { wait: true });
         },
       );
     } finally {

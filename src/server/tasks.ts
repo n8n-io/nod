@@ -535,7 +535,7 @@ export function createTasks(options: {
         .strict()
         .parse(request.body);
       const { rowCount } = await pool.query(
-        'UPDATE tasks SET title=$3 WHERE id=$1 AND owner_id=$2',
+        'UPDATE tasks SET title=$3,updated_at=now() WHERE id=$1 AND owner_id=$2',
         [id, ownerId, title],
       );
       if (!rowCount) throw failure('Task not found.', 404);

@@ -1,3 +1,4 @@
+import type { ObservationProvider } from '../../src/ports/proactivity.ts';
 import type { AppsWorld } from './world/apps.ts';
 import type { Site } from './world/sites.ts';
 import type { Run } from './trace.ts';
@@ -27,6 +28,8 @@ export type FailureClass =
   | 'format';
 
 export interface World {
+  observations?: ObservationProvider[];
+  proactiveBaseline?: boolean;
   notificationRule?: string;
   rules?: string;
   apps?: AppsWorld;
