@@ -61,7 +61,7 @@ export function modelContextBudget(model: {
   };
 }
 
-function payloadTokens(payload: unknown) {
+export function estimateModelTokens(payload: unknown) {
   let images = 0;
   const text = JSON.stringify(payload, (_key, value) => {
     if (!value || typeof value !== 'object') return value;
@@ -76,6 +76,14 @@ function payloadTokens(payload: unknown) {
     if (value.type === 'image' && value.source?.type === 'base64') {
       images++;
       return { ...value, source: { ...value.source, data: '[image]' } };
+    }
+    if (
+      value.type === 'image' &&
+      /^image\//.test(value.mimeType ?? '') &&
+      typeof value.data === 'string'
+    ) {
+      images++;
+      return { ...value, data: '[image]' };
     }
     for (const key of ['inlineData', 'inline_data'])
       if (/^image\//.test(value[key]?.mimeType ?? value[key]?.mime_type ?? '')) {
@@ -1099,7 +1107,7 @@ export async function createPiModelRuntime(
 
         const budget = modelContextBudget(target);
         if (budget.compact) {
-          const available = budget.window - payloadTokens(body) - budget.margin;
+          const available = budget.window - estimateModelTokens(body) - budget.margin;
           if (available < 128)
             throw new Error(
               `This request does not fit the model's ${budget.window}-token context. Use a model with a larger context or a shorter request.`,

@@ -59,7 +59,7 @@ function smallContextAccess(
         id,
         name: id,
         efforts: ['off'],
-        images: id === 'fixture-vision',
+        images: id.startsWith('fixture-vision'),
         contextWindow: window,
       },
       spec: {
@@ -70,7 +70,7 @@ function smallContextAccess(
         baseUrl:
           provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'http://127.0.0.1:1/v1',
         reasoning: false,
-        input: id === 'fixture-vision' ? ['text', 'image'] : ['text'],
+        input: id.startsWith('fixture-vision') ? ['text', 'image'] : ['text'],
         contextWindow: window,
         maxTokens: 4096,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -90,6 +90,7 @@ test('small models and routers complete tool discovery inside the endpoint conte
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
     { provider: 'compatible', id: 'fixture-resumed', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-vision', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-vision-resumed', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-mcp', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-followup', window: 8192, limit: 8192 },
   ] as const)
@@ -97,7 +98,7 @@ test('small models and routers complete tool discovery inside the endpoint conte
       const directory = await mkdtemp(join(tmpdir(), 'nod-small-context-'));
       test.after(() => rm(directory, { recursive: true, force: true }));
       await writeFile(join(directory, 'report.txt'), 'Synthetic report bytes');
-      if (id === 'fixture-vision') {
+      if (id.startsWith('fixture-vision')) {
         const { createCanvas } = await import('@napi-rs/canvas');
         const canvas = createCanvas(128, 128);
         const drawing = canvas.getContext('2d');
@@ -108,7 +109,22 @@ test('small models and routers complete tool discovery inside the endpoint conte
           pixels.data[index] = index % 4 === 3 ? 255 : seed >>> 24;
         }
         drawing.putImageData(pixels, 0, 0);
-        await writeFile(join(directory, 'synthetic.png'), canvas.toBuffer('image/png'));
+        const image = canvas.toBuffer('image/png');
+        await writeFile(join(directory, 'synthetic.png'), image);
+        if (id === 'fixture-vision-resumed') {
+          const saved = join(directory, 'sessions/fixture');
+          await mkdir(saved, { recursive: true });
+          const manager = SessionManager.create(saved, saved);
+          manager.appendMessage({
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Synthetic image from the previous turn.' },
+              { type: 'image', data: image.toString('base64'), mimeType: 'image/png' },
+            ],
+            timestamp: 1,
+          });
+          manager.appendMessage(fauxAssistantMessage([{ type: 'text', text: 'Image received.' }]));
+        }
       }
       const guide = 'Synthetic MCP guide: inspect the selected account before reading its records.';
       const earlier = 'Synthetic earlier session content. '.repeat(2000);
@@ -171,7 +187,7 @@ test('small models and routers complete tool discovery inside the endpoint conte
           }
           if (id === 'fixture-followup' && requests === 0)
             assert.ok(JSON.stringify(body).includes('Synthetic owner intent for the report.'));
-          if (id === 'fixture-vision' && requests === 0) {
+          if (id.startsWith('fixture-vision') && requests === 0) {
             assert.equal(images, 1);
             assert.ok(
               JSON.stringify(body).includes(

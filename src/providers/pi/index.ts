@@ -21,7 +21,7 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { createPiModelRuntime, modelContextBudget } from './models.ts';
+import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -395,15 +395,15 @@ export function createPiAgent(options: {
       };
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
-      const historyTokens = Math.ceil(
-        Buffer.byteLength(JSON.stringify(manager.buildSessionContext().messages)) / 3,
-      );
+      const historyTokens = budget.compact
+        ? estimateModelTokens(manager.buildSessionContext().messages)
+        : 0;
       if (budget.compact && historyTokens > budget.window / 2) {
         let recentTokens = 0;
         let firstKept: string | null = null;
         for (const entry of manager.buildContextEntries().toReversed()) {
           if (entry.type !== 'message') continue;
-          recentTokens += Math.ceil(Buffer.byteLength(JSON.stringify(entry.message)) / 3);
+          recentTokens += estimateModelTokens(entry.message);
           if (recentTokens > budget.recent) break;
           if (entry.message.role === 'user') firstKept = entry.id;
         }
