@@ -551,6 +551,12 @@
   color: var(--accent);
 }
 .voice-choice .voice-picker-label > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
   font-weight: 500;
 }
 .voice-picker-empty {

@@ -29,13 +29,6 @@ function sourceLabel(voice: SpeechVoice) {
     : voice.engine;
 }
 
-export function voiceLabel(voice: SpeechVoice) {
-  const parts = voice.engine === 'ElevenLabs' && voice.name.match(/^(.+?)\s+[–—-]\s+(.+)$/);
-  return parts
-    ? { name: parts[1], description: parts[2] }
-    : { name: voice.name, description: voice.description };
-}
-
 export function VoiceSample({
   voice,
   loading,
@@ -160,13 +153,9 @@ export function VoicePicker({
       >
         <span className="voice-picker-label">
           <span id={`${id}-value`}>
-            {selected
-              ? voiceLabel(selected).name
-              : value
-                ? 'Choose another voice'
-                : 'Choose a voice'}
+            {selected ? selected.name : value ? 'Choose another voice' : 'Choose a voice'}
           </span>
-          {selected && <small id={`${id}-detail`}>{voiceLabel(selected).description}</small>}
+          {selected && <small id={`${id}-detail`}>{selected.description}</small>}
         </span>
         <ChevronDown size={16} />
       </DialogTrigger>
@@ -262,10 +251,8 @@ export function VoicePicker({
                       onClick={() => onChange(voice.id)}
                     >
                       <span className="voice-picker-label">
-                        <span>{voiceLabel(voice).name}</span>
-                        {voiceLabel(voice).description !== group && (
-                          <small>{voiceLabel(voice).description}</small>
-                        )}
+                        <span>{voice.name}</span>
+                        {voice.description !== group && <small>{voice.description}</small>}
                       </span>
                       {voice.id === (value ?? defaultVoice) && <Check size={16} />}
                     </button>

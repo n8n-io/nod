@@ -8,7 +8,7 @@ import { Check, ChevronDown, Download, LoaderCircle, Mic, Sparkles } from './ico
 import { ConnectionMenu } from './connection-menu';
 import { ModelProviderLogo } from './models';
 import { VoiceConnections } from './voice-connections';
-import { VoicePicker, VoiceSample, voiceLabel, voiceProvider } from './voice-picker';
+import { VoicePicker, VoiceSample, voiceProvider } from './voice-picker';
 import { Button, Notice } from './ui';
 
 const providerNames = {
@@ -324,8 +324,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                         <span>{name}</span>
                         {value === 'auto' && automaticVoice && (
                           <small>
-                            {providerNames[voiceProvider(automaticVoice)]} ·{' '}
-                            {voiceLabel(automaticVoice).name}
+                            {providerNames[voiceProvider(automaticVoice)]} · {automaticVoice.name}
                           </small>
                         )}
                       </span>
@@ -407,9 +406,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
               {providerSelection === 'auto' ? (
                 <div className="voice-automatic-choice" aria-labelledby={`${id}-voice`}>
                   <span className="voice-picker-label">
-                    <span>
-                      {selectedVoice ? voiceLabel(selectedVoice).name : 'No voice available'}
-                    </span>
+                    <span>{selectedVoice ? selectedVoice.name : 'No voice available'}</span>
                     <small>
                       {selectedVoice
                         ? `${providerNames[provider]} default`
