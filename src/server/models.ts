@@ -155,7 +155,7 @@ function connectionLabel(provider: ModelProvider, method: ModelMethod, value: Mo
   return modelSource({ provider, method });
 }
 
-function textCompanion(row: Pick<ModelRecord, 'provider' | 'models'>) {
+function textCompanion(row: Pick<ModelRecord, 'provider' | 'method' | 'models'>) {
   const candidates = row.models.filter(
     (model) =>
       !model.choice.audio &&
@@ -163,11 +163,12 @@ function textCompanion(row: Pick<ModelRecord, 'provider' | 'models'>) {
       Array.isArray(model.spec.input) &&
       model.spec.input.includes('text'),
   );
-  return (
-    candidates.find((model) => model.choice.id === agentModels[row.provider]) ??
-    candidates.find((model) => model.choice.id === memoryModels[row.provider]) ??
-    candidates[0]
+  const choice = defaultModel(
+    row.provider,
+    candidates.map((model) => model.choice),
+    row.method,
   );
+  return candidates.find((model) => model.choice.id === choice?.id);
 }
 
 function missingTextCompanion() {
@@ -177,7 +178,7 @@ function missingTextCompanion() {
 }
 
 function usable(
-  connections: Pick<ModelRecord, 'id' | 'provider' | 'status' | 'models'>[],
+  connections: Pick<ModelRecord, 'id' | 'provider' | 'method' | 'status' | 'models'>[],
   selection: ModelSelection | null,
 ) {
   return (
@@ -745,7 +746,7 @@ export function createModelService(options: {
             models: models.map((model) => ({
               ...model.choice,
               ...(model.choice.audio
-                ? { textModelName: textCompanion({ provider, models })?.choice.name }
+                ? { textModelName: textCompanion({ provider, method, models })?.choice.name }
                 : {}),
             })),
             ...(keyEnding ? { keyEnding } : {}),

@@ -1081,6 +1081,9 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     pairedModels = ['gpt-audio-1.5', 'gpt-6-luna'];
     await owner.refreshCatalog(paired);
     assert.equal((await owner.resolve()).textModel?.definition.choice.id, 'gpt-6-luna');
+    pairedModels = ['gpt-audio-1.5', 'gpt-4.1', 'gpt-6-luna'];
+    await owner.refreshCatalog(paired);
+    assert.equal((await owner.resolve()).textModel?.definition.choice.id, 'gpt-4.1');
     pairedModels = ['gpt-audio-1.5'];
     await owner.refreshCatalog(paired);
     assert.equal(owner.configured, false);
