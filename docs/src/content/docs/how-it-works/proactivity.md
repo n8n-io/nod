@@ -89,7 +89,7 @@ The model must retain the details needed to use the result. These include releva
 
 A draft must not invent eligibility, a cause, a deadline, a refund, a booking, or an action already performed. Unknown facts stay explicit. If a relevant record is shortened, the model reads that record by ID before it treats the result as strong evidence.
 
-The nudge is a normal chat message with no link or special screen. It explains the concrete change and the prepared value in one or two short sentences, then asks one short question about the next step, such as seeing the draft. It does not claim an outside action. It does not use guilt, pressure, or silence as a reason to escalate.
+The nudge explains the concrete change and the prepared value in one or two short sentences, then asks one short question about the next step, such as seeing the draft. It does not claim an outside action. It does not use guilt, pressure, or silence as a reason to escalate.
 
 Preparation and attention are separate choices. The worker can save well-supported, high-value work with `delivery: private`. That save sends no message. With `delivery: offer`, the server checks the same evidence and your delivery limits before it can send a nudge. The worker does not need to lower its impact or confidence rating to stay quiet.
 
