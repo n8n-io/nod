@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -78,6 +78,7 @@ test(
     const sent: Array<{ chat: string; name: string; mimeType: string; bytes: Buffer }> = [];
     const fetchLocal = globalThis.fetch.bind(globalThis);
     const captured = new Map<string, Artifact>();
+    const publicationPaths = new Map<string, string>();
     const held = new Map<string, RuntimeContext>();
     const release = new Map<string, () => void>();
     const runtimes = new Map<string, ReturnType<typeof createAgentRuntime>>();
@@ -280,6 +281,8 @@ test(
           if (event === 'nod_turn_completed') completedTurns += 1;
         },
         browserStep: async () => 'run',
+        readArtifact: async (threadId, path) =>
+          readFile(join(dataRoot, 'workspaces', threadId, path)),
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
           signal?.throwIfAborted();
@@ -287,6 +290,14 @@ test(
         },
         artifacts: {
           ...localArtifacts,
+          async publishArtifact(...args) {
+            const artifact = await localArtifacts.publishArtifact(...args);
+            const row = (
+              await args[4]!.query('SELECT storage_path FROM artifacts WHERE id=$1', [artifact.id])
+            ).rows[0];
+            publicationPaths.set(artifact.name, row.storage_path);
+            return artifact;
+          },
           async storeArtifact(...args) {
             const artifact = await localArtifacts.storeArtifact(...args);
             const publication = args[3] ? publications.get(args[3]) : undefined;
@@ -485,6 +496,118 @@ test(
         await waitFor(() => held.has(submitted.turnId));
         return submitted;
       };
+      await t.test(
+        'workspace file references deliver owned bytes without share_file',
+        async (test) => {
+          const { turnId } = await submitHeld('Held workspace file references');
+          const context = held.get(turnId)!;
+          test.after(() => release.get(turnId)!());
+          const root = `/workspace/${context.threadId}`;
+          const calendar = Buffer.from('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n');
+          const notes = Buffer.from('Synthetic map links');
+          const local = join(dataRoot, 'workspaces', context.threadId);
+          await writeFile(join(local, 'calendar.ics'), calendar);
+          await writeFile(join(local, 'map links 100%.txt'), notes);
+          await writeFile(join(local, 'private.txt'), 'Private working file');
+          await context.reply(
+            `Your files:\n- \`${root}/calendar.ics\`\n- [Map links](sandbox:${root}/map%20links%20100%.txt)\n\n` +
+              `Example only:\n\`\`\`text\n${root}/private.txt\n\`\`\``,
+          );
+          const messages = (
+            await db.pool.query("SELECT * FROM messages WHERE turn_id=$1 AND role='assistant'", [
+              turnId,
+            ])
+          ).rows;
+          assert.equal(messages.length, 1);
+          const files = messages[0].attachments as Artifact[];
+          assert.deepEqual(
+            files.map((file) => file.name),
+            ['calendar.ics', 'map links 100%.txt'],
+          );
+          for (const [index, bytes] of [calendar, notes].entries()) {
+            const response = await app.inject({ method: 'GET', url: files[index].url, headers });
+            assert.equal(response.statusCode, 200);
+            assert.deepEqual(response.rawPayload, bytes);
+            assert.ok(messages[0].text.includes(files[index].url));
+          }
+          await assert.rejects(context.reply(`Missing: \`${root}/missing.txt\``));
+          await writeFile(join(local, 'uncommitted.txt'), 'Uncommitted output');
+          await assert.rejects(
+            context.reply(`\`${root}/uncommitted.txt\` and \`${root}/missing.txt\``),
+          );
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT id FROM artifacts WHERE thread_id=$1 AND name='uncommitted.txt'",
+                [context.threadId],
+              )
+            ).rowCount,
+            0,
+          );
+          await assert.rejects(readFile(publicationPaths.get('uncommitted.txt')!), {
+            code: 'ENOENT',
+          });
+          await assert.rejects(
+            context.reply(`\`${root}/uncommitted.txt\``, undefined, randomUUID()),
+          );
+          await assert.rejects(readFile(publicationPaths.get('uncommitted.txt')!), {
+            code: 'ENOENT',
+          });
+          const foreign = randomUUID();
+          await mkdir(join(dataRoot, 'workspaces', foreign));
+          await writeFile(
+            join(dataRoot, 'workspaces', foreign, 'private.txt'),
+            'Foreign workspace',
+          );
+          await assert.rejects(context.reply(`Foreign: \`/workspace/${foreign}/private.txt\``));
+          await writeFile(join(dataRoot, 'workspaces', 'private.txt'), 'Outside workspace');
+          await assert.rejects(context.reply(`Escape: \`${root}/../private.txt\``));
+          assert.equal(
+            (
+              await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+                turnId,
+              ])
+            ).rowCount,
+            1,
+          );
+          const shared = await context.publish('calendar.ics');
+          await context.reply(`Calendar again: \`${root}/calendar.ics\``);
+          const again = (
+            await db.pool.query(
+              "SELECT attachments FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at,id",
+              [turnId],
+            )
+          ).rows;
+          assert.deepEqual(
+            again[1].attachments.map((file: Artifact) => file.id),
+            [shared.id],
+          );
+          release.get(turnId)!();
+          await succeeded(turnId);
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT count(*)::int AS count FROM artifacts WHERE thread_id=$1 AND name='private.txt'",
+                [context.threadId],
+              )
+            ).rows[0].count,
+            0,
+          );
+          const stopped = await submitHeld('Held stopped file references');
+          const late = held.get(stopped.turnId)!;
+          await threads.stopThread();
+          await assert.rejects(late.reply(`Late: \`${root}/private.txt\``));
+          release.get(stopped.turnId)!();
+          assert.equal(
+            (
+              await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+                stopped.turnId,
+              ])
+            ).rowCount,
+            0,
+          );
+        },
+      );
       await t.test(
         'page screenshot tools stage owned images and refuse a missing screen',
         async () => {

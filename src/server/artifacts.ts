@@ -10,6 +10,43 @@ import { fileBytes, fileName } from '../shared/files.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+
+const replyParser = unified().use(remarkParse);
+
+export function replyFileReferences(text: string) {
+  if (!text.includes('/workspace/')) return [];
+  const nodes = [...replyParser.parse(text).children];
+  const references: Array<{ path: string; start: number; end: number }> = [];
+  for (const node of nodes) {
+    const value =
+      node.type === 'inlineCode'
+        ? node.value
+        : node.type === 'link' || node.type === 'image'
+          ? node.url
+          : undefined;
+    if (value !== undefined) {
+      let path = value.replace(/^sandbox:/, '');
+      if (!path.startsWith('/workspace/') || path.endsWith('/')) continue;
+      if (node.type === 'inlineCode' && !/^\/workspace\/[^/]+\/.+/.test(path)) continue;
+      if (node.type !== 'inlineCode') {
+        try {
+          path = decodeURIComponent(path.replace(/%(?![\da-f]{2})/gi, '%25'));
+        } catch {}
+      }
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        references.push({
+          path,
+          start,
+          end,
+        });
+    } else if ('children' in node) nodes.push(...node.children);
+  }
+  return references.sort((a, b) => a.start - b.start);
+}
 
 const mimeTypes: Record<string, string> = {
   '.txt': 'text/plain',
@@ -263,6 +300,7 @@ export function createArtifactService(options: {
       purpose?: 'attachment' | 'publication',
     ) => Promise<Uint8Array>,
     database?: Pick<PoolClient, 'query'>,
+    onCreated?: (cleanup: () => Promise<void>) => void,
   ) {
     z.uuid().parse(threadId);
     if (!path || path.length > 4096 || path.includes('\0') || path.includes('\\'))
@@ -281,6 +319,7 @@ export function createArtifactService(options: {
       mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
       threadId,
       database,
+      onCreated,
     );
   }
   async function readThreadArtifacts(

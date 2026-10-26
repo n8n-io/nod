@@ -359,11 +359,18 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
           description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read and rtk grep for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.`,
         }
       : {}),
-    execute: (id, params, signal, onUpdate, context) =>
-      workspaceOutputs(
+    execute: async (id, params, signal, onUpdate, context) => {
+      const result = await workspaceOutputs(
         () => definition.execute(id, params, signal, onUpdate, context),
         workspace,
         signal,
-      ),
+      );
+      if (definition.name === 'write' && !result.isError)
+        result.content.push({
+          type: 'text',
+          text: "This file is private in the workspace. Call share_file to attach it before you claim delivery. A workspace path does not open on the user's device.",
+        });
+      return result;
+    },
   }));
 }
