@@ -3399,6 +3399,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const fallback = microphone();
         await act(async () => microphoneRequests.at(-1).resolve(fallback));
         assert.equal(fallback.track.stopped, true);
+        await settle(() => document.activeElement === document.querySelector('[contenteditable]'));
         microphones.push({ kind: 'audioinput', deviceId: 'usb', label: 'USB microphone' });
         await click('Choose microphone');
         await settle(() => document.querySelector('[aria-label="USB microphone"]'));
