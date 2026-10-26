@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -34,12 +34,7 @@ import {
   type Workspace,
 } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
-import type {
-  ObservationBatch,
-  ObservationProvider,
-  ObservationQuery,
-  ObservationSource,
-} from '../ports/proactivity.ts';
+import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult, type MailCheck } from './integration-result.ts';
@@ -115,7 +110,12 @@ import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { createProactivity } from './proactivity.ts';
-import { appToolArgs, appTools, type AppAccount, type AppTool } from './app-reads.ts';
+import {
+  connectionSources,
+  createConnectionSources,
+  type AppAccount,
+  type AppTool,
+} from './app-reads.ts';
 import { lockProactivity } from './locks.ts';
 import { createObservationSources } from './observation-sources.ts';
 import { createTaskObservations } from './task-observations.ts';
@@ -768,69 +768,9 @@ async function initializeApplication(
   });
   await tasks.initialize();
   const activity = createActivity({ pool, ownerId });
-  const checkInterval = 30 * 60000;
-  const connectionSources = 'connections';
-  const fingerprint = (value: unknown) =>
-    createHash('sha256').update(JSON.stringify(value)).digest('hex');
   const observedSource = (catalog: ObservationSource[], id: string) =>
     catalog.find((source) => source.id === id) ??
     catalog.find((source) => source.id === `${connectionSources}:${id}`);
-  const toolCatalogs = new Map<string, { binding: string; tools: AppTool[] }>();
-  const readAccount = async (
-    connectionId: string,
-    input: ObservationQuery,
-    signal: AbortSignal,
-  ): Promise<ObservationBatch> => {
-    const account = (await appReads.accounts()).find((item) => item.connectionId === connectionId);
-    if (
-      !account ||
-      (input.revision !== undefined && input.revision !== fingerprint(account.binding))
-    )
-      throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
-    if (input.query) {
-      const tools = appTools(await appReads.search(account, input.query, signal), connectionId);
-      toolCatalogs.set(connectionId, { binding: account.binding, tools });
-      return {
-        records: [
-          {
-            id: 'tools',
-            version: fingerprint(tools.map(({ name }) => name)),
-            available: true,
-            data: {
-              tools: tools.map(({ name, description, schema }) => ({ name, description, schema })),
-            },
-          },
-        ],
-      };
-    }
-    const catalog = toolCatalogs.get(connectionId);
-    const tool =
-      catalog?.binding === account.binding
-        ? catalog.tools.find((item) => item.name === input.tool)
-        : undefined;
-    if (!tool)
-      throw Object.assign(
-        new Error('Search this source with query first, then read one of the tools it returns.'),
-        { refused: true },
-      );
-    const args = input.args ?? {};
-    const result = await appReads.read(
-      account,
-      tool,
-      appToolArgs(tool, args, connectionId),
-      signal,
-    );
-    return {
-      records: [
-        {
-          id: fingerprint([tool.name, args]),
-          version: fingerprint(result ?? null),
-          available: true,
-          data: { tool: tool.name, args, result },
-        },
-      ],
-    };
-  };
   let proactivity!: ReturnType<typeof createProactivity>;
   let privateReady = false;
   const preparationRule = createNotificationRouting(review);
@@ -1348,44 +1288,12 @@ async function initializeApplication(
   });
   const observations = createObservationSources(
     [
-      {
-        id: connectionSources,
-        sources: async (client?: import('pg').PoolClient) => {
-          const [recorded, accounts] = await Promise.all([
-            integrations.activitySources(client),
-            appReads.accounts(),
-          ]);
-          return [
-            ...recorded.map((source) => ({
-              id: source.connectionId,
-              label: source.account,
-              description: 'Read-only records from ' + source.service,
-              revision: source.revision,
-              readable: source.active,
-              pollIntervalMs: source.eventDriven ? undefined : checkInterval,
-              changeToken: source.changeToken,
-            })),
-            ...accounts
-              .filter(
-                (account) =>
-                  !recorded.some((source) => source.connectionId === account.connectionId),
-              )
-              .map((account) => ({
-                id: account.connectionId,
-                label: account.name,
-                description: `Read-only data from ${account.name}, through its own read tools.`,
-                revision: fingerprint(account.binding),
-                readable: true,
-                tools: true,
-                pollIntervalMs: checkInterval,
-              })),
-          ];
-        },
-        read: (id, input, signal) =>
-          input.query || input.tool
-            ? readAccount(id, input, signal)
-            : integrations.readActivity({ connectionId: id, ...input }, signal),
-      },
+      createConnectionSources({
+        recorded: integrations.activitySources,
+        readRecorded: (connectionId, input, signal) =>
+          integrations.readActivity({ connectionId, ...input }, signal),
+        ...appReads,
+      }),
       createTaskObservations(pool, ownerId, createRedactor(secrets)),
       ...(adapters.observations ?? []),
     ],
