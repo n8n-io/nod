@@ -22,7 +22,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
-import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
+import { audioContext, audioEntries, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -407,9 +407,17 @@ export function createPiAgent(options: {
         ? estimateModelTokens(manager.buildSessionContext().messages)
         : 0;
       if (budget.compact && historyTokens > budget.window / 2) {
+        const entries = manager.buildContextEntries();
+        const lastAnswer = entries.findLastIndex(
+          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+        );
+        const recordings = new Set(audioEntries(manager).map((entry) => entry.id));
+        const firstPending = entries
+          .slice(lastAnswer + 1)
+          .find((entry) => recordings.has(entry.id));
         let recentTokens = 0;
         let firstKept: string | null = null;
-        for (const entry of manager.buildContextEntries().toReversed()) {
+        for (const entry of entries.toReversed()) {
           if (entry.type !== 'message') continue;
           recentTokens += estimateModelTokens(entry.message);
           if (recentTokens > budget.recent) break;
@@ -417,7 +425,8 @@ export function createPiAgent(options: {
         }
         manager.appendCompaction(
           'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.',
-          firstKept,
+          entries.find((entry) => entry.id === firstKept || entry.id === firstPending?.id)?.id ??
+            null,
           historyTokens,
         );
       }

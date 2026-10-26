@@ -4754,6 +4754,47 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     'fixture-text-model',
   );
   assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  const interruptedScope = fakeExecution(randomUUID());
+  const interrupted = await open(interruptedScope);
+  const pendingManager = piSession!.sessionManager;
+  pendingManager.appendMessage({ role: 'user', content: 'Earlier request.', timestamp: 1 });
+  pendingManager.appendMessage(fauxAssistantMessage('Earlier completed context. '.repeat(2000)));
+  const { audioMessage } = await import('../src/providers/pi/audio.ts');
+  for (let index = 0; index < 3; index++) {
+    const recordingId = randomUUID();
+    known.add(recordingId);
+    const message = audioMessage(`Queued recording ${index}`, [], {
+      files: [{ id: recordingId, mimeType: 'audio/wav' }],
+      fallback: `Unheard queued transcript ${index}`,
+    });
+    pendingManager.appendCustomMessageEntry(
+      message.customType,
+      message.content,
+      message.display,
+      message.details,
+    );
+  }
+  pendingManager.appendMessage({
+    role: 'user',
+    content: 'Also consider this queued typed follow-up.',
+    timestamp: Date.now(),
+  });
+  await interrupted.dispose();
+  const beforeReopen = bodies.length;
+  const reopenedPending = await open(interruptedScope);
+  await reopenedPending.prompt('Continue with the queued recordings.', []);
+  await reopenedPending.dispose();
+  assert.equal(bodies.length, beforeReopen + 1);
+  assert.equal(audio(bodies.at(-1)!).length, 3);
+  assert.ok(JSON.stringify(bodies.at(-1)).includes('Also consider this queued typed follow-up.'));
+  for (let index = 0; index < 3; index++) {
+    assert.ok(JSON.stringify(bodies.at(-1)).includes(`Queued recording ${index}`));
+    assert.ok(!JSON.stringify(bodies.at(-1)).includes(`Unheard queued transcript ${index}`));
+  }
+  const answeredPending = await open(interruptedScope);
+  await answeredPending.prompt('Continue after those recordings were answered.', []);
+  await answeredPending.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 2);
   textDefinition.spec.contextWindow = 128000;
   smallCompanion = false;
   const compactions = events.filter(
