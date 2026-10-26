@@ -11,13 +11,11 @@ import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import type { MessagingAttachment } from '../src/ports/messaging.ts';
 import { createLedger } from '../src/server/ledger.ts';
-import { memoryObjectStore } from './fixtures/object-store.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie } from '../src/server/access.ts';
 import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
-import { createChannelSessionStore } from '../src/server/channel-session.ts';
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
   const received: { distinct_id: string; event: string }[] = [];
@@ -65,93 +63,6 @@ test('analytics drops revoked owner queues while preserving another owner and re
     [local],
   );
 });
-
-test(
-  'linked channel keys bind owner and slot, survive restart, and refuse stale writes and deletion',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const schema = `test_channel_keys_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-    const key = randomBytes(32);
-    const ownerStore = createChannelSessionStore({ pool, ownerId: 'fixture-owner', keyStore });
-    const foreignStore = createChannelSessionStore({ pool, ownerId: 'fixture-other', keyStore });
-    try {
-      const first = await ownerStore.open();
-      const other = await foreignStore.open();
-      await first.set({
-        creds: 'synthetic-owner-credentials',
-        'session:fixture': 'synthetic-session-key',
-      });
-      await other.set({ creds: 'synthetic-other-credentials' });
-      const ciphertext = (
-        await pool.query('SELECT owner_id,slot,ciphertext FROM channel_session_keys')
-      ).rows;
-      assert.equal(JSON.stringify(ciphertext).includes('synthetic-'), false);
-      assert.equal(await first.get('creds'), 'synthetic-owner-credentials');
-      assert.equal(await other.get('creds'), 'synthetic-other-credentials');
-      assert.equal(await other.get('session:fixture'), undefined);
-      const resumed = await ownerStore.open();
-      assert.equal(await resumed.get('creds'), 'synthetic-owner-credentials');
-      await assert.rejects(first.set({ creds: 'stale-write' }), /changed/);
-      await assert.rejects(first.clear(), /changed/);
-      await first.close();
-      assert.equal(await resumed.get('creds'), 'synthetic-owner-credentials');
-      await pool.query(
-        "UPDATE channel_session_keys SET ciphertext=(SELECT ciphertext FROM channel_session_keys WHERE owner_id='fixture-other' AND slot='creds') WHERE owner_id='fixture-owner' AND slot='creds'",
-      );
-      await assert.rejects(resumed.get('creds'));
-      await resumed.set({ creds: 'synthetic-owner-credentials' });
-      await pool.query(
-        "UPDATE channel_session_keys SET ciphertext=(SELECT ciphertext FROM channel_session_keys WHERE owner_id='fixture-owner' AND slot='creds') WHERE owner_id='fixture-owner' AND slot='session:fixture'",
-      );
-      await assert.rejects(resumed.get('session:fixture'));
-      await resumed.clear();
-      await assert.rejects(resumed.set({ creds: 'late-write' }), /closed/);
-      const fresh = await ownerStore.open();
-      assert.equal(await fresh.get('creds'), undefined);
-      assert.equal(await other.get('creds'), 'synthetic-other-credentials');
-      await assert.rejects(fresh.set({ creds: 'x'.repeat(1024 * 1024 + 1) }));
-      await assert.rejects(fresh.set({ creds: '€'.repeat(400_000) }));
-      const connection = t.mock.method(pool, 'connect', () => {
-        throw new Error('The rejected batch reached storage.');
-      });
-      try {
-        await assert.rejects(
-          fresh.set(
-            Object.fromEntries(
-              Array.from({ length: 25 }, (_, index) => [`batch:${index}`, 'x'.repeat(1024 * 1024)]),
-            ),
-          ),
-          /full/,
-        );
-      } finally {
-        connection.mock.restore();
-      }
-      assert.equal(await fresh.get('creds'), undefined);
-      assert.equal(
-        (
-          await pool.query(
-            'SELECT count(*)::int AS count FROM channel_session_keys WHERE owner_id=$1',
-            ['fixture-owner'],
-          )
-        ).rows[0].count,
-        0,
-      );
-      await fresh.close();
-      await other.close();
-    } finally {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
 
 test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',

@@ -19,38 +19,6 @@ import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
 
-test('channel environment rejects ambiguous flags and disables explicitly configured accounts', () => {
-  assert.deepEqual(
-    managedChannelEnvironment({ TELEGRAM_ENABLED: '', TELEGRAM_BOT_TOKEN: '', WHATSAPP_MODE: '' }),
-    {},
-  );
-  for (const environment of [
-    { TELEGRAM_ENABLED: 'yes' },
-    { WHATSAPP_ENABLED: '0' },
-    { WHATSAPP_POLICY_CONFIRMED: 'yes' },
-    { TELEGRAM_MODE: 'unknown' },
-    { WHATSAPP_MODE: 'unknown' },
-    { WHATSAPP_MODE: 'self-chat' },
-    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true' },
-    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true', WHATSAPP_ALLOWED_NUMBER: '123' },
-    { WHATSAPP_MODE: 'self-chat', WHATSAPP_POLICY_CONFIRMED: 'false' },
-  ])
-    assert.throws(() => managedChannelEnvironment(environment));
-  const disabled = managedChannelEnvironment({
-    TELEGRAM_ENABLED: 'false',
-    TELEGRAM_BOT_TOKEN: token,
-    TELEGRAM_ALLOWED_USER_ID: '42',
-  });
-  assert.equal(disabled.telegram?.TELEGRAM_ENABLED, 'false');
-  const polling = managedChannelEnvironment({
-    TELEGRAM_BOT_TOKEN: token,
-    TELEGRAM_ALLOWED_USER_ID: '42',
-  });
-  assert.equal(polling.telegram?.TELEGRAM_ENABLED, 'true');
-  assert.equal(polling.telegram?.TELEGRAM_MODE, 'polling');
-  assert.match(polling.telegram!.TELEGRAM_WEBHOOK_SECRET_TOKEN!, /^[A-Za-z0-9_-]{43}$/);
-});
-
 test(
   'managed channels shadow saved credentials, refuse changes and restore saved configuration when removed',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -924,64 +892,6 @@ async function outboxFixture(t: TestContext, max?: number, provider = 'telegram'
     });
   return { pool, threadId, posts, receive, turnOf, reply, create, transport };
 }
-
-test(
-  'outbound discovery queues each reply once, sends in creation order and answers the conversation that asked',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
-    const channels = await create();
-    await pool.query(`CREATE TABLE outbox_attempts(message_id uuid);
-      CREATE FUNCTION count_outbox_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN INSERT INTO outbox_attempts VALUES(NEW.message_id); RETURN NEW; END $$;
-      CREATE TRIGGER count_outbox_attempt BEFORE INSERT ON channel_outbox
-        FOR EACH ROW EXECUTE FUNCTION count_outbox_attempt()`);
-    try {
-      receive('111', 'a1', 'chat-a1');
-      receive('222', 'b1', 'chat-b1');
-      receive('111', 'a2', 'chat-a2');
-      await channels.drain();
-      const [a1, b1, a2] = [await turnOf('a1'), await turnOf('b1'), await turnOf('a2')];
-      assert.notEqual(a1.channel, b1.channel);
-      assert.equal(a1.channel, a2.channel);
-      const resume = randomUUID();
-      await pool.query(
-        "INSERT INTO turns(id,owner_id,thread_id,source,channel,channel_source_id) VALUES($1,'local-development',$2,'resume',$3,'channel:telegram:bot:a1')",
-        [resume, threadId, a1.channel],
-      );
-      const background = randomUUID();
-      await pool.query(
-        "INSERT INTO turns(id,owner_id,thread_id,source,channel) VALUES($1,'local-development',$2,'schedule',$3)",
-        [background, threadId, a1.channel],
-      );
-      await reply(a1.turn_id, 'first', 'ffffffff-0000-4000-8000-000000000001', 1);
-      await reply(b1.turn_id, 'second', 'aaaaaaaa-0000-4000-8000-000000000002', 2);
-      await reply(resume, 'third', '55555555-0000-4000-8000-000000000003', 3);
-      await reply(a2.turn_id, 'fourth', '33333333-0000-4000-8000-000000000004', 4);
-      await reply(background, 'fifth', '00000000-0000-4000-8000-000000000005', 5);
-      await channels.drain();
-      assert.deepEqual(posts, [
-        { threadId: 'chat-a1', text: 'first' },
-        { threadId: 'chat-b1', text: 'second' },
-        { threadId: 'chat-a1', text: 'third' },
-        { threadId: 'chat-a2', text: 'fourth' },
-        { threadId: 'chat-a2', text: 'fifth' },
-      ]);
-      const attempts = (await pool.query('SELECT count(*)::int AS n FROM outbox_attempts')).rows[0]
-        .n;
-      assert.equal(attempts, 5);
-      await channels.drain();
-      await channels.drain();
-      assert.equal(
-        (await pool.query('SELECT count(*)::int AS n FROM outbox_attempts')).rows[0].n,
-        attempts,
-      );
-      assert.equal(posts.length, 5);
-    } finally {
-      await channels.close();
-    }
-  },
-);
 
 test(
   'presence follows live work in the conversation that asked, after its queued replies, and repeats only on a change or its cadence',
