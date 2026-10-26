@@ -389,6 +389,14 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   validateSource(options.sourceId, options.channel);
   const create = async (client: PoolClient) => {
     const thread = await lockThread(client);
+    const sessionId = options.proactive
+      ? (
+          await client.query<{ observer_session_id: string }>(
+            'SELECT observer_session_id FROM threads WHERE id=$1 AND owner_id=$2',
+            [thread.id, ownerId],
+          )
+        ).rows[0]!.observer_session_id
+      : options.sessionId;
     const id = randomUUID();
     const inserted = await client.query(
       `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id,proactive)
@@ -404,7 +412,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.channel ?? 'web',
         options.background ?? options.source !== 'resume',
         options.channelSourceId ?? null,
-        options.sessionId ?? null,
+        sessionId ?? null,
         options.parentTurnId ?? null,
         options.proactive ?? null,
       ],
@@ -979,11 +987,8 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
-    let proactiveBusy = busy.rows.some((row) => row.proactive);
     const claimed = rows.filter((row) => {
       if (sessions.has(row.session_id)) return false;
-      if (row.proactive && proactiveBusy) return false;
-      proactiveBusy ||= row.proactive;
       sessions.add(row.session_id);
       return true;
     });

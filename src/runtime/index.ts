@@ -324,6 +324,8 @@ export function createAgentRuntime(dependencies: {
           const safe =
             name === 'read_source' ||
             name === 'proactive_issue' ||
+            name === 'task' ||
+            (name === 'ask_user' && overBudget()) ||
             (name === 'manage_personal_context' &&
               [
                 'memory_read',
@@ -336,7 +338,13 @@ export function createAgentRuntime(dependencies: {
               'This tool is unavailable in proactive work. Only supported reads and private preparation are allowed.',
             );
         }
-        if (overBudget() && !reportingTools.has(name)) {
+        if (
+          overBudget() &&
+          (!reportingTools.has(name) ||
+            (context.proactivity &&
+              name === 'task' &&
+              (params as { action?: string }).action === 'start'))
+        ) {
           if (source === execution) checkInBlocked = true;
           throw new Error(
             `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to say in a line what is done and what is left, and ask whether to keep going.`,
@@ -476,7 +484,13 @@ export function createAgentRuntime(dependencies: {
           .filter(
             (tool) =>
               !context.proactivity ||
-              ['read_source', 'proactive_issue', 'manage_personal_context'].includes(tool.name),
+              [
+                'read_source',
+                'proactive_issue',
+                'manage_personal_context',
+                'task',
+                'ask_user',
+              ].includes(tool.name),
           )
           .map((tool): AgentTool => {
             const { name, execute } = tool;
