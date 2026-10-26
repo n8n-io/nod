@@ -4486,6 +4486,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   for (let index = 0; index < 1600; index++)
     recording.writeInt16LE(Math.round(Math.sin(index / 8) * 5000), 44 + index * 2);
   let reads = 0;
+  const readIds: string[] = [];
   let calls = 0;
   const execution = fakeExecution(randomUUID());
   const textDefinition = {
@@ -4563,6 +4564,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
         signal.throwIfAborted();
         assert.ok(known.has(file.id));
         assert.equal(file.mimeType, 'audio/wav');
+        readIds.push(file.id);
         reads++;
         return holdRead ?? recording;
       },
@@ -4754,47 +4756,74 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     'fixture-text-model',
   );
   assert.equal(traces.at(-1)!.name, 'fixture-text-model');
-  const interruptedScope = fakeExecution(randomUUID());
-  const interrupted = await open(interruptedScope);
-  const pendingManager = piSession!.sessionManager;
-  pendingManager.appendMessage({ role: 'user', content: 'Earlier request.', timestamp: 1 });
-  pendingManager.appendMessage(fauxAssistantMessage('Earlier completed context. '.repeat(2000)));
   const { audioMessage } = await import('../src/providers/pi/audio.ts');
-  for (let index = 0; index < 3; index++) {
-    const recordingId = randomUUID();
-    known.add(recordingId);
-    const message = audioMessage(`Queued recording ${index}`, [], {
-      files: [{ id: recordingId, mimeType: 'audio/wav' }],
-      fallback: `Unheard queued transcript ${index}`,
+  for (const change of ['pending', 'edited', 'deleted', 'typed']) {
+    const interruptedScope = fakeExecution(randomUUID());
+    const interrupted = await open(interruptedScope);
+    const pendingManager = piSession!.sessionManager;
+    pendingManager.appendMessage({ role: 'user', content: 'Earlier request.', timestamp: 1 });
+    pendingManager.appendMessage(fauxAssistantMessage('Earlier completed context. '.repeat(2000)));
+    if (change === 'typed')
+      pendingManager.appendMessage({
+        role: 'user',
+        content: 'Pending typed instruction. ' + 'Additional pending details. '.repeat(150),
+        timestamp: Date.now(),
+      });
+    const pendingIds: string[] = [];
+    const entries: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const recordingId = randomUUID();
+      pendingIds.push(recordingId);
+      known.add(recordingId);
+      const message = audioMessage(`Queued recording ${index}`, [], {
+        files: [{ id: recordingId, mimeType: 'audio/wav' }],
+        fallback: `Unheard queued transcript ${index}`,
+      });
+      entries.push(
+        pendingManager.appendCustomMessageEntry(
+          message.customType,
+          message.content,
+          message.display,
+          message.details,
+        ),
+      );
+    }
+    if (change === 'edited' || change === 'deleted')
+      pendingManager.appendContextEdit(
+        entries[0],
+        change === 'edited' ? { content: 'Replacement owner text.' } : null,
+      );
+    pendingManager.appendMessage({
+      role: 'user',
+      content: 'Also consider this queued typed follow-up.',
+      timestamp: Date.now(),
     });
-    pendingManager.appendCustomMessageEntry(
-      message.customType,
-      message.content,
-      message.display,
-      message.details,
-    );
+    await interrupted.dispose();
+    const beforeReopen = bodies.length;
+    const beforeReadIds = readIds.length;
+    const reopenedPending = await open(interruptedScope);
+    await reopenedPending.prompt('Continue with the queued recordings.', []);
+    await reopenedPending.dispose();
+    const expectedIds = ['edited', 'deleted'].includes(change) ? pendingIds.slice(1) : pendingIds;
+    assert.equal(bodies.length, beforeReopen + 1);
+    assert.equal(audio(bodies.at(-1)!).length, expectedIds.length);
+    assert.deepEqual(new Set(readIds.slice(beforeReadIds)), new Set(expectedIds));
+    const submitted = JSON.stringify(bodies.at(-1));
+    assert.ok(submitted.includes('Also consider this queued typed follow-up.'));
+    assert.equal(submitted.includes('Replacement owner text.'), change === 'edited');
+    assert.equal(submitted.includes('Pending typed instruction.'), change === 'typed');
+    for (let index = 0; index < 3; index++) {
+      assert.equal(
+        submitted.includes(`Queued recording ${index}`),
+        expectedIds.includes(pendingIds[index]),
+      );
+      assert.ok(!submitted.includes(`Unheard queued transcript ${index}`));
+    }
+    const answeredPending = await open(interruptedScope);
+    await answeredPending.prompt('Continue after those recordings were answered.', []);
+    await answeredPending.dispose();
+    assert.equal(audio(bodies.at(-1)!).length, 2);
   }
-  pendingManager.appendMessage({
-    role: 'user',
-    content: 'Also consider this queued typed follow-up.',
-    timestamp: Date.now(),
-  });
-  await interrupted.dispose();
-  const beforeReopen = bodies.length;
-  const reopenedPending = await open(interruptedScope);
-  await reopenedPending.prompt('Continue with the queued recordings.', []);
-  await reopenedPending.dispose();
-  assert.equal(bodies.length, beforeReopen + 1);
-  assert.equal(audio(bodies.at(-1)!).length, 3);
-  assert.ok(JSON.stringify(bodies.at(-1)).includes('Also consider this queued typed follow-up.'));
-  for (let index = 0; index < 3; index++) {
-    assert.ok(JSON.stringify(bodies.at(-1)).includes(`Queued recording ${index}`));
-    assert.ok(!JSON.stringify(bodies.at(-1)).includes(`Unheard queued transcript ${index}`));
-  }
-  const answeredPending = await open(interruptedScope);
-  await answeredPending.prompt('Continue after those recordings were answered.', []);
-  await answeredPending.dispose();
-  assert.equal(audio(bodies.at(-1)!).length, 2);
   textDefinition.spec.contextWindow = 128000;
   smallCompanion = false;
   const compactions = events.filter(

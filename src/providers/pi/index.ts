@@ -22,7 +22,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
-import { audioContext, audioEntries, audioMessage, readsNativeAudio } from './audio.ts';
+import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -411,10 +411,13 @@ export function createPiAgent(options: {
         const lastAnswer = entries.findLastIndex(
           (entry) => entry.type === 'message' && entry.message.role === 'assistant',
         );
-        const recordings = new Set(audioEntries(manager).map((entry) => entry.id));
         const firstPending = entries
           .slice(lastAnswer + 1)
-          .find((entry) => recordings.has(entry.id));
+          .find(
+            (entry) =>
+              (entry.type === 'message' && entry.message.role === 'user') ||
+              (entry.type === 'custom_message' && entry.customType === 'nod-audio-input'),
+          );
         let recentTokens = 0;
         let firstKept: string | null = null;
         for (const entry of entries.toReversed()) {
