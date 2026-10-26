@@ -1231,13 +1231,11 @@ test(
           const result = await messages.submit(
             'Yes',
             [
-              {
-                id: randomUUID(),
-                name: 'revision.txt',
-                mimeType: 'text/plain',
-                size: 12,
-                url: '/api/fixture-artifact',
-              },
+              await artifacts.localArtifacts.storeUpload(
+                Buffer.from('revision fixture'),
+                'revision.txt',
+                'text/plain',
+              ),
             ],
             { replyToMessageId: confirmationMessageId },
           );
