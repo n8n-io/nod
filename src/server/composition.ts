@@ -34,6 +34,7 @@ import {
   type Workspace,
 } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
+import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult, type MailCheck } from './integration-result.ts';
@@ -104,7 +105,20 @@ import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
+import { createNotificationRouting } from './notification-routing.ts';
+import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
+import { untrustedBlock } from '../shared/untrusted.ts';
+import { createProactivity } from './proactivity.ts';
+import {
+  connectionSources,
+  createConnectionSources,
+  type AppAccount,
+  type AppTool,
+} from './app-reads.ts';
+import { lockProactivity } from './locks.ts';
+import { createObservationSources } from './observation-sources.ts';
+import { createTaskObservations } from './task-observations.ts';
 import type { TrustBasis } from './trust-basis.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
@@ -127,7 +141,12 @@ import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
-import { createErrorRedactor, environmentSecrets } from './redaction.ts';
+import {
+  createErrorRedactor,
+  createRedactor,
+  createTextRedactor,
+  environmentSecrets,
+} from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
@@ -178,6 +197,7 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
+  observations?: ObservationProvider[];
   keyStore: CredentialKeyStore;
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
@@ -446,7 +466,12 @@ export function createDefaultAdapters(
 
 export async function createApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
+  options: {
+    workers?: boolean;
+    channels?: boolean;
+    heartbeat?: boolean;
+    runtimeReady?: Promise<void>;
+  } = {},
 ) {
   const diagnostics: {
     log?: Awaited<ReturnType<typeof createFeedbackLog>>;
@@ -473,7 +498,12 @@ export async function createApplication(
 
 async function initializeApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
+  options: {
+    workers?: boolean;
+    channels?: boolean;
+    heartbeat?: boolean;
+    runtimeReady?: Promise<void>;
+  },
   diagnostics: { log?: Awaited<ReturnType<typeof createFeedbackLog>>; failure: FailureLogSink },
 ) {
   const analytics = await createAnalytics({
@@ -738,10 +768,26 @@ async function initializeApplication(
   });
   await tasks.initialize();
   const activity = createActivity({ pool, ownerId });
+  const observedSource = (catalog: ObservationSource[], id: string) =>
+    catalog.find((source) => source.id === id) ??
+    catalog.find((source) => source.id === `${connectionSources}:${id}`);
+  let proactivity!: ReturnType<typeof createProactivity>;
+  let privateReady = false;
+  const preparationRule = createNotificationRouting(review);
   const triage = createTriage({
     consumers,
     connectedApps: () => integrations.connectedApps(ownerId, true),
+    preparation: async (rule, rules, sourceId) => {
+      if (!privateReady) throw new Error('Background sources are starting.');
+      const source = observedSource(await observations.sources(), sourceId);
+      return Boolean(source?.readable) && (await preparationRule(rule, rules));
+    },
+    signal: async (sourceId, client, summary) => {
+      const source = observedSource(await observations.sources(client), sourceId);
+      if (source) await proactivity.signal(source.id, client, summary);
+    },
     sweep: () => vault.forgetExpiredHolds(),
+    due: () => proactivity.due(),
   });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
@@ -800,6 +846,8 @@ async function initializeApplication(
     resumeConnection: resumeAfterConnection,
     writingStyle,
     wake: triage.triageEvent,
+    lockActivity: (client) => lockProactivity(client, ownerId),
+    removeActivity: (id, client) => proactivity.forgetSource(`connections:${id}`, client),
     refresh,
     baseUrl: publicOrigin,
     callbackReturnTo: desktopMode ? 'window' : undefined,
@@ -945,6 +993,21 @@ async function initializeApplication(
   };
   const approvals = await createApprovals(
     async (action, args, provenance) => {
+      if (
+        action !== 'NOD_read_source' &&
+        (
+          await pool.query('SELECT proactive FROM turns WHERE id=$1 AND owner_id=$2', [
+            provenance.turnId,
+            ownerId,
+          ])
+        ).rows[0]?.proactive
+      )
+        throw Object.assign(
+          new Error(
+            'This background session can only read and prepare private work. Start an ordinary request to take this action.',
+          ),
+          { notRun: true },
+        );
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'NOD_vault_allow'
@@ -1017,6 +1080,73 @@ async function initializeApplication(
       .filter(connectedGmail)
       .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
+  const appReads = {
+    accounts: async () => {
+      const connected = (await integrations.list(ownerId, { refresh: false })).filter(
+        (account) =>
+          account.status === 'connected' &&
+          !account.savedLogin &&
+          !account.disconnectPending &&
+          account.connectionId,
+      );
+      const accounts = await Promise.all(
+        connected.map(async (account) => {
+          const binding = await integrations.binding(account.connectionId!);
+          return binding
+            ? {
+                connectionId: account.connectionId!,
+                binding,
+                slug: account.slug,
+                name: account.name,
+              }
+            : undefined;
+        }),
+      );
+      return accounts.filter((account) => account !== undefined);
+    },
+    search: async (account: AppAccount, query: string, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      if ((await integrations.binding(account.connectionId)) !== account.binding)
+        throw new Error('This connected account changed.');
+      return integrations.execute(
+        ownerId,
+        'SEARCH_TOOLS',
+        { connectionId: account.connectionId, query },
+        undefined,
+        signal,
+      );
+    },
+    read: async (
+      account: AppAccount,
+      tool: AppTool,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+    ) => {
+      signal.throwIfAborted();
+      if (
+        (await integrations.binding(account.connectionId)) !== account.binding ||
+        !(await trust.readOnly(
+          tool.action,
+          args,
+          { description: tool.description, inputSchema: tool.schema },
+          signal,
+        ))
+      )
+        throw Object.assign(new Error('This action is not a read, so nothing ran.'), {
+          refused: true,
+        });
+      signal.throwIfAborted();
+      if ((await integrations.binding(account.connectionId)) !== account.binding)
+        throw new Error('This connected account changed.');
+      return integrations.execute(ownerId, tool.action, args, undefined, signal, account.binding);
+    },
+    current: async (accounts: AppAccount[], client?: import('pg').PoolClient) => {
+      for (const account of accounts)
+        if ((await integrations.binding(account.connectionId, client)) !== account.binding)
+          return false;
+      return true;
+    },
+  };
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
     curator: onboardingCurator,
@@ -1028,67 +1158,13 @@ async function initializeApplication(
         .map((entry) => entry.text),
     signal: closing.signal,
     discovery: {
-      accounts: async () => {
-        const connected = (await integrations.list(ownerId, { refresh: false })).filter(
-          (account) =>
-            account.status === 'connected' &&
-            !account.savedLogin &&
-            !account.disconnectPending &&
-            account.connectionId,
-        );
-        const accounts = await Promise.all(
-          connected.map(async (account) => {
-            const binding = await integrations.binding(account.connectionId!);
-            return binding
-              ? {
-                  connectionId: account.connectionId!,
-                  binding,
-                  slug: account.slug,
-                  name: account.name,
-                }
-              : undefined;
-          }),
-        );
-        return accounts.filter((account) => account !== undefined);
-      },
-      search: async (account, signal) => {
-        signal.throwIfAborted();
-        if ((await integrations.binding(account.connectionId)) !== account.binding)
-          throw new Error('This connected account changed.');
-        return integrations.execute(
-          ownerId,
-          'SEARCH_TOOLS',
-          {
-            connectionId: account.connectionId,
-            query: `${account.name} recent activity messages events tasks projects documents`,
-          },
-          undefined,
+      ...appReads,
+      search: (account, signal) =>
+        appReads.search(
+          account,
+          `${account.name} recent activity messages events tasks projects documents`,
           signal,
-        );
-      },
-      read: async (account, tool, args, signal) => {
-        signal.throwIfAborted();
-        if (
-          (await integrations.binding(account.connectionId)) !== account.binding ||
-          !(await trust.readOnly(
-            tool.action,
-            args,
-            { description: tool.description, inputSchema: tool.schema },
-            signal,
-          ))
-        )
-          throw new Error('This discovery action is unavailable.');
-        signal.throwIfAborted();
-        if ((await integrations.binding(account.connectionId)) !== account.binding)
-          throw new Error('This connected account changed.');
-        return integrations.execute(ownerId, tool.action, args, undefined, signal, account.binding);
-      },
-      current: async (accounts, client) => {
-        for (const account of accounts)
-          if ((await integrations.binding(account.connectionId, client)) !== account.binding)
-            return false;
-        return true;
-      },
+        ),
     },
     telegram: async () =>
       Boolean(
@@ -1210,6 +1286,73 @@ async function initializeApplication(
     ownerId,
     review,
   });
+  const observations = createObservationSources(
+    [
+      createConnectionSources({
+        recorded: integrations.activitySources,
+        readRecorded: (connectionId, input, signal) =>
+          integrations.readActivity({ connectionId, ...input }, signal),
+        ...appReads,
+      }),
+      createTaskObservations(pool, ownerId, createRedactor(secrets)),
+      ...(adapters.observations ?? []),
+    ],
+    { secrets, check: mailCheck },
+  );
+  proactivity = createProactivity({
+    pool,
+    ownerId,
+    redact: createTextRedactor(secrets),
+    sources: async (client) => {
+      const catalog = await observations.sources(client);
+      const prefs = await triage.getPreferences();
+      const preparing =
+        !prefs.notificationRule.trim() ||
+        (await preparationRule(prefs.notificationRule, prefs.rules));
+      return catalog.map((source) =>
+        !preparing || source.mode === 'classic'
+          ? {
+              ...source,
+              mode: 'classic' as const,
+              pollIntervalMs: undefined,
+              changeToken: undefined,
+            }
+          : { ...source, mode: 'prepare' as const },
+      );
+    },
+    read: async (turn, input, signal) => {
+      const source = (await observations.sources()).find(
+        (item) => item.id === input.sourceId && item.readable,
+      );
+      if (!source) throw new Error('This source has no supported activity reader.');
+      const bound = { ...input, revision: source.revision };
+      if (source.tools) {
+        const result = await observations.read(bound, signal);
+        await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
+        return result;
+      }
+      const verdict = await trust.check(turn, 'NOD_read_source', {
+        ...bound,
+        source: source.label,
+        description: source.description,
+        operation: 'Read current records from this registered read-only source.',
+      });
+      if (verdict.confirm)
+        throw Object.assign(
+          new Error(
+            verdict.reason === 'rule'
+              ? "The owner's rules ask before reading this source, so private preparation skips it."
+              : 'The trust check did not allow this read. Private preparation will try again later.',
+          ),
+          { blocked: verdict.reason === 'rule' },
+        );
+      const result = await observations.read(bound, signal);
+      await ledger.action(turn.turnId, 'NOD_read_source', verdict.basis);
+      return result;
+    },
+  });
+  await proactivity.initialize();
+  privateReady = true;
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
     check: trust.check,
@@ -1241,13 +1384,18 @@ async function initializeApplication(
     },
   };
   if (options.workers !== false) {
-    await triage.initializeHeartbeat();
+    if (options.heartbeat !== false) await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
-      observeTurn: conversationAnalytics.observe,
+      observeTurn: (turnId, operation) =>
+        conversationAnalytics.observe(turnId, operation).finally(() => {
+          void admission
+            .run(() => proactivity.due())
+            ?.catch((error) => logFailure('proactivity_wake', error));
+        }),
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
@@ -1256,10 +1404,16 @@ async function initializeApplication(
       executeConfirmation: approvals.executeConfirmed,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
-      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      proactivity: proactivity.context,
+      runTurn: (context) =>
+        ledger.withTurn(context.turnId, () =>
+          runtime.runTurn(context).finally(() => proactivity.release(context.turnId)),
+        ),
       spendingLimitReached: ledger.limitReached,
       checkIn: ledger.checkIn,
-      skipTurn: triage.staleCheck,
+      skipTurn: async (sourceId) =>
+        (await triage.staleCheck(sourceId)) ||
+        (sourceId.startsWith('proactivity:') && !(await proactivity.canRun())),
       accountProfile,
       connectedApps: integrations.connectedApps,
       mcpServers: discovered.servers,
@@ -1344,6 +1498,12 @@ async function initializeApplication(
       },
       speech,
       manage: async (turn, action, args, { admit, ...provenance }) => {
+        if (action === 'prepared_list')
+          return untrustedBlock('prepared work', JSON.stringify(await proactivity.prepared(args)));
+        if (action === 'prepared_update') {
+          const { id, state, snoozedUntil, feedback } = await proactivity.control(args, turn);
+          return { id, state, snoozedUntil, feedback };
+        }
         if (action === 'limits_update') {
           const input = limitsInput.parse(args);
           const verdict = await trust.check(turn, 'NOD_limits_update', input);
@@ -1908,6 +2068,7 @@ async function initializeApplication(
     personal,
     memory,
     triage,
+    proactivity,
     integrations,
     vault,
     channels,

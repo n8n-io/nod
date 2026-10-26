@@ -4,6 +4,7 @@ import type { ConnectedApp } from './integrations.ts';
 import type { DiscoveredTool } from './discovered.ts';
 import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
 import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
+import type { ProactiveIssue } from '../shared/proactivity.ts';
 
 export interface ModelUsageObservation {
   type: 'model_usage';
@@ -75,6 +76,28 @@ export interface ConnectedMcpServer {
 }
 
 export interface RuntimeContext {
+  proactivity?: {
+    instructions: string;
+    issues: Array<
+      Pick<
+        ProactiveIssue,
+        | 'id'
+        | 'category'
+        | 'matterKey'
+        | 'primary'
+        | 'title'
+        | 'summary'
+        | 'state'
+        | 'feedback'
+        | 'sources'
+        | 'deadline'
+        | 'nextCheck'
+      >
+    >;
+    sources: Array<Omit<import('./proactivity.ts').ObservationSource, 'revision'>>;
+    read(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+    update(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+  };
   threadId: string;
   turnId: string;
   sessionId: string;
@@ -243,6 +266,7 @@ export type AgentEvent =
   | ModelUsageObservation
   | { type: 'error'; message: string };
 export interface AgentSessionOptions extends ExecutionScope {
+  restricted?: boolean;
   ephemeral?: boolean;
   systemPrompt: string;
   ownerContext?: string;

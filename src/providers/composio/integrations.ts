@@ -1,5 +1,6 @@
 import type { Composio, ToolRouterSession } from '@composio/core';
 import { z } from 'zod';
+import { composioActivity } from './activity.ts';
 import { integrationServices, type IntegrationServiceInfo } from '../../shared/integrations.ts';
 import { createComposioFiles } from './downloads.ts';
 import type { createComposioProxy } from './proxy.ts';
@@ -633,6 +634,7 @@ export function createComposioProvider(options: {
     sentEmails: (accountId, signal) => readSentEmails(client.tools, accountId, signal),
     inboxSnippets: (accountId, signal) => readInboxSnippets(client.tools, accountId, signal),
     inboxThreads: (accountId, signal) => readInboxThreads(client.tools, accountId, signal),
+    activity: composioActivity(client.tools),
     async pollInbox(accountId, cursor, signal) {
       const deadline = AbortSignal.timeout(25_000);
       const operation = AbortSignal.any([signal, deadline]);

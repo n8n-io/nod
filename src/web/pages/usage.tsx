@@ -287,12 +287,14 @@ function Sentence({
   vault,
   rule,
   rules,
+  paused,
   onSaved,
 }: {
   view: TrustView;
   vault: VaultActivity;
   rule: string;
   rules: string;
+  paused: boolean;
   onSaved(): void;
 }) {
   const format = useDateFormat();
@@ -399,7 +401,15 @@ function Sentence({
         <br />
         On its own, nod{' '}
         <StatementValue
-          text={rule ? 'follows your instruction' : 'watches nothing'}
+          text={
+            paused
+              ? rule
+                ? 'follows your instruction, with preparation paused'
+                : 'is paused'
+              : rule
+                ? 'follows your instruction'
+                : 'prepares private work automatically'
+          }
           label="Standing instruction"
         >
           {(close) => (
@@ -679,6 +689,7 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
             vault={vault.data}
             rule={preferences.data.notificationRule}
             rules={preferences.data.rules}
+            paused={preferences.data.proactivePaused}
             onSaved={() => {
               void trust.refresh();
               void preferences.refresh();

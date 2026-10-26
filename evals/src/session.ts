@@ -22,8 +22,9 @@ export interface Session {
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
   api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
+  proactivity: Stack['proactivity'];
   fireSchedules(): Promise<number>;
-  event(summary: string): Promise<string>;
+  event(summary: string, sources?: string[]): Promise<string>;
   waitForTurn(turnId: string): Promise<void>;
   settle(): Promise<void>;
   reset(): Promise<void>;
@@ -405,6 +406,7 @@ export function createSession(options: {
       if (!response.ok) throw new Error(`Upload failed (${response.status}).`);
       return (await response.json()).id as string;
     },
+    proactivity: stack.proactivity,
     async api(method, path, body) {
       if (new URL(path, stack.origin).origin !== stack.origin)
         throw new Error('Scenario API calls must stay on the nod server.');

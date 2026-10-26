@@ -20,7 +20,7 @@ import { untrustedBlock } from '../shared/untrusted.ts';
 import type { Turn } from './turn.ts';
 
 export const taskRouting =
-  'In the main chat, use task start for substantial work with several steps, such as researching and comparing several sources or options, making a report or other substantial deliverable, or completing a multi-step app or browser workflow. Do this even when the work can finish in one sitting. Also use a saved task for work that waits on someone or something, independent jobs that run alongside each other, and an explicit request to track work as a task. Keep quick answers, single lookups, brief summaries of supplied content and simple actions in chat. Judge the work by its goal, not the number of tool calls. Keep one coherent job in one task and reuse a related open task. The task start message is its acknowledgement; do not add a separate opening message for the same handoff.';
+  'In the main chat, use task start for substantial work with several steps, such as researching and comparing several sources or options, making a report or other substantial deliverable, or completing a multi-step app or browser workflow. Do this even when the work can finish in one sitting. Also use a saved task for work that waits on someone or something, independent jobs that run alongside each other, and an explicit request to track work as a task. Keep quick answers, single lookups, brief summaries of supplied content and simple actions in chat. A yes to what a nudge offered, such as sending its draft or moving the meeting it prepared, also stays in chat: do it with the prepared work, because the yes covers the action only together with the nudge it answers. Judge the work by its goal, not the number of tool calls. Keep one coherent job in one task and reuse a related open task. The task start message is its acknowledgement; do not add a separate opening message for the same handoff.';
 
 export const personalActions = [
   'notification_preferences_get',
@@ -39,6 +39,8 @@ export const personalActions = [
   'schedule_cancel',
   'schedule_record_observation',
   'usage_get',
+  'prepared_list',
+  'prepared_update',
   'limits_update',
 ] as const;
 
@@ -188,6 +190,88 @@ export const toolDefinitions = {
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
+    }),
+  ),
+  read_source: defineTool(
+    'read_source',
+    'Read current observations from one registered read-only source. For a source with tools, pass query to find its read tools, then tool and args from that result. For other sources, pass record ids, or omit them for a bounded recent page; the server saves page progress and nextCursor shows that more records remain. This tool cannot change connected data.',
+    Type.Object({
+      sourceId: Type.String({ minLength: 1, maxLength: 200 }),
+      ids: Type.Optional(
+        Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), {
+          minItems: 1,
+          maxItems: 10,
+        }),
+      ),
+      query: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+      tool: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+      args: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    }),
+  ),
+  proactive_issue: defineTool(
+    'proactive_issue',
+    'List, read, prepare, or resolve a private update. read needs id and returns the complete saved draft. save identifies one matter with a stable matterKey and explicit primary {sourceId,id}; omit id. Reuse the returned matterKey for that matter. Different matters can share a source record. save needs a short descriptive category, title, summary, benefit, delayCost, a complete plain-text draft, unknowns, sources [{sourceId,id,version}], impact (low,medium,high), delivery (private to save without a nudge, offer to request attention), evidence (strong,uncertain), deadline and nextCheck (ISO timestamps or null), and materialChange (none,deadline_advanced,condition_changed,new_option). summary is the whole nudge message. resolve needs id and fresh sources. The server checks evidence and controls notification delivery. It never sends the draft to another person.',
+    Type.Object({
+      action: Type.Union([
+        Type.Literal('list'),
+        Type.Literal('read'),
+        Type.Literal('save'),
+        Type.Literal('resolve'),
+      ]),
+      args: Type.Optional(
+        Type.Object(
+          {
+            id: Type.Optional(uuid),
+            matterKey: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            primary: Type.Optional(
+              Type.Object(
+                {
+                  sourceId: Type.String({ minLength: 1, maxLength: 200 }),
+                  id: Type.String({ minLength: 1, maxLength: 1024 }),
+                },
+                { additionalProperties: false },
+              ),
+            ),
+            category: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
+            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            summary: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
+            benefit: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
+            delayCost: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
+            draft: Type.Optional(
+              Type.String({
+                minLength: 1,
+                maxLength: 20000,
+                description: 'Reusable result only. Put owner-only review notes in unknowns.',
+              }),
+            ),
+            unknowns: Type.Optional(
+              Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 8 }),
+            ),
+            sources: Type.Optional(
+              Type.Array(
+                Type.Object(
+                  {
+                    sourceId: Type.String({ minLength: 1, maxLength: 200 }),
+                    id: Type.String({ minLength: 1, maxLength: 1024 }),
+                    version: Type.String({ minLength: 1, maxLength: 1000 }),
+                  },
+                  { additionalProperties: false },
+                ),
+                { minItems: 1, maxItems: 6 },
+              ),
+            ),
+            impact: Type.Optional(literals(['low', 'medium', 'high'])),
+            delivery: Type.Optional(literals(['private', 'offer'])),
+            evidence: Type.Optional(literals(['strong', 'uncertain'])),
+            deadline: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            nextCheck: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            materialChange: Type.Optional(
+              literals(['none', 'deadline_advanced', 'condition_changed', 'new_option']),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
     }),
   ),
   follow_up: defineTool(
@@ -438,7 +522,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's app settings, models, schedules, memory and earlier conversation. Use these actions to make requested changes in any channel, including Telegram and WhatsApp. Read current values first, change only what the user requested, and report success only from the saved result. notification_preferences_get {} reads notificationRule, timeZone, locale, hourCycle, quietHoursEnabled, quietStart and quietEnd. notification_preferences_update accepts those same fields as a partial update; hourCycle is auto, h12 or h23; times use HH:MM; timeZone is an IANA name or null for automatic; locale is a locale tag or null for automatic. models_get {} lists connected services, their available models and efforts, and the current selection, without credentials. model_select {connectionId, modelId, effort} selects an available model for the next turn. Use IDs from models_get and ask if the service or model is unclear. Connecting or reconnecting a model needs private sign-in in Settings > Models. Device settings such as desktop notifications and launch at login require Settings on that computer. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context lists every saved entry; tentative entries were mentioned once, so treat them as likely rather than certain. memory_find {query, area?} and memory_read {path} (an area or area/slug) look entries up. Before you answer a question about what the user said, did, has or planned earlier, or about what you said or recommended, or ask for something they may have told you, check the memory index, and when the conversation in front of you doesn't show it or was summarized, search earlier conversation with history_search; for counts, totals, lists or the latest value, gather every mention and use their dates. When a fact changed over time, the newest statement wins; list what you found, keep only what meets every part of the question, then count it; when the user asks what you said or recommended earlier, answer from the conversation first, then add any correction; if nothing relevant turns up, say you don't know rather than guess, and when what you found is about something else than what was asked, such as another person, item or activity, say you don't have it. Before you recommend or advise, check what memory and earlier conversation say about the user's situation and preferences on that topic, and tailor the answer to them. memory_learn {messages?} saves what the user's current message asks you to remember, or the lasting personal fact, preference, routine or correction it states. You never write the notes: nod's memory model writes them from the user's own words, reading the current message with the user's recent messages in this conversation, so \"remember that address\" works when the address came a few messages earlier. When it refers to something the user said longer ago, find that message with history_search and pass its id in messages. Use it without asking, and never for questions, tasks, guesses or quoted outside content. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. A correction archives the note it replaces, so never forget a note to save a new one. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query?, from?:'YYYY-MM-DD', to?:'YYYY-MM-DD', before?, around?} searches every earlier message for any of the query's words and returns the best matches first, with their dates; from and to keep matches between those local dates, alone they list that period's newest messages; each search returns up to 20 messages and 15 turns, so for a busy period or a full count, repeat it with before, the id of the oldest result, until nothing older comes back; a long message comes back as the parts that match, marked shortened; around, the id of a message result, returns it in full with the five messages before and after it, such as the reply to a question, each of those up to 6,000 characters; usage_get {} returns your own activity ledger, shown on the Usage page: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did. limits_update {monthlyUsd?, taskUsd?} changes the monthly spending limit or the amount a task may spend since the owner's last message before it checks in, in US dollars of at least 1; null removes that limit. Use it when the owner asks to change a limit.",
+    "The user's app settings, models, schedules, memory and earlier conversation. Use these actions to make requested changes in any channel, including Telegram and WhatsApp. Read current values first, change only what the user requested, and report success only from the saved result. prepared_list {} lists the work nod prepared on its own, such as the draft behind a nudge. prepared_list {query} or {id} reads one complete draft with its sources; read it before you show, review or act on it, and show the draft text when the owner asks to see it. prepared_update {id, action} records the owner's answer to a nudge: snooze with minutes (15 to 10080), handled, dismiss, useful or not_useful. Use it only when the owner asks. notification_preferences_get {} reads notificationRule, timeZone, locale, hourCycle, quietHoursEnabled, quietStart, quietEnd and proactivePaused. notification_preferences_update accepts those same fields as a partial update; hourCycle is auto, h12 or h23; times use HH:MM; timeZone is an IANA name or null for automatic; locale is a locale tag or null for automatic. models_get {} lists connected services, their available models and efforts, and the current selection, without credentials. model_select {connectionId, modelId, effort} selects an available model for the next turn. Use IDs from models_get and ask if the service or model is unclear. Connecting or reconnecting a model needs private sign-in in Settings > Models. Device settings such as desktop notifications and launch at login require Settings on that computer. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context lists every saved entry; tentative entries were mentioned once, so treat them as likely rather than certain. memory_find {query, area?} and memory_read {path} (an area or area/slug) look entries up. Before you answer a question about what the user said, did, has or planned earlier, or about what you said or recommended, or ask for something they may have told you, check the memory index, and when the conversation in front of you doesn't show it or was summarized, search earlier conversation with history_search; for counts, totals, lists or the latest value, gather every mention and use their dates. When a fact changed over time, the newest statement wins; list what you found, keep only what meets every part of the question, then count it; when the user asks what you said or recommended earlier, answer from the conversation first, then add any correction; if nothing relevant turns up, say you don't know rather than guess, and when what you found is about something else than what was asked, such as another person, item or activity, say you don't have it. Before you recommend or advise, check what memory and earlier conversation say about the user's situation and preferences on that topic, and tailor the answer to them. memory_learn {messages?} saves what the user's current message asks you to remember, or the lasting personal fact, preference, routine or correction it states. You never write the notes: nod's memory model writes them from the user's own words, reading the current message with the user's recent messages in this conversation, so \"remember that address\" works when the address came a few messages earlier. When it refers to something the user said longer ago, find that message with history_search and pass its id in messages. Use it without asking, and never for questions, tasks, guesses or quoted outside content. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. A correction archives the note it replaces, so never forget a note to save a new one. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query?, from?:'YYYY-MM-DD', to?:'YYYY-MM-DD', before?, around?} searches every earlier message for any of the query's words and returns the best matches first, with their dates; from and to keep matches between those local dates, alone they list that period's newest messages; each search returns up to 20 messages and 15 turns, so for a busy period or a full count, repeat it with before, the id of the oldest result, until nothing older comes back; a long message comes back as the parts that match, marked shortened; around, the id of a message result, returns it in full with the five messages before and after it, such as the reply to a question, each of those up to 6,000 characters; usage_get {} returns your own activity ledger, shown on the Usage page: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did. limits_update {monthlyUsd?, taskUsd?} changes the monthly spending limit or the amount a task may spend since the owner's last message before it checks in, in US dollars of at least 1; null removes that limit. Use it when the owner asks to change a limit.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -686,6 +770,16 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     return { output: verdict.result };
   };
   return [
+    ...(context.proactivity
+      ? [
+          bind(toolDefinitions.read_source, async (p) =>
+            confirm(await context.proactivity!.read(p, signal)),
+          ),
+          bind(toolDefinitions.proactive_issue, async (p) =>
+            confirm(await context.proactivity!.update({ ...p.args, action: p.action }, signal)),
+          ),
+        ]
+      : []),
     bind(toolDefinitions.skills, async (p) => {
       if (p.action === 'list') return skills?.catalog ?? [];
       if (p.action === 'read') {

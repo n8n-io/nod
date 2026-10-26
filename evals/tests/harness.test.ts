@@ -31,7 +31,9 @@ import {
   urlsGrounded,
 } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
-import { createCapture } from '../src/capture.ts';
+import { createCapture, proactiveBaselineInstructions } from '../src/capture.ts';
+import { summarizePopulation } from '../src/proactivity.ts';
+import { select } from '../src/run.ts';
 import { decide, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
 import { check, type Scenario } from '../src/scenario.ts';
@@ -2227,6 +2229,7 @@ test('only calibrated scenarios that passed every one of at least five attempts 
 function quietRun(world: ReturnType<Scenario['world']>): Run {
   return {
     api: async () => ({ status: 200, body: {} }),
+    proactivity: { view: async () => ({ issues: [], coverage: [] }), control: async () => ({}) },
     task: '',
     messages: [],
     replies: [],
@@ -2353,4 +2356,85 @@ test('fake remote MCP servers sign in and answer through nod’s own MCP client'
     unroute();
     await served.close();
   }
+});
+
+test('the proactive comparison keeps restrictions and explicit case order', async () => {
+  const opened: import('../../src/ports/agent.ts').AgentSessionOptions[] = [];
+  const capture = createCapture(true);
+  const agent = capture.agent({
+    open: async (options) => {
+      opened.push(options);
+      return { resumed: false, prompt: async () => {}, abort() {}, dispose() {} };
+    },
+    dispose() {},
+  });
+  const original = {
+    restricted: true,
+    systemPrompt: 'Production policy',
+    ownerContext: 'Owner scope',
+    tools: [{ name: 'read_source' }],
+  } as import('../../src/ports/agent.ts').AgentSessionOptions;
+  await agent.open(original);
+  assert.equal(opened[0].systemPrompt, proactiveBaselineInstructions);
+  assert.equal(opened[0].tools, original.tools);
+  assert.equal(opened[0].restricted, true);
+  assert.equal(opened[0].ownerContext, original.ownerContext);
+  await agent.open({ ...original, restricted: false });
+  assert.equal(opened[1].systemPrompt, original.systemPrompt);
+  const ids = ['proactivity-population-2-engine', 'proactivity-population-1-baseline'];
+  assert.deepEqual(
+    select({ scenarioIds: ids, tier: 'release', ignoreWindow: true }).map((s) => s.id),
+    ids,
+  );
+});
+
+test('population scoring keeps a missed critical matter and missing measurements visible', () => {
+  const attempt = {
+    scenario: 'proactivity-population-1-engine',
+    attempt: 1,
+    status: 'fail',
+    checks: [
+      {
+        id: 'population-metrics',
+        evidence: JSON.stringify({
+          cohort: 1,
+          arm: 'engine',
+          records: 24,
+          readRecords: 12,
+          expected: 2,
+          found: 1,
+          criticalMissed: true,
+          prepared: 2,
+          falsePrepared: 1,
+          notified: 2,
+          relevantNotified: 1,
+          unwanted: 1,
+          duplicateNudges: 0,
+        }),
+      },
+    ],
+    costUsd: null,
+    judgeCostUsd: 0.01,
+    seconds: 4,
+  } as AttemptResult;
+  const result = summarizePopulation([
+    attempt,
+    { ...attempt, attempt: 2, status: 'incomplete', checks: [] },
+  ]);
+  assert.equal(result.arms[0].recall, 0.5);
+  assert.equal(result.arms[0].precision, 0.5);
+  assert.equal(result.arms[0].criticalMissed, 1);
+  assert.equal(result.arms[0].unwanted, 1);
+  assert.equal(result.arms[0].attempts, 2);
+  assert.equal(result.arms[0].measured, 1);
+  assert.equal(result.arms[0].incomplete, 1);
+  assert.equal(result.arms[0].costUsd, null);
+  assert.equal(result.arms[0].populations[0].allPassed, false);
+  assert.equal(
+    summarizePopulation([
+      { ...attempt, seconds: 2 },
+      { ...attempt, seconds: 6 },
+    ]).arms[0].medianSeconds,
+    4,
+  );
 });

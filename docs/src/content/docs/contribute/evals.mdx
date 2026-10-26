@@ -12,7 +12,7 @@ Capability evals run real tasks against the real nod harness and report how ofte
 The short version: each attempt boots its own nod with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what nod said.
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 228 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 249 attempts. The unit tests never call them.
 :::
 
 ## How an attempt works
@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 76 controlled cases, three attempts each.
+3. Run all 83 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -68,13 +68,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 159 cases of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 206 cases: 159 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 235 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 289 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -255,7 +255,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 239 cases: 76 controlled cases, 159 release cases, three live web cases and the harness canary.
+The suite has 293 cases: 83 controlled cases, 206 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -316,6 +316,13 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                        | vault, browser                           | scored      |
 | `price-watch`                           | Watch a booked hotel price and alert only when it really drops                    | browser, schedules, memory               | scored      |
 | `proactive-standing-intro`              | The first unprompted update says nod will keep doing it, once                     | apps, progress                           | known gap   |
+| `proactivity-app-tools`                 | Prepare help from an app read only through its own read tools                     | apps, progress                           | known gap   |
+| `proactivity-chat-review`               | Show the draft behind a nudge in chat                                             | progress                                 | known gap   |
+| `proactivity-credit-holdout`            | A document source produces a complete credit enquiry with usable references       | progress                                 | known gap   |
+| `proactivity-memory-match`              | Saved goals make a course update useful after the chat resets                     | memory, progress                         | known gap   |
+| `proactivity-resolved-travel-holdout`   | A travel thread the owner already handled needs no nudge                          | apps, progress                           | known gap   |
+| `proactivity-travel-draft`              | Prepare useful help for a cancelled flight without submitting anything            | apps, progress                           | known gap   |
+| `proactivity-work-signal`               | A connected source prepares a useful private plan without a watch instruction     | progress                                 | known gap   |
 | `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each              | research, files, approvals, apps         | known gap   |
 | `purchase-asks-only-to-pay`             | Buy past a cookie wall and an icon-only basket button, asked only to pay          | vault, browser, approvals                | calibrating |
 | `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included                   | approvals, vault, browser                | scored      |
@@ -342,7 +349,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 159 release cases</summary>
+<summary>All 159 everyday release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -530,7 +537,7 @@ Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The s
 
 Every attempt also checks that the last turn finished, unless the scenario defines its own `completion` check, and that no saved password or key-shaped string appears in nod's messages.
 
-A world has no notification rule unless it sets `notificationRule`, so nod starts no activity checks or event turns on its own. Each release case must fail at least one of its required code checks when nod does nothing; `pnpm --dir evals test` enforces this.
+A world has no notification rule unless it sets `notificationRule`, and evals turn off the scheduled heartbeat, so activity checks and private preparation start only from events the scenario sends. Each release case must fail at least one of its required code checks when nod does nothing; `pnpm --dir evals test` enforces this.
 
 Follow these rules:
 
@@ -588,6 +595,39 @@ Use distinct labels for the baseline and candidate. Keep the case fingerprints f
 :::caution[Evidence boundary]
 These cases cover model-generated app confirmations and approval decisions with synthetic recipients. They do not prove channel handoffs, secure-form localization, live provider delivery or credential-request screening; nod does not filter outgoing reply text.
 :::
+
+## Measure proactive discovery
+
+The `proactivity-population-*` release cases contain noisy source populations. Each has 24 records, two useful matters and one important item on the second page. Half use the production policy; half use a concise baseline in the eval harness. Both arms keep the same model, tools, source data, Trust checks and delivery rules. The baseline is not a production setting.
+
+Run both arms for every population with the same model and repeat count. Use `--scenario` to set an explicit order; the runner preserves it. Keep answer keys and score rules fixed before the run. Retain setup failures and record any corrected test version.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-population-1-engine,proactivity-population-1-baseline --repeat 3 --label proactive-comparison
+pnpm run eval:capability proactivity-report proactive-comparison
+```
+
+The report separates prepared-work precision, opportunity recall, important misses, unwanted notifications, duplicates, draft quality, cost and attempt duration. A missing measurement stays missing. Repeats of one population are not independent owner situations. The four fixture populations cannot prove superiority over other products. Do not report model grades as owner ratings, measured edits or sustained benefit.
+
+For real use, measure with owners over actual elapsed days. A complete-window source audit supplies a denominator for owner-reported recall. Feedback only on delivered nudges cannot reveal missed opportunities.
+
+## Stress proactive work
+
+The `proactivity-stress-*` release cases test changed source state, noisy pages, source outages, repeated signals, owner controls, hostile source text, language and changed goals. Each attempt uses the real runtime and a synthetic source provider. The held-out variants change record format or source order; the memory variant adds 160 historical notes through the owner API.
+
+Run an engine and baseline case with the same selected model and judge. Keep all required checks and source data fixed before the run. Use a new run label and record the reason when a check changes.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-stress-late-page-engine,proactivity-stress-late-page-baseline --repeat 3 --label proactive-stress
+```
+
+See [Proactivity evidence](/how-it-works/proactivity-evidence/) for the method and claim limits. A pass requires correct quiet behaviour as well as useful prepared work. Consolidation is valid when one enquiry keeps all required account details.
+
+The `proactivity-stress-endurance-*` cases add an 18-page scan across bounded wakes and 12 event phases for repeated signals, dismissal or snooze. Each has a changed-context variant. Keep the single-message long-scan check: saving routine work must not consume the attention needed for a later deadline.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-engine,proactivity-stress-endurance-holdout-late-page-engine --repeat 2 --label proactive-endurance
+```
 
 ## Related resources
 

@@ -8,6 +8,7 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
+import { z } from 'zod';
 import type { FeedbackEnvelope } from '../src/ports/feedback.ts';
 import { createN8nFeedback } from '../src/providers/n8n/feedback.ts';
 import { registerFeedback } from '../src/server/feedback.ts';
@@ -1315,12 +1316,15 @@ test(
                   .map((account) => account.connectionId)
                   .sort(),
               );
-              assert.deepEqual(calls.at(-1)?.args, {
-                connectionId: accounts[2]!.connectionId,
-                pathId,
-                tool: 'list_records',
-                input: { limit: 2 },
-              });
+              assert.deepEqual(
+                calls.find((call) => call.account === accounts[2]!.connectionId)?.args,
+                {
+                  connectionId: accounts[2]!.connectionId,
+                  pathId,
+                  tool: 'list_records',
+                  input: { limit: 2 },
+                },
+              );
               assert.doesNotMatch(
                 JSON.stringify(briefs),
                 /482913|owner@example|sender@example|private\.example/,
@@ -2103,6 +2107,887 @@ test(
         },
       );
       await t.test(
+        'proactive preparation keeps source, delivery, and owner fences across restarts',
+        async (t) => {
+          const { createProactivity } = await import('../src/server/proactivity.ts');
+          const { createLedger } = await import('../src/server/ledger.ts');
+          const ledger = createLedger({ pool: db.pool, ownerId });
+          await ledger.initialize();
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const previous = await preferences.get();
+          const currentThread = (await thread.activeThread()).id;
+          const turnId = randomUUID();
+          const ref = { turnId, threadId: currentThread };
+          const sourceId = 'builds:queue';
+          let revision = 'account-one';
+          let connected = true;
+          let state: 'open' | 'replied' = 'open';
+          let version = 'v1';
+          let afterRead = async () => {};
+          let changeToken: string | undefined;
+          const options = {
+            pool: db.pool,
+            ownerId,
+            sources: async () =>
+              connected
+                ? [
+                    {
+                      id: sourceId,
+                      label: 'Synthetic source',
+                      description: 'Synthetic source records',
+                      changeToken,
+                      readable: true,
+                      revision,
+                    },
+                  ]
+                : [],
+            read: async (_turn: unknown, input: Record<string, unknown>) => {
+              const snapshot = {
+                checkedAt: new Date().toISOString(),
+                records: [
+                  {
+                    id: 'thread1',
+                    version,
+                    available: true,
+                    data: { status: state, title: 'Synthetic decision' },
+                  },
+                ],
+              };
+              await afterRead();
+              return snapshot;
+            },
+          };
+          const engine = createProactivity(options);
+          await engine.initialize();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic source check','running',true,true,now())",
+            [turnId, ownerId, currentThread],
+          );
+          const proposal = (patch: Record<string, unknown> = {}) => ({
+            action: 'save',
+            matterKey: 'contract-reply',
+            primary: (({ sourceId, id }: { sourceId: string; id: string }) => ({ sourceId, id }))(
+              ((patch.sources as Array<{ sourceId: string; id: string }> | undefined) ?? [
+                { sourceId, id: 'thread1' },
+              ])[0],
+            ),
+            category: 'reply',
+            title: 'Contract reply',
+            summary: 'A contract needs your decision. A reply is ready.',
+            benefit: 'A complete reply saves preparation time.',
+            delayCost: 'The sender needs your decision before the meeting.',
+            draft: 'Hello, I reviewed the synthetic contract. Please confirm the start date.',
+            unknowns: [],
+            sources: [{ sourceId, id: 'thread1', version }],
+            impact: 'medium',
+            evidence: 'strong',
+            deadline: null,
+            nextCheck: null,
+            materialChange: 'none',
+            ...patch,
+          });
+          const save = (patch: Record<string, unknown> = {}) => engine.save(ref, proposal(patch));
+          const delivered = async () =>
+            Number(
+              (
+                await db.pool.query(
+                  "SELECT count(*) FROM messages WHERE owner_id=$1 AND turn_id=$2 AND starts_with(stream_id,'proactive:')",
+                  [ownerId, turnId],
+                )
+              ).rows[0].count,
+            );
+          async function reset() {
+            await waitFor(
+              async () =>
+                !(
+                  await db.pool.query(
+                    "SELECT 1 FROM turns WHERE owner_id=$1 AND id<>$2 AND proactive AND status IN ('queued','running') LIMIT 1",
+                    [ownerId, turnId],
+                  )
+                ).rowCount,
+            );
+            afterRead = async () => {};
+            state = 'open';
+            version = 'v1';
+            connected = true;
+            revision = 'account-one';
+            changeToken = undefined;
+            engine.release(turnId);
+            await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
+            await db.pool.query('DELETE FROM proactive_closures WHERE owner_id=$1', [ownerId]);
+            await db.pool.query('DELETE FROM proactive_evidence WHERE owner_id=$1', [ownerId]);
+            await db.pool.query('DELETE FROM proactive_sources WHERE owner_id=$1', [ownerId]);
+            await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [turnId]);
+            await db.pool.query('DELETE FROM model_usage WHERE turn_id=$1', [turnId]);
+            await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [turnId]);
+            await preferences.update({
+              ...previous,
+              notificationRule: '',
+              rules: '',
+              timeZone: 'UTC',
+              quietHoursEnabled: false,
+              proactivePaused: false,
+            });
+          }
+          try {
+            await t.test(
+              'every useful matter nudges once, with no daily count or gap',
+              async () => {
+                await reset();
+                await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                assert.equal(await engine.canRun(), true);
+                await reset();
+                for (const matterKey of ['first', 'second', 'third'])
+                  assert.equal(
+                    ((await save({ matterKey })) as { status: string }).status,
+                    'notified',
+                  );
+                assert.equal(
+                  ((await save({ matterKey: 'first' })) as { status: string }).status,
+                  'prepared',
+                );
+                assert.equal(await delivered(), 3);
+                const first = (await engine.view()).issues.find(
+                  (issue) => issue.state === 'offered',
+                )!;
+                const full = await engine.prepared({ id: first.id });
+                assert.ok('draft' in full[0]);
+                assert.equal(full[0].draft, first.draft);
+                const nudges = await db.pool.query(
+                  "SELECT text FROM messages WHERE turn_id=$1 AND starts_with(stream_id,'proactive:')",
+                  [turnId],
+                );
+                for (const { text } of nudges.rows) assert.doesNotMatch(text, /\]\(|\/updates/);
+              },
+            );
+            await t.test(
+              'explicit source removal deletes private work and closures only for that owner and source',
+              async () => {
+                await reset();
+                await save();
+                const issue = (await engine.view()).issues[0];
+                await engine.control({ id: issue.id, action: 'dismiss' });
+                await db.pool.query(
+                  "UPDATE proactive_issues SET updated_at=now()-interval '31 days' WHERE id=$1",
+                  [issue.id],
+                );
+                await engine.due();
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT count(*)::int AS n FROM proactive_closures WHERE owner_id=$1',
+                      [ownerId],
+                    )
+                  ).rows[0].n,
+                  1,
+                );
+                await save({ matterKey: 'another' });
+                const foreignOwner = 'synthetic-removal-owner';
+                await db.pool.query(
+                  `INSERT INTO proactive_issues(id,owner_id,identity,proposal,sources,state,policy)
+                  SELECT gen_random_uuid(),$2,identity,proposal,sources,state,policy FROM proactive_issues WHERE owner_id=$1`,
+                  [ownerId, foreignOwner],
+                );
+                connected = false;
+                await engine.due();
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT count(*)::int AS n FROM proactive_issues WHERE owner_id=$1',
+                      [ownerId],
+                    )
+                  ).rows[0].n,
+                  1,
+                );
+                const client = await db.pool.connect();
+                try {
+                  await client.query('BEGIN');
+                  await engine.forgetSource(sourceId, client);
+                  await client.query('ROLLBACK');
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT count(*)::int AS n FROM proactive_issues WHERE owner_id=$1',
+                        [ownerId],
+                      )
+                    ).rows[0].n,
+                    1,
+                  );
+                  await client.query('BEGIN');
+                  await engine.forgetSource('another:source', client);
+                  await client.query('COMMIT');
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT count(*)::int AS n FROM proactive_issues WHERE owner_id=$1',
+                        [ownerId],
+                      )
+                    ).rows[0].n,
+                    1,
+                  );
+                  await client.query('BEGIN');
+                  await engine.forgetSource(sourceId, client);
+                  await client.query('COMMIT');
+                  for (const table of [
+                    'proactive_issues',
+                    'proactive_closures',
+                    'proactive_evidence',
+                    'proactive_sources',
+                  ])
+                    assert.equal(
+                      (
+                        await db.pool.query(
+                          `SELECT count(*)::int AS n FROM ${table} WHERE owner_id=$1`,
+                          [ownerId],
+                        )
+                      ).rows[0].n,
+                      0,
+                    );
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT count(*)::int AS n FROM proactive_issues WHERE owner_id=$1',
+                        [foreignOwner],
+                      )
+                    ).rows[0].n,
+                    1,
+                  );
+                } finally {
+                  client.release();
+                  await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [
+                    foreignOwner,
+                  ]);
+                }
+              },
+            );
+            await t.test('quiet hours, snooze and pause hold nudges until they end', async () => {
+              await reset();
+              const clock = (offset: number) =>
+                new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
+              await preferences.update({
+                quietHoursEnabled: true,
+                quietStart: clock(-1),
+                quietEnd: clock(1),
+              });
+              const important = {
+                impact: 'high',
+                deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
+              };
+              assert.equal(((await save(important)) as { status: string }).status, 'prepared');
+              const held = (await engine.view()).issues[0];
+              const wake = Date.parse(held.nextCheck ?? '') - Date.now();
+              assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
+              await preferences.update({ quietHoursEnabled: false });
+              assert.equal(((await save(important)) as { status: string }).status, 'notified');
+              await engine.control({ id: held.id, action: 'snooze', minutes: 60 });
+              version = 'v2';
+              assert.equal(
+                (
+                  (await save({ ...important, materialChange: 'condition_changed' })) as {
+                    status: string;
+                  }
+                ).status,
+                'prepared',
+              );
+              await preferences.update({ proactivePaused: true });
+              await assert.rejects(save({ matterKey: 'while paused' }), /paused/);
+              await preferences.update({ proactivePaused: false });
+              assert.equal(
+                ((await save({ matterKey: 'after pause' })) as { status: string }).status,
+                'notified',
+              );
+              assert.equal(await delivered(), 2);
+            });
+            await t.test(
+              'managed event bursts keep one owner job and retain later signals',
+              async () => {
+                await reset();
+                const routed = createTriage({
+                  preparation: async () => true,
+                  signal: (id, client, summary) => engine.signal(id, client, summary),
+                  due: engine.due,
+                });
+                const before = Number(
+                  (
+                    await db.pool.query(
+                      "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                      [ownerId],
+                    )
+                  ).rows[0].count,
+                );
+                const ids = await Promise.all(
+                  Array.from({ length: 50 }, () =>
+                    routed.triageEvent(
+                      'Untrusted synthetic event text',
+                      randomUUID(),
+                      async () => true,
+                      sourceId,
+                    ),
+                  ),
+                );
+                assert.deepEqual(new Set(ids), new Set([turnId]));
+                const source = (
+                  await db.pool.query(
+                    'SELECT signal_version,inspected_signal,events FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(Number(source.signal_version), 50);
+                assert.equal(Number(source.inspected_signal), 0);
+                assert.equal(source.events.length, 10);
+                assert.ok(
+                  source.events.every(
+                    (event: { summary: string }) =>
+                      event.summary === 'Untrusted synthetic event text',
+                  ),
+                );
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                await routed.triageEvent(
+                  'Later synthetic signal',
+                  randomUUID(),
+                  async () => true,
+                  sourceId,
+                );
+                assert.deepEqual(
+                  (
+                    await db.pool.query(
+                      'SELECT events FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                      [ownerId, sourceId],
+                    )
+                  ).rows[0].events.map((event: { summary: string }) => event.summary),
+                  ['Later synthetic signal'],
+                );
+                const failing = createTriage({
+                  preparation: async () => true,
+                  signal: (id, client) => engine.signal(id, client),
+                  due: async () => {
+                    throw new Error('Synthetic dispatcher failure');
+                  },
+                });
+                await assert.rejects(
+                  failing.triageEvent(
+                    'Signal before dispatcher failure',
+                    randomUUID(),
+                    async () => true,
+                    sourceId,
+                  ),
+                  /dispatcher failure/,
+                );
+                const pending = (
+                  await db.pool.query(
+                    'SELECT signal_version,inspected_signal FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(Number(pending.signal_version), 52);
+                assert.equal(Number(pending.inspected_signal), 50);
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                const restarted = createProactivity(options);
+                const queued = await Promise.all([
+                  restarted.due(),
+                  restarted.due(),
+                  restarted.due(),
+                ]);
+                assert.equal(new Set(queued).size, 1);
+                assert.ok(queued[0] && queued[0] !== turnId);
+                const after = Number(
+                  (
+                    await db.pool.query(
+                      "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                      [ownerId],
+                    )
+                  ).rows[0].count,
+                );
+                assert.equal(after, before + 1);
+                await waitFor(settled(queued[0]!));
+              },
+            );
+            await t.test(
+              'a paused preparation keeps pending source changes until it resumes',
+              async () => {
+                await reset();
+                changeToken = 'source-change';
+                await transaction((client) => engine.signal(sourceId, client), db.pool);
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [turnId]);
+                await preferences.update({ proactivePaused: true });
+                await engine.due();
+                const paused = await engine.view();
+                assert.equal(paused.coverage[0].status, 'paused');
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  /paused/,
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT count(*)::int AS n FROM proactive_sources WHERE owner_id=$1 AND signal_version>inspected_signal',
+                      [ownerId],
+                    )
+                  ).rows[0].n,
+                  1,
+                );
+                const source = (
+                  await db.pool.query(
+                    'SELECT * FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(source.change_token, null);
+                assert.equal(source.complete_at, null);
+                await preferences.update({ proactivePaused: false });
+                await db.pool.query(
+                  "UPDATE proactive_sources SET next_poll=now()-interval '1 minute' WHERE owner_id=$1",
+                  [ownerId],
+                );
+                const before = Number(
+                  (
+                    await db.pool.query(
+                      "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                      [ownerId],
+                    )
+                  ).rows[0].count,
+                );
+                await engine.due();
+                assert.equal(
+                  Number(
+                    (
+                      await db.pool.query(
+                        "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                        [ownerId],
+                      )
+                    ).rows[0].count,
+                  ),
+                  before + 1,
+                );
+              },
+            );
+            await t.test('a failed message insert rolls back the issue', async () => {
+              await reset();
+              await db.pool
+                .query(`CREATE FUNCTION reject_proactive_message() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                  IF starts_with(NEW.stream_id,'proactive:') THEN RAISE EXCEPTION 'Synthetic message failure'; END IF;
+                  RETURN NEW;
+                END $$;
+                CREATE TRIGGER reject_proactive_message BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION reject_proactive_message()`);
+              try {
+                await assert.rejects(save(), /Synthetic message failure/);
+                assert.equal((await engine.view()).issues.length, 0);
+                assert.equal(await delivered(), 0);
+              } finally {
+                await db.pool.query('DROP TRIGGER reject_proactive_message ON messages');
+                await db.pool.query('DROP FUNCTION reject_proactive_message()');
+              }
+              assert.equal(((await save()) as { status: string }).status, 'notified');
+              assert.equal((await engine.view()).issues.length, 1);
+              assert.equal(await delivered(), 1);
+            });
+            await t.test('evidence expires while a save waits for the owner lock', async () => {
+              await reset();
+              const { lockKey } = await import('../src/server/locks.ts');
+              const held = await db.pool.connect();
+              await held.query('BEGIN');
+              const pid = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+              let queued = false;
+              let locked: Promise<void> | undefined;
+              const loaded = createProactivity({
+                ...options,
+                sources: async (client?: import('pg').PoolClient) => {
+                  const catalog = await options.sources();
+                  if (client && !queued) {
+                    queued = true;
+                    const writer = (await client.query('SELECT pg_backend_pid() AS pid')).rows[0]
+                      .pid;
+                    locked = lockKey(held, `proactivity:${ownerId}`);
+                    await waitFor(async () =>
+                      Boolean(
+                        (
+                          await client.query('SELECT $1=ANY(pg_blocking_pids($2)) AS waiting', [
+                            writer,
+                            pid,
+                          ])
+                        ).rows[0].waiting,
+                      ),
+                    );
+                  }
+                  return catalog;
+                },
+              });
+              const pending = Promise.allSettled([loaded.save(ref, proposal())]);
+              let expired: boolean | null = null;
+              try {
+                await waitFor(() => Boolean(locked));
+                await locked;
+                let started: Date | undefined;
+                await waitFor(async () => {
+                  started = (
+                    await db.pool.query(
+                      'SELECT xact_start FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                      [pid],
+                    )
+                  ).rows[0]?.xact_start;
+                  return !!started;
+                });
+                await db.pool.query(
+                  "UPDATE proactive_evidence SET checked_at=$2::timestamptz-interval '119.9 seconds' WHERE owner_id=$1",
+                  [ownerId, started],
+                );
+                await delay(250);
+                expired = (
+                  await db.pool.query(
+                    "SELECT bool_and(checked_at<clock_timestamp()-interval '2 minutes') AS expired FROM proactive_evidence WHERE owner_id=$1",
+                    [ownerId],
+                  )
+                ).rows[0].expired;
+              } finally {
+                await held.query('COMMIT');
+                held.release();
+              }
+              const results = await pending;
+              assert.equal(expired, true);
+              assert.equal(results[0].status, 'rejected');
+              assert.equal(await delivered(), 0);
+              assert.equal((await engine.view()).issues.length, 0);
+            });
+            await t.test('Stop ends a proactive save blocked by a database row lock', async () => {
+              await reset();
+              const held = await db.pool.connect();
+              await held.query('BEGIN');
+              await held.query('SELECT 1 FROM preferences WHERE owner_id=$1 FOR UPDATE', [ownerId]);
+              const pid = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+              const controller = new AbortController();
+              const pending = Promise.allSettled([
+                engine.save(ref, proposal(), undefined, controller.signal),
+              ]);
+              let stopped!: Promise<unknown>;
+              let settledWhileHeld = false;
+              try {
+                await waitFor(
+                  async () =>
+                    (
+                      await db.pool.query(
+                        'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                        [pid],
+                      )
+                    ).rowCount! > 0,
+                );
+                stopped = db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                  turnId,
+                ]);
+                controller.abort(new Error('Synthetic Stop'));
+                settledWhileHeld = await Promise.race([
+                  Promise.all([pending, stopped]).then(() => true),
+                  delay(500).then(() => false),
+                ]);
+              } finally {
+                await held.query('COMMIT');
+                held.release();
+              }
+              const results = await pending;
+              await stopped;
+              assert.deepEqual(
+                {
+                  settledWhileHeld,
+                  result: results[0].status,
+                  evidence: Number(
+                    (
+                      await db.pool.query(
+                        'SELECT count(*) FROM proactive_evidence WHERE owner_id=$1',
+                        [ownerId],
+                      )
+                    ).rows[0].count,
+                  ),
+                  messages: await delivered(),
+                },
+                { settledWhileHeld: true, result: 'rejected', evidence: 0, messages: 0 },
+              );
+            });
+            await t.test(
+              'a changed source, changed rule, disconnect, and Stop prevent stale work',
+              async () => {
+                await reset();
+                version = 'v2';
+                assert.equal(
+                  (
+                    (await save({ sources: [{ sourceId, id: 'thread1', version: 'v1' }] })) as {
+                      status: string;
+                    }
+                  ).status,
+                  'source_changed',
+                );
+                assert.equal((await engine.view()).issues.length, 0);
+                await reset();
+                afterRead = async () => {
+                  await preferences.update({
+                    notificationRule: 'Only prepare private work about renewals.',
+                  });
+                };
+                await assert.rejects(save(), /rules changed/);
+                await reset();
+                afterRead = async () => {
+                  connected = false;
+                };
+                await assert.rejects(save(), /source changed/i);
+                await reset();
+                afterRead = async () => {
+                  await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
+                };
+                await assert.rejects(save(), /no longer active/);
+                assert.equal(await delivered(), 0);
+              },
+            );
+            await t.test('private drafts and controls stay within their owner', async () => {
+              await reset();
+              await save();
+              const issue = (await engine.view()).issues[0];
+              const stranger = createProactivity({ ...options, ownerId: 'synthetic-other-owner' });
+              assert.deepEqual(await stranger.prepared({ id: issue.id }), []);
+              assert.equal((await stranger.view()).issues.length, 0);
+              await assert.rejects(
+                stranger.control({ id: issue.id, action: 'handled' }),
+                /unavailable/,
+              );
+              await assert.rejects(
+                engine.control({ id: issue.id, action: 'dismiss' }, ref),
+                /owner message/,
+              );
+              assert.equal((await engine.view()).issues[0].state, 'offered');
+            });
+            await t.test(
+              'the saved-work reader keeps owner scope, redaction, and current versions',
+              async () => {
+                await reset();
+                const { createTaskObservations } =
+                  await import('../src/server/task-observations.ts');
+                const { createRedactor } = await import('../src/server/redaction.ts');
+                const secret = 'synthetic-secret-password-9481';
+                const own = randomUUID();
+                const foreign = randomUUID();
+                await db.pool.query(
+                  "INSERT INTO tasks(id,owner_id,session_id,turn_id,title,done_when,now_text,result) VALUES($1,$3,$1,$4,'Owned review','Reviewed','Waiting',$5),($2,'synthetic-other-owner',$2,$4,'Private foreign review','Reviewed','Waiting','Foreign content')",
+                  [own, foreign, ownerId, turnId, secret],
+                );
+                try {
+                  const reader = createTaskObservations(db.pool, ownerId, createRedactor([secret]));
+                  const read = (id: string) =>
+                    reader.read('tasks', { ids: [id] }, new AbortController().signal);
+                  const first = (await read(own)).records[0];
+                  assert.equal(first.available, true);
+                  assert.equal(JSON.stringify(first).includes(secret), false);
+                  assert.equal(first.data.title, 'Owned review');
+                  const hidden = (await read(foreign)).records[0];
+                  assert.equal(hidden.available, false);
+                  assert.equal(JSON.stringify(hidden).includes('Foreign content'), false);
+                  let token = (await reader.sources())[0].changeToken;
+                  let version = first.version;
+                  for (const [field, value, wakes] of [
+                    ['title', 'Updated review', true],
+                    ['done_when', 'Updated completion condition', true],
+                    ['result', 'Updated result', true],
+                    ['now_text', 'The required details are ready', false],
+                    ['updated_at', '2026-10-27T12:00:00.000Z', false],
+                  ] as const) {
+                    await db.pool.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`, [own, value]);
+                    const current = (await read(own)).records[0];
+                    const changed = (await reader.sources())[0].changeToken;
+                    assert.notEqual(current.version, version, field);
+                    if (wakes) assert.notEqual(changed, token, field);
+                    else assert.equal(changed, token, field);
+                    version = current.version;
+                    token = changed;
+                  }
+                  await db.pool.query(
+                    "UPDATE tasks SET updated_at=now()-interval '10 minutes' WHERE id=$1",
+                    [own],
+                  );
+                  const since = new Date(Date.now() - 60000).toISOString();
+                  const renamed = await request('PATCH', `/api/tasks/${own}`, {
+                    title: 'Renamed review',
+                  });
+                  assert.equal(renamed.statusCode, 200);
+                  const asOf = new Date(Date.now() + 1000).toISOString();
+                  const changed = [];
+                  for (
+                    let cursor: string | undefined, first = true;
+                    first || cursor;
+                    first = false
+                  ) {
+                    const page = await reader.read(
+                      'tasks',
+                      { since, asOf, ...(cursor ? { cursor } : {}) },
+                      new AbortController().signal,
+                    );
+                    changed.push(...page.records);
+                    cursor = page.nextCursor;
+                  }
+                  assert.ok(
+                    changed.some(
+                      (record) => record.id === own && record.data.title === 'Renamed review',
+                    ),
+                  );
+                  await db.pool.query(
+                    "UPDATE tasks SET state='done',result='Reviewed',updated_at=now()+interval '1 second' WHERE id=$1",
+                    [own],
+                  );
+                  const latest = (await read(own)).records[0];
+                  assert.notEqual(first.version, latest.version);
+                  assert.equal(latest.data.state, 'done');
+                } finally {
+                  await db.pool.query('DELETE FROM tasks WHERE id=ANY($1::uuid[])', [
+                    [own, foreign],
+                  ]);
+                }
+              },
+            );
+            await t.test(
+              'one due issue queues one reassessment and resumes retain the tool limit',
+              async () => {
+                await reset();
+                await save({
+                  impact: 'low',
+                  nextCheck: new Date(Date.now() + 60000).toISOString(),
+                });
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                await db.pool.query(
+                  "UPDATE proactive_issues SET next_check=now()-interval '1 minute' WHERE owner_id=$1",
+                  [ownerId],
+                );
+                const before = Number(
+                  (
+                    await db.pool.query(
+                      "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                      [ownerId],
+                    )
+                  ).rows[0].count,
+                );
+                await Promise.all([engine.due(), engine.due()]);
+                const after = Number(
+                  (
+                    await db.pool.query(
+                      "SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                      [ownerId],
+                    )
+                  ).rows[0].count,
+                );
+                assert.equal(after, before + 1);
+                const resumed = await thread.enqueueTurn('Synthetic read approval resume', {
+                  source: 'resume',
+                  parentTurnId: turnId,
+                  sessionId: turnId,
+                  background: true,
+                });
+                assert.equal(
+                  (await db.pool.query('SELECT proactive FROM turns WHERE id=$1', [resumed]))
+                    .rows[0].proactive,
+                  true,
+                );
+              },
+            );
+          } finally {
+            await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
+            await preferences.update(previous);
+          }
+        },
+      );
+      await t.test(
+        'standing automations and unsupported watches retain ordinary event turns',
+        async () => {
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const original = await preferences.get();
+          const legacy = createTriage({ preparation: async () => false });
+          try {
+            quietBackgroundWork = true;
+            await preferences.update({
+              notificationRule: 'Forward the synthetic invoices to the owned test target.',
+              proactivePaused: true,
+            });
+            const turnId = await legacy.triageEvent(
+              'Synthetic owned automation event',
+              randomUUID(),
+              async () => true,
+              'synthetic-account',
+            );
+            assert.ok(turnId);
+            const row = (
+              await db.pool.query(
+                'SELECT proactive,source_id FROM turns WHERE id=$1 AND owner_id=$2',
+                [turnId, ownerId],
+              )
+            ).rows[0];
+            assert.equal(row.proactive, false);
+            assert.ok(row.source_id.startsWith('notification:'));
+            await waitFor(async () => runs.some((run) => run.turnId === turnId));
+            const run = runs.find((run) => run.turnId === turnId)!;
+            assert.equal(run.proactivity, undefined);
+            assert.equal(
+              run.notificationRule,
+              'Forward the synthetic invoices to the owned test target.',
+            );
+            let account = 'first-account';
+            const connectionId = randomUUID();
+            const polling = createTriage({
+              preparation: async () => false,
+              connectedApps: async () => [
+                {
+                  slug: 'synthetic-records',
+                  name: 'Synthetic records',
+                  status: 'connected',
+                  connectionId,
+                  accountId: account,
+                  access: ['mcp'],
+                  triggersEnabled: false,
+                  supportsTriggers: false,
+                },
+              ],
+            });
+            await polling.heartbeat();
+            await polling.heartbeat();
+            const checks = (
+              await db.pool.query(
+                'SELECT id,proactive,source_id FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2)',
+                [ownerId, `activity-check:${connectionId}:`],
+              )
+            ).rows;
+            assert.equal(checks.length, 1);
+            assert.equal(checks[0].proactive, false);
+            assert.equal(await polling.staleCheck(checks[0].source_id), false);
+            await waitFor(settled(checks[0].id));
+            await db.pool.query(
+              "UPDATE turns SET created_at=now()-interval '31 minutes' WHERE id=$1",
+              [checks[0].id],
+            );
+            await polling.heartbeat();
+            const repeated = (
+              await db.pool.query(
+                'SELECT id FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2) ORDER BY created_at DESC',
+                [ownerId, `activity-check:${connectionId}:`],
+              )
+            ).rows;
+            assert.equal(repeated.length, 2);
+            await waitFor(settled(repeated[0].id));
+
+            account = 'new-account';
+            assert.equal(await polling.staleCheck(checks[0].source_id), true);
+            await preferences.update({ notificationRule: '' });
+            await polling.heartbeat();
+            assert.equal(
+              (
+                await db.pool.query(
+                  'SELECT count(*) FROM turns WHERE owner_id=$1 AND starts_with(source_id,$2)',
+                  [ownerId, `activity-check:${connectionId}:`],
+                )
+              ).rows[0].count,
+              '2',
+            );
+          } finally {
+            quietBackgroundWork = false;
+            await preferences.update(original);
+          }
+        },
+      );
+      await t.test(
         'every app event wakes one quiet turn under a notification rule, and none without one',
         async () => {
           const threadId = (await thread.activeThread()).id;
@@ -2200,7 +3085,10 @@ test(
         async () => {
           const preferences = createPreferencesStore(db.pool, ownerId);
           const original = await preferences.get();
-          const triage = createTriage({ connectedApps: readConnectedApps });
+          const triage = createTriage({
+            connectedApps: readConnectedApps,
+            preparation: async () => false,
+          });
           const app: ConnectedApp & { accountId: string } = {
             slug: 'notion',
             name: 'Notion',
@@ -2230,6 +3118,10 @@ test(
                 [ownerId, connectionId],
               )
             ).rows;
+          const mine = async () => [
+            ...(await checks(app.connectionId)),
+            ...(await checks(other.connectionId)),
+          ];
           const stale = async (sourceId: string) => {
             const turnId = await thread.enqueueTurn('Synthetic stale check', {
               source: 'event',
@@ -2246,7 +3138,7 @@ test(
             await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
             currentApps = [app, other];
             await triage.heartbeat();
-            assert.deepEqual(await checks(), []);
+            assert.deepEqual(await mine(), []);
             assert.equal(
               await triage.triageEvent('Synthetic event before a rule', randomUUID()),
               undefined,
@@ -2260,14 +3152,14 @@ test(
             for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
-            for (const check of await checks()) await waitFor(settled(check.id));
+            for (const check of await mine()) await waitFor(settled(check.id));
             assert.ok(
               ran(first.id),
               `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
             );
             const { started_at: since } = (await checks(app.connectionId))[0];
             await triage.heartbeat();
-            assert.equal((await checks()).length, 2);
+            assert.equal((await mine()).length, 2);
             const continuation = randomUUID();
             await db.pool.query(
               "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE id=$1",
@@ -2279,13 +3171,13 @@ test(
               [continuation, first.id],
             );
             await triage.heartbeat();
-            assert.equal((await checks()).length, 2);
+            assert.equal((await mine()).length, 2);
             await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
             await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [first.id]);
             await triage.heartbeat();
             const [, second] = await checks(app.connectionId);
             assert.ok(second.prompt.includes(since.toISOString()));
-            assert.equal((await checks()).length, 3);
+            assert.equal((await mine()).length, 3);
             await waitFor(settled(second.id));
             const replaced = { ...app, accountId: 'account-2' };
             currentApps = [replaced, other, ...ignored];
@@ -2293,7 +3185,7 @@ test(
             const third = (await checks(app.connectionId)).at(-1);
             assert.equal(third.source_id, `activity-check:${app.connectionId}:account-2:first`);
             assert.ok(!third.prompt.includes(since.toISOString()));
-            assert.equal((await checks()).length, 4);
+            assert.equal((await mine()).length, 4);
             await waitFor(settled(third.id));
             await preferences.update({ notificationRule: '' });
             await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
@@ -2305,9 +3197,9 @@ test(
             );
             currentApps = [replaced, other];
             await preferences.update({ notificationRule: '' });
-            const count = (await checks()).length;
+            const count = (await mine()).length;
             await triage.heartbeat();
-            assert.equal((await checks()).length, count);
+            assert.equal((await mine()).length, count);
             await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
           } finally {
             quietBackgroundWork = false;
@@ -4406,5 +5298,132 @@ test(
       (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
       0,
     );
+  },
+);
+
+test(
+  'proactive storage starts once when fresh-schema workers start together',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_proactive_init_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    url.searchParams.set('application_name', schema);
+    const previousDatabase = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = url.href;
+    const pool = new pg.Pool({ connectionString: url.href, max: 25 });
+    t.after(async () => {
+      if (previousDatabase === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabase;
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await pool.query(
+      'CREATE TABLE messages(id uuid PRIMARY KEY); CREATE TABLE turns(id uuid PRIMARY KEY)',
+    );
+    const { createProactivity } = await import('../src/server/proactivity.ts');
+    const held = await pool.connect();
+    await held.query('BEGIN');
+    await held.query('LOCK TABLE messages IN ACCESS EXCLUSIVE MODE');
+    const starts = Promise.allSettled(
+      Array.from({ length: 24 }, (_, i) =>
+        createProactivity({
+          pool,
+          ownerId: `synthetic-start-owner-${i}`,
+          sources: async () => [],
+          read: async () => ({}),
+        }).initialize(),
+      ),
+    );
+    try {
+      let waiting = 0;
+      const deadline = Date.now() + 10000;
+      while (waiting < 2 && Date.now() < deadline) {
+        waiting = Number(
+          (
+            await admin.query(
+              "SELECT count(*) FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock'",
+              [schema],
+            )
+          ).rows[0].count,
+        );
+        if (waiting < 2) await delay(10);
+      }
+      assert.ok(waiting >= 2);
+    } finally {
+      await held.query('COMMIT');
+      held.release();
+    }
+    assert.deepEqual(
+      (await starts).flatMap((result) =>
+        result.status === 'rejected' ? [String(result.reason.code)] : [],
+      ),
+      [],
+    );
+  },
+);
+
+test('the dispatch classifier keeps ordinary work when unclear or failing and never sees events', async () => {
+  const { createNotificationRouting } = await import('../src/server/notification-routing.ts');
+  const inputs: unknown[] = [];
+  const route = (answer: unknown) =>
+    createNotificationRouting(async (_instructions, input) => {
+      inputs.push(input);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
+  const rule = 'Prepare replies to contract requests.';
+  const rules = 'Ask before replying to Ana.';
+  assert.equal(await route({ automation: false })('', ''), true);
+  assert.equal(inputs.length, 0);
+  assert.equal(await route({})(rule, rules), false);
+  assert.equal(await route(new Error('timeout'))(rule, rules), false);
+  assert.equal(await route({ automation: true })(rule, rules), false);
+  const prepare = route({ automation: false });
+  assert.equal(await prepare(rule, rules), true);
+  assert.equal(await prepare(rule, rules), true);
+  assert.equal(inputs.length, 4);
+  assert.deepEqual(inputs.at(-1), { notificationRule: rule, rules });
+});
+
+test(
+  'a cancelled transaction stops waiting for a database connection and releases a late client',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const { transaction } = await import('../src/server/transaction.ts');
+    const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+    const held = await pool.connect();
+    const controller = new AbortController();
+    const reason = new Error('Synthetic Stop');
+    let ran = false;
+    const pending = transaction(
+      async () => {
+        ran = true;
+      },
+      pool,
+      controller.signal,
+    );
+    const rejected = assert.rejects(pending, (error) => error === reason);
+    try {
+      assert.equal(pool.waitingCount, 1);
+      controller.abort(reason);
+      assert.equal(
+        await Promise.race([rejected.then(() => true), delay(1000).then(() => false)]),
+        true,
+      );
+      assert.equal(ran, false);
+    } finally {
+      const removed = new Promise<void>((resolve) => pool.once('remove', () => resolve()));
+      held.release();
+      await rejected;
+      await removed;
+      assert.equal(pool.totalCount, 0);
+      await pool.query('SELECT 1');
+      await pool.end();
+    }
+    assert.equal(ran, false);
   },
 );
