@@ -36,10 +36,10 @@ export interface SiteContext {
 
 export type Site = (context: SiteContext) => Page | Promise<Page>;
 
-export function page(title: string, body: string, status = 200): Page {
+export function page(title: string, body: string, status = 200, lang = 'en'): Page {
   return {
     status,
-    body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 20px;color:#1b1b1f}header{border-bottom:1px solid #ddd;margin-bottom:24px;padding-bottom:8px}nav a{margin-right:16px}label,input,button,select{display:block;margin:12px 0;font:inherit}input,select,button{padding:8px 10px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px;text-align:left}.card{border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0}.error{color:#b00020}</style></head><body>${body}</body></html>`,
+    body: `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 20px;color:#1b1b1f}header{border-bottom:1px solid #ddd;margin-bottom:24px;padding-bottom:8px}nav a{margin-right:16px}label,input,button,select{display:block;margin:12px 0;font:inherit}input,select,button{padding:8px 10px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px;text-align:left}.card{border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0}.error{color:#b00020}</style></head><body>${body}</body></html>`,
   };
 }
 

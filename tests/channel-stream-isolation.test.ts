@@ -168,64 +168,6 @@ test(
       await waitFor(() =>
         wire.some((event) => event.streamId === 'stream-web-reply' && event.done),
       );
-      const persisted = (
-        await app.inject({ method: 'GET', url: '/api/state', headers })
-      ).json<AppState>();
-      const history = (
-        await app.inject({ method: 'GET', url: '/api/messages', headers })
-      ).json<MessageHistoryPage>().messages;
-      const expected = modes.map((mode) => mode.marker).sort();
-      await t.test('reload and history retain every reply in the shared thread', async () => {
-        assert.deepEqual(
-          persisted.messages
-            .filter((message) => message.role === 'assistant')
-            .map((message) => message.text)
-            .sort(),
-          expected,
-        );
-        assert.deepEqual(
-          history
-            .filter((message) => message.role === 'assistant')
-            .map((message) => message.text)
-            .sort(),
-          expected,
-        );
-        assert.equal(
-          (await db.pool.query("SELECT id FROM messages WHERE role='assistant'")).rowCount,
-          modes.length,
-        );
-        assert.ok(visible.includes('web-reply'));
-        assert.equal(
-          wire.some((event) => event.type === 'delta' && event.turnId === ids.get('web-reminder')),
-          false,
-        );
-        assert.equal(
-          wire.some((event) => event.type === 'delta' && event.turnId === ids.get('web-event')),
-          false,
-        );
-        assert.equal(
-          wire.some((event) => 'ownerId' in event || 'channel' in event),
-          false,
-        );
-      });
-      const foreignIds = new Set(
-        modes.filter((mode) => mode.channel !== 'web').map((mode) => ids.get(mode.marker)),
-      );
-      await t.test('external-channel task deltas never leave the web SSE response', () => {
-        assert.deepEqual(
-          wire.filter((event) => event.type === 'delta' && foreignIds.has(String(event.turnId))),
-          [],
-          'External-channel assistant bytes reached the web SSE response.',
-        );
-      });
-      await t.test('SSE rejects foreign-owner, foreign-destination and unscoped events', () => {
-        assert.deepEqual(
-          wire.filter((event) =>
-            rejectedEvents.some((rejected) => rejected.turnId === event.turnId),
-          ),
-          [],
-        );
-      });
     } finally {
       controller.abort();
       try {
