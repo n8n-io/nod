@@ -6,34 +6,34 @@
 
   $windows = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
   if (-not [Environment]::Is64BitOperatingSystem -or [int]$windows.CurrentBuildNumber -lt 22000) {
-    throw 'nod requires 64-bit Windows 11.'
+    throw 'Nod requires 64-bit Windows 11.'
   }
   if ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this installer in a normal PowerShell window, not as administrator.'
   }
   if (Get-Process -Name nod -ErrorAction SilentlyContinue) {
-    throw 'Quit nod, then run this command again.'
+    throw 'Quit Nod, then run this command again.'
   }
 
   $latest = Invoke-RestMethod -Uri "$base/releases?installer=true&platform=win32-x64" -UseBasicParsing
   $assets = "$base/releases/$($latest.releaseId)/assets/"
   if ($latest.schema -ne 1 -or "$($latest.version)" -notmatch '^\d+\.\d+\.\d+$' -or -not "$($latest.manifestUrl)".StartsWith($assets)) {
-    throw 'The nod release metadata is invalid.'
+    throw 'The Nod release metadata is invalid.'
   }
   foreach ($key in $files.Keys) {
     $entry = $latest.$key
     if (-not "$($entry.url)".StartsWith($assets) -or "$($entry.sha256)" -cnotmatch '^[a-f0-9]{64}$' -or [long]$entry.bytes -lt 1) {
-      throw 'The nod release metadata is invalid.'
+      throw 'The Nod release metadata is invalid.'
     }
   }
   $response = Invoke-WebRequest -Uri $latest.manifestUrl -UseBasicParsing
   $manifest = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json
   if ($manifest.version -ne $latest.version -or $manifest.platform -ne 'win32-x64') {
-    throw 'The nod release files do not match their metadata.'
+    throw 'The Nod release files do not match their metadata.'
   }
   foreach ($key in $files.Keys) {
     if ($manifest.$key.file -ne $files[$key] -or $manifest.$key.sha256 -ne $latest.$key.sha256 -or [long]$manifest.$key.bytes -ne [long]$latest.$key.bytes) {
-      throw 'The nod release files do not match their metadata.'
+      throw 'The Nod release files do not match their metadata.'
     }
   }
 
@@ -56,25 +56,25 @@
       $target = $existing
       $arguments = "/S /D=$existing"
     }
-    Write-Host "Installing nod $($latest.version)..."
+    Write-Host "Installing Nod $($latest.version)..."
     $process = Start-Process -FilePath (Join-Path $directory $files.installer) -ArgumentList $arguments -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw 'The nod installer did not finish.' }
+    if ($process.ExitCode -ne 0) { throw 'The Nod installer did not finish.' }
     $installed = (Get-ItemProperty -Path 'HKCU:\Software\nod' -ErrorAction SilentlyContinue).InstallDir
     if (-not $installed -or [IO.Path]::GetFullPath($installed) -ne [IO.Path]::GetFullPath($target)) {
-      throw 'The nod installation destination could not be verified.'
+      throw 'The Nod installation destination could not be verified.'
     }
     $application = Join-Path $installed 'nod.exe'
     $package = Get-Content -LiteralPath (Join-Path $installed 'resources\app\package.json') -Raw | ConvertFrom-Json
     if (-not (Test-Path -LiteralPath $application -PathType Leaf) -or $package.name -ne 'nod-desktop' -or $package.version -ne $latest.version) {
-      throw 'The installed app does not match the nod release.'
+      throw 'The installed app does not match the Nod release.'
     }
   } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
   }
-  Write-Host "nod $($latest.version) is installed. Opening nod..."
+  Write-Host "Nod $($latest.version) is installed. Opening Nod..."
   try {
     Start-Process -FilePath $application -WorkingDirectory $installed
   } catch {
-    throw 'nod is installed, but could not open. Open nod from the Start menu.'
+    throw 'Nod is installed, but could not open. Open Nod from the Start menu.'
   }
 }

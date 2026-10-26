@@ -99,7 +99,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      "You are Alex Rivera. Your Banco Atlântico online banking login is saved in nod's Vault. You have one account there, a current account. You never type passwords into chat.",
+      "You are Alex Rivera. Your Banco Atlântico online banking login is saved in Nod's Vault. You have one account there, a current account. You never type passwords into chat.",
   },
   world() {
     const state: State = { logins: 0, failures: 0, noticeAccepted: false, accountViews: 0 };

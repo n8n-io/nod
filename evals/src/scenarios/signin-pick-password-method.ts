@@ -157,7 +157,7 @@ export default scenario({
   seconds: 600,
   user: {
     approve: true,
-    persona: `You are Alex Rivera. Your Stackly login (${owner.email} with a password) is saved in nod's Vault. You want nod to use that saved password login, not Google or a magic link.`,
+    persona: `You are Alex Rivera. Your Stackly login (${owner.email} with a password) is saved in Nod's Vault. You want Nod to use that saved password login, not Google or a magic link.`,
   },
   world(clock) {
     const { current, previous, earlier, next } = calendar(clock.now());

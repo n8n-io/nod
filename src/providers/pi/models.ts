@@ -227,7 +227,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     }
     const token = tokenSchema.parse(await response.json());
     if (!token.scope.split(/\s+/).includes(planScope))
-      throw new ModelAuthError('Allow nod to use your ChatGPT plan, then try again.', true);
+      throw new ModelAuthError('Allow Nod to use your ChatGPT plan, then try again.', true);
     return token;
   }
   function definition(model: Model<Api>): ModelDefinition {
@@ -437,7 +437,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         client_id: saved?.clientId ?? registration,
         ...(saved
           ? { id_token_hint: saved.idToken, ...(saved.email ? { login_hint: saved.email } : {}) }
-          : { agent_name_hint: 'nod' }),
+          : { agent_name_hint: 'Nod' }),
         ext_agent_host_id: `urn:uuid:${hostId}`,
         response_type: 'code',
         redirect_uri: callbackUrl,
@@ -548,7 +548,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         if (error instanceof ModelAuthError) throw error;
         throw new ModelAuthError(
           error instanceof Error && 'code' in error && error.code === 'EADDRINUSE'
-            ? 'Port 1455 is already in use. Close the other nod app or another sign-in, then try again.'
+            ? 'Port 1455 is already in use. Close the other Nod app or another sign-in, then try again.'
             : 'ChatGPT sign-in couldn’t start. Try again.',
         );
       }
@@ -789,7 +789,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         state,
         code_challenge: challenge,
         code_challenge_method: 'S256',
-        key_label: 'nod',
+        key_label: 'Nod',
       }).toString();
       return { url: url.toString(), state, secret: { state, verifier, redirectUri } };
     },
@@ -917,10 +917,10 @@ export async function createPiModelRuntime(
       return [{ providerId: provider, type: subscription ? 'oauth' : 'api_key' }];
     },
     async modify() {
-      throw new Error('Model credentials are managed by nod.');
+      throw new Error('Model credentials are managed by Nod.');
     },
     async delete() {
-      throw new Error('Model credentials are managed by nod.');
+      throw new Error('Model credentials are managed by Nod.');
     },
   };
   const runtime = await ModelRuntime.create({

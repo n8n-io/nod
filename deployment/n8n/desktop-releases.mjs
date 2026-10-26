@@ -652,6 +652,6 @@ export function workflowCode() {
         `const n${index} = ${index < 5 ? 'trigger' : type === 'n8n-nodes-base.if' ? 'ifElse' : 'node'}(${literal({ ...(type === 'n8n-nodes-base.if' ? {} : { type }), version: typeVersion, config, output })});`,
     )
     .join('\n');
-  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
+  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','Nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
 .add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
 }

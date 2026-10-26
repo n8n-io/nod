@@ -805,7 +805,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     '/\n/outside.example.test/api',
     '/\t/outside.example.test/api',
   ])
-    await assert.rejects(session.api('GET', path), /must stay on the nod server/);
+    await assert.rejects(session.api('GET', path), /must stay on the Nod server/);
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
@@ -2261,7 +2261,7 @@ function quietRun(world: ReturnType<Scenario['world']>): Run {
   };
 }
 
-test('every release scenario fails a required code check when nod does nothing, and its sites answer', async () => {
+test('every release scenario fails a required code check when Nod does nothing, and its sites answer', async () => {
   const release = scenarios.filter((item) => item.tier === 'release');
   for (const definition of release) {
     const world = definition.world({ now: Date.now });
@@ -2298,7 +2298,7 @@ test('every release scenario fails a required code check when nod does nothing, 
   }
 });
 
-test('fake remote MCP servers sign in and answer through nod’s own MCP client', async () => {
+test('fake remote MCP servers sign in and answer through Nod’s own MCP client', async () => {
   const { remoteMcp } = await import('../src/world/mcp.ts');
   const { createDiscoveredOAuth } = await import('../../src/providers/discovered/oauth.ts');
   const { createDiscoveredTransport } = await import('../../src/providers/discovered/remote.ts');

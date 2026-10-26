@@ -1,5 +1,5 @@
 export function workspaceNetwork(inspectedNetworks: string) {
-  const unavailable = () => new Error('Start the nod workspace on a normal Docker network first.');
+  const unavailable = () => new Error('Start the Nod workspace on a normal Docker network first.');
   let networks: unknown;
   try {
     networks = JSON.parse(inspectedNetworks);

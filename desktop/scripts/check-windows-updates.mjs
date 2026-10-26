@@ -27,7 +27,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const runner = await realpath(process.env.RUNNER_TEMP);
 const root = await mkdtemp(join(runner, 'nod-update-'));
 const profile = join(root, 'profile');
-const installation = join(root, 'installed nod');
+const installation = join(root, 'installed Nod');
 const events = join(root, 'events.jsonl');
 const stop = join(root, 'stop');
 const output = join(repository, '.local/windows-update-acceptance');
@@ -72,7 +72,7 @@ async function start() {
   });
   return waitFor((entries) => {
     const ready = entries.find((entry) => entry.event === 'ready' && entry.pid === child.pid);
-    assert.ok(ready || child.exitCode === null, `nod exited before readiness (${child.exitCode}).`);
+    assert.ok(ready || child.exitCode === null, `Nod exited before readiness (${child.exitCode}).`);
     return ready;
   });
 }
@@ -211,7 +211,7 @@ app.whenReady().then(async () => {
       arch: 'x64',
       electronVersion: configuration.devDependencies.electron,
       appVersion: version,
-      win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'nod', FileDescription: 'nod' },
+      win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Nod', FileDescription: 'Nod' },
       overwrite: true,
     });
     const stage = join(root, `stage-${version}`);
@@ -265,12 +265,12 @@ app.whenReady().then(async () => {
   const rejectedSource = join(rejected, 'failed.nsi');
   await writeFile(
     rejectedSource,
-    `Unicode true\nName "nod rejected update fixture"\nOutFile "${join(rejected, 'nod-Setup-x64.exe')}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetErrorLevel 5\nSectionEnd\n`,
+    `Unicode true\nName "Nod rejected update fixture"\nOutFile "${join(rejected, 'nod-Setup-x64.exe')}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetErrorLevel 5\nSectionEnd\n`,
   );
   await run(nsis, [rejectedSource]);
   receipt.stage = 'rejecting failed update';
   const rejectedUpdate = await replace(rejected);
-  assert.equal(rejectedUpdate.ok, false, 'A rejected installer must fail without opening nod.');
+  assert.equal(rejectedUpdate.ok, false, 'A rejected installer must fail without opening Nod.');
   await delay(500);
   assert.equal((await recorded()).filter((entry) => entry.event === 'ready').length, 1);
   receipt.stage = 'restarting 1.0.0';

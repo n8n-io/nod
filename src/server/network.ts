@@ -29,7 +29,7 @@ export function serverNetwork(environment: Record<string, string | undefined>) {
       'NOD_AUTH_TOKEN must contain at least 43 letters, digits, underscores or hyphens.',
     );
   if (!desktop && (!local.has(host) || !local.has(url.hostname)) && !authToken)
-    throw new Error('Set NOD_AUTH_TOKEN before making nod available beyond localhost.');
+    throw new Error('Set NOD_AUTH_TOKEN before making Nod available beyond localhost.');
   return {
     port,
     host,

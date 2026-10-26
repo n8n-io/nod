@@ -499,7 +499,7 @@ export async function createDiscoveredConnections(
         .local(url.origin)
         .transport.validateEndpoint(endpoint)
         .catch(() => {
-          throw error(`nod could not reach ${url.host}. Check the address.`);
+          throw error(`Nod could not reach ${url.host}. Check the address.`);
         });
       local = true;
       const advertised = await options
@@ -550,7 +550,7 @@ export async function createDiscoveredConnections(
     );
     if (!updated.rowCount) throw error('This connection request expired.', 409);
     const unreachable = parsed.token
-      ? `nod could not use this token at ${url.host}. Check the address and the token in ${server.name} under Settings, Instance-level MCP.`
+      ? `Nod could not use this token at ${url.host}. Check the address and the token in ${server.name} under Settings, Instance-level MCP.`
       : `${server.name} did not answer at ${url.host}. Check the address, and turn on MCP access in ${server.name} under Settings, Instance-level MCP.`;
     try {
       return parsed.token
@@ -1116,7 +1116,7 @@ export async function createDiscoveredConnections(
         ...(row.reconnect_required ? { connectionId: row.id } : {}),
         paths: row.paths.map((path) => {
           if (path.kind === 'cli') {
-            if (!path.source || !path.env) throw error('Ask nod to set up this CLI again.', 409);
+            if (!path.source || !path.env) throw error('Ask Nod to set up this CLI again.', 409);
             return {
               kind: path.kind,
               command: path.command,

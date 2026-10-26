@@ -125,7 +125,7 @@ export function FeedbackDiagnostics({
       </div>
       <p className="feedback-diagnostics-disclosure">
         Recent messages, tool inputs and results, logs and app activity help us fix bugs and improve
-        nod. Known secrets and personal details are masked. Redaction can miss information; review
+        Nod. Known secrets and personal details are masked. Redaction can miss information; review
         before sending or uncheck to leave the report out.
       </p>
       {included && error && (

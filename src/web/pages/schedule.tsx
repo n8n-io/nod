@@ -80,11 +80,11 @@ export function ScheduleRow({
               variant="ghost"
               size="sm"
               aria-expanded={asking}
-              aria-label={`Ask nod about ${schedule.title}`}
+              aria-label={`Ask Nod about ${schedule.title}`}
               onClick={() => setAsking(!asking)}
             >
               <Sparkles size={16} aria-hidden="true" />
-              Ask nod
+              Ask Nod
             </Button>
             <DeletePlan id={schedule.id} title={schedule.title} />
           </>

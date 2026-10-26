@@ -19,7 +19,7 @@ function summary(view: TrustView) {
   const actions = week.actions
     ? ` It used your apps ${week.actions === 1 ? 'once' : `${week.actions} times`}.`
     : '';
-  return `In the last 7 days, nod did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
+  return `In the last 7 days, Nod did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
 }
 
 function month({ view, timeZone, locale }: UsageReport) {
@@ -85,7 +85,7 @@ export function usagePdf(report: UsageReport, exported: Date) {
       ]);
     y -= gap;
   };
-  line('nod usage', 20, true, 30);
+  line('Nod usage', 20, true, 30);
   line(
     `Exported ${exported.toLocaleString(locale, { day: 'numeric', month: 'long', year: 'numeric', ...clockOptions(locale, report.hourCycle), timeZone })}`,
     9,

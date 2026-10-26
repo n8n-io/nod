@@ -2733,7 +2733,7 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(f.children.length, 2);
 });
 
-test('the engine token waits for the engine nod started to report its port', async (t) => {
+test('the engine token waits for the engine Nod started to report its port', async (t) => {
   const requests = [];
   const f = await runningDesktop(
     t,
@@ -2862,7 +2862,7 @@ test('the engine reaches 1Password only through a separate helper that may load 
   const [helper] = f.helpers;
   assert.match(helper.file, /[\\/]desktop[\\/]main[\\/]onepassword\.mjs$/);
   assert.equal(helper.options.allowLoadingUnsignedLibraries, true);
-  assert.equal(helper.options.serviceName, 'nod 1Password');
+  assert.equal(helper.options.serviceName, 'Nod 1Password');
   assert.deepEqual(JSON.parse(JSON.stringify(helper.options.env)), { HOME: '/Users/synthetic' });
   assert.deepEqual(JSON.parse(JSON.stringify(helper.args)), ['0.0.0-test']);
   assert.deepEqual(JSON.parse(JSON.stringify(helper.sent)), [
@@ -4399,7 +4399,7 @@ test('background update readiness respects notification permission and quiet tim
       },
       currentVersion: '0.1.0',
       prepareRuntime: async () => {},
-      restart: async () => assert.fail('Background readiness cannot restart nod.'),
+      restart: async () => assert.fail('Background readiness cannot restart Nod.'),
     });
     t.after(() => updater.dispose());
     const prompts = [];
@@ -4877,7 +4877,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   );
 });
 
-test('Intel updates use their own app assets and an official nod runtime release', async () => {
+test('Intel updates use their own app assets and an official Nod runtime release', async () => {
   const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop', 'x64', true);
   const candidate = await f.source.latest('0.1.0');
   assert.equal(candidate.runtime.platform, 'darwin-x64');

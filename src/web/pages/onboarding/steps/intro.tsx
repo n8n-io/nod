@@ -140,7 +140,7 @@ export function Introduction({
               >
                 👋
               </span>
-              Hey, I’m nod.
+              Hey, I’m Nod.
             </span>
             <span className="ob-greeting-sub">
               Your personal assistant for <strong>work and life</strong>.
@@ -170,7 +170,7 @@ export function Introduction({
                   error={error}
                   onChange={(value) => void change(value)}
                 >
-                  Help us make nod better by sharing how you use it. Never your messages.
+                  Help us make Nod better by sharing how you use it. Never your messages.
                 </PreferenceBubble>,
               ]
             : []),

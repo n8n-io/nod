@@ -1,6 +1,6 @@
 ---
 title: The agent runtime
-description: How nod runs Pi sessions, which tools the model gets, how every tool call passes the turn guard, and how the prompt is built.
+description: How Nod runs Pi sessions, which tools the model gets, how every tool call passes the turn guard, and how the prompt is built.
 sidebar:
   order: 3
 ---
@@ -9,27 +9,27 @@ This page explains what happens inside a turn: the Pi session, the tools the mod
 
 The short version: `src/runtime` runs each turn in a Pi session. Every tool call goes through one turn guard. Results from the outside world reach the model wrapped as untrusted data.
 
-nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
+Nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
 
 Replies, task updates, questions and confirmations share one writing rule. They use short paragraphs with blank lines between them. Long answers are allowed when useful. They use lists and headings when those help you read. A confirmation asks once and separates the necessary details into short paragraphs.
 
-The prompt asks nod to preserve source titles and identifying context in the visible reply, including a meeting's known date or a document's project. A link or the period searched does not replace that context. Context already clear for the item need not be repeated. The reply says when details are unknown, including people's roles or an item's purpose, without dropping known facts or inventing context.
+The prompt asks Nod to preserve source titles and identifying context in the visible reply, including a meeting's known date or a document's project. A link or the period searched does not replace that context. Context already clear for the item need not be repeated. The reply says when details are unknown, including people's roles or an item's purpose, without dropping known facts or inventing context.
 
-The activity view stays available during work. For a longer request, nod sends a normal chat message when a useful, verified part is ready. It states what it found or completed and what remains. It can deliver that result before the whole job is done. Routine tool steps do not each need a message or a new status line.
+The activity view stays available during work. For a longer request, Nod sends a normal chat message when a useful, verified part is ready. It states what it found or completed and what remains. It can deliver that result before the whole job is done. Routine tool steps do not each need a message or a new status line.
 
-Related details stay together. nod can split a reply at a natural break when each message has a clear purpose. It does not split each sentence or paragraph into another notification. Progress messages need useful progress, an important change, a blocker or a question. [Notification research](https://interruptions.net/literature/Iqbal-CHI08.pdf) supports choosing useful breaks for interruptions. A [randomized field study of notification batching](https://doi.org/10.1016/j.chb.2019.07.016) also found benefits from grouping alerts. These findings guide the choice of message breaks. They do not prove that one or two messages are best for a given reply, or set a fixed message rate for nod.
+Related details stay together. Nod can split a reply at a natural break when each message has a clear purpose. It does not split each sentence or paragraph into another notification. Progress messages need useful progress, an important change, a blocker or a question. [Notification research](https://interruptions.net/literature/Iqbal-CHI08.pdf) supports choosing useful breaks for interruptions. A [randomized field study of notification batching](https://doi.org/10.1016/j.chb.2019.07.016) also found benefits from grouping alerts. These findings guide the choice of message breaks. They do not prove that one or two messages are best for a given reply, or set a fixed message rate for Nod.
 
 The rule uses everyday words, natural contractions and practical help. It follows [Microsoft's writing guidance](https://learn.microsoft.com/en-us/windows/apps/design/style/writing-style) on warmth, clear language and useful error recovery.
 
-[COLING 2025 research](https://aclanthology.org/2025.coling-main.410/) supports adapting the interaction to the user rather than assuming one style suits everyone. A [2026 study of conversational style and trust](https://arxiv.org/abs/2502.10844) found that praise combined with changing stance can reduce trust. nod therefore keeps its own judgement and explains disagreement with respect.
+[COLING 2025 research](https://aclanthology.org/2025.coling-main.410/) supports adapting the interaction to the user rather than assuming one style suits everyone. A [2026 study of conversational style and trust](https://arxiv.org/abs/2502.10844) found that praise combined with changing stance can reduce trust. Nod therefore keeps its own judgement and explains disagreement with respect.
 
 These sources guide the design. They do not prove the quality of each generated reply. Paragraph length and blank lines are product choices for readability.
 
-[Research on conversational feedback](https://arxiv.org/abs/2507.22352) found that natural cues improved perceived response time in a voice and VR setting. [Sidekick](https://arxiv.org/abs/2607.17527) found benefits from combining quiet background cues with summaries of completed actions. These studies support adapting feedback to the task. They do not establish that chat messages always beat status indicators, or measure a dopamine effect from nod messages.
+[Research on conversational feedback](https://arxiv.org/abs/2507.22352) found that natural cues improved perceived response time in a voice and VR setting. [Sidekick](https://arxiv.org/abs/2607.17527) found benefits from combining quiet background cues with summaries of completed actions. These studies support adapting feedback to the task. They do not establish that chat messages always beat status indicators, or measure a dopamine effect from Nod messages.
 
 ## Pi sessions
 
-Pi is the agent harness nod runs on. It keeps the transcript, calls the model and runs tools. nod's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/nod/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
+Pi is the agent harness Nod runs on. It keeps the transcript, calls the model and runs tools. Nod's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/nod/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
 - Background sessions save their transcript too. A reply or secure form continues that session.
@@ -80,14 +80,14 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
 | `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
 | `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops one task or all background work. It grants no permission.        |
-| `share_file`                                                        | Attaches a workspace file to nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
+| `share_file`                                                        | Attaches a workspace file to Nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
 | `mcp__<server>__<tool>`                                             | One tool for each tool of a connected MCP server, such as `mcp__n8n__validate_workflow`. Each call runs like `apps`, after the trust check.  |
 | `tool_search`                                                       | Finds connected MCP server tools by meaning and loads the matches for the next model call.                                                   |
 | `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                        |
 
-The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
+The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
 
 ## The turn guard
 
@@ -115,7 +115,7 @@ A call acts only once every `apps` or `manage_personal_context` call issued befo
 Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no network, files or timers.
 
 - Scripts can call the workspace and `pi-web-access` tools and the tools of connected MCP servers, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
-- Every other nod tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
+- Every other Nod tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
 - A connected MCP server tool called from a script passes the same guard, order and trust check as a direct call. If the check asks you first, the script stops and the question goes to chat.
 - Calls inside a script stay raw so the script can parse them. Codemode's output is wrapped when it returns.
 
@@ -123,7 +123,7 @@ Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no 
 
 Each tool of a connected MCP server becomes its own Pi tool, named `mcp__<server>__<tool>`, with the server's own description and input schema. These tools are deferred: the model loads the ones it needs with `tool_search` or calls them from codemode, so a server with dozens of tools doesn't fill every request. Each server's own guide to its tools reaches Pi inside an `untrusted_tool_result` block, as data that never grants permission.
 
-nod keeps one MCP connection per account and address for a minute after its last call, caches each server's tool list for ten minutes and waits up to ten minutes for one call.
+Nod keeps one MCP connection per account and address for a minute after its last call, caches each server's tool list for ten minutes and waits up to ten minutes for one call.
 
 ## Untrusted results
 
@@ -135,11 +135,11 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 
 | Layer         | Contains                                                                                                                        | Sent                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| Static prompt | nod's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
+| Static prompt | Nod's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
 | Owner context | Account details, date format, the memory index and the learned skill index                                                      | Again only when it changes |
 | Turn message  | Mode, time, channel, message ID, reply target, recent conversation and the instruction                                          | Every turn                 |
 
-The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because nod's custom prompt would otherwise drop them.
+The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Nod's custom prompt would otherwise drop them.
 
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 
@@ -147,24 +147,24 @@ The owner context is a message of its own, never part of the system prompt, so a
 - Earlier copies stay where they are, so the cached conversation after them stays valid.
 - Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
 
-Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when nod restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts).
+Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Nod restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts).
 
 ## Message cadence
 
-nod keeps two things apart:
+Nod keeps two things apart:
 
-- **Live status** shows that nod is working and what it's doing right now. It updates in place without notifying you. Its activity records are separate from chat messages.
-- **Messages** are what nod says to you: an opening line, a useful milestone or partial result, a question, a blocker, the final result or a failure.
+- **Live status** shows that Nod is working and what it's doing right now. It updates in place without notifying you. Its activity records are separate from chat messages.
+- **Messages** are what Nod says to you: an opening line, a useful milestone or partial result, a question, a blocker, the final result or a failure.
 
-Live status covers work you started: a chat request, a task, a reply to a task, and work that continues after you answer or approve something. Schedules and email events that nod starts on its own show none. Whether nod is working comes from the turn's state and its tool events, never from what the model says about its progress; the model only words the step. The status is computed in [`src/server/activity.ts`](https://github.com/n8n-io/nod/blob/main/src/server/activity.ts), and the runtime records steps in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts).
+Live status covers work you started: a chat request, a task, a reply to a task, and work that continues after you answer or approve something. Schedules and email events that Nod starts on its own show none. Whether Nod is working comes from the turn's state and its tool events, never from what the model says about its progress; the model only words the step. The status is computed in [`src/server/activity.ts`](https://github.com/n8n-io/nod/blob/main/src/server/activity.ts), and the runtime records steps in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts).
 
-| Where               | While nod works for you                                                                                                                                                                                                                                                                  |
+| Where               | While Nod works for you                                                                                                                                                                                                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| nod web and desktop | A live bubble with its current activity, such as "Checking seat availability", or the website it's on. A task also shows its title. Milestone messages join the conversation while the live bubble continues. It disappears when work ends. A task card shows the same step and website. |
+| Nod web and desktop | A live bubble with its current activity, such as "Checking seat availability", or the website it's on. A task also shows its title. Milestone messages join the conversation while the live bubble continues. It disappears when work ends. A task card shows the same step and website. |
 | Telegram            | **typing…** plus the current step as a live draft in your chat. A draft never notifies you. It is refreshed during work and expires after 30 seconds without a refresh.                                                                                                                  |
-| WhatsApp            | **typing…** only; it marks your latest message as read. In Business Cloud API mode, nod stops typing when the 24-hour reply window closes. A QR-paired connection does not set that limit.                                                                                               |
+| WhatsApp            | **typing…** only; it marks your latest message as read. In Business Cloud API mode, Nod stops typing when the 24-hour reply window closes. A QR-paired connection does not set that limit.                                                                                               |
 
-| Moment              | What nod does                                                                                                                | Purpose                                                                 |
+| Moment              | What Nod does                                                                                                                | Purpose                                                                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Start               | A short opening message for a chat request that takes more than a few seconds. A saved task uses its existing start message. | Acknowledge the request without repeating the same start.               |
 | Routine work        | Keep activity visible. Use a short status for a useful change of phase.                                                      | Show the current work without narrating each tool call.                 |
@@ -179,7 +179,7 @@ The runtime's conversation guidance defines these message breaks. The confirmati
 
 ## Compact command output
 
-Workspace images include a pinned [RTK](https://github.com/rtk-ai/rtk). Supported simple Bash commands are rewritten to RTK inside the workspace for compact Git, file, search, test and build output. Pipes, redirection, machine-output flags, bare `git log` and `find` stay raw. RTK's `find` skips hidden and ignored folders such as `.nod`, where nod keeps its working files. Unsupported commands fall back before they run, and executed commands are never retried. `rtk proxy <command>` gives exact output. The rules are in [`src/providers/pi/sandbox.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/sandbox.ts).
+Workspace images include a pinned [RTK](https://github.com/rtk-ai/rtk). Supported simple Bash commands are rewritten to RTK inside the workspace for compact Git, file, search, test and build output. Pipes, redirection, machine-output flags, bare `git log` and `find` stay raw. RTK's `find` skips hidden and ignored folders such as `.nod`, where Nod keeps its working files. Unsupported commands fall back before they run, and executed commands are never retried. `rtk proxy <command>` gives exact output. The rules are in [`src/providers/pi/sandbox.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/sandbox.ts).
 
 ## Related resources
 

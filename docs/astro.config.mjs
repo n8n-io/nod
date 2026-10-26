@@ -87,9 +87,9 @@ export default defineConfig({
       },
     }),
     starlight({
-      title: 'nod',
+      title: 'Nod',
       description:
-        'nod is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
+        'Nod is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
       logo: { light: './src/assets/nod-light.svg', dark: './src/assets/nod-dark.svg' },
       favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/n8n-io/nod' }],
@@ -99,19 +99,19 @@ export default defineConfig({
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
         section('Get started', 'get-started'),
-        section('Use nod', 'use'),
+        section('Use Nod', 'use'),
         section('Trust and Vault', 'trust'),
         section('Connect', 'connect'),
-        section('How nod works', 'how-it-works'),
+        section('How Nod works', 'how-it-works'),
         section('Deploy and operate', 'deploy'),
         section('Contribute', 'contribute'),
       ],
       plugins: [
         starlightLinksValidator(),
         starlightLlmsTxt({
-          projectName: 'nod',
+          projectName: 'Nod',
           description:
-            'nod is a personal assistant you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
+            'Nod is a personal assistant you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
         }),
       ],
     }),

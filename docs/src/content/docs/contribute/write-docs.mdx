@@ -1,6 +1,6 @@
 ---
 title: Write docs
-description: Run, write and publish the nod docs, using the site's house style, components and diagrams.
+description: Run, write and publish the Nod docs, using the site's house style, components and diagrams.
 sidebar:
   order: 8
 ---
@@ -17,9 +17,9 @@ import {
   Tabs,
 } from '@astrojs/starlight/components';
 
-This page explains how to run the nod docs on your computer, how to write a page that reads like the rest of the site, and which components and diagrams you can use.
+This page explains how to run the Nod docs on your computer, how to write a page that reads like the rest of the site, and which components and diagrams you can use.
 
-The short version: write for a busy person who has never seen nod's code. Lead with the answer. Use short sentences, "you", and a diagram whenever something moves between parts.
+The short version: write for a busy person who has never seen Nod's code. Lead with the answer. Use short sentences, "you", and a diagram whenever something moves between parts.
 
 ## Run the docs locally
 
@@ -91,7 +91,7 @@ Use a different branch for a preview deployment. Open the returned deployment UR
       - deploy/
       - contribute/
     - assets/ images and screenshots
-    - styles/theme.css the nod theme
+    - styles/theme.css the Nod theme
 
 </FileTree>
 
@@ -130,7 +130,7 @@ A diagram, then two or three short paragraphs.
 
 ## Write like the rest of the docs
 
-nod's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribution-guide-for-n8n-docs/style-guide-for-n8n-docs), which builds on the Microsoft Writing Style Guide.
+Nod's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribution-guide-for-n8n-docs/style-guide-for-n8n-docs), which builds on the Microsoft Writing Style Guide.
 
 ### Plain language
 
@@ -140,19 +140,19 @@ nod's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contributi
 | in order to                                  | to                     |
 | functionality, capabilities                  | features, what it does |
 | It's important to note that X                | X                      |
-| nod provides a powerful, seamless way to ... | nod lets you ...       |
+| Nod provides a powerful, seamless way to ... | Nod lets you ...       |
 | The owner                                    | you                    |
-| Pi, the agent, the LLM (in user pages)       | nod, or the model      |
+| Pi, the agent, the LLM (in user pages)       | Nod, or the model      |
 
 - **Lead with the answer.** Put one sentence under the title that says what the page lets you do.
 - **Keep sentences short.** One idea each, under 25 words. Split anything held together by a semicolon.
 - **Cut filler and marketing.** No "simply", "powerful", "robust" or "seamless". Say what happens.
-- **Be exact.** Write "for 90 days", not "for a while". Write "nod asks you", not "nod may ask".
-- **Lead with the action.** "To stop nod, select **Stop**", not "There is a button that stops nod".
+- **Be exact.** Write "for 90 days", not "for a while". Write "Nod asks you", not "Nod may ask".
+- **Lead with the action.** "To stop Nod, select **Stop**", not "There is a button that stops Nod".
 
 ### Voice and person
 
-- Talk to the reader as "you". Name nod in the third person: "nod asks", not "we ask".
+- Talk to the reader as "you". Name Nod in the third person: "Nod asks", not "we ask".
 - Use active voice: "The server checks the action", not "The action is checked".
 - Use contractions: "don't", "can't", "you'll".
 - Use "they" for an unknown person.
@@ -237,7 +237,7 @@ Use tabs when the same task differs by platform or setup.
 
 <Tabs syncKey="platform">
   <TabItem label="macOS" icon="apple">
-    nod keeps the Vault key in the macOS Keychain.
+    Nod keeps the Vault key in the macOS Keychain.
   </TabItem>
   <TabItem label="Linux" icon="linux">
     Set `NOD_VAULT_KEY` in `.env` before the first start.
@@ -259,7 +259,7 @@ Use cards for a short grid of ideas, and link cards to send readers onward.
   </Card>
 </CardGrid>
 
-<LinkCard title="Trust and Vault" href="/trust/" description="How nod keeps you in control." />
+<LinkCard title="Trust and Vault" href="/trust/" description="How Nod keeps you in control." />
 
 ### Badges
 
@@ -339,15 +339,15 @@ Use a sequence diagram when the order of messages matters.
 ```mermaid
 sequenceDiagram
   actor You
-  participant nod
+  participant Nod
   participant Server
   participant Site as Website
-  You->>nod: Read the report with my saved login
-  nod->>Server: Use this account on this website
+  You->>Nod: Read the report with my saved login
+  Nod->>Server: Use this account on this website
   Server->>Server: Check task, account and website
   Server->>Site: Fill in and submit privately
-  Site-->>nod: Page after sign-in, secrets masked
-  nod-->>You: Here is the report
+  Site-->>Nod: Page after sign-in, secrets masked
+  Nod-->>You: Here is the report
 ```
 
 ### State diagram
@@ -375,6 +375,6 @@ stateDiagram-v2
 
 ## Related resources
 
-- [Contribute to nod](/contribute/)
+- [Contribute to Nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Pull requests and releases](/contribute/pull-requests/)

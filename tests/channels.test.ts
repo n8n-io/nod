@@ -2187,7 +2187,7 @@ test('channel presentation isolates private links from the model and rejects uns
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });
-    return 'Continua na aplicação nod.';
+    return 'Continua na aplicação Nod.';
   };
   await channelReply(
     'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
@@ -2200,7 +2200,7 @@ test('channel presentation isolates private links from the model and rejects uns
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
   for (const page of ['/vault', '/trust']) {
-    await channelReply(`Save it in nod: ${page}?add=login`, { threadId: 'owned-thread', present });
+    await channelReply(`Save it in Nod: ${page}?add=login`, { threadId: 'owned-thread', present });
     assert.doesNotMatch(JSON.stringify(presentation), /(?:vault|trust)\?add/);
   }
   for (const generated of [
@@ -2298,7 +2298,7 @@ test(
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
         if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
-        return 'Continua na aplicação nod.';
+        return 'Continua na aplicação Nod.';
       },
       transport: createChatSdkTransport(pool, fixtureEnv),
       resolveAttachments: async (resolvedThreadId, ids) => {
@@ -2682,7 +2682,7 @@ test(
         await channels.drain();
         assert.equal(sent.length, before + 2);
         assert.equal(sent.at(-1)?.provider, provider);
-        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação nod/);
+        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação Nod/);
         assert.match(JSON.stringify(sent.at(-2)?.body), /The website needs sign-in/);
         assert.equal(handoffPresentations.length, presented + 1);
         assert.doesNotMatch(
@@ -2714,7 +2714,7 @@ test(
       await app.close();
       const restarted = await createChannels(pool, {
         ownerId: 'local-development',
-        present: async () => 'Consulta os ficheiros na aplicação nod.',
+        present: async () => 'Consulta os ficheiros na aplicação Nod.',
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');

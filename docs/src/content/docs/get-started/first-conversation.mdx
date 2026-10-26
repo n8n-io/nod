@@ -1,19 +1,19 @@
 ---
 title: Your first conversation
-description: Get through nod's onboarding, start your first task and learn what happens when nod needs you.
+description: Get through Nod's onboarding, start your first task and learn what happens when Nod needs you.
 sidebar:
   order: 4
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-This page walks you through nod's onboarding, your first tasks and what to do when nod needs you.
+This page walks you through Nod's onboarding, your first tasks and what to do when Nod needs you.
 
 ## Onboarding at a glance
 
-nod opens onboarding the first time you set up an assistant. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. nod gets to know you in chat after setup.
+Nod opens onboarding the first time you set up an assistant. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. Nod gets to know you in chat after setup.
 
-For a local desktop assistant, you can connect accounts while nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
+For a local desktop assistant, you can connect accounts while Nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
 
 ```mermaid
 flowchart TD
@@ -22,16 +22,16 @@ flowchart TD
   email --> calendar[Calendar or skip]:::muted
   calendar --> model[Connect<br/>a model]:::accent
   model --> apps[Other tools]:::muted
-  apps --> chat([Get to know nod<br/>in chat]):::go
+  apps --> chat([Get to know Nod<br/>in chat]):::go
 ```
 
 ## Go through onboarding
 
 <Steps>
 
-1. **Choose your assistant.** In the desktop app, select **Use this computer** for a local assistant or **Connect to a server**. In the web app, select **Get started**. Local setup prepares its services in the background after your choice. If storage is still preparing, nod waits and continues automatically when it's ready.
+1. **Choose your assistant.** In the desktop app, select **Use this computer** for a local assistant or **Connect to a server**. In the web app, select **Get started**. Local setup prepares its services in the background after your choice. If storage is still preparing, Nod waits and continues automatically when it's ready.
 
-2. **Say hi.** nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. For a local desktop assistant, the introduction stays visible until email setup is ready to open.
+2. **Say hi.** Nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. For a local desktop assistant, the introduction stays visible until email setup is ready to open.
 
 3. **Connect email (optional).** Choose **Gmail** or **Outlook** to get help with replies and follow-ups. Sign in and review the permissions, or select **Skip for now**. Setup continues after the connection is confirmed. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps to add another account or confirm removal. Select **Continue** when you’re ready.
 
@@ -39,7 +39,7 @@ flowchart TD
 
 5. **Connect a model.** Choose a provider, or select **More providers** to search all supported services. Follow its sign-in or API-key form. See [Connect a model](/connect/models/) for required credentials and cloud settings. Existing connections, including those configured through server environment variables, are available here.
 
-   To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from nod's server. If nod shows **Key saved for**, access will be checked on first use. Choose a model if prompted, then select **Continue**. You can change the model here or later in **Models**.
+   To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from Nod's server. If Nod shows **Key saved for**, access will be checked on first use. Choose a model if prompted, then select **Continue**. You can change the model here or later in **Models**.
 
 6. **Connect other apps (optional).** Browse the categories or search by name, then select **Connect** and review the access requested by each app. Connected apps keep their place in the list. **Manage** opens the same account manager as Apps, where you can add another account or disconnect one. A count shows connected tools, excluding email. Each app counts once, even with multiple accounts. Finish this step whenever you’re ready, including with no apps connected. You can add apps anytime from **Apps**.
 
@@ -47,28 +47,28 @@ flowchart TD
 
 </Steps>
 
-Setup finishes after the apps step in the web app or a desktop client connected to a server. A local assistant also requires desktop preferences. If its computer is still preparing, nod shows progress and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, nod sends you back to that step.
+Setup finishes after the apps step in the web app or a desktop client connected to a server. A local assistant also requires desktop preferences. If its computer is still preparing, Nod shows progress and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
-To revisit setup in your browser, open `/onboarding?replay=1` on your nod address. This returns to Welcome while keeping saved connections and settings.
+To revisit setup in your browser, open `/onboarding?replay=1` on your Nod address. This returns to Welcome while keeping saved connections and settings.
 
 In the desktop app, **Replay onboarding** opens setup again without deleting saved connections or preferences. While first setup is still running, it returns to your current step. For a separate empty test install on a Mac, use the [Mac test installer](/contribute/desktop-releases/#test-a-local-mac-build); it creates a new isolated profile.
 
 ## Start your first task
 
-nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep your local assistant or server running so it can reply.
+Nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep your local assistant or server running so it can reply.
 
-On a new desktop profile, nod enables notifications when its first chat introduction appears, so it can tell you when work is ready or needs your attention. macOS may ask for permission; your system settings control delivery. If you decline, nod does not ask again automatically. You can allow notifications in your system settings later. Existing notification choices are kept. Desktop alerts do not authorize app monitoring or scheduled work.
+On a new desktop profile, Nod enables notifications when its first chat introduction appears, so it can tell you when work is ready or needs your attention. macOS may ask for permission; your system settings control delivery. If you decline, Nod does not ask again automatically. You can allow notifications in your system settings later. Existing notification choices are kept. Desktop alerts do not authorize app monitoring or scheduled work.
 
-nod also prepares three starting task cards: one **Right now** and two **Ongoing** ideas. It reads a small sample from your connected tools to find work it could take off your plate. That might be a meeting to prepare for, a conversation waiting on you, or a recurring report. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
+Nod also prepares three starting task cards: one **Right now** and two **Ongoing** ideas. It reads a small sample from your connected tools to find work it could take off your plate. That might be a meeting to prepare for, a conversation waiting on you, or a recurring report. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
 
-If a tool can't be read or has nothing useful to surface, nod suggests work without claiming it found something. You can ignore the cards and type any request.
+If a tool can't be read or has nothing useful to surface, Nod suggests work without claiming it found something. You can ignore the cards and type any request.
 
-Each card shows its connected tool, or **For you** for general suggestions. Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to nod as your message. The card shows **On it…** while nod works, then **Done** or **Set up**.
+Each card shows its connected tool, or **For you** for general suggestions. Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to Nod as your message. The card shows **On it…** while Nod works, then **Done** or **Set up**.
 
 :::note[A card isn't your permission]
-The card's words are nod's, not yours. They can't on their own approve sending something to other people or deleting data, now or in a schedule the card set up.
+The card's words are Nod's, not yours. They can't on their own approve sending something to other people or deleting data, now or in a schedule the card set up.
 :::
 
 ## Write a good first request
@@ -78,27 +78,27 @@ The card's words are nod's, not yours. They can't on their own approve sending s
 - **Say whether to send or draft:** "Draft a reply to the Northstar quote. Don't send it."
 - **Ask for a schedule in plain words:** "Every Monday at 9 am, send me a summary of new client email."
 
-You can keep writing while nod works. nod reads new messages before its next step.
+You can keep writing while Nod works. Nod reads new messages before its next step.
 
-## When nod needs you
+## When Nod needs you
 
-| nod needs                    | What you see                                                       | What you do                              |
+| Nod needs                    | What you see                                                       | What you do                              |
 | ---------------------------- | ------------------------------------------------------------------ | ---------------------------------------- |
 | A choice or a missing detail | A question in the chat                                             | Reply in the chat                        |
 | Your OK for an action        | "Reply yes to go ahead, no to skip it, or tell me what to change." | Reply **yes** or **no**                  |
 | A password, code or card     | A private form, such as **Sign in** or **Approve payment**         | Enter it in the form, not the chat       |
-| You to use a website         | A live browser view in chat                                        | Take over, then select **Return to nod** |
+| You to use a website         | A live browser view in chat                                        | Take over, then select **Return to Nod** |
 
-What you type in a private form goes to the website, not to the model. nod never asks for a password, code, card number or API key in the chat. See [Approvals and the trust check](/trust/approvals/) and [Vault](/trust/vault/).
+What you type in a private form goes to the website, not to the model. Nod never asks for a password, code, card number or API key in the chat. See [Approvals and the trust check](/trust/approvals/) and [Vault](/trust/vault/).
 
-## Stop nod
+## Stop Nod
 
-To stop nod, select **Stop**, the square button next to the send button. It shows while nod is working. nod stops the current work and cancels anything still queued. Stopping can't undo an action that already started, such as an email that's already on its way.
+To stop Nod, select **Stop**, the square button next to the send button. It shows while Nod is working. Nod stops the current work and cancels anything still queued. Stopping can't undo an action that already started, such as an email that's already on its way.
 
 ## Related resources
 
-- [What is nod](/get-started/what-is-nod/)
+- [What is Nod](/get-started/what-is-nod/)
 - [Key concepts](/get-started/glossary/)
-- [Chat with nod](/use/chat/)
+- [Chat with Nod](/use/chat/)
 - [Connect a model](/connect/models/)
 - [Trust and Vault](/trust/)

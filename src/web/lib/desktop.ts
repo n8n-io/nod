@@ -194,7 +194,7 @@ export function subscribeDesktopStatus(listener: (status: DesktopStatus) => void
 
 export async function retryDesktopRuntime() {
   const bridge = (window as DesktopWindow).nodDesktop;
-  if (!bridge?.prepare) throw new Error('Restart nod to try setting up your workspace again.');
+  if (!bridge?.prepare) throw new Error('Restart Nod to try setting up your workspace again.');
   const status = await bridge.prepare({ retry: true });
   const failure =
     status.error ||

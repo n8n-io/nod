@@ -1,15 +1,15 @@
 ---
 title: Install the desktop app
-description: Install nod on a Mac or Windows PC, get through the first launch and keep it running and up to date.
+description: Install Nod on a Mac or Windows PC, get through the first launch and keep it running and up to date.
 sidebar:
   order: 2
 ---
 
 import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-The desktop app is the quickest way to run nod. You don't need Node.js, Docker or developer tools.
+The desktop app is the quickest way to run Nod. You don't need Node.js, Docker or developer tools.
 
-Already have a [nod server](/deploy/self-host/)? Choose **Connect to a server** on first launch, or **Server connection** in the app menu or tray. Enter its address and access token to use that assistant.
+Already have a [Nod server](/deploy/self-host/)? Choose **Connect to a server** on first launch, or **Server connection** in the app menu or tray. Enter its address and access token to use that assistant.
 
 For a local assistant, have a [supported model service](/connect/models/) ready with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server such as Ollama. Paid providers bill you for use. A local model costs nothing per request. A remote assistant uses the models configured on its server.
 
@@ -17,7 +17,7 @@ For a local assistant, have a [supported model service](/connect/models/) ready 
 flowchart LR
   dl[Download<br/>the installer] --> open[Open and<br/>approve it]
   open --> local[Use this computer]
-  local --> prep[nod prepares<br/>its computer]:::accent
+  local --> prep[Nod prepares<br/>its computer]:::accent
   local --> ob[Onboarding]
   open --> remote[Connect to a server]
   remote --> address[Enter address<br/>and token]
@@ -26,7 +26,7 @@ flowchart LR
   address --> chat
 ```
 
-## Install nod
+## Install Nod
 
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
@@ -35,22 +35,22 @@ You need macOS 14 or later, on Apple silicon or Intel. For a local assistant, th
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **nod** release. Download `nod-arm64.dmg` for Apple silicon or `nod-x64.dmg` for Intel.
+1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **Nod** release. Download `nod-arm64.dmg` for Apple silicon or `nod-x64.dmg` for Intel.
 
-2. Open the DMG, drag **nod** to **Applications** and open it from there.
+2. Open the DMG, drag **Nod** to **Applications** and open it from there.
 
 3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
-4. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. macOS may ask for permission. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
+4. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, Nod enables desktop notifications when its first chat introduction appears. macOS may ask for permission. If macOS asks for your keychain password, approve it so Nod can protect your saved keys.
 
-5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, Nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
 <details>
 <summary>Install from Terminal instead</summary>
 
-You can install the latest release on Apple silicon or Intel with one command. Quit nod first, then paste this into Terminal:
+You can install the latest release on Apple silicon or Intel with one command. Quit Nod first, then paste this into Terminal:
 
 ```sh title="Terminal"
 (
@@ -60,7 +60,7 @@ You can install the latest release on Apple silicon or Intel with one command. Q
 )
 ```
 
-Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/nod.app`, and opens nod. Your existing data stays in place. You don't need a GitHub account.
+Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/nod.app`, and opens Nod. Your existing data stays in place. You don't need a GitHub account.
 
 </details>
 
@@ -73,64 +73,64 @@ Run it as your normal user, without `sudo`. It verifies the download, installs t
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **nod** release. Download `nod-Setup-x64.exe`.
+1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **Nod** release. Download `nod-Setup-x64.exe`.
 
-2. Run `nod-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds nod to the Start menu.
+2. Run `nod-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds Nod to the Start menu.
 
-3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. Windows notification settings control delivery. You can change these preferences later in Settings.
+3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, Nod enables desktop notifications when its first chat introduction appears. Windows notification settings control delivery. You can change these preferences later in Settings.
 
-4. If nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open nod again afterwards; your saved connections and settings are kept.
+4. If Nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open Nod again afterwards; your saved connections and settings are kept.
 
-5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, Nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
 <details>
 <summary>Install from PowerShell instead</summary>
 
-Quit nod first, then paste this into PowerShell:
+Quit Nod first, then paste this into PowerShell:
 
 ```powershell title="PowerShell"
 irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex
 ```
 
-Use a normal PowerShell window, not **Run as administrator**. It verifies the installer and runtime file, installs nod, and opens it. Your existing data stays in place. You don't need a GitHub account.
+Use a normal PowerShell window, not **Run as administrator**. It verifies the installer and runtime file, installs Nod, and opens it. Your existing data stays in place. You don't need a GitHub account.
 
 </details>
 
 </TabItem>
 </Tabs>
 
-## Keep nod running
+## Keep Nod running
 
-For a local assistant, closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
+For a local assistant, closing the window keeps Nod running in the menu bar on a Mac, or the tray on Windows. **Quit Nod** stops Nod and its private computer.
 
-| nod is                                  | What runs                                       |
+| Nod is                                  | What runs                                       |
 | --------------------------------------- | ----------------------------------------------- |
 | Open, or closed to the menu bar or tray | Chat, channels, schedules and background checks |
-| Quit, or your computer is asleep        | Nothing, until nod is open and awake again      |
+| Quit, or your computer is asleep        | Nothing, until Nod is open and awake again      |
 
 If you rely on scheduled tasks, turn on **Open at login** in **Settings → General**.
 
 When connected to a server, the server keeps your assistant, channels and schedules running after you quit the app or put your computer to sleep. The server must stay running and connected.
 
-## Update nod
+## Update Nod
 
-nod updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **nod** menu on a Mac, or from the menu bar or tray icon.
+Nod updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **Nod** menu on a Mac, or from the menu bar or tray icon.
 
-When an update is ready, choose **Restart** to install it or **Later** to keep working. If nod is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. nod keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
+When an update is ready, choose **Restart** to install it or **Later** to keep working. If Nod is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. Nod keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
 
-On Windows, the restart runs the new installer in the background and opens nod again when it's done.
+On Windows, the restart runs the new installer in the background and opens Nod again when it's done.
 
 Updating a connected desktop client does not update its server. Follow [Server operations](/deploy/server-operations/) to update the server separately.
 
 ## Where your data lives
 
-For a local assistant, nod's database, workspace and browser stay on your computer. When connected to a server, the server stores them along with model credentials and the Composio identity. Every client using the same server reaches the same assistant and connected accounts. Your device keeps its server address, encrypted access token, preferences and client data, such as unsent drafts and downloaded files.
+For a local assistant, Nod's database, workspace and browser stay on your computer. When connected to a server, the server stores them along with model credentials and the Composio identity. Every client using the same server reaches the same assistant and connected accounts. Your device keeps its server address, encrypted access token, preferences and client data, such as unsent drafts and downloaded files.
 
 Requests go to the model provider and apps you choose. Managed app requests and results pass through the configured connection service and Composio; n8n hosts the default service. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
 
-nod starts with a fresh profile and doesn't import data from a source install.
+Nod starts with a fresh profile and doesn't import data from a source install.
 
 |                       | Mac                                                | Windows                                     |
 | --------------------- | -------------------------------------------------- | ------------------------------------------- |
@@ -138,27 +138,27 @@ nod starts with a fresh profile and doesn't import data from a source install.
 | Private computer      | `~/.nod-desktop/<profile id>`                      | A WSL distribution named `nod-<profile id>` |
 | Saved keys            | Encrypted with the macOS key store                 | Encrypted with Windows DPAPI                |
 
-## Remove nod
+## Remove Nod
 
-Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To delete a local assistant first, choose **Use this computer** in **Server connection**, then:
+Moving Nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To delete a local assistant first, choose **Use this computer** in **Server connection**, then:
 
-1. Select **Remove all data** in **Settings → General**. If nod can't finish setup, select **Remove all data…** in the **nod** menu instead.
-2. Confirm. nod deletes your profile and private computer, then quits.
-3. Move nod to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
+1. Select **Remove all data** in **Settings → General**. If Nod can't finish setup, select **Remove all data…** in the **Nod** menu instead.
+2. Confirm. Nod deletes your profile and private computer, then quits.
+3. Move Nod to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
 
-On a Mac, nod keeps the runtime it downloaded, so a new install doesn't download it again, and its entry in the key store. Neither holds your data. Apps you connected may still list nod until you remove it there.
+On a Mac, Nod keeps the runtime it downloaded, so a new install doesn't download it again, and its entry in the key store. Neither holds your data. Apps you connected may still list Nod until you remove it there.
 
-If you deleted nod's folders by hand, nod removes the private computer they leave behind the next time it opens.
+If you deleted Nod's folders by hand, Nod removes the private computer they leave behind the next time it opens.
 
 ## Troubleshooting
 
 | Problem                            | Try this                                                                                                               |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| macOS blocks the first launch      | Install the newest release. On a managed Mac, ask your IT team to allow nod.                                           |
+| macOS blocks the first launch      | Install the newest release. On a managed Mac, ask your IT team to allow Nod.                                           |
 | Setup stops with an error          | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.        |
-| nod asks for a runtime file        | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                                |
+| Nod asks for a runtime file        | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                                |
 | Windows can't download the runtime | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again.      |
-| A scheduled task didn't run        | Check that the machine running your assistant was awake and nod was running. For a remote assistant, check the server. |
+| A scheduled task didn't run        | Check that the machine running your assistant was awake and Nod was running. For a remote assistant, check the server. |
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.
@@ -166,7 +166,7 @@ Don't delete the profile or the private computer to fix a problem. You'd lose yo
 
 ## Related resources
 
-- [What is nod](/get-started/what-is-nod/)
+- [What is Nod](/get-started/what-is-nod/)
 - [Your first conversation](/get-started/first-conversation/)
 - [Install from source](/get-started/install-from-source/)
 - [The desktop app in depth](/deploy/desktop-app/)

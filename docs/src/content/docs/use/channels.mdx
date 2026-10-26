@@ -1,19 +1,19 @@
 ---
 title: Telegram and WhatsApp
-description: Chat with nod from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the nod app.
+description: Chat with Nod from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the Nod app.
 sidebar:
   order: 7
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-You can chat with nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the nod app.
+You can chat with Nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the Nod app.
 
 With a [self-hosted server](/deploy/self-host/), channels stay connected while the server runs. You can close the web or desktop app.
 
-nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the nod app.
+Nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Nod app.
 
-nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
+Nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
 
 ## Before you start
 
@@ -21,17 +21,17 @@ nod uses your conversation language for pairing notices and private-step guidanc
 | ------------------- | ----------------------------------- | ------------------------------------------- |
 | You need            | A Telegram bot, made with BotFather | A registered WhatsApp account               |
 | Works on a laptop   | Yes                                 | Yes                                         |
-| Who can message nod | Only the Telegram account you pair  | Your personal number, or your own self-chat |
-| Files from nod      | Images, documents, video and audio  | Images, documents, video and audio          |
-| When nod can write  | While nod runs                      | While nod runs and WhatsApp is connected    |
+| Who can message Nod | Only the Telegram account you pair  | Your personal number, or your own self-chat |
+| Files from Nod      | Images, documents, video and audio  | Images, documents, video and audio          |
+| When Nod can write  | While Nod runs                      | While Nod runs and WhatsApp is connected    |
 
 The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client. WhatsApp can restrict the account or change how it connects. Check the WhatsApp terms before you connect.
 
-A long reply arrives as several messages. If a file doesn't arrive, open nod to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
+A long reply arrives as several messages. If a file doesn't arrive, open Nod to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
 
 ## Set up a channel
 
-Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. nod checks your details before it saves them, and keeps them encrypted, outside the chat.
+Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. Nod checks your details before it saves them, and keeps them encrypted, outside the chat.
 
 On a self-hosted server, leave that channel's environment variables blank or unset to use this setup. A channel configured through the environment is server-managed: edit its settings in `.env` and [apply the configuration](/deploy/configuration/#apply-configuration-changes).
 
@@ -42,9 +42,9 @@ On a self-hosted server, leave that channel's environment variables blank or uns
 
 1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_nod_bot`.
 2. Select **I have my token**. Paste BotFather's reply, or just the token, into **BotFather message or token**. Select **Connect bot**.
-3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
-4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message nod.
-5. Select **Start conversation** and say hello. nod must be running to reply.
+3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, Nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
+4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message Nod.
+5. Select **Start conversation** and say hello. Nod must be running to reply.
 
 </Steps>
 
@@ -56,25 +56,25 @@ If the link doesn't work for you, select **Enter your user ID instead** and use 
 <Steps>
 
 1. Choose **Separate bot number** or **Use my own number**.
-2. For a bot number, register a second number in WhatsApp or the WhatsApp Business app. Enter your personal number in nod, with the country code and without `+` or spaces. Only your personal number can start work.
+2. For a bot number, register a second number in WhatsApp or the WhatsApp Business app. Enter your personal number in Nod, with the country code and without `+` or spaces. Only your personal number can start work.
 3. Read the account risk and terms. Select **Show QR code**.
-4. On the phone for the account you will link, open **Settings → Linked Devices → Link a Device**. Scan the code in nod. A code expires after one minute. The setup expires after five minutes.
+4. On the phone for the account you will link, open **Settings → Linked Devices → Link a Device**. Scan the code in Nod. A code expires after one minute. The setup expires after five minutes.
 5. For a bot number, message the linked number from your personal WhatsApp. For your own number, open **Message yourself** and write there.
 
 </Steps>
 
-nod ignores groups, status updates, other senders and message history. In self-chat, nod ignores its own replies. Your other chats stay outside the nod conversation.
+Nod ignores groups, status updates, other senders and message history. In self-chat, Nod ignores its own replies. Your other chats stay outside the Nod conversation.
 
-The QR code updates automatically. If the code expires or nod cannot check the connection, nod hides it until a new check succeeds. Select **Start again** if setup does not continue.
+The QR code updates automatically. If the code expires or Nod cannot check the connection, Nod hides it until a new check succeeds. Select **Start again** if setup does not continue.
 
-Closing an unfinished setup cancels that setup. Once connected, closing the panel keeps WhatsApp connected. Select **Disconnect** to remove the saved link. You can also remove nod from **Linked Devices** on your phone. To get a new link after a sign-out, select **Finish setup**, then **Start again**.
+Closing an unfinished setup cancels that setup. Once connected, closing the panel keeps WhatsApp connected. Select **Disconnect** to remove the saved link. You can also remove Nod from **Linked Devices** on your phone. To get a new link after a sign-out, select **Finish setup**, then **Start again**.
 
 <details>
 <summary>Use the Meta Cloud API</summary>
 
 Select **Use Meta Cloud API instead** in the setup panel. You need a Meta app with WhatsApp, a business sender number and a public HTTPS callback. Enter the business phone number ID, your personal number, the business access token and the Meta app secret. Set a webhook verification token. Save the setup, then use the same callback and token in Meta and subscribe to messages.
 
-The Cloud API replies only within 24 hours of your last message. Its file support is limited: open nod to get files. The QR connection supports files directly.
+The Cloud API replies only within 24 hours of your last message. Its file support is limited: open Nod to get files. The QR connection supports files directly.
 
 :::caution[Use a protected server]
 Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTPS, or a proxy exposing only `/api/webhooks/whatsapp` from a local install. It accepts text only; use the QR connection for files and voice.
@@ -96,87 +96,87 @@ To configure and pair the channel in the app, clear all its environment variable
 
 ## Files and voice messages
 
-In nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally for Ogg Opus voice notes. Before decoding, nod checks the stream, packet duration and page checksums. Long or unsupported audio can still play without a waveform.
+In Nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally for Ogg Opus voice notes. Before decoding, Nod checks the stream, packet duration and page checksums. Long or unsupported audio can still play without a waveform.
 
 A sticker is a conversation message, not a request to review a file. Static and animated WebP stickers, Telegram TGS animations and WebM video stickers play inline. Animations pause outside the visible chat or when the app is hidden. The reduced-motion setting stops automatic playback. TGS playback uses a local canvas in a sandbox with no network access. Invalid or oversized animations keep their original download. Telegram's thumbnail can still help the model read a sticker; it does not appear as a second message card. A sticker sent as a reply stays linked to that message.
 
-A file message sent before model setup gets a setup notice without a media download or transcription. If a chat model is connected but speech is not set up, nod asks for an OpenAI or OpenRouter API key in **Settings → Models**.
+A file message sent before model setup gets a setup notice without a media download or transcription. If a chat model is connected but speech is not set up, Nod asks for an OpenAI or OpenRouter API key in **Settings → Models**.
 
 With Telegram or the WhatsApp QR connection, send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
 
-You can send a photo or file without a caption. nod uses its content and the conversation to respond, and can ask what you want when that is unclear. It does not add a request to review the file. PNG, JPEG and WebP images reach the selected model directly when it accepts images, within the runtime's [image limits](/how-it-works/agent-runtime/#keeping-the-context-small). If that model cannot read images, nod looks for an image model in its connected service, then in your other connected services. That model receives the images and your current request. It sends a description to the selected chat model. The chat selection stays the same. If no image model is available, the files stay in the workspace and nod can explain the missing capability. Other files remain in the workspace for file tools.
+You can send a photo or file without a caption. Nod uses its content and the conversation to respond, and can ask what you want when that is unclear. It does not add a request to review the file. PNG, JPEG and WebP images reach the selected model directly when it accepts images, within the runtime's [image limits](/how-it-works/agent-runtime/#keeping-the-context-small). If that model cannot read images, Nod looks for an image model in its connected service, then in your other connected services. That model receives the images and your current request. It sends a description to the selected chat model. The chat selection stays the same. If no image model is available, the files stay in the workspace and Nod can explain the missing capability. Other files remain in the workspace for file tools.
 
-Shared locations show their coordinates and place details in a map card. Select **View map** to load the map from [OpenStreetMap](https://www.openstreetmap.org). No map request runs before that click. A live-location share is a snapshot; nod does not track later movements.
+Shared locations show their coordinates and place details in a map card. Select **View map** to load the map from [OpenStreetMap](https://www.openstreetmap.org). No map request runs before that click. A live-location share is a snapshot; Nod does not track later movements.
 
 Shared contacts show a contact card with the name, organization, title, phone numbers, email addresses, postal addresses and website text when present. The preview reads vCard 2.1, 3.0 and 4.0, including folded fields and quoted-printable names. Website fields do not open automatically. The original vCard stays available to download, including extra contacts and fields that the card preview does not show. A shared location or contact is data, not permission to contact a person or change an app.
 
 A `.vcf` reply can arrive as a native contact. Telegram supports one native card with a vCard of at most 2048 bytes; larger or grouped cards arrive as a file. A valid `location.json` reply can arrive as a native location. The [Telegram API](https://core.telegram.org/bots/api#sendcontact) defines its native contact limit.
 
-A message usually has one file. An animated Telegram sticker can include its original file and a model-only image preview. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, and current adapters attach at most an original sticker and its preview. TGS previews accept Telegram's 64 KiB compressed limit, at most 4 MB after decompression, and a bounded vector structure. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
+A message usually has one file. An animated Telegram sticker can include its original file and a model-only image preview. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, and current adapters attach at most an original sticker and its preview. TGS previews accept Telegram's 64 KiB compressed limit, at most 4 MB after decompression, and a bounded vector structure. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. Nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
 
-nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
+Nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
 
-Voice input uses an available OpenAI or OpenRouter API key from **Settings → Models**. nod uses OpenAI when its API key is available; otherwise it uses OpenRouter. A single connected API key can supply transcription while another provider supplies chat. If you have several keys for the same provider, select the connection you want to use. A ChatGPT subscription does not supply the audio API. A source install can instead set server `OPENAI_API_KEY` or `OPENROUTER_API_KEY`. nod selects one service before sending the audio. A failed request does not send the audio to another service.
+Voice input uses an available OpenAI or OpenRouter API key from **Settings → Models**. Nod uses OpenAI when its API key is available; otherwise it uses OpenRouter. A single connected API key can supply transcription while another provider supplies chat. If you have several keys for the same provider, select the connection you want to use. A ChatGPT subscription does not supply the audio API. A source install can instead set server `OPENAI_API_KEY` or `OPENROUTER_API_KEY`. Nod selects one service before sending the audio. A failed request does not send the audio to another service.
 
-`STT_MODEL` selects the transcription model. The default is `gpt-transcribe` for OpenAI and `openai/gpt-transcribe` for OpenRouter. For OpenRouter, use a full model ID from its [transcription catalog](https://openrouter.ai/models?fmt=cards&output_modalities=transcription). A model ID without `/` gets the `openai/` prefix on OpenRouter. Text-only chat models cannot transcribe audio. Without speech setup, nod asks you to send text. Text and file messages still work.
+`STT_MODEL` selects the transcription model. The default is `gpt-transcribe` for OpenAI and `openai/gpt-transcribe` for OpenRouter. For OpenRouter, use a full model ID from its [transcription catalog](https://openrouter.ai/models?fmt=cards&output_modalities=transcription). A model ID without `/` gets the `openai/` prefix on OpenRouter. Text-only chat models cannot transcribe audio. Without speech setup, Nod asks you to send text. Text and file messages still work.
 
 Use text to approve an action. A file or voice attachment does not approve it.
 
-Ask nod for a voice reply to get a native voice note. Voice replies need an OpenAI API key. `TTS_MODEL` and `TTS_VOICE` select the speech model and voice. The audio is generated by AI. Speech calls use the spending-limit check and have usage records. OpenRouter reports the transcription cost. Where OpenAI returns supported usage, nod calculates an API-price estimate. A speech response without a known price is marked unpriced.
+Ask Nod for a voice reply to get a native voice note. Voice replies need an OpenAI API key. `TTS_MODEL` and `TTS_VOICE` select the speech model and voice. The audio is generated by AI. Speech calls use the spending-limit check and have usage records. OpenRouter reports the transcription cost. Where OpenAI returns supported usage, Nod calculates an API-price estimate. A speech response without a known price is marked unpriced.
 
-nod sends files up to 50 MB each. Large or unavailable files stay available in nod. Long replies are split into messages. nod shows typing status while work runs.
+Nod sends files up to 50 MB each. Large or unavailable files stay available in Nod. Long replies are split into messages. Nod shows typing status while work runs.
 
 For a short reply with one image, video or document, the text is its caption. Longer replies, voice replies and replies with several files send the text in a separate message.
 
 ## Connection and delivery
 
-nod saves the WhatsApp device keys encrypted in its database. The keys stay on the server. They do not enter the model, sandbox, analytics or chat. The QR code is available only in the private setup panel and is not saved in channel settings.
+Nod saves the WhatsApp device keys encrypted in its database. The keys stay on the server. They do not enter the model, sandbox, analytics or chat. The QR code is available only in the private setup panel and is not saved in channel settings.
 
-After a restart or network loss, nod uses the saved link to connect again. Replies that have not started sending wait while WhatsApp is disconnected. A send with an unclear result is not repeated automatically. This prevents duplicate messages; check nod if a reply does not arrive.
+After a restart or network loss, Nod uses the saved link to connect again. Replies that have not started sending wait while WhatsApp is disconnected. A send with an unclear result is not repeated automatically. This prevents duplicate messages; check Nod if a reply does not arrive.
 
-## Private steps happen in the nod app
+## Private steps happen in the Nod app
 
-Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, nod asks you to open nod. Finish the step there, and the task carries on and replies in the chat app.
+Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
 
 ```mermaid
 sequenceDiagram
   actor You
   participant Chat as Telegram or WhatsApp
-  participant App as nod app
-  participant nod
+  participant App as Nod app
+  participant Nod
   You->>Chat: Book the table with my saved login
-  Chat->>nod: Your request
-  nod-->>Chat: Open nod to continue securely
+  Chat->>Nod: Your request
+  Nod-->>Chat: Open Nod to continue securely
   You->>App: Finish the private step
-  App->>nod: Done
-  nod-->>Chat: The result
+  App->>Nod: Done
+  Nod-->>Chat: The result
 ```
 
-If a website sends you a one-time sign-in code, you can reply with it in the chat where nod asked. nod uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the nod app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
+If a website sends you a one-time sign-in code, you can reply with it in the chat where Nod asked. Nod uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the Nod app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
 
 A direct reply must name the current sign-in question. A reply to a closed or unknown question cannot send a code to another sign-in request.
 
-Taking over [nod's browser](/use/browser/) also needs the nod app, because chat apps can't show the page.
+Taking over [Nod's browser](/use/browser/) also needs the Nod app, because chat apps can't show the page.
 
-## While nod works
+## While Nod works
 
-While nod works on something you asked for in this chat, including a task it started for you, you see **typing…**.
+While Nod works on something you asked for in this chat, including a task it started for you, you see **typing…**.
 
-- **Telegram** also shows what nod is doing right now as a live draft in the chat, such as "Lisbon trip: Checking seats on trainline.com". A draft updates in place, never notifies you and disappears when the answer arrives or after 30 seconds.
+- **Telegram** also shows what Nod is doing right now as a live draft in the chat, such as "Lisbon trip: Checking seats on trainline.com". A draft updates in place, never notifies you and disappears when the answer arrives or after 30 seconds.
 - **WhatsApp** shows **typing…** while connected. The Meta Cloud API also marks your latest message as read and stops typing after its 24-hour reply window closes. The QR connection has no reply window.
 
-nod still sends real messages for what needs you: its opening line, a question, a blocker, the result or a failure. See [Message cadence](/how-it-works/agent-runtime/#message-cadence).
+Nod still sends real messages for what needs you: its opening line, a question, a blocker, the result or a failure. See [Message cadence](/how-it-works/agent-runtime/#message-cadence).
 
 ## Reactions
 
-Reactions work both ways, as they do in the [nod app](/use/chat/#react-to-messages).
+Reactions work both ways, as they do in the [Nod app](/use/chat/#react-to-messages).
 
-- **nod's reactions.** nod sometimes reacts to your message with an emoji, such as ❤️ when you thank it or 🎉 for good news. A reaction comes on top of nod's reply, never instead of it. On Telegram, nod uses only Telegram's standard reactions.
-- **Your reactions.** React to any nod message, and nod takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the nod app, including reactions to later parts of a long reply.
+- **Nod's reactions.** Nod sometimes reacts to your message with an emoji, such as ❤️ when you thank it or 🎉 for good news. A reaction comes on top of Nod's reply, never instead of it. On Telegram, Nod uses only Telegram's standard reactions.
+- **Your reactions.** React to any Nod message, and Nod takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the Nod app, including reactions to later parts of a long reply.
 
-If a reaction send fails, its result can be unclear. nod keeps the attempt and does not send it again. You can ask nod to remove it. A failed removal keeps the previous reaction.
+If a reaction send fails, its result can be unclear. Nod keeps the attempt and does not send it again. You can ask Nod to remove it. A failed removal keeps the previous reaction.
 
-A Telegram webhook must include `message_reaction` in its allowed update types to pass your reactions to nod. For an environment-managed channel, follow [Telegram webhooks](/deploy/configuration/#telegram-webhooks) to register it again. For a channel configured in the app, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, already requests reactions.
+A Telegram webhook must include `message_reaction` in its allowed update types to pass your reactions to Nod. For an environment-managed channel, follow [Telegram webhooks](/deploy/configuration/#telegram-webhooks) to register it again. For a channel configured in the app, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, already requests reactions.
 
 ## Commands
 
@@ -185,16 +185,16 @@ These commands prepare a report without starting a task. Your selected model wri
 | Send      | To get                                                      |
 | --------- | ----------------------------------------------------------- |
 | `/usage`  | This month's spending and app actions, with a PDF statement |
-| `/memory` | A short summary of what nod remembers, with the full export |
+| `/memory` | A short summary of what Nod remembers, with the full export |
 
-Telegram and the WhatsApp QR connection receive the PDF and export as documents. With the WhatsApp Cloud API, open nod to get them.
+Telegram and the WhatsApp QR connection receive the PDF and export as documents. With the WhatsApp Cloud API, open Nod to get them.
 
 Both channels have task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-and-whatsapp-without-a-task-page).
 
 ## Related resources
 
 - [Host your own server](/deploy/self-host/)
-- [Chat with nod](/use/chat/)
+- [Chat with Nod](/use/chat/)
 - [Spending and usage](/use/spending/)
 - [Memory](/use/memory/)
 - [Vault and saved logins](/trust/vault/)

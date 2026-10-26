@@ -43,7 +43,7 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
       >
         <header className="server-access-header">
           <NodGlyph size={72} mode="still" />
-          <h1 id="server-access-title">Connect to nod</h1>
+          <h1 id="server-access-title">Connect to Nod</h1>
           <p>Enter your server’s token to open your assistant.</p>
         </header>
         <Field label="Authentication token">

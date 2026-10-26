@@ -19,7 +19,7 @@ async function localKey(dataRoot: string, name: 'access-key' | 'credential-reque
   }
   const info = await lstat(path);
   const key = info.isFile() ? await readFile(path, 'utf8') : '';
-  if (!token.test(key)) throw new Error(`Delete ${path} and restart nod.`);
+  if (!token.test(key)) throw new Error(`Delete ${path} and restart Nod.`);
   if (info.mode & 0o077) await chmod(path, 0o600);
   return key;
 }
@@ -139,10 +139,10 @@ export function registerLocalAccess(
     )
       return reply.code(401).send({
         error: desktop
-          ? 'Open nod in the desktop app.'
+          ? 'Open Nod in the desktop app.'
           : access.bearer
             ? 'Enter your server authentication token.'
-            : 'Open nod from the link in your terminal.',
+            : 'Open Nod from the link in your terminal.',
       });
     if (request.headers['sec-fetch-site'] === 'cross-site' && !appCallback && !pageNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not permitted.' });

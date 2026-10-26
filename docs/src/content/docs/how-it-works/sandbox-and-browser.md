@@ -1,11 +1,11 @@
 ---
 title: Sandbox and browser isolation
-description: How nod's workspace and browser containers are locked down, what each part can reach, and where the limits are.
+description: How Nod's workspace and browser containers are locked down, what each part can reach, and where the limits are.
 sidebar:
   order: 4
 ---
 
-This page explains how nod isolates the commands it runs and the websites it visits, and what each part of the system can and can't reach.
+This page explains how Nod isolates the commands it runs and the websites it visits, and what each part of the system can and can't reach.
 
 The short version: commands run as an unprivileged user in a workspace container. The browser runs in a separate container. Provider keys and the owner access key stay in the server process.
 
@@ -13,7 +13,7 @@ The short version: commands run as an unprivileged user in a workspace container
 
 ```mermaid
 flowchart LR
-  server[nod server<br/>provider keys · Vault]:::accent
+  server[Nod server<br/>provider keys · Vault]:::accent
   subgraph workspace[Workspace container]
     sandbox[Sandbox user<br/>runs Pi commands]
     cli[One user per CLI<br/>one CLI token each]
@@ -64,7 +64,7 @@ Every command goes through a small supervisor inside the container, in [`src/pro
 
 - It owns the command's session and signals every process in it, even ones that left the process group.
 - It enforces the timeout: 59 minutes for `bash` by default. The model can ask for longer.
-- It acknowledges when the command ends. If that acknowledgement is lost, the server fences the workspace: no more commands run until nod restarts.
+- It acknowledges when the command ends. If that acknowledgement is lost, the server fences the workspace: no more commands run until Nod restarts.
 
 ## Command output
 
@@ -98,7 +98,7 @@ Known secret values (passwords, codes, card numbers and security codes) are remo
 
 ## Browser handoff
 
-When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. nod web shows the live tab in chat.
+When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. Nod web shows the live tab in chat.
 
 ```mermaid
 sequenceDiagram
@@ -110,12 +110,12 @@ sequenceDiagram
   Browser-->>You: Live JPEG frames
   You->>Server: Clicks, typing and scrolling
   Server->>Browser: Forwarded while the chat turn waits
-  You->>Server: Return to nod
+  You->>Server: Return to Nod
   Note over Pi: Next turn takes a fresh snapshot
 ```
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
-- **Return to nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
+- **Return to Nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
 - One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
@@ -128,6 +128,6 @@ In a source install or self-hosted server, the workspace has internet access thr
 
 - [Architecture](/how-it-works/architecture/)
 - [The agent runtime](/how-it-works/agent-runtime/)
-- [nod's workspace](/use/workspace/)
+- [Nod's workspace](/use/workspace/)
 - [The browser](/use/browser/)
 - [Security model and limits](/trust/security-model/)

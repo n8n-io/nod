@@ -57,7 +57,7 @@ cleanup() {
   if [ "$result" -ne 0 ]; then
     echo 'Restore incomplete. The new project was kept for inspection; no assistant was started.' >&2
   else
-    printf '%s\n' 'Restored into a new project. Review .env before starting nod.' \
+    printf '%s\n' 'Restored into a new project. Review .env before starting Nod.' \
       'Start with: docker compose --file compose.yaml --env-file .env up -d --build --wait' \
       'For public HTTPS: docker compose --file compose.yaml --env-file .env --profile https up -d --build --wait'
   fi

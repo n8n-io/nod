@@ -207,7 +207,7 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
           </button>
         ))}
       </div>
-      <small>nod asks before a task spends more.</small>
+      <small>Nod asks before a task spends more.</small>
       {error && <Notice>{error}</Notice>}
     </div>
   );
@@ -345,7 +345,7 @@ function Sentence({
   return (
     <>
       <p className="statement-summary usage-sentence">
-        nod spent{' '}
+        Nod spent{' '}
         <StatementValue text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
         </StatementValue>
@@ -386,7 +386,7 @@ function Sentence({
         <br />
         {done.length ? (
           <>
-            This week nod{' '}
+            This week Nod{' '}
             {done.map((part, index) => (
               <span key={index}>
                 {index ? (used.length > 1 ? ', ' : ' and ') : ''}
@@ -399,7 +399,7 @@ function Sentence({
           'Nothing yet this week.'
         )}
         <br />
-        On its own, nod{' '}
+        On its own, Nod{' '}
         <StatementValue
           text={
             paused
@@ -418,7 +418,7 @@ function Sentence({
               value={rule}
               label="Standing instruction"
               placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
-              hint="nod reads and drafts on its own, and does only what this says."
+              hint="Nod reads and drafts on its own, and does only what this says."
               remove="Stop"
               onSaved={() => {
                 close();
@@ -429,7 +429,7 @@ function Sentence({
         </StatementValue>
         {rule ? <>: “{rule}”</> : '.'}
         <br />
-        {rules ? 'Everywhere, nod keeps ' : 'You haven’t set any '}
+        {rules ? 'Everywhere, Nod keeps ' : 'You haven’t set any '}
         <StatementValue text={rules ? 'your rules' : 'rules'} label="Rules">
           {(close) => (
             <RuleEditor
@@ -437,7 +437,7 @@ function Sentence({
               value={rules}
               label="Rules"
               placeholder="Always ask before sending email outside my company."
-              hint="Say what nod may do without asking, or must ask you about first."
+              hint="Say what Nod may do without asking, or must ask you about first."
               remove="Clear"
               onSaved={() => {
                 close();
@@ -573,7 +573,7 @@ function Statement({
     }
   }
   if (!rows.length && cutoff === -Infinity)
-    return <p className="statement-empty">What nod does and spends will show up here.</p>;
+    return <p className="statement-empty">What Nod does and spends will show up here.</p>;
   const days = new Map<string, typeof rows>();
   for (const row of rows) {
     const label = formatDayLabel(row.at, format);

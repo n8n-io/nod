@@ -11,17 +11,17 @@ const statuses: Array<{ status: MemoryStatus; label: string; meaning: string }> 
   {
     status: 'stated',
     label: 'Confirmed',
-    meaning: 'You said it, wrote it or confirmed it. nod uses it.',
+    meaning: 'You said it, wrote it or confirmed it. Nod uses it.',
   },
   {
     status: 'observed',
     label: 'Learned',
-    meaning: 'nod heard it in two or more of your messages. nod uses it.',
+    meaning: 'Nod heard it in two or more of your messages. Nod uses it.',
   },
   {
     status: 'tentative',
     label: 'Mentioned once',
-    meaning: 'nod heard it once. It is a guess until you confirm it or say it again.',
+    meaning: 'Nod heard it once. It is a guess until you confirm it or say it again.',
   },
 ];
 const reasons: Record<MemoryArchived['reason'], string> = {
@@ -34,7 +34,7 @@ const reasons: Record<MemoryArchived['reason'], string> = {
   contradicted: 'Contradicted',
 };
 const channels: Record<string, string> = {
-  web: 'nod web',
+  web: 'Nod web',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
 };
@@ -77,9 +77,9 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
     return [`## ${label}\n\n${groups.join('\n\n')}`];
   });
   return `${[
-    '# What nod remembers about you',
+    '# What Nod remembers about you',
     `Exported on ${day(exported.toISOString())}.`,
-    'nod keeps short notes about you so it does not have to ask twice. Each note has a status:',
+    'Nod keeps short notes about you so it does not have to ask twice. Each note has a status:',
     [
       ...statuses.map(({ label, meaning }) => `- **${label}**: ${meaning}`),
       '- **Let go**: Replaced, expired or not mentioned for 60 days. Kept so you can bring it back.',
@@ -98,7 +98,7 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
       : []),
     ...(view.skills.length
       ? [
-          `## Skills nod learned\n\nHow nod did a task, written by nod so it can follow the same steps next time.\n\n${view.skills
+          `## Skills Nod learned\n\nHow Nod did a task, written by Nod so it can follow the same steps next time.\n\n${view.skills
             .map(
               (skill) =>
                 `### ${text(skill.name)}\n\n${text(skill.description)} Updated on ${day(skill.updated)}.\n\n${skill.body

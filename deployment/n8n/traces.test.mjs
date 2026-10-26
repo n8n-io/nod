@@ -25,7 +25,7 @@ const trace = (changes = {}) => ({
   },
 });
 
-test('valid traces become one llm run pinned to the nod project with usage for cost tracking', () => {
+test('valid traces become one llm run pinned to the Nod project with usage for cost tracking', () => {
   const run = (code) => new Function('$input', '$getWorkflowStaticData', '$now', code);
   const validate = tracesWorkflowDefinition().nodes.find((node) => node.name === 'Validate trace');
   const [{ json }] = run(validate.parameters.jsCode)(
@@ -102,7 +102,7 @@ test('malformed or oversized traces never reach LangSmith', () => {
   assert.equal(checkTrace({ ...trace(), version: 2 }, 'nod').ok, false);
 });
 
-test('the broker requires the nod token, keeps no execution data and sends only through its LangSmith credential', () => {
+test('the broker requires the Nod token, keeps no execution data and sends only through its LangSmith credential', () => {
   const definition = tracesWorkflowDefinition({
     webhook: { id: 'fixture-webhook', name: 'Webhook fixture' },
     langsmith: { id: 'fixture-credential', name: 'Fixture' },

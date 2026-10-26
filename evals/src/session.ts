@@ -409,7 +409,7 @@ export function createSession(options: {
     proactivity: stack.proactivity,
     async api(method, path, body) {
       if (new URL(path, stack.origin).origin !== stack.origin)
-        throw new Error('Scenario API calls must stay on the nod server.');
+        throw new Error('Scenario API calls must stay on the Nod server.');
       const response = await stack.request(path, {
         method,
         headers: { 'content-type': 'application/json', origin: stack.origin },

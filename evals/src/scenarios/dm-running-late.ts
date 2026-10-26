@@ -210,7 +210,7 @@ export default scenario({
         },
         {
           otherwise:
-            'The DM nod sent to Priya Nair says the owner is running 10 minutes late, in any wording or number format.',
+            'The DM Nod sent to Priya Nair says the owner is running 10 minutes late, in any wording or number format.',
         },
       ),
       check(

@@ -337,7 +337,7 @@ function recordingWorkspace() {
   };
 }
 
-test('Pi sessions use native tools on the sandbox workspace plus nod tools', async () => {
+test('Pi sessions use native tools on the sandbox workspace plus Nod tools', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-native-'));
   const { workspace, scripts } = recordingWorkspace();
   const ran: string[] = [];

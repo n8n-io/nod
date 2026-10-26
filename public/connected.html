@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="/theme-init.js"></script>
-    <title>Return to nod</title>
+    <title>Return to Nod</title>
     <style>
       @font-face {
         font-family: 'Geist';
@@ -128,12 +128,12 @@
           <circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4" />
           <circle cx="25" cy="6" r="4" fill="#ff91ac" />
         </svg>
-        <span>nod</span>
+        <span>Nod</span>
       </div>
-      <h1 id="title">Return to nod</h1>
-      <p id="message">Check your connection in nod.</p>
+      <h1 id="title">Return to Nod</h1>
+      <p id="message">Check your connection in Nod.</p>
       <div class="actions">
-        <a id="return" class="return" href="/apps">Return to nod</a>
+        <a id="return" class="return" href="/apps">Return to Nod</a>
       </div>
     </main>
     <script>
@@ -164,10 +164,10 @@
         document.getElementById('message').textContent = succeeded
           ? ''
           : connection === 'expired'
-            ? 'Check your connection in nod.'
+            ? 'Check your connection in Nod.'
             : connection === 'cancelled'
-              ? 'You can start again in nod.'
-              : 'Try again in nod.';
+              ? 'You can start again in Nod.'
+              : 'Try again in Nod.';
         const desktop = query.get('desktop') === '1';
         const returnLink = document.getElementById('return');
         returnLink.href = desktop ? 'nod://open/apps' : '/apps';
@@ -185,7 +185,7 @@
             window.close();
           } catch {}
         });
-        document.title = `${title} · nod`;
+        document.title = `${title} · Nod`;
         try {
           history.replaceState(null, '', location.pathname);
         } catch {}

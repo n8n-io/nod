@@ -64,17 +64,17 @@ export function slackMessage(
 ) {
   const first = runs[0].summary.manifest;
   const attempts = runs[0].summary.regression.total + runs[0].summary.regression.incomplete;
-  return `*nod capability evals: what we built and how the models do*
+  return `*Nod capability evals: what we built and how the models do*
 
-We built an eval harness that checks whether nod actually *finishes real tasks*, not just whether it talks well. We borrowed the approach from n8n's LangTracer: real task scenarios, state-based grading, an independent judge, pass@k / pass^k, failure attribution (agent vs. eval vs. infra) and human review to calibrate the judge.
+We built an eval harness that checks whether Nod actually *finishes real tasks*, not just whether it talks well. We borrowed the approach from n8n's LangTracer: real task scenarios, state-based grading, an independent judge, pass@k / pass^k, failure attribution (agent vs. eval vs. infra) and human review to calibrate the judge.
 
 *How it works*
-• Each attempt boots an isolated nod (real Pi, real model, Docker workspace, real Chromium) against a fake outside world: stateful Gmail / Calendar / Sheets / Slack fakes and lookalike sites (banks, shops, 2FA logins, bookings).
-• We grade what actually happened (emails sent, baskets filled, payments made, files saved), plus nod's own rules: honest about what it did, short and result-first voice, asks only when needed, never pays or sends without permission.
+• Each attempt boots an isolated Nod (real Pi, real model, Docker workspace, real Chromium) against a fake outside world: stateful Gmail / Calendar / Sheets / Slack fakes and lookalike sites (banks, shops, 2FA logins, bookings).
+• We grade what actually happened (emails sent, baskets filled, payments made, files saved), plus Nod's own rules: honest about what it did, short and result-first voice, asks only when needed, never pays or sends without permission.
 • Each task runs ${first.repeat} times. *pass@${first.k}* = does it ever get it right, *pass^${first.k}* = does it get it right every time (the one that matters for trust).
 • One command to run: \`pnpm run eval:capability doctor --fix\`, then \`run\`, \`models a b c\`, \`refs main my-branch\`, \`compare\`.
 
-*The suite:* ${suite.total} scenarios from the Linear capability tasks (inbox, Slack, spreadsheets, bank and portal logins with 2FA, booking, subscriptions, price watches, competitor digests, memory). ${suite.frozen} are calibrated and scored below. ${suite.pending} are still being calibrated. ${suite.gaps} are deliberate stretch goals nod can't do yet (e.g. paying with a saved card, hosted apps), so we can watch them turn green.
+*The suite:* ${suite.total} scenarios from the Linear capability tasks (inbox, Slack, spreadsheets, bank and portal logins with 2FA, booking, subscriptions, price watches, competitor digests, memory). ${suite.frozen} are calibrated and scored below. ${suite.pending} are still being calibrated. ${suite.gaps} are deliberate stretch goals Nod can't do yet (e.g. paying with a saved card, hosted apps), so we can watch them turn green.
 
 *Results* (${runs.length} models, ${runs[0].summary.scenarios.length} scenarios × ${first.repeat} tries = ${attempts} attempts each, same judge for all)
 ${leaderboard(runs)}

@@ -1,11 +1,11 @@
 ---
 title: Back up and update a server
-description: Back up a self-hosted nod server, restore into a fresh installation, update it, and rotate its access token.
+description: Back up a self-hosted Nod server, restore into a fresh installation, update it, and rotate its access token.
 sidebar:
   order: 5
 ---
 
-Keep your server configuration and data together, and make a backup before updating nod.
+Keep your server configuration and data together, and make a backup before updating Nod.
 
 Run the commands below from your bundle directory or `nod/deployment/self-host` source checkout. If you use the HTTPS profile, include `--profile https` in Compose start, stop, and status commands.
 
@@ -41,13 +41,13 @@ The command stops the server, browser, and workspace while it copies data. It re
 | `.env`                   | Server access token, Vault key, database password, and your environment settings.             |
 | `postgres.dump`          | A logical PostgreSQL backup of conversations, settings, schedules, and encrypted credentials. |
 | `server-data.tar.gz`     | Server state, transcripts, and local profile data.                                            |
-| `workspace-data.tar.gz`  | Files created in nod's workspace.                                                             |
+| `workspace-data.tar.gz`  | Files created in Nod's workspace.                                                             |
 | `workspace-tools.tar.gz` | Installed workspace tools and their files.                                                    |
 | `browser-data.tar.gz`    | Browser profiles and saved browser state.                                                     |
-| `source-commit`          | The bundle or source checkout revision to restore before starting nod.                        |
+| `source-commit`          | The bundle or source checkout revision to restore before starting Nod.                        |
 | `complete`               | The marker required by the restore command.                                                   |
 
-The destination must not exist. The command creates private files and refuses a custom `DATABASE_URL`. For an external database, coordinate its backup with copies of the four data volumes while nod is stopped.
+The destination must not exist. The command creates private files and refuses a custom `DATABASE_URL`. For an external database, coordinate its backup with copies of the four data volumes while Nod is stopped.
 
 :::danger[The backup contains secrets]
 Store it encrypted and restrict who can read it. Without the original Vault key, the database cannot recover saved credentials.
@@ -61,7 +61,7 @@ Keep the original installation until you have checked the restore. The restore c
 
 1. Unpack your saved bundle into a new folder. Its `source-revision` must match the backup's `source-commit`. Don't run the installer yet.
 
-   For a source installation, clone nod into a new folder and check out that commit:
+   For a source installation, clone Nod into a new folder and check out that commit:
 
    ```sh title="Terminal"
    git clone https://github.com/n8n-io/nod.git nod-restored
@@ -96,7 +96,7 @@ The restore command restores file ownership and the original Vault key. It stops
 
 If configuration validation fails before data is restored, the command removes the newly created `.env` so you can correct the backup configuration and retry. A failure after restoration starts keeps the new project for inspection.
 
-Open nod with the saved token. Check conversation history, workspace files, model settings, and channel status. Check a saved credential through the private form without sending its value to chat. Review schedules before leaving the server running.
+Open Nod with the saved token. Check conversation history, workspace files, model settings, and channel status. Check a saved credential through the private form without sending its value to chat. Review schedules before leaving the server running.
 
 A restore returns data to the backup's point in time. It does not undo messages or actions that happened afterwards.
 
@@ -115,7 +115,7 @@ A restore returns data to the backup's point in time. It does not undo messages 
 
    For public HTTPS, use `sh install.sh --https`. The installer keeps your existing `.env`, checks the images, and starts them without compiling.
 
-5. Open nod, confirm its history and files, and check channel status.
+5. Open Nod, confirm its history and files, and check channel status.
 
 The `source-revision` file records the installed bundle revision. Don't change `COMPOSE_PROJECT_NAME` during an update: it selects your existing data volumes.
 
@@ -142,11 +142,11 @@ The workflow never publishes or replaces an existing tag, release or asset. If a
    docker compose up -d --build --wait
    ```
 
-4. Open nod, confirm its history and files, and check channel status.
+4. Open Nod, confirm its history and files, and check channel status.
 
 The images build from the checked-out source. Pin a release or commit so you can identify what runs on the server. The setup command preserves your existing `.env`.
 
-Database migrations run when nod starts. Don't point an older application version at an already upgraded database. To roll back, restore the pre-update backup into a fresh installation using its recorded revision.
+Database migrations run when Nod starts. Don't point an older application version at an already upgraded database. To roll back, restore the pre-update backup into a fresh installation using its recorded revision.
 
 ## Rotate access
 

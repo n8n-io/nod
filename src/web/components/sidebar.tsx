@@ -171,7 +171,7 @@ export function Sidebar({
         <a
           href="/"
           className="brand"
-          aria-label="nod"
+          aria-label="Nod"
           onClick={(event) => {
             if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
@@ -179,7 +179,7 @@ export function Sidebar({
           }}
         >
           <BrandMark />
-          <span data-analytics-public>nod</span>
+          <span data-analytics-public>Nod</span>
         </a>
       </div>
       <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">

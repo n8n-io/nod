@@ -349,7 +349,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to nod';
+        popup.document.title = 'Connect to Nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}

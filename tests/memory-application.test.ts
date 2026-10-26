@@ -942,7 +942,7 @@ test(
     );
     assert.deepEqual(
       (await memory.load()).entries.map((entry) => entry.text),
-      [`Told nod during setup: ${answer}`],
+      [`Told Nod during setup: ${answer}`],
     );
     const completed = { generation, completed: true, answers: [], turns: [], done: true };
     assert.deepEqual((await create().inject(path)).json(), completed);
@@ -1022,7 +1022,7 @@ test(
       ).statusCode,
       409,
     );
-    assert.equal((await memory.load()).entries[0].text, `Told nod during setup: ${newerAnswer}`);
+    assert.equal((await memory.load()).entries[0].text, `Told Nod during setup: ${newerAnswer}`);
     const expired = sealVaultValue(
       key,
       ['nod-onboarding-interview-v1', ownerId],
@@ -1155,7 +1155,7 @@ test(
         }),
       );
       await waitForLocks(2);
-      assert.equal((await memory.load()).entries[0].text, `Told nod during setup: ${newerAnswer}`);
+      assert.equal((await memory.load()).entries[0].text, `Told Nod during setup: ${newerAnswer}`);
     } finally {
       await blocker.query('ROLLBACK');
       blocker.release();

@@ -182,7 +182,7 @@ test('CLI-INSTALL: hosted script installs verified bytes and preserves the exist
   }
 });
 
-test('CLI-INSTALL: a nod app signed with an earlier certificate is replaced by the verified release', async () => {
+test('CLI-INSTALL: a Nod app signed with an earlier certificate is replaced by the verified release', async () => {
   const state = await fixture({ earlierCertificate: true });
   try {
     const result = state.run();
@@ -300,7 +300,7 @@ async function windowsInstall(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'nod-windows-install-'));
   const temporary = join(directory, 'tmp');
   const localAppData = join(directory, 'Local App Data');
-  const target = join(localAppData, options.existing ? 'Custom nod' : 'Programs/nod');
+  const target = join(localAppData, options.existing ? 'Custom Nod' : 'Programs/nod');
   await mkdir(temporary);
   const bytes = {
     installer: Buffer.from('synthetic Windows installer'),
