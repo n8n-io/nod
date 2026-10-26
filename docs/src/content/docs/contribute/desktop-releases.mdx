@@ -121,7 +121,9 @@ The container images, Windows runtime, Mac signing, Mac update checks, and publi
 
 Docker builds use Blacksmith's disk cache, with a separate cache for each Mac architecture and the Windows runtime. They do not export Docker layers to GitHub's cache service.
 
-Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. After app signing and any required notarization, the ZIP and disk image build in parallel. The final job downloads platform artifacts in parallel. It checks all three platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
+Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. The final job downloads platform artifacts in parallel. It checks all three platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
+
+Developer ID builds submit the signed disk image to Apple once. Apple's ticket covers the app inside it, as described in [Apple's packaging guide](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution). The build staples and checks the disk image and app, then creates the update ZIP from the stapled app. The disk image and app retain their signature and Gatekeeper checks. Runtime host tools have their own notarization because the app downloads them separately. Self-signed and local preview builds create the ZIP and disk image in parallel.
 
 The Mac build logs show separate times for signing, notarization, ZIP creation, and disk image creation. Use these times and the Actions step times to compare releases. Compare runtime rebuilds with other rebuilds, and runtime reuse with other reuse runs.
 
