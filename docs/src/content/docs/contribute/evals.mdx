@@ -68,7 +68,7 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 206 cases: 159 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity stress and population cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 206 cases: 159 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500

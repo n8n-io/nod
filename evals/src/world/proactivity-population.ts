@@ -172,11 +172,15 @@ export function populationScenario(cohort: number, baseline: boolean) {
             notified: offered.length,
             relevantNotified: notified.size,
             unwanted: offered.filter((i) => !match(i).length).length,
-            duplicateNudges: Math.max(
-              0,
-              run.messages.filter((m) => m.role === 'assistant' && m.turnId === world.state.turnId)
-                .length - offered.length,
-            ),
+            duplicateNudges:
+              Math.max(
+                0,
+                run.messages.filter(
+                  (m) => m.role === 'assistant' && m.turnId === world.state.turnId,
+                ).length - offered.length,
+              ) +
+              offered.flatMap(match).length -
+              notified.size,
           };
           return {
             pass:

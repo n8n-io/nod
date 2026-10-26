@@ -1316,12 +1316,15 @@ test(
                   .map((account) => account.connectionId)
                   .sort(),
               );
-              assert.deepEqual(calls.at(-1)?.args, {
-                connectionId: accounts[2]!.connectionId,
-                pathId,
-                tool: 'list_records',
-                input: { limit: 2 },
-              });
+              assert.deepEqual(
+                calls.find((call) => call.account === accounts[2]!.connectionId)?.args,
+                {
+                  connectionId: accounts[2]!.connectionId,
+                  pathId,
+                  tool: 'list_records',
+                  input: { limit: 2 },
+                },
+              );
               assert.doesNotMatch(
                 JSON.stringify(briefs),
                 /482913|owner@example|sender@example|private\.example/,

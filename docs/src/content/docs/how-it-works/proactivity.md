@@ -34,7 +34,7 @@ Every connected account is a source. No setup or opt-in is needed.
 | Gmail                                                                | Conversations from the last 30 days, with exact versions per thread  | On new mail                                                         |
 | Google Calendar                                                      | Events in the primary calendar from yesterday through the next month | When the calendar changes, checked every 30 minutes without a model |
 | Work nod saved for you                                               | Task state, results and waiting conditions                           | When a task changes                                                 |
-| Every other app, including MCP and HTTP connections you added to nod | The account's own read tools, the same ones nod uses in chat         | Every 30 minutes, all due accounts in one run                       |
+| Every other app, including MCP and HTTP connections you added to nod | The account's own read tools, the same ones nod uses in chat         | Every 30 minutes, up to ten due accounts per run                    |
 
 The saved-work change check includes every field that its reader returns. Changes to a task's title, completion condition, progress, or result trigger a new assessment.
 
