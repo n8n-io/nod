@@ -473,7 +473,7 @@ export function createAgentRuntime(dependencies: {
                           'notification_preferences_get',
                         ].map((action) => Type.Literal(action)),
                       ),
-                      args: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+                      args: Type.Record(Type.String(), Type.Unknown()),
                     },
                     { additionalProperties: false },
                   )

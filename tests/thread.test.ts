@@ -3179,6 +3179,12 @@ test(
           );
           const proposal = (patch: Record<string, unknown> = {}) => ({
             action: 'save',
+            matterKey: 'contract-reply',
+            primary: (({ sourceId, id }: { sourceId: string; id: string }) => ({ sourceId, id }))(
+              ((patch.sources as Array<{ sourceId: string; id: string }> | undefined) ?? [
+                { sourceId, id: 'thread1' },
+              ])[0],
+            ),
             category: 'reply',
             title: 'Contract reply',
             summary: 'A contract needs your decision. A reply is ready.',
@@ -3189,7 +3195,6 @@ test(
             sources: [{ sourceId, id: 'thread1', version }],
             impact: 'medium',
             evidence: 'strong',
-            urgency: 'routine',
             deadline: null,
             nextCheck: null,
             materialChange: 'none',
@@ -3235,81 +3240,39 @@ test(
               rules: '',
               timeZone: 'UTC',
               quietHoursEnabled: false,
-              proactiveDailyLimit: 2,
               proactivePaused: false,
             });
           }
           try {
             await t.test(
-              'reading a draft in owner chat restores attention without desktop feedback',
+              'every useful matter nudges once, with no daily count or gap',
               async () => {
                 await reset();
                 await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
                 await engine.read(ref, { sourceId }, new AbortController().signal);
                 assert.equal(await engine.canRun(), true);
                 await reset();
-                await preferences.update({ proactiveMinGapMinutes: 0 });
-                await save({ matterKey: 'first' });
-                await save({ matterKey: 'second' });
-                await db.pool.query(
-                  "UPDATE messages SET created_at=now()-interval '1 day' WHERE turn_id=$1",
-                  [turnId],
+                for (const matterKey of ['first', 'second', 'third'])
+                  assert.equal(
+                    ((await save({ matterKey })) as { status: string }).status,
+                    'notified',
+                  );
+                assert.equal(
+                  ((await save({ matterKey: 'first' })) as { status: string }).status,
+                  'prepared',
                 );
-                const held = (await save({ matterKey: 'third' })) as {
-                  status: string;
-                  issue: { id: string };
-                };
-                assert.equal(held.status, 'prepared');
+                assert.equal(await delivered(), 3);
                 const first = (await engine.view()).issues.find(
                   (issue) => issue.state === 'offered',
                 )!;
-                await engine.prepared({ id: first.id }, undefined, ref);
-                await engine.prepared({});
-                assert.equal(
-                  ((await save({ matterKey: 'third' })) as { status: string }).status,
-                  'prepared',
+                const full = await engine.prepared({ id: first.id });
+                assert.ok('draft' in full[0]);
+                assert.equal(full[0].draft, first.draft);
+                const nudges = await db.pool.query(
+                  "SELECT text FROM messages WHERE turn_id=$1 AND starts_with(stream_id,'proactive:')",
+                  [turnId],
                 );
-                const messageId = randomUUID();
-                await db.pool.query(
-                  "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'user','Show the prepared reply here.')",
-                  [messageId, ownerId, currentThread, turnId],
-                );
-                await db.pool.query("UPDATE turns SET source='user',message_id=$2 WHERE id=$1", [
-                  turnId,
-                  messageId,
-                ]);
-                try {
-                  await engine.prepared({}, undefined, ref);
-                  assert.equal(
-                    ((await save({ matterKey: 'third' })) as { status: string }).status,
-                    'prepared',
-                  );
-                  const full = await engine.prepared({ id: first.id }, undefined, ref);
-                  assert.ok('draft' in full[0]);
-                  assert.equal(full[0].draft, first.draft);
-                  assert.ok(
-                    (
-                      await db.pool.query('SELECT next_check FROM proactive_issues WHERE id=$1', [
-                        held.issue.id,
-                      ])
-                    ).rows[0].next_check,
-                  );
-                  assert.equal(
-                    ((await save({ matterKey: 'third' })) as { status: string }).status,
-                    'notified',
-                  );
-                  assert.equal(await delivered(), 3);
-                  const nudges = await db.pool.query(
-                    "SELECT text FROM messages WHERE turn_id=$1 AND starts_with(stream_id,'proactive:')",
-                    [turnId],
-                  );
-                  for (const { text } of nudges.rows) assert.doesNotMatch(text, /\]\(|\/updates/);
-                } finally {
-                  await db.pool.query(
-                    "UPDATE turns SET source='event',message_id=NULL WHERE id=$1",
-                    [turnId],
-                  );
-                }
+                for (const { text } of nudges.rows) assert.doesNotMatch(text, /\]\(|\/updates/);
               },
             );
             await t.test(
@@ -3412,86 +3375,44 @@ test(
                 }
               },
             );
-            await t.test('an urgent deadline still goes out after the routine limit', async () => {
+            await t.test('quiet hours, snooze and pause hold nudges until they end', async () => {
               await reset();
-              await preferences.update({ proactiveMinGapMinutes: 0, proactiveDailyLimit: 2 });
-              const reader = createProactivity({
-                ...options,
-                read: async (_turn, input) => ({
-                  checkedAt: new Date().toISOString(),
-                  records: (input.ids ?? []).map((id) => ({
-                    id,
-                    version: 'v1',
-                    available: true,
-                    data: { state: 'open' },
-                  })),
-                }),
+              const clock = (offset: number) =>
+                new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
+              await preferences.update({
+                quietHoursEnabled: true,
+                quietStart: clock(-1),
+                quietEnd: clock(1),
               });
-              for (const id of ['routine-one', 'routine-two'])
-                await reader.save(ref, proposal({ sources: [{ sourceId, id, version: 'v1' }] }));
-              const urgent = await reader.save(
-                ref,
-                proposal({
-                  sources: [{ sourceId, id: 'urgent', version: 'v1' }],
-                  impact: 'high',
-                  urgency: 'time_sensitive',
-                  deadline: new Date(Date.now() + 15 * 60000).toISOString(),
-                }),
+              const important = {
+                impact: 'high',
+                deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
+              };
+              assert.equal(((await save(important)) as { status: string }).status, 'prepared');
+              const held = (await engine.view()).issues[0];
+              const wake = Date.parse(held.nextCheck ?? '') - Date.now();
+              assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
+              await preferences.update({ quietHoursEnabled: false });
+              assert.equal(((await save(important)) as { status: string }).status, 'notified');
+              await engine.control({ id: held.id, action: 'snooze', minutes: 60 });
+              version = 'v2';
+              assert.equal(
+                (
+                  (await save({ ...important, materialChange: 'condition_changed' })) as {
+                    status: string;
+                  }
+                ).status,
+                'prepared',
               );
-              assert.equal((urgent as { status: string }).status, 'notified');
-              assert.equal(await delivered(), 3);
+              await preferences.update({ proactivePaused: true });
+              await assert.rejects(save({ matterKey: 'while paused' }), /paused/);
+              await preferences.update({ proactivePaused: false });
+              assert.equal(
+                ((await save({ matterKey: 'after pause' })) as { status: string }).status,
+                'notified',
+              );
+              assert.equal(await delivered(), 2);
             });
-            await t.test(
-              'quiet hours and a zero limit hold urgent nudges, which skip the routine limit and gap',
-              async () => {
-                await reset();
-                const clock = (offset: number) =>
-                  new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
-                await preferences.update({
-                  quietHoursEnabled: true,
-                  quietStart: clock(-1),
-                  quietEnd: clock(1),
-                  proactiveMinGapMinutes: 120,
-                });
-                const urgent = {
-                  impact: 'high',
-                  urgency: 'time_sensitive',
-                  deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
-                };
-                assert.equal(((await save(urgent)) as { status: string }).status, 'prepared');
-                const held = (await engine.view()).issues[0];
-                const wake = Date.parse(held.nextCheck ?? '') - Date.now();
-                assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
-                await preferences.update({ quietHoursEnabled: false });
-                assert.equal(((await save(urgent)) as { status: string }).status, 'notified');
-                assert.equal(
-                  ((await save({ matterKey: 'routine after urgent' })) as { status: string })
-                    .status,
-                  'notified',
-                );
-                await engine.control({ id: held.id, action: 'snooze', minutes: 60 });
-                version = 'v2';
-                await save({ ...urgent, materialChange: 'condition_changed' });
-                assert.equal(
-                  (
-                    (await save({ ...urgent, matterKey: 'another urgent matter' })) as {
-                      status: string;
-                    }
-                  ).status,
-                  'notified',
-                );
-                await preferences.update({ proactiveDailyLimit: 0 });
-                assert.equal(
-                  (
-                    (await save({ ...urgent, matterKey: 'urgent while paused' })) as {
-                      status: string;
-                    }
-                  ).status,
-                  'prepared',
-                );
-                assert.equal(await delivered(), 3);
-              },
-            );
             await t.test(
               'managed event bursts keep one owner job and retain later signals',
               async () => {
@@ -3640,7 +3561,7 @@ test(
                 );
               },
             );
-            await t.test('a failed message insert rolls back the issue and allowance', async () => {
+            await t.test('a failed message insert rolls back the issue', async () => {
               await reset();
               await db.pool
                 .query(`CREATE FUNCTION reject_proactive_message() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -4098,30 +4019,12 @@ test(
             );
             assert.equal(deltas.filter((event) => turnIds.includes(event.turnId)).length, 0);
             await preferences.update({ notificationRule: '' });
-            const automaticId = randomUUID();
-            const automaticTurn = await triage.triageEvent(
-              'Synthetic event without a rule',
-              automaticId,
-            );
-            assert.ok(automaticTurn);
-            await waitFor(settled(automaticTurn));
-            assert.equal((await eventTurns([automaticId])).length, 1);
+            const sourceless = randomUUID();
             assert.equal(
-              (
-                await db.pool.query('SELECT proactive FROM turns WHERE id=$1 AND owner_id=$2', [
-                  automaticTurn,
-                  ownerId,
-                ])
-              ).rows[0].proactive,
-              true,
-            );
-            const unsupported = createTriage({ preparation: async () => false });
-            const disabledId = randomUUID();
-            assert.equal(
-              await unsupported.triageEvent('Synthetic event without a rule', disabledId),
+              await triage.triageEvent('Synthetic event without a rule or source', sourceless),
               undefined,
             );
-            assert.deepEqual(await eventTurns([disabledId]), []);
+            assert.deepEqual(await eventTurns([sourceless]), []);
           } finally {
             quietBackgroundWork = false;
             await preferences.update(original);

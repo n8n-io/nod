@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -34,7 +34,12 @@ import {
   type Workspace,
 } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
-import type { ObservationProvider } from '../ports/proactivity.ts';
+import type {
+  ObservationBatch,
+  ObservationProvider,
+  ObservationQuery,
+  ObservationSource,
+} from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult, type MailCheck } from './integration-result.ts';
@@ -110,6 +115,7 @@ import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { createProactivity } from './proactivity.ts';
+import { appToolArgs, appTools, type AppAccount, type AppTool } from './app-reads.ts';
 import { lockProactivity } from './locks.ts';
 import { createObservationSources } from './observation-sources.ts';
 import { createTaskObservations } from './task-observations.ts';
@@ -762,6 +768,69 @@ async function initializeApplication(
   });
   await tasks.initialize();
   const activity = createActivity({ pool, ownerId });
+  const checkInterval = 30 * 60000;
+  const connectionSources = 'connections';
+  const fingerprint = (value: unknown) =>
+    createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const observedSource = (catalog: ObservationSource[], id: string) =>
+    catalog.find((source) => source.id === id) ??
+    catalog.find((source) => source.id === `${connectionSources}:${id}`);
+  const toolCatalogs = new Map<string, { binding: string; tools: AppTool[] }>();
+  const readAccount = async (
+    connectionId: string,
+    input: ObservationQuery,
+    signal: AbortSignal,
+  ): Promise<ObservationBatch> => {
+    const account = (await appReads.accounts()).find((item) => item.connectionId === connectionId);
+    if (
+      !account ||
+      (input.revision !== undefined && input.revision !== fingerprint(account.binding))
+    )
+      throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
+    if (input.query) {
+      const tools = appTools(await appReads.search(account, input.query, signal), connectionId);
+      toolCatalogs.set(connectionId, { binding: account.binding, tools });
+      return {
+        records: [
+          {
+            id: 'tools',
+            version: fingerprint(tools.map(({ name }) => name)),
+            available: true,
+            data: {
+              tools: tools.map(({ name, description, schema }) => ({ name, description, schema })),
+            },
+          },
+        ],
+      };
+    }
+    const catalog = toolCatalogs.get(connectionId);
+    const tool =
+      catalog?.binding === account.binding
+        ? catalog.tools.find((item) => item.name === input.tool)
+        : undefined;
+    if (!tool)
+      throw Object.assign(
+        new Error('Search this source with query first, then read one of the tools it returns.'),
+        { refused: true },
+      );
+    const args = input.args ?? {};
+    const result = await appReads.read(
+      account,
+      tool,
+      appToolArgs(tool, args, connectionId),
+      signal,
+    );
+    return {
+      records: [
+        {
+          id: fingerprint([tool.name, args]),
+          version: fingerprint(result ?? null),
+          available: true,
+          data: { tool: tool.name, args, result },
+        },
+      ],
+    };
+  };
   let proactivity!: ReturnType<typeof createProactivity>;
   let privateReady = false;
   const preparationRule = createNotificationRouting(review);
@@ -770,21 +839,12 @@ async function initializeApplication(
     connectedApps: () => integrations.connectedApps(ownerId, true),
     preparation: async (rule, rules, sourceId) => {
       if (!privateReady) throw new Error('Background sources are starting.');
-      const catalog = await observations.sources();
-      const supported = sourceId
-        ? catalog.some((source) => source.id === sourceId && source.readable) ||
-          (await integrations.activitySources()).some(
-            (source) => source.connectionId === sourceId && source.supported,
-          )
-        : catalog.some((source) => source.readable && source.id !== 'work:tasks');
-      return supported && (await preparationRule(rule, rules));
+      const source = observedSource(await observations.sources(), sourceId);
+      return Boolean(source?.readable) && (await preparationRule(rule, rules));
     },
     signal: async (sourceId, client) => {
-      const catalog = await observations.sources(client);
-      await proactivity.signal(
-        catalog.some((source) => source.id === sourceId) ? sourceId : `connections:${sourceId}`,
-        client,
-      );
+      const source = observedSource(await observations.sources(client), sourceId);
+      if (source) await proactivity.signal(source.id, client);
     },
     sweep: () => vault.forgetExpiredHolds(),
     due: () => proactivity.due(),
@@ -1080,6 +1140,73 @@ async function initializeApplication(
       .filter(connectedGmail)
       .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
+  const appReads = {
+    accounts: async () => {
+      const connected = (await integrations.list(ownerId, { refresh: false })).filter(
+        (account) =>
+          account.status === 'connected' &&
+          !account.savedLogin &&
+          !account.disconnectPending &&
+          account.connectionId,
+      );
+      const accounts = await Promise.all(
+        connected.map(async (account) => {
+          const binding = await integrations.binding(account.connectionId!);
+          return binding
+            ? {
+                connectionId: account.connectionId!,
+                binding,
+                slug: account.slug,
+                name: account.name,
+              }
+            : undefined;
+        }),
+      );
+      return accounts.filter((account) => account !== undefined);
+    },
+    search: async (account: AppAccount, query: string, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      if ((await integrations.binding(account.connectionId)) !== account.binding)
+        throw new Error('This connected account changed.');
+      return integrations.execute(
+        ownerId,
+        'SEARCH_TOOLS',
+        { connectionId: account.connectionId, query },
+        undefined,
+        signal,
+      );
+    },
+    read: async (
+      account: AppAccount,
+      tool: AppTool,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+    ) => {
+      signal.throwIfAborted();
+      if (
+        (await integrations.binding(account.connectionId)) !== account.binding ||
+        !(await trust.readOnly(
+          tool.action,
+          args,
+          { description: tool.description, inputSchema: tool.schema },
+          signal,
+        ))
+      )
+        throw Object.assign(new Error('This action is not a read, so nothing ran.'), {
+          refused: true,
+        });
+      signal.throwIfAborted();
+      if ((await integrations.binding(account.connectionId)) !== account.binding)
+        throw new Error('This connected account changed.');
+      return integrations.execute(ownerId, tool.action, args, undefined, signal, account.binding);
+    },
+    current: async (accounts: AppAccount[], client?: import('pg').PoolClient) => {
+      for (const account of accounts)
+        if ((await integrations.binding(account.connectionId, client)) !== account.binding)
+          return false;
+      return true;
+    },
+  };
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
     curator: onboardingCurator,
@@ -1091,67 +1218,13 @@ async function initializeApplication(
         .map((entry) => entry.text),
     signal: closing.signal,
     discovery: {
-      accounts: async () => {
-        const connected = (await integrations.list(ownerId, { refresh: false })).filter(
-          (account) =>
-            account.status === 'connected' &&
-            !account.savedLogin &&
-            !account.disconnectPending &&
-            account.connectionId,
-        );
-        const accounts = await Promise.all(
-          connected.map(async (account) => {
-            const binding = await integrations.binding(account.connectionId!);
-            return binding
-              ? {
-                  connectionId: account.connectionId!,
-                  binding,
-                  slug: account.slug,
-                  name: account.name,
-                }
-              : undefined;
-          }),
-        );
-        return accounts.filter((account) => account !== undefined);
-      },
-      search: async (account, signal) => {
-        signal.throwIfAborted();
-        if ((await integrations.binding(account.connectionId)) !== account.binding)
-          throw new Error('This connected account changed.');
-        return integrations.execute(
-          ownerId,
-          'SEARCH_TOOLS',
-          {
-            connectionId: account.connectionId,
-            query: `${account.name} recent activity messages events tasks projects documents`,
-          },
-          undefined,
+      ...appReads,
+      search: (account, signal) =>
+        appReads.search(
+          account,
+          `${account.name} recent activity messages events tasks projects documents`,
           signal,
-        );
-      },
-      read: async (account, tool, args, signal) => {
-        signal.throwIfAborted();
-        if (
-          (await integrations.binding(account.connectionId)) !== account.binding ||
-          !(await trust.readOnly(
-            tool.action,
-            args,
-            { description: tool.description, inputSchema: tool.schema },
-            signal,
-          ))
-        )
-          throw new Error('This discovery action is unavailable.');
-        signal.throwIfAborted();
-        if ((await integrations.binding(account.connectionId)) !== account.binding)
-          throw new Error('This connected account changed.');
-        return integrations.execute(ownerId, tool.action, args, undefined, signal, account.binding);
-      },
-      current: async (accounts, client) => {
-        for (const account of accounts)
-          if ((await integrations.binding(account.connectionId, client)) !== account.binding)
-            return false;
-        return true;
-      },
+        ),
     },
     telegram: async () =>
       Boolean(
@@ -1276,20 +1349,42 @@ async function initializeApplication(
   const observations = createObservationSources(
     [
       {
-        id: 'connections',
-        sources: async (client?: import('pg').PoolClient) =>
-          (await integrations.activitySources(client)).map((source) => ({
-            id: source.connectionId,
-            label: source.account,
-            description: 'Read-only records from ' + source.service,
-            revision: source.revision,
-            readable: source.supported && source.active,
-            mode: source.supported ? ('prepare' as const) : ('classic' as const),
-            pollIntervalMs: source.eventDriven ? undefined : 30 * 60000,
-            changeToken: source.changeToken,
-          })),
+        id: connectionSources,
+        sources: async (client?: import('pg').PoolClient) => {
+          const [recorded, accounts] = await Promise.all([
+            integrations.activitySources(client),
+            appReads.accounts(),
+          ]);
+          return [
+            ...recorded.map((source) => ({
+              id: source.connectionId,
+              label: source.account,
+              description: 'Read-only records from ' + source.service,
+              revision: source.revision,
+              readable: source.active,
+              pollIntervalMs: source.eventDriven ? undefined : checkInterval,
+              changeToken: source.changeToken,
+            })),
+            ...accounts
+              .filter(
+                (account) =>
+                  !recorded.some((source) => source.connectionId === account.connectionId),
+              )
+              .map((account) => ({
+                id: account.connectionId,
+                label: account.name,
+                description: `Read-only data from ${account.name}, through its own read tools.`,
+                revision: fingerprint(account.binding),
+                readable: true,
+                tools: true,
+                pollIntervalMs: checkInterval,
+              })),
+          ];
+        },
         read: (id, input, signal) =>
-          integrations.readActivity({ connectionId: id, ...input }, signal),
+          input.query || input.tool
+            ? readAccount(id, input, signal)
+            : integrations.readActivity({ connectionId: id, ...input }, signal),
       },
       createTaskObservations(pool, ownerId, createRedactor(secrets)),
       ...(adapters.observations ?? []),
@@ -1323,6 +1418,11 @@ async function initializeApplication(
       );
       if (!source) throw new Error('This source has no supported activity reader.');
       const bound = { ...input, revision: source.revision };
+      if (source.tools) {
+        const result = await observations.read(bound, signal);
+        await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
+        return result;
+      }
       const verdict = await trust.check(turn, 'NOD_read_source', {
         ...bound,
         source: source.label,
@@ -1491,10 +1591,7 @@ async function initializeApplication(
       speech,
       manage: async (turn, action, args, { admit, ...provenance }) => {
         if (action === 'prepared_list')
-          return untrustedBlock(
-            'prepared work',
-            JSON.stringify(await proactivity.prepared(args, undefined, turn)),
-          );
+          return untrustedBlock('prepared work', JSON.stringify(await proactivity.prepared(args)));
         if (action === 'prepared_update') {
           const { id, state, snoozedUntil, feedback } = await proactivity.control(args, turn);
           return { id, state, snoozedUntil, feedback };

@@ -129,10 +129,6 @@ export function populationScenario(cohort: number, baseline: boolean) {
       };
     },
     async play(session, world) {
-      await session.api('PATCH', '/api/preferences', {
-        proactiveDailyLimit: 20,
-        proactiveMinGapMinutes: 0,
-      });
       world.state.turnId = await session.event('Records changed in source records:current.');
       await session.waitForTurn(world.state.turnId);
       await session.settle();

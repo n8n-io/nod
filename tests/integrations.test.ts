@@ -9856,13 +9856,11 @@ test(
     const f = await appsFixture(t);
     const connected = await f.connect('gmail');
     assert.ok(connected.connectionId);
-    const identity = createComposioProvider({
+    const { identity } = createComposioProvider({
       proxy: composioProxyFixture({} as Composio),
-    }).activityIdentity!;
-    f.provider.activityServices = ['gmail'];
-    f.provider.activitySignals = ['gmail'];
-    f.provider.activityIdentity = identity;
-    f.provider.activity = async () => ({ records: [] });
+    }).activity!.gmail;
+    const gmail = { read: async () => ({ records: [] }), identity };
+    f.provider.activity = { gmail };
     await f.pool.query(
       "UPDATE app_connections SET account_email='owner@example.test' WHERE id=$1",
       [connected.connectionId],
@@ -9914,7 +9912,7 @@ test(
       { connectionId: connected.connectionId, revision: first.revision },
       new AbortController().signal,
     );
-    f.provider.activity = async () => {
+    gmail.read = async () => {
       await f.pool.query(
         "UPDATE app_connections SET account_id='another-physical-id' WHERE id=$1",
         [connected.connectionId],
@@ -9944,7 +9942,18 @@ test(
 );
 
 test('proactive readers use fixed GET paths, preserve pages, and check exact source state', async () => {
-  const { readActivity } = await import('../src/providers/composio/activity.ts');
+  const { composioActivity } = await import('../src/providers/composio/activity.ts');
+  const readActivity = async (
+    client: Pick<Composio['tools'], 'proxyExecute'>,
+    service: string,
+    accountId: string,
+    input: { ids?: string[]; cursor?: string; asOf?: string },
+    signal: AbortSignal,
+  ) => {
+    const readers = composioActivity(client);
+    if (!Object.hasOwn(readers, service)) throw new Error('This source has no reader.');
+    return readers[service].read(accountId, input, signal);
+  };
   const calls: Array<{
     endpoint: string;
     method: string;
@@ -10274,15 +10283,16 @@ test(
       },
     );
     const account = await f.connect('googlecalendar');
-    f.provider.activityServices = ['googlecalendar'];
-    f.provider.activityChangeServices = ['googlecalendar'];
-    f.provider.activity = async () => ({ records: [] });
+    const calendar: import('../src/ports/integrations.ts').ActivityReader = {
+      read: async () => ({ records: [] }),
+    };
+    f.provider.activity = { googlecalendar: calendar };
     let calls = 0;
     let token = 'version-one';
     let fail = false;
     let swap = false;
     let changedConfiguration = false;
-    f.provider.activityChangeToken = async (_service, accountId) => {
+    calendar.changeToken = async (accountId) => {
       calls++;
       assert.equal(accountId, account.accountId);
       if (changedConfiguration) {

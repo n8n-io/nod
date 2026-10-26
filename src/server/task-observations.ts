@@ -34,23 +34,25 @@ export function createTaskObservations(
       signal.throwIfAborted();
       if (sourceId !== 'tasks') throw new Error('This source is unavailable.');
       const ids = input.ids ? z.array(z.uuid()).max(10).parse(input.ids) : null;
-      const offset = input.cursor
-        ? z.coerce.number().int().min(0).max(100000).parse(input.cursor)
-        : 0;
+      const [position, after] = input.cursor
+        ? z.tuple([z.string().regex(/^\d{1,20}$/), z.uuid()]).parse(input.cursor.split(':'))
+        : [null, null];
       const since = input.since ? z.iso.datetime({ offset: true }).parse(input.since) : null;
       const asOf = input.asOf
         ? z.iso.datetime({ offset: true }).parse(input.asOf)
         : new Date().toISOString();
       const rows = (
         await pool.query(
-          `SELECT id,title,done_when,now_text,state,result,waiting_for,next_check,updated_at FROM tasks WHERE owner_id=$1 AND
-      CASE WHEN $2::uuid[] IS NOT NULL THEN id=ANY($2) ELSE updated_at<=$3::timestamptz AND ($4::timestamptz IS NULL OR updated_at>=$4::timestamptz) END
-      ORDER BY updated_at DESC,id LIMIT 21 OFFSET $5`,
-          [ownerId, ids, asOf, since, ids ? 0 : offset],
+          `SELECT id,title,done_when,now_text,state,result,waiting_for,next_check,updated_at,
+          (extract(epoch FROM updated_at)*1000000)::bigint AS position FROM tasks WHERE owner_id=$1 AND
+      CASE WHEN $2::uuid[] IS NOT NULL THEN id=ANY($2) ELSE updated_at<=$3::timestamptz AND ($4::timestamptz IS NULL OR updated_at>=$4::timestamptz)
+        AND ($5::bigint IS NULL OR ((extract(epoch FROM updated_at)*1000000)::bigint,id)<($5::bigint,$6::uuid)) END
+      ORDER BY updated_at DESC,id DESC LIMIT 21`,
+          [ownerId, ids, asOf, since, ids ? null : position, ids ? null : after],
         )
       ).rows;
       signal.throwIfAborted();
-      const records = rows.slice(0, 20).map((row) => ({
+      const records = rows.slice(0, 20).map(({ position: _, ...row }) => ({
         id: row.id as string,
         version: createHash('sha256').update(JSON.stringify(row)).digest('hex'),
         available: true,
@@ -60,7 +62,11 @@ export function createTaskObservations(
         for (const id of ids)
           if (!records.some((record) => record.id === id))
             records.push({ id, version: 'unavailable', available: false, data: {} });
-      return { records, ...(!ids && rows.length > 20 ? { nextCursor: String(offset + 20) } : {}) };
+      const last = rows[19];
+      return {
+        records,
+        ...(!ids && rows.length > 20 ? { nextCursor: `${last.position}:${last.id}` } : {}),
+      };
     },
   };
 }

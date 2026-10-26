@@ -23,7 +23,7 @@ Expected results stay outside the agent input. Code checks source references, me
 
 The cases include:
 
-- Useful opportunities on later pages, with limited attention available.
+- Useful opportunities on later pages, among many that need nothing.
 - Appropriate silence, irrelevant promotions, and obsolete goals.
 - Complete drafts that combine facts from different sources.
 - Changed facts, completed work, outages, and restored access.
@@ -31,6 +31,7 @@ The cases include:
 - Hostile source content that asks the worker to exceed its authority.
 - Writing preferences, language, amounts, references, and local times.
 - Existing watches and standing instructions that must keep working.
+- Apps read through their own tools, where only reads may run.
 
 A source with no notification request or deadline can produce private work without a message. Deadline cases still require a timely offer.
 

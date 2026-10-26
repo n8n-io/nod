@@ -99,7 +99,7 @@ export interface Stack {
   prompts: Array<{ turnId: string; sessionId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
-  event(summary: string): Promise<string>;
+  event(summary: string, sources?: string[]): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -438,16 +438,17 @@ export async function startStack(options: {
         const { previousThreadId } = await resetThread((await activeThread()).id);
         await computer.discard?.(previousThreadId).catch(() => {});
       },
-      async event(summary) {
+      async event(summary, sources) {
         const eventId = `eval:${randomUUID()}`;
         const legacy = (
           await pool.query("SELECT to_regclass('notifications') IS NOT NULL AS found")
         ).rows[0].found;
-        const observationSources: string[] = [];
-        for (const provider of options.observations ?? [])
-          for (const source of await provider.sources())
-            if (source.readable) observationSources.push(`${provider.id}:${source.id}`);
-        if (!legacy)
+        const observationSources: string[] = [...(sources ?? [])];
+        if (!sources)
+          for (const provider of options.observations ?? [])
+            for (const source of await provider.sources())
+              if (source.readable) observationSources.push(`${provider.id}:${source.id}`);
+        if (!legacy && !sources)
           for (const source of await application!.integrations.activitySources())
             if (source.active) observationSources.push(source.connectionId);
         const queued = legacy

@@ -31,6 +31,7 @@ import type { SiteIcon } from '../ports/link-preview.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { noMailCheck, privateEmailResult, type MailCheck } from './integration-result.ts';
+import type { ObservationQuery } from '../ports/proactivity.ts';
 import { withoutSecretKeys } from './redaction.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import {
@@ -466,11 +467,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       }));
   }
 
+  function inboxPolled(slug: string) {
+    return slug === 'gmail' && Boolean(provider.pollInbox);
+  }
+  function activityReader(slug: string) {
+    return provider.activity && Object.hasOwn(provider.activity, slug)
+      ? provider.activity[slug]
+      : undefined;
+  }
   function supportsWatch(slug: Slug) {
     return (
-      provider.configured &&
-      (provider.supportsSubscriptions.includes(slug) ||
-        (slug === 'gmail' && Boolean(provider.pollInbox)))
+      provider.configured && (provider.supportsSubscriptions.includes(slug) || inboxPolled(slug))
     );
   }
 
@@ -650,7 +657,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const accountEmail = row?.account_email ?? undefined;
         const supported = supportsWatch(slug);
         const requested = Boolean(supported && row?.watch_requested);
-        const pollingSupported = slug === 'gmail' && Boolean(provider.pollInbox);
+        const pollingSupported = inboxPolled(slug);
         const pollingActive = Boolean(
           pollingSupported &&
           row?.inbox_checked_at &&
@@ -1792,7 +1799,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           row.provider_id,
           row.configuration_id,
           row.slug,
-          provider.activityIdentity?.(row.slug, row.account_id!, row.account_email) ??
+          activityReader(row.slug)?.identity?.(row.account_id!, row.account_email) ??
             row.account_id,
         ]),
       )
@@ -1800,16 +1807,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function activitySources(client?: PoolClient) {
     return (await connectionRows(configuredOwner, client))
-      .filter((row) => row.account_id && !row.revoked && configurationMatches(row))
+      .filter(
+        (row) =>
+          row.account_id && !row.revoked && configurationMatches(row) && activityReader(row.slug),
+      )
       .map((row) => {
+        const reader = activityReader(row.slug)!;
         const native =
-          provider.activitySignals?.includes(row.slug) &&
+          inboxPolled(row.slug) &&
           row.watch_requested &&
           !row.inbox_failed &&
           !row.inbox_reconnect_required;
-        const checked = Boolean(
-          provider.activityChangeToken && provider.activityChangeServices?.includes(row.slug),
-        );
+        const checked = Boolean(reader.changeToken);
         return {
           connectionId: row.id,
           account: row.account_email || row.account_name || row.slug,
@@ -1820,20 +1829,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           eventDriven: Boolean(
             row.watch_requested && (checked || native || (row.triggers_enabled && row.trigger_id)),
           ),
-          supported: Boolean(provider.activity && provider.activityServices?.includes(row.slug)),
         };
       });
   }
 
   async function readActivity(
-    input: {
-      connectionId: string;
-      revision?: string;
-      ids?: string[];
-      since?: string;
-      cursor?: string;
-      asOf?: string;
-    },
+    input: ObservationQuery & { connectionId: string },
     signal: AbortSignal,
   ) {
     const current = async () =>
@@ -1846,11 +1847,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           configurationMatches(row),
       );
     const row = await current();
-    if (!row || !provider.activity || !provider.activityServices?.includes(row.slug))
-      throw new Error('This connection has no supported activity reader.');
+    const reader = row && activityReader(row.slug);
+    if (!row || !reader) throw new Error('This connection has no supported activity reader.');
     if (input.revision !== undefined && input.revision !== activityRevision(row))
       throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
-    const result = await provider.activity(row.slug, row.account_id!, input, signal);
+    const { connectionId: _, revision: _revision, ...query } = input;
+    const result = await reader.read(row.account_id!, query, signal);
     signal.throwIfAborted();
     const latest = await current();
     if (
@@ -1863,13 +1865,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   function pollActivityChanges() {
-    if (
-      closed ||
-      !provider.configured ||
-      !provider.activityChangeToken ||
-      !provider.activityChangeServices?.length
-    )
-      return Promise.resolve();
+    const services = Object.entries(provider.activity ?? {})
+      .filter(([, reader]) => reader.changeToken)
+      .map(([service]) => service);
+    if (closed || !provider.configured || !services.length) return Promise.resolve();
     if (activityPolling) return activityPolling;
     activityPolling = (async () => {
       const { rows } = await pool.query<ConnectionRow>(
@@ -1882,7 +1881,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         [
           configuredOwner,
           providerId,
-          provider.activityChangeServices,
+          services,
           provider.configurationId ?? null,
           randomBytes(16).toString('hex'),
         ],
@@ -1898,7 +1897,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               .max(2048)
               .parse(
                 await Promise.race([
-                  provider.activityChangeToken!(row.slug, row.account_id!, signal),
+                  activityReader(row.slug)!.changeToken!(row.account_id!, signal),
                   new Promise<never>((_, reject) => {
                     onAbort = () => reject(signal.reason);
                     signal.addEventListener('abort', onAbort, { once: true });

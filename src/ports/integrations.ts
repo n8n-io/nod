@@ -1,6 +1,6 @@
 import type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
-import type { ObservationBatch } from './proactivity.ts';
+import type { ObservationBatch, ObservationQuery } from './proactivity.ts';
 export type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
 export interface IntegrationConnectionBrowser {
   open(
@@ -151,6 +151,15 @@ export interface InboxThread {
   automated: boolean;
   text: string;
 }
+export interface ActivityReader {
+  read(
+    accountId: string,
+    input: Omit<ObservationQuery, 'revision'>,
+    signal: AbortSignal,
+  ): Promise<ObservationBatch>;
+  changeToken?(accountId: string, signal: AbortSignal): Promise<string>;
+  identity?(accountId: string, email: string | null): string;
+}
 export interface IntegrationProvider {
   id: string;
   configured: boolean;
@@ -202,17 +211,7 @@ export interface IntegrationProvider {
   sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
   inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
   inboxThreads?(accountId: string, signal: AbortSignal): Promise<InboxThread[]>;
-  activity?(
-    service: string,
-    accountId: string,
-    input: { ids?: string[]; since?: string; cursor?: string; asOf?: string },
-    signal: AbortSignal,
-  ): Promise<ObservationBatch>;
-  activityChangeToken?(service: string, accountId: string, signal: AbortSignal): Promise<string>;
-  activityChangeServices?: readonly string[];
-  activityServices?: readonly string[];
-  activitySignals?: readonly string[];
-  activityIdentity?(service: string, accountId: string, email: string | null): string;
+  activity?: Readonly<Record<string, ActivityReader>>;
   pollInbox?(
     accountId: string,
     cursor: string | null,

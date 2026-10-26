@@ -24,7 +24,7 @@ export interface Session {
   api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
   proactivity: Stack['proactivity'];
   fireSchedules(): Promise<number>;
-  event(summary: string): Promise<string>;
+  event(summary: string, sources?: string[]): Promise<string>;
   waitForTurn(turnId: string): Promise<void>;
   settle(): Promise<void>;
   reset(): Promise<void>;

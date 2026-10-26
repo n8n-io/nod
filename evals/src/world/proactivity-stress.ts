@@ -117,7 +117,7 @@ export function stressScenario(
           data: { ...credit.data, reference: 'BA-846', invoice: 'IN-231', amount: 145 },
         };
         quality +=
-          ' Also prepare complete enquiries for EUR 320 (BA-392, AC-528, IN-683) and EUR 145 (BA-846, AC-528, IN-231), with no invented refund terms. One combined account enquiry is valid if it itemizes both balances and their references; EUR 465 is the correct total. Keep these routine balance results private. Do not omit the late-page reservation.';
+          ' Also prepare complete enquiries for EUR 320 (BA-392, AC-528, IN-683) and EUR 145 (BA-846, AC-528, IN-231), with no invented refund terms. One combined account enquiry is valid if it itemizes both balances and their references; EUR 465 is the correct total. The balances have no deadline, so a calm offer or a private draft are both fine. Do not omit the late-page reservation.';
       }
       if (kind === 'duplicate_sources') {
         tables.current = [{ ...decision, data: { ...decision.data, threadReference: 'TH-482' } }];
@@ -435,10 +435,6 @@ export function stressScenario(
       };
     },
     async play(session, world) {
-      await session.api('PATCH', '/api/preferences', {
-        proactiveDailyLimit: kind === 'late_page' ? 1 : 20,
-        proactiveMinGapMinutes: kind === 'late_page' ? 120 : 0,
-      });
       if (kind === 'language')
         await session.say(
           'Prefiero mensajes breves en español. Esta respuesta solo debe confirmar mi preferencia; no revises fuentes todavía.',
@@ -466,9 +462,12 @@ export function stressScenario(
         }
         await session.reset();
       }
-      const fire = async (text = 'Current records changed in source records:current.') => {
+      const fire = async (
+        text = 'Current records changed in source records:current.',
+        source = 'records:current',
+      ) => {
         const startedAt = new Date().toISOString();
-        const id = await session.event(text);
+        const id = await session.event(text, [source]);
         world.state.turnIds.push(id);
         world.state.timeline.push({
           kind: 'event',
@@ -486,11 +485,9 @@ export function stressScenario(
           at: new Date().toISOString(),
         });
       };
-      await fire(
-        kind === 'duplicate_sources' && holdout
-          ? 'Records changed in source records:archive.'
-          : undefined,
-      );
+      if (kind === 'duplicate_sources' && holdout)
+        await fire('Records changed in source records:archive.', 'records:archive');
+      else await fire();
       if (endurance && kind === 'late_page') {
         for (
           let i = 1;
@@ -511,7 +508,8 @@ export function stressScenario(
       }
       if (kind === 'duplicate_sources') {
         world.state.phase++;
-        await fire(`Records changed in source records:${holdout ? 'current' : 'correspondence'}.`);
+        const source = `records:${holdout ? 'current' : 'correspondence'}`;
+        await fire(`Records changed in source ${source}.`, source);
       }
       if (kind === 'repeat_signal') {
         for (let i = 0; i < (endurance ? 11 : 2); i++) {
@@ -621,12 +619,15 @@ export function stressScenario(
           const issues = last?.issues ?? [];
           const open = issues.filter((i) => ['open', 'offered'].includes(i.state));
           const count = messages(run).length;
+          const onlyFirst =
+            messages(run).filter((m) => m.turnId === world.state.turnIds[0]).length === 1 &&
+            world.state.turnIds.slice(1).every((id) => !messages(run).some((m) => m.turnId === id));
           const critical = issues.find((i) => i.sources.some((s) => s.id === world.criticalId));
           let pass = count === 1 && open.length === 1;
           if (kind === 'late_page') {
             const targets = [world.criticalId, world.creditId, 'r-d83'];
             pass =
-              count === 1 &&
+              count === issues.filter((i) => i.notifiedAt).length &&
               open.length >= 2 &&
               open.length <= 3 &&
               targets.every((id) =>
@@ -635,11 +636,6 @@ export function stressScenario(
                 ),
               ) &&
               !!critical?.notifiedAt &&
-              issues.filter((i) => i.notifiedAt).length === 1 &&
-              !issues.some(
-                (i) =>
-                  i.notifiedAt && i.sources.some((s) => [world.creditId, 'r-d83'].includes(s.id)),
-              ) &&
               new Set(world.state.calls.filter((c) => !c.ids).map((c) => c.cursor ?? '0')).size >=
                 (endurance ? 18 : 6);
           }
@@ -654,10 +650,10 @@ export function stressScenario(
               open.length === 1 &&
               last!.coverage.some((s) => s.status === 'ready');
           if (kind === 'dismissed')
-            pass = count === 1 && issues.length === 1 && issues[0].state === 'dismissed';
+            pass = onlyFirst && issues.length === 1 && issues[0].state === 'dismissed';
           if (kind === 'snoozed')
             pass =
-              count === 1 &&
+              onlyFirst &&
               issues.length === 1 &&
               !!issues[0].snoozedUntil &&
               Date.parse(issues[0].snoozedUntil) > Date.now();

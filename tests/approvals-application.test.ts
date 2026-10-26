@@ -86,6 +86,8 @@ test(
     let formTarget = 'https://bank.example.test/transfer/send';
     const sourceRevision = 'v1';
     let sourceReads = 0;
+    let toolSearch: Record<string, unknown> | undefined;
+    const readOnlyActions = new Set<string>();
     let appOutage = false;
     let appResult: unknown;
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
@@ -271,6 +273,9 @@ test(
               uploads.push(Buffer.from(file.bytes).toString());
               return { name: file.name, mimetype: file.mimeType, s3key: randomUUID() };
             };
+            const search = session.search.bind(session);
+            session.search = async (...input) =>
+              toolSearch ? { tools: toolSearch, suggestions: [] } : search(...input);
             const execute = session.execute.bind(session);
             session.execute = async (...input) => {
               executedApps.push(input[0]);
@@ -344,6 +349,8 @@ test(
               return { valid: confirmationValid };
             }
             if (task === 'review' && !('purpose' in input)) fallbackChecks.push(input);
+            if (task === 'review' && 'action' in input && 'schema' in Object(input.action))
+              return { readOnly: readOnlyActions.has(String(Object(input.action).name)) };
             if (task === 'review' && 'action' in input && checkCost !== undefined)
               report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
             return task === 'review' && 'reply' in input
@@ -759,27 +766,103 @@ test(
             args: { sourceId: 'fixture:notes', ids: ['record/1'] },
           });
           try {
-            await application.triage.updatePreferences({
-              notificationRule: 'Read synthetic notes and prepare private work.',
-              rules: '',
-            });
+            await application.triage.updatePreferences({ notificationRule: '', rules: '' });
             const turnId = await enqueueTurn(prompt, {
               source: 'event',
               background: true,
               proactive: true,
             });
+            let status = '';
             for (let attempt = 0; attempt < 300; attempt++) {
-              const status = (await pool.query('SELECT status FROM turns WHERE id=$1', [turnId]))
-                .rows[0].status;
+              status = (await pool.query('SELECT status FROM turns WHERE id=$1', [turnId])).rows[0]
+                .status;
               if (status === 'succeeded' || status === 'failed') break;
               await delay(20);
             }
+            assert.ok(['succeeded', 'failed'].includes(status));
+            assert.ok(
+              fallbackChecks.some(
+                (input) => Object(Object(input).action).name === 'NOD_read_source',
+              ),
+            );
             assert.deepEqual(await approvalsFor(turnId), []);
             assert.equal(sourceReads, 0);
           } finally {
             checkCost = previousCheckCost;
             decisionCost = previousDecisionCost;
             await application.triage.updatePreferences(previous);
+          }
+        },
+      );
+      await t.test(
+        'a proactive app read runs only what the read-only check calls a read',
+        async () => {
+          const connection = (
+            await pool.query(
+              "SELECT id FROM app_connections WHERE owner_id=$1 AND slug='gmail' AND NOT revoked",
+              [ownerId],
+            )
+          ).rows[0];
+          const sourceId = `connections:${connection.id}`;
+          const schema = (field: string) => ({
+            type: 'object',
+            properties: { [field]: { type: 'string' } },
+            additionalProperties: false,
+          });
+          toolSearch = {
+            GMAIL_FETCH_EMAILS: { description: 'Read messages.', inputSchema: schema('query') },
+            GMAIL_SEND_EMAIL: {
+              description: 'Send a message.',
+              inputSchema: schema('recipient_email'),
+            },
+          };
+          readOnlyActions.add('GMAIL_FETCH_EMAILS');
+          const writes = integrationFixture.writes.length;
+          const executed = executedApps.length;
+          const read = async (args: Record<string, unknown>) => {
+            const prompt = 'Synthetic app read ' + randomUUID();
+            plans.set(prompt, { tool: 'read_source', action: 'read', args: { sourceId, ...args } });
+            const turnId = await enqueueTurn(prompt, {
+              source: 'event',
+              background: true,
+              proactive: true,
+            });
+            let turn = { status: '', error: '' };
+            for (let attempt = 0; attempt < 300; attempt++) {
+              turn = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [turnId]))
+                .rows[0];
+              if (turn.status === 'succeeded' || turn.status === 'failed') break;
+              await delay(20);
+            }
+            assert.deepEqual(await approvalsFor(turnId), []);
+            return turn.status === 'succeeded' ? JSON.stringify(results.get(turnId)) : turn.error;
+          };
+          try {
+            assert.match(
+              await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'invoice' } }),
+              /Search this source/,
+            );
+            assert.match(await read({ query: 'email' }), /GMAIL_SEND_EMAIL/);
+            assert.match(
+              await read({ tool: 'GMAIL_SEND_EMAIL', args: { recipient_email: 'x@example.test' } }),
+              /not a read/,
+            );
+            assert.equal(executedApps.length, executed);
+            await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'invoice' } });
+            assert.deepEqual(executedApps.slice(executed), ['GMAIL_FETCH_EMAILS']);
+            assert.equal(integrationFixture.writes.length, writes);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT count(*)::int AS count FROM proactive_evidence WHERE owner_id=$1 AND source_id=$2 AND resource_id<>'tools'",
+                  [ownerId, sourceId],
+                )
+              ).rows[0].count,
+              1,
+            );
+          } finally {
+            toolSearch = undefined;
+            readOnlyActions.clear();
           }
         },
       );

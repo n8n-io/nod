@@ -49,13 +49,14 @@ export default scenario({
           }),
         },
       ],
-      state: { initial: '', reply: '' },
+      state: { initial: '', reply: '', prepared: 0 },
     };
   },
   async play(session, world) {
     world.state.initial = await session.event('A current supplier statement record changed.');
     await session.waitForTurn(world.state.initial);
     await session.settle();
+    world.state.prepared = (await session.proactivity.view()).issues.length;
     await session.say(
       'Show me the Cedar Tools draft here, including the subject and full message, so I can copy it.',
     );
@@ -67,6 +68,7 @@ export default scenario({
   },
   expect(world) {
     return [
+      check('work-was-prepared-first', () => world.state.prepared > 0),
       check('full-work-reaches-chat', () =>
         ['CM-392', 'AC-572', 'INV-793', '280'].every((value) => world.state.reply.includes(value)),
       ),

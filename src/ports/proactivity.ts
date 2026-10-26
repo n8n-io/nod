@@ -7,6 +7,7 @@ export interface ObservationSource {
   pollIntervalMs?: number;
   changeToken?: string;
   mode?: 'prepare' | 'classic';
+  tools?: boolean;
 }
 
 export interface ObservationQuery {
@@ -15,6 +16,9 @@ export interface ObservationQuery {
   since?: string;
   cursor?: string;
   asOf?: string;
+  query?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
 }
 
 export interface ObservationRecord {

@@ -6,21 +6,33 @@ import {
   type ObservationRecord,
   type ObservationBatch,
 } from '../../ports/proactivity.ts';
+import type { ActivityReader } from '../../ports/integrations.ts';
 import { messageSchema, messageText } from './verification-email.ts';
 
-const id = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
+const id = z.string().regex(/^[a-zA-Z0-9_-]{1,1024}$/);
 const page = z.string().min(1).max(2048);
 const version = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 type Client = Pick<Composio['tools'], 'proxyExecute'>;
+type Query = Parameters<ActivityReader['read']>[1];
+const emailIdentity = (accountId: string, email: string | null) =>
+  email && z.email().safeParse(email).success ? email.trim().toLowerCase() : accountId;
 
-export async function readActivity(
-  client: Client,
-  service: string,
-  accountId: string,
-  input: { ids?: string[]; since?: string; cursor?: string; asOf?: string },
-  signal: AbortSignal,
-): Promise<ObservationBatch> {
+export function composioActivity(client: Client): Record<string, ActivityReader> {
+  return {
+    gmail: {
+      read: (accountId, input, signal) => readGmail(client, accountId, input, signal),
+      identity: emailIdentity,
+    },
+    googlecalendar: {
+      read: (accountId, input, signal) => readCalendar(client, accountId, input, signal),
+      changeToken: (accountId, signal) => calendarChangeToken(client, accountId, signal),
+      identity: emailIdentity,
+    },
+  };
+}
+
+function reader(client: Client, accountId: string, input: Query, signal: AbortSignal) {
   const ids = input.ids && z.array(id).min(1).max(10).parse(input.ids);
   const cursor = input.cursor && page.parse(input.cursor);
   const since = input.since && z.iso.datetime({ offset: true }).parse(input.since);
@@ -119,132 +131,71 @@ export async function readActivity(
     );
     return records;
   };
-  if (service === 'gmail') {
-    const base = 'https://gmail.googleapis.com/gmail/v1/users/me/threads';
-    const list = ids
-      ? { threads: ids.map((id) => ({ id })), nextPageToken: undefined }
-      : z
-          .object({
-            threads: z.array(z.object({ id })).max(20).default([]),
-            nextPageToken: page.optional(),
-          })
-          .parse(
-            await get(base, [
-              [
-                'q',
-                `after:${Math.floor(Math.max(asOf - 30 * 86400000, since ? new Date(since).getTime() : 0) / 1000)} before:${Math.ceil(asOf / 1000) + 1} -in:spam -in:trash`,
-              ],
-              ['maxResults', 20],
-              ['fields', 'threads/id,nextPageToken'],
-              ...(cursor ? [['pageToken', cursor] as [string, string]] : []),
-            ]),
-          );
-    const records = await recordsFor(
-      list.threads.map((item) => item.id),
-      async (threadId, stop) => {
-        const raw = await get(
-          `${base}/${threadId}`,
-          [
-            ['format', 'metadata'],
-            ['fields', 'id,historyId,messages(id,internalDate,labelIds)'],
-          ],
-          stop,
-          2_000_000,
-        );
-        if (raw === null)
-          return { id: threadId, version: 'unavailable', available: false, data: {} };
-        const thread = z
-          .object({
-            id,
-            historyId: z.string().optional(),
-            messages: z
-              .array(
-                z.object({
-                  id,
-                  internalDate: z.string().regex(/^\d{1,16}$/),
-                  labelIds: z.array(z.string()).max(100).optional(),
-                }),
-              )
-              .min(1),
-          })
-          .parse(raw);
-        if (thread.id !== threadId) throw new Error('The source identity changed.');
-        const messages = thread.messages
-          .filter(
-            (message) =>
-              !message.labelIds?.some((label) => ['DRAFT', 'SPAM', 'TRASH'].includes(label)),
-          )
-          .sort((a, b) => Number(a.internalDate) - Number(b.internalDate));
-        if (!messages.length)
-          return {
-            id: threadId,
-            version: version(
-              messages.map(({ id, internalDate, labelIds }) => ({
-                id,
-                internalDate,
-                sent: labelIds?.includes('SENT') ?? false,
-              })),
-            ),
-            available: false,
-            data: {},
-          };
-        const selected = messages.slice(ids ? -8 : -1);
-        const loaded = await Promise.all(
-          selected.map(async (message) => {
-            const value = await get(
-              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
-              [
-                ['format', ids ? 'full' : 'metadata'],
-                [
-                  'fields',
-                  ids
-                    ? 'id,internalDate,labelIds,snippet,payload'
-                    : 'id,internalDate,labelIds,snippet,payload/headers',
-                ],
-                ...(!ids
-                  ? ([
-                      ['metadataHeaders', 'From'],
-                      ['metadataHeaders', 'To'],
-                      ['metadataHeaders', 'Subject'],
-                    ] as Array<[string, string]>)
-                  : []),
-              ],
-              stop,
-            );
-            const mail = messageSchema
-              .extend({ snippet: z.string().max(2000).optional() })
-              .parse(value);
-            if (mail.id !== message.id) throw new Error('The source identity changed.');
-            const body = ids ? messageText(mail.payload) : undefined;
-            const header = (name: string) =>
-              mail.payload.headers
-                .find((item) => item.name.toLowerCase() === name)
-                ?.value.slice(0, 2000) ?? '';
-            const text = body ?? mail.snippet ?? '';
-            return {
-              id: mail.id,
-              from: header('from'),
-              to: header('to'),
-              subject: header('subject'),
-              receivedAt: new Date(Number(mail.internalDate)).toISOString(),
-              sent: mail.labelIds?.includes('SENT') ?? false,
-              text: text.slice(0, 8000),
-              truncated: !ids || body === undefined || text.length > 8000,
-            };
-          }),
-        );
-        const latest = z.object({ id, historyId: z.string().optional() }).parse(
-          await get(
-            `${base}/${threadId}`,
+  return { ids, cursor, since, asOf, get, recordsFor };
+}
+
+async function readGmail(
+  client: Client,
+  accountId: string,
+  input: Query,
+  signal: AbortSignal,
+): Promise<ObservationBatch> {
+  const { ids, cursor, since, asOf, get, recordsFor } = reader(client, accountId, input, signal);
+  const base = 'https://gmail.googleapis.com/gmail/v1/users/me/threads';
+  const list = ids
+    ? { threads: ids.map((id) => ({ id })), nextPageToken: undefined }
+    : z
+        .object({
+          threads: z.array(z.object({ id })).max(20).default([]),
+          nextPageToken: page.optional(),
+        })
+        .parse(
+          await get(base, [
             [
-              ['format', 'minimal'],
-              ['fields', 'id,historyId'],
+              'q',
+              `after:${Math.floor(Math.max(asOf - 30 * 86400000, since ? new Date(since).getTime() : 0) / 1000)} before:${Math.ceil(asOf / 1000) + 1} -in:spam -in:trash`,
             ],
-            stop,
-          ),
+            ['maxResults', 20],
+            ['fields', 'threads/id,nextPageToken'],
+            ...(cursor ? [['pageToken', cursor] as [string, string]] : []),
+          ]),
         );
-        if (latest.id !== threadId || latest.historyId !== thread.historyId)
-          throw new Error('The source changed during its read.');
+  const records = await recordsFor(
+    list.threads.map((item) => item.id),
+    async (threadId, stop) => {
+      const raw = await get(
+        `${base}/${threadId}`,
+        [
+          ['format', 'metadata'],
+          ['fields', 'id,historyId,messages(id,internalDate,labelIds)'],
+        ],
+        stop,
+        2_000_000,
+      );
+      if (raw === null) return { id: threadId, version: 'unavailable', available: false, data: {} };
+      const thread = z
+        .object({
+          id,
+          historyId: z.string().optional(),
+          messages: z
+            .array(
+              z.object({
+                id,
+                internalDate: z.string().regex(/^\d{1,16}$/),
+                labelIds: z.array(z.string()).max(100).optional(),
+              }),
+            )
+            .min(1),
+        })
+        .parse(raw);
+      if (thread.id !== threadId) throw new Error('The source identity changed.');
+      const messages = thread.messages
+        .filter(
+          (message) =>
+            !message.labelIds?.some((label) => ['DRAFT', 'SPAM', 'TRASH'].includes(label)),
+        )
+        .sort((a, b) => Number(a.internalDate) - Number(b.internalDate));
+      if (!messages.length)
         return {
           id: threadId,
           version: version(
@@ -254,101 +205,171 @@ export async function readActivity(
               sent: labelIds?.includes('SENT') ?? false,
             })),
           ),
-          available: true,
-          url: `https://mail.google.com/mail/u/0/#all/${threadId}`,
-          data: { truncated: !ids || messages.length > 8, messages: loaded },
+          available: false,
+          data: {},
         };
-      },
-    );
-    return { records, ...(list.nextPageToken ? { nextCursor: list.nextPageToken } : {}) };
-  }
-  if (service === 'googlecalendar') {
-    const day = Date.parse(new Date(asOf).toISOString().slice(0, 10));
-    const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
-    const event = z.object({
-      id,
-      etag: z.string().max(500).optional(),
-      status: z.string().max(50),
-      summary: z.string().max(2000).optional(),
-      description: z.string().max(16000).optional(),
-      location: z.string().max(2000).optional(),
-      updated: z.string().max(100).optional(),
-      start: z
-        .object({
-          dateTime: z.string().optional(),
-          date: z.string().optional(),
-          timeZone: z.string().optional(),
-        })
-        .optional(),
-      end: z
-        .object({
-          dateTime: z.string().optional(),
-          date: z.string().optional(),
-          timeZone: z.string().optional(),
-        })
-        .optional(),
-      organizer: z
-        .object({ email: z.string().max(500).optional(), self: z.boolean().optional() })
-        .optional(),
-      attendees: z
-        .array(
-          z.object({
-            email: z.string().max(500).optional(),
-            self: z.boolean().optional(),
-            responseStatus: z.string().max(50).optional(),
-          }),
-        )
-        .max(100)
-        .optional(),
-    });
-    const list = ids
-      ? { items: ids.map((id) => ({ id })), nextPageToken: undefined }
-      : z
-          .object({
-            items: z.array(z.object({ id }).passthrough()).max(20).default([]),
-            nextPageToken: page.optional(),
-          })
-          .parse(
-            await get(base, [
-              ['timeMin', new Date(day - 86400000).toISOString()],
-              ['timeMax', new Date(day + 31 * 86400000).toISOString()],
-              ['singleEvents', 'true'],
-              ['showDeleted', 'true'],
-              ['maxResults', 20],
-              ['orderBy', 'startTime'],
-              ...(since &&
-              new Date(since).toISOString().slice(0, 10) ===
-                new Date(asOf).toISOString().slice(0, 10)
-                ? [['updatedMin', since] as [string, string]]
+      const selected = messages.slice(ids ? -8 : -1);
+      const loaded = await Promise.all(
+        selected.map(async (message) => {
+          const value = await get(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
+            [
+              ['format', ids ? 'full' : 'metadata'],
+              [
+                'fields',
+                ids
+                  ? 'id,internalDate,labelIds,snippet,payload'
+                  : 'id,internalDate,labelIds,snippet,payload/headers',
+              ],
+              ...(!ids
+                ? ([
+                    ['metadataHeaders', 'From'],
+                    ['metadataHeaders', 'To'],
+                    ['metadataHeaders', 'Subject'],
+                  ] as Array<[string, string]>)
                 : []),
-              ...(cursor ? [['pageToken', cursor] as [string, string]] : []),
-            ]),
+            ],
+            stop,
           );
-    const records = await recordsFor(
-      list.items.map((item) => item.id),
-      async (eventId, stop) => {
-        const value = ids
-          ? await get(`${base}/${eventId}`, [], stop)
-          : list.items.find((item) => item.id === eventId);
-        if (value === null)
-          return { id: eventId, version: 'unavailable', available: false, data: {} };
-        const item = event.parse(value);
-        if (item.id !== eventId) throw new Error('The source identity changed.');
-        return { id: item.id, version: version(item), available: true, data: item };
-      },
-    );
-    return { records, ...(list.nextPageToken ? { nextCursor: list.nextPageToken } : {}) };
-  }
-  throw new Error('This source has no supported activity reader.');
+          const mail = messageSchema
+            .extend({ snippet: z.string().max(2000).optional() })
+            .parse(value);
+          if (mail.id !== message.id) throw new Error('The source identity changed.');
+          const body = ids ? messageText(mail.payload) : undefined;
+          const header = (name: string) =>
+            mail.payload.headers
+              .find((item) => item.name.toLowerCase() === name)
+              ?.value.slice(0, 2000) ?? '';
+          const text = body ?? mail.snippet ?? '';
+          return {
+            id: mail.id,
+            from: header('from'),
+            to: header('to'),
+            subject: header('subject'),
+            receivedAt: new Date(Number(mail.internalDate)).toISOString(),
+            sent: mail.labelIds?.includes('SENT') ?? false,
+            text: text.slice(0, 8000),
+            truncated: !ids || body === undefined || text.length > 8000,
+          };
+        }),
+      );
+      const latest = z.object({ id, historyId: z.string().optional() }).parse(
+        await get(
+          `${base}/${threadId}`,
+          [
+            ['format', 'minimal'],
+            ['fields', 'id,historyId'],
+          ],
+          stop,
+        ),
+      );
+      if (latest.id !== threadId || latest.historyId !== thread.historyId)
+        throw new Error('The source changed during its read.');
+      return {
+        id: threadId,
+        version: version(
+          messages.map(({ id, internalDate, labelIds }) => ({
+            id,
+            internalDate,
+            sent: labelIds?.includes('SENT') ?? false,
+          })),
+        ),
+        available: true,
+        url: `https://mail.google.com/mail/u/0/#all/${threadId}`,
+        data: { truncated: !ids || messages.length > 8, messages: loaded },
+      };
+    },
+  );
+  return { records, ...(list.nextPageToken ? { nextCursor: list.nextPageToken } : {}) };
 }
 
-export async function activityChangeToken(
+async function readCalendar(
   client: Client,
-  service: string,
+  accountId: string,
+  input: Query,
+  signal: AbortSignal,
+): Promise<ObservationBatch> {
+  const { ids, cursor, since, asOf, get, recordsFor } = reader(client, accountId, input, signal);
+  const day = Date.parse(new Date(asOf).toISOString().slice(0, 10));
+  const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+  const event = z.object({
+    id,
+    etag: z.string().max(500).optional(),
+    status: z.string().max(50),
+    summary: z.string().max(2000).optional(),
+    description: z.string().max(16000).optional(),
+    location: z.string().max(2000).optional(),
+    updated: z.string().max(100).optional(),
+    start: z
+      .object({
+        dateTime: z.string().optional(),
+        date: z.string().optional(),
+        timeZone: z.string().optional(),
+      })
+      .optional(),
+    end: z
+      .object({
+        dateTime: z.string().optional(),
+        date: z.string().optional(),
+        timeZone: z.string().optional(),
+      })
+      .optional(),
+    organizer: z
+      .object({ email: z.string().max(500).optional(), self: z.boolean().optional() })
+      .optional(),
+    attendees: z
+      .array(
+        z.object({
+          email: z.string().max(500).optional(),
+          self: z.boolean().optional(),
+          responseStatus: z.string().max(50).optional(),
+        }),
+      )
+      .optional(),
+  });
+  const list = ids
+    ? { items: ids.map((id) => ({ id })), nextPageToken: undefined }
+    : z
+        .object({
+          items: z.array(z.object({ id }).passthrough()).max(20).default([]),
+          nextPageToken: page.optional(),
+        })
+        .parse(
+          await get(base, [
+            ['timeMin', new Date(day - 86400000).toISOString()],
+            ['timeMax', new Date(day + 31 * 86400000).toISOString()],
+            ['singleEvents', 'true'],
+            ['showDeleted', 'true'],
+            ['maxResults', 20],
+            ['orderBy', 'startTime'],
+            ...(since &&
+            new Date(since).toISOString().slice(0, 10) === new Date(asOf).toISOString().slice(0, 10)
+              ? [['updatedMin', since] as [string, string]]
+              : []),
+            ...(cursor ? [['pageToken', cursor] as [string, string]] : []),
+          ]),
+        );
+  const records = await recordsFor(
+    list.items.map((item) => item.id),
+    async (eventId, stop) => {
+      const value = ids
+        ? await get(`${base}/${eventId}`, [], stop)
+        : list.items.find((item) => item.id === eventId);
+      if (value === null)
+        return { id: eventId, version: 'unavailable', available: false, data: {} };
+      const item = event.parse(value);
+      if (item.id !== eventId) throw new Error('The source identity changed.');
+      return { id: item.id, version: version(item), available: true, data: item };
+    },
+  );
+  return { records, ...(list.nextPageToken ? { nextCursor: list.nextPageToken } : {}) };
+}
+
+async function calendarChangeToken(
+  client: Client,
   accountId: string,
   signal: AbortSignal,
 ): Promise<string> {
-  if (service !== 'googlecalendar') throw new Error('This source has no change check.');
   const result = await client.proxyExecute(
     {
       connectedAccountId: accountId,

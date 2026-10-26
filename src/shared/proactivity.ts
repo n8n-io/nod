@@ -15,8 +15,8 @@ export function sourceVersions(sources: ProactiveEvidence[]) {
 }
 export interface ProactiveIssue {
   id: string;
-  matterKey?: string;
-  primary?: Pick<ProactiveEvidence, 'sourceId' | 'id'>;
+  matterKey: string;
+  primary: Pick<ProactiveEvidence, 'sourceId' | 'id'>;
   category: ProactiveCategory;
   title: string;
   summary: string;

@@ -48,26 +48,17 @@ Only your own messages can snooze, close or dismiss a nudge. If you don't answer
 
 ## When nod nudges you
 
-nod saves useful work privately first, then checks whether a message is allowed now. Change any limit by telling nod, for example "Only one routine message a day" or "Pause preparation".
+nod saves useful work privately first and messages you only when it's worth an interruption. There's no daily count. Each matter nudges you once, however often its source repeats, and again only if something really changes. Quiet hours always hold: a nudge that comes up at night goes out when they end. Set them in **Settings → General**, or tell nod.
 
-| Limit                    | Default |
-| ------------------------ | ------- |
-| Routine messages per day | 2       |
-| Minutes between messages | 120     |
-
-Urgent matters, with high impact and a checked deadline, skip the daily limit and the wait. Quiet hours always hold: an urgent nudge that comes up at night goes out when they end. Each matter nudges you once, however often its source repeats. Set quiet hours in **Settings → General**, or tell nod. A zero message limit keeps everything quiet.
-
-To stop preparation itself, tell nod "Pause preparation", and "Resume preparation" to turn it back on. Preparation runs when a source changes or a saved matter is due, and its cost counts toward your monthly limit in **Usage**, like everything else nod does.
-
-If routine nudges pile up unanswered, new routine ones wait until you answer one. Urgent ones can still reach you.
+Tell nod "Fewer of these" and it uses that next time. To stop preparation itself, tell nod "Pause preparation", and "Resume preparation" to turn it back on. Preparation runs when a source changes or a saved matter is due, and its cost counts toward your monthly limit in **Usage**, like everything else nod does.
 
 ## What nod reads
 
-nod reads your Gmail conversations from the last 30 days, your primary Google Calendar, and the work it saved for you. Other apps keep their existing watches. A failed or partial check never means nothing needs you.
+nod reads every app you connect, with nothing to turn on. Gmail, your primary Google Calendar and the work nod saved for you are read as soon as they change. Other apps, including MCP and HTTP connections, are read through their own read tools every 30 minutes, and only calls that read can run. A failed or partial check never means nothing needs you.
 
 ## What stays private
 
-The worker that prepares nudges can only read sources, read your memory and save private work. It can't send, book, buy, delete or change settings. Sending a draft always starts a new request that goes through the [trust check](/trust/approvals/).
+The worker that prepares nudges can only read sources, read your memory and save private work. It can't send, book, buy, delete, draft in your apps or change settings. Sending a draft always starts a new request that goes through the [trust check](/trust/approvals/).
 
 Prepared drafts stay separate from your memory. Closed drafts are deleted after 30 days. Removing an account in **Apps** deletes the prepared work that came from it.
 

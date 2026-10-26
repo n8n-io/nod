@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import type {
   ObservationBatch,
   ObservationProvider,
+  ObservationQuery,
   ObservationSource,
 } from '../ports/proactivity.ts';
 import {
@@ -105,7 +106,7 @@ export function createObservationSources(
         (await provider.sources(client)).map((source) => {
           if (
             source.pollIntervalMs !== undefined &&
-            (source.pollIntervalMs < 0 ||
+            (source.pollIntervalMs <= 0 ||
               !Number.isFinite(source.pollIntervalMs) ||
               !Number.isFinite(new Date(Date.now() + source.pollIntervalMs).getTime()))
           )
@@ -117,6 +118,7 @@ export function createObservationSources(
             revision: identifier(source.revision),
             readable: source.readable === true,
             ...(source.mode ? { mode: source.mode } : {}),
+            ...(source.tools ? { tools: true } : {}),
             ...(source.changeToken !== undefined
               ? { changeToken: identifier(source.changeToken) }
               : {}),
@@ -132,17 +134,7 @@ export function createObservationSources(
       throw new Error('Observation source IDs must be unique.');
     return all;
   }
-  async function read(
-    input: {
-      sourceId: string;
-      revision?: string;
-      ids?: string[];
-      since?: string;
-      cursor?: string;
-      asOf?: string;
-    },
-    signal: AbortSignal,
-  ) {
+  async function read(input: ObservationQuery & { sourceId: string }, signal: AbortSignal) {
     signal.throwIfAborted();
     let rejectAbort: () => void = () => {};
     const aborted = new Promise<never>((_resolve, reject) => {

@@ -12,8 +12,6 @@ export const preferencesSchema = z
     quietHoursEnabled: z.boolean(),
     quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    proactiveMinGapMinutes: z.number().int().min(0).max(1440),
-    proactiveDailyLimit: z.number().int().min(0).max(20),
     proactivePaused: z.boolean(),
   })
   .strict();
@@ -27,8 +25,6 @@ export const defaultPreferences: Preferences = {
   quietHoursEnabled: true,
   quietStart: '22:00',
   quietEnd: '08:00',
-  proactiveMinGapMinutes: 120,
-  proactiveDailyLimit: 2,
   proactivePaused: false,
 };
 export function isQuietTime(preferences: Preferences, now = new Date()) {
@@ -55,7 +51,7 @@ function canonicalLocale(value: string) {
   return null;
 }
 const columns =
-  'notification_rule AS "notificationRule",rules,time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd",proactive_min_gap_minutes AS "proactiveMinGapMinutes",proactive_daily_limit AS "proactiveDailyLimit",proactive_paused AS "proactivePaused"';
+  'notification_rule AS "notificationRule",rules,time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd",proactive_paused AS "proactivePaused"';
 function ianaTimeZone(value: string) {
   try {
     new Intl.DateTimeFormat('en', { timeZone: value });
@@ -88,13 +84,12 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
     async update(raw: unknown): Promise<Preferences> {
       const patch = validate(raw);
       const result = await pool.query(
-        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,proactive_daily_limit,proactive_paused,proactive_min_gap_minutes)
-        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),COALESCE($17::integer,$19::integer),COALESCE($18::boolean,$20::boolean),COALESCE($21::integer,$22::integer))
+        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,proactive_paused)
+        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),COALESCE($17::boolean,$18::boolean))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),
         time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
         quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $14 THEN $11 ELSE preferences.locale END,
-        hour_cycle=COALESCE($12,preferences.hour_cycle),proactive_daily_limit=COALESCE($17,preferences.proactive_daily_limit),
-        proactive_paused=COALESCE($18,preferences.proactive_paused),proactive_min_gap_minutes=COALESCE($21,preferences.proactive_min_gap_minutes)
+        hour_cycle=COALESCE($12,preferences.hour_cycle),proactive_paused=COALESCE($17,preferences.proactive_paused)
         RETURNING ${columns}`,
         [
           ownerId,
@@ -113,12 +108,8 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           patch.locale !== undefined,
           patch.timeZone !== undefined,
           patch.rules ?? null,
-          patch.proactiveDailyLimit ?? null,
           patch.proactivePaused ?? null,
-          defaultPreferences.proactiveDailyLimit,
           defaultPreferences.proactivePaused,
-          patch.proactiveMinGapMinutes ?? null,
-          defaultPreferences.proactiveMinGapMinutes,
         ],
       );
       return result.rows[0];

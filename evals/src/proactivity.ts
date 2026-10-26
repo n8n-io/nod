@@ -61,6 +61,7 @@ export function summarizePopulation(attempts: AttemptResult[]) {
       precision: ratio(sum('prepared') - sum('falsePrepared'), sum('prepared')),
       criticalMissed: sum('criticalMissed'),
       notifications: sum('notified'),
+      relevantNotified: sum('relevantNotified'),
       unwanted: sum('unwanted'),
       duplicates: sum('duplicateNudges'),
       groundedAttempts: all.filter((r) => r.grounded === true).length,

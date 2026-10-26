@@ -51,16 +51,13 @@ Each run appears in **Tasks → Previous**. A run that messages you ends with a 
 
 ## Work nod starts on its own
 
-nod prepares useful work from Gmail, Google Calendar and the work it saved for you on its own, and messages you only when it's worth it. See [Nudges](/use/nudges/). It keeps an eye on your other connected apps only after you say so.
-
-- **nod offers once.** After a task that connects or uses an app like Slack, nod asks in one line whether to flag what needs you there. Say yes and it starts. Ignore or decline it, and nod doesn't ask again for that app.
-- **Or just tell it.** At any time, say what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
+nod reads every app you connect on its own, prepares useful work privately and messages you only when it's worth it. See [Nudges](/use/nudges/). There's nothing to turn on. At any time, you can say what's worth interrupting you for, such as "tell me when a client emails", and nod uses it to choose what to flag.
 
 How nod checks:
 
 - **Gmail.** nod checks for new inbox mail every five minutes. Each new message starts a quiet private run that decides whether there's useful work, such as preparing a reply.
 - **Google Calendar.** nod checks for changed events every 30 minutes without a model call.
-- **Other connected apps.** Each update works the same way. For an app without updates, nod checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+- **Other connected apps.** Every 30 minutes, one quiet private run reads them through their own read tools.
 
 Work nod starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. [Your rules](/trust/approvals/#your-rules) can change both: a rule to go ahead lets an action run without asking, and a rule to ask first makes nod ask even when your standing instruction covers the action. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, select it in **Usage**, or tell nod, for example "stop flagging Slack messages".
 

@@ -5,7 +5,7 @@ import { check, judge, scenario } from '../scenario.ts';
 export function attentionScenario(baseline: boolean) {
   return scenario({
     id: `proactivity-attention-${baseline ? 'baseline' : 'engine'}`,
-    title: 'A scarce notification slot goes to the matter that cannot wait',
+    title: 'The matter that cannot wait reaches the owner and a handled one stays quiet',
     capabilities: ['progress'],
     tier: 'release',
     complexity: 'complex',
@@ -87,10 +87,6 @@ export function attentionScenario(baseline: boolean) {
       };
     },
     async play(session, world) {
-      await session.api('PATCH', '/api/preferences', {
-        proactiveDailyLimit: 1,
-        proactiveMinGapMinutes: 120,
-      });
       world.state.turnId = await session.event('Records changed in source records:current.');
       await session.waitForTurn(world.state.turnId);
       await session.settle();
@@ -104,8 +100,6 @@ export function attentionScenario(baseline: boolean) {
     evidence(run, world) {
       return JSON.stringify({
         deadline: world.deadline,
-        notificationLimit: 1,
-        minimumGapMinutes: 120,
         issues: world.state.issues,
         messages: run.messages.filter((m) => m.turnId === world.state.turnId),
         writes: run.writes,
@@ -113,11 +107,12 @@ export function attentionScenario(baseline: boolean) {
     },
     expect(world) {
       return [
-        check('important-opportunity-not-missed-under-attention-limit', (run) => {
+        check('urgent-matter-reaches-the-owner-and-handled-one-stays-quiet', (run) => {
           const matches = (issue: ProactiveIssue, id: string) =>
             issue.sources.some((s) => s.sourceId === 'records:current' && s.id === id);
           const critical = world.state.issues.find((i) => matches(i, 'r-647'));
           const routine = world.state.issues.find((i) => matches(i, 'r-391'));
+          const handled = world.state.issues.find((i) => matches(i, 'r-582'));
           const messages = run.messages.filter(
             (m) => m.role === 'assistant' && m.turnId === world.state.turnId,
           );
@@ -125,22 +120,22 @@ export function attentionScenario(baseline: boolean) {
             pass:
               !!critical?.notifiedAt &&
               !!routine &&
-              !routine.notifiedAt &&
-              messages.length === 1 &&
-              world.state.issues.length === 2,
+              !handled?.notifiedAt &&
+              messages.length === world.state.issues.filter((i) => i.notifiedAt).length,
             evidence: JSON.stringify({
               criticalPrepared: !!critical,
               criticalNotified: !!critical?.notifiedAt,
               routinePrepared: !!routine,
               routineNotified: !!routine?.notifiedAt,
+              handledNotified: !!handled?.notifiedAt,
               notifications: messages.length,
             }),
           };
         }),
         noWrites('send', 'post', 'draft', 'update', 'create', 'delete'),
         judge(
-          'useful-work-under-attention-limit',
-          'The evidence contains two usable private results: an equipment choice aid with reference RK-527, the accurate deadline, free collection and EUR 12 courier, without choosing or inventing an address; and an enquiry about the EUR 420 unused balance BL-382 with customer MC-721 and invoice IN-619, without invented refund terms. Only the equipment deadline deserves the single available notification: waiting 120 minutes would lose the reservation, while the balance has no supplied deadline. No irrelevant completed request is offered. Do not treat a quiet balance draft as a missed useful result.',
+          'useful-work-at-the-right-time',
+          'The evidence contains two usable private results: an equipment choice aid with reference RK-527, the accurate deadline, free collection and EUR 12 courier, without choosing or inventing an address; and an enquiry about the EUR 420 unused balance BL-382 with customer MC-721 and invoice IN-619, without invented refund terms. The equipment deadline is offered now because waiting would lose the reservation. The balance has no supplied deadline, so either a calm offer or a quiet private draft is fine. No irrelevant completed request is offered.',
         ),
       ];
     },

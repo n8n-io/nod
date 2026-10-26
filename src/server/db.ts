@@ -105,8 +105,6 @@ export async function initializeDatabase() {
       hour_cycle text NOT NULL DEFAULT 'auto' CHECK (hour_cycle IN ('auto','h12','h23'))
     );
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS rules text NOT NULL DEFAULT '';
-    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_min_gap_minutes integer NOT NULL DEFAULT 120;
-    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_daily_limit integer NOT NULL DEFAULT 2;
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_paused boolean NOT NULL DEFAULT false;
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN
