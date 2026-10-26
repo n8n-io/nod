@@ -1222,6 +1222,7 @@ test('all three checked bundles publish together as one regular Nod release', as
   await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
   await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
   await assert.rejects(f.invoke('draft-all'));
+  assert.equal((await f.readState()).created, 0);
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
   await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
   await writeFile(

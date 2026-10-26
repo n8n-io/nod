@@ -743,6 +743,7 @@ async function draftApp({ stageOnly = false } = {}) {
       files.push(destination);
     } else files.push(join(output, name));
   }
+  if (stageOnly) return files;
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
@@ -751,8 +752,8 @@ async function draftApp({ stageOnly = false } = {}) {
     notes: releaseNotes(),
     files,
   });
-  if (!stageOnly) await verifyDownloads(tag, [metadata.disk, metadata.update]);
-  if (publish && !stageOnly) {
+  await verifyDownloads(tag, [metadata.disk, metadata.update]);
+  if (publish) {
     await uploadDraft({
       repository: releaseRepository,
       tag,
@@ -881,6 +882,7 @@ async function draftAll() {
     join(windows, windowsRuntimeArchive),
   );
   const appAssets = [];
+  const appFiles = new Map();
   for (const target of ['arm64', 'x64']) {
     const environment = {
       ...process.env,
@@ -892,7 +894,16 @@ async function draftAll() {
       run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], { env: environment }),
     );
     environment.NOD_EXPECTED_RUNTIME_FINGERPRINT = inputs.fingerprint;
-    run(process.execPath, [fileURLToPath(import.meta.url), 'stage'], { env: environment });
+    const files = JSON.parse(
+      run(process.execPath, [fileURLToPath(import.meta.url), 'stage'], { env: environment }),
+    );
+    for (const file of files) {
+      const name = basename(file);
+      const previous = appFiles.get(name);
+      if (previous && (await hash(previous)) !== (await hash(file)))
+        throw new Error(`Platform assets have different contents for the same name: ${name}`);
+      appFiles.set(name, file);
+    }
     const app = JSON.parse(
       await readFile(join(environment.NOD_DESKTOP_OUTPUT, 'release.json'), 'utf8'),
     );
@@ -911,9 +922,14 @@ async function draftAll() {
     title: `Nod v${version}`,
     notes,
     marker,
-    files: ['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json']
-      .map((name) => join(windows, name))
-      .concat(sum, windowsManifest),
+    files: [
+      ...appFiles.values(),
+      ...['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json'].map(
+        (name) => join(windows, name),
+      ),
+      sum,
+      windowsManifest,
+    ],
   });
   const expected = [
     'nod-arm64.dmg',
@@ -950,7 +966,7 @@ async function draftAll() {
 const command = process.argv[2];
 if (command === 'plan') await plan();
 else if (command === 'draft') await draftApp();
-else if (command === 'stage') await draftApp({ stageOnly: true });
+else if (command === 'stage') console.log(JSON.stringify(await draftApp({ stageOnly: true })));
 else if (command === 'draft-all') await draftAll();
 else if (command === 'reuse-windows-runtime') await reuseWindowsRuntime();
 else throw new Error('Expected plan, draft, stage, draft-all or reuse-windows-runtime.');
