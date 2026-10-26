@@ -1,3 +1,5 @@
+import { post } from './api';
+
 const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function sameInstance(url: URL, instance?: string) {
@@ -32,4 +34,15 @@ export function connectionUrl(value: string, origin: string, instance?: string) 
   )
     throw new Error('The sign-in address could not be verified.');
   return url.href;
+}
+
+export async function setupLinkHash(url: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function cancelSetup(url: string) {
+  void setupLinkHash(url)
+    .then((hash) => post('/api/apps/setup-cancel', { hash }))
+    .catch(() => {});
 }

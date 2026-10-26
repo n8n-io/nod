@@ -40,8 +40,9 @@ export const apiKeyModelProviders = [
   'zai-coding-cn',
 ] as const;
 
+export const apiKeyConnectionProviders = [...apiKeyModelProviders, 'elevenlabs'] as const;
 export const modelProviders = [...apiKeyModelProviders, 'compatible'] as const;
-export type ModelProvider = (typeof modelProviders)[number];
+export type ModelProvider = (typeof apiKeyConnectionProviders)[number] | 'compatible';
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -54,6 +55,8 @@ export interface ModelChoice {
   name: string;
   efforts: ModelEffort[];
   images: boolean;
+  audio?: boolean;
+  textModelName?: string;
   contextWindow: number;
 }
 
@@ -84,6 +87,7 @@ export const modelProviderNames = {
   anthropic: 'Anthropic',
   google: 'Google Gemini',
   openrouter: 'OpenRouter',
+  elevenlabs: 'ElevenLabs',
   'amazon-bedrock': 'Amazon Bedrock',
   'google-vertex': 'Google Vertex AI',
   azure: 'Azure OpenAI',
@@ -124,7 +128,13 @@ export const modelProviderNames = {
 
 export const modelProviderInfo: Record<
   ModelProvider,
-  { keyUrl: string; env: string; common?: boolean; catalog: 'account' | 'bundled' }
+  {
+    keyUrl: string;
+    env: string;
+    common?: boolean;
+    catalog: 'account' | 'bundled';
+    speechOnly?: boolean;
+  }
 > = {
   openai: {
     keyUrl: 'platform.openai.com/api-keys',
@@ -149,6 +159,12 @@ export const modelProviderInfo: Record<
     env: 'OPENROUTER_API_KEY',
     catalog: 'account',
     common: true,
+  },
+  elevenlabs: {
+    keyUrl: 'elevenlabs.io/app/developers/api-keys',
+    env: 'ELEVENLABS_API_KEY',
+    catalog: 'account',
+    speechOnly: true,
   },
   'amazon-bedrock': {
     keyUrl: 'console.aws.amazon.com/bedrock',

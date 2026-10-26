@@ -28,12 +28,21 @@ export function ConnectionMenu({
   };
   const menuId = useId();
   const container = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef(false);
   const close = () => {
     setOpen(false);
-    queueMicrotask(() =>
-      container.current?.querySelector<HTMLButtonElement>(':scope > button')?.focus(),
-    );
+    queueMicrotask(() => {
+      const button = container.current?.querySelector<HTMLButtonElement>(':scope > button');
+      pendingFocus.current = Boolean(button?.disabled);
+      button?.focus();
+    });
   };
+  useEffect(() => {
+    if (disabled || !pendingFocus.current) return;
+    pendingFocus.current = false;
+    if (document.activeElement === document.body)
+      container.current?.querySelector<HTMLButtonElement>(':scope > button')?.focus();
+  }, [disabled]);
   useEffect(() => {
     if (!open) return;
     container.current?.querySelector<HTMLElement>('[role^="menuitem"]:not(:disabled)')?.focus();

@@ -90,6 +90,7 @@ export async function initializeDatabase() {
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_quote text;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_caption text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS presentation jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
@@ -100,6 +101,11 @@ export async function initializeDatabase() {
       mime_type text NOT NULL, size integer NOT NULL, storage_path text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS audio_messages (
+      owner_id text NOT NULL, message_id uuid NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+      fingerprint text NOT NULL, response jsonb, created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(owner_id,message_id)
+    );
     CREATE TABLE IF NOT EXISTS preferences (
       owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
       quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
@@ -107,6 +113,11 @@ export async function initializeDatabase() {
       hour_cycle text NOT NULL DEFAULT 'auto' CHECK (hour_cycle IN ('auto','h12','h23'))
     );
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS rules text NOT NULL DEFAULT '';
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_voice text;
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_reply text NOT NULL DEFAULT 'auto';
+    ALTER TABLE preferences DROP CONSTRAINT IF EXISTS preferences_speech_reply_check;
+    ALTER TABLE preferences ADD CONSTRAINT preferences_speech_reply_check CHECK (speech_reply IN ('auto','voice','always','never'));
+    ALTER TABLE preferences ALTER COLUMN speech_reply SET DEFAULT 'auto';
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_paused boolean NOT NULL DEFAULT false;
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN

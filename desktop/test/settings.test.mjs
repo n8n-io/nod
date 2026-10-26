@@ -402,13 +402,30 @@ async function runningDesktop(
   });
   let openAtLogin = false;
   let requestHeaders;
-  const appSession = Object.assign(new EventEmitter(), {
-    webRequest: {
-      onBeforeSendHeaders: (handler) => {
-        requestHeaders = handler;
-      },
-    },
-  });
+  let permissionCheck;
+  let permissionRequest;
+  const appSessions = new Map();
+  const fromPartition = (partition) => {
+    if (!appSessions.has(partition)) {
+      const appSession = Object.assign(new EventEmitter(), {
+        setPermissionCheckHandler: (handler) => {
+          permissionCheck = handler;
+          appSession.permissionCheck = handler;
+        },
+        setPermissionRequestHandler: (handler) => {
+          permissionRequest = handler;
+          appSession.permissionRequest = handler;
+        },
+        webRequest: {
+          onBeforeSendHeaders: (handler) => {
+            requestHeaders = handler;
+          },
+        },
+      });
+      appSessions.set(partition, appSession);
+    }
+    return appSessions.get(partition);
+  };
   const context = {
     readFileSync: () => JSON.stringify(appPages),
     appOpenPath,
@@ -452,7 +469,7 @@ async function runningDesktop(
       resourcesPath: dirname(storage.path),
     },
     ipcMain: ipc,
-    session: { fromPartition: () => appSession },
+    session: { fromPartition },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
     shell: {
@@ -703,6 +720,7 @@ async function runningDesktop(
       showConnectionSettings,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
+      installRuntime: (installer) => lifecycle.install(installer, { warmup: false }),
       close: async () => { quitting = true; await lifecycle.close(); },
       profileRoot,
       profileOwner,
@@ -732,7 +750,14 @@ async function runningDesktop(
     externalURLs,
     rendererReady,
     updateMenu,
+    appSessions,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
+    checkPermission: (...args) => permissionCheck?.(...args) ?? true,
+    requestPermission: (sender, permission, details) =>
+      new Promise((resolve) => {
+        if (permissionRequest) permissionRequest(sender, permission, resolve, details);
+        else resolve(true);
+      }),
   };
 }
 
@@ -795,6 +820,9 @@ test('the normal engine uses the release boundary for analytics during first set
 });
 
 test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+  const revealed = [];
+  const cause = `Synthetic WSL missing: ${'x'.repeat(450)} HCS_E_HYPERV_NOT_INSTALLED`;
+  const details = `Error: ${cause}\n${'Synthetic WSL output\n'.repeat(200)}End of native error`;
   const f = await runningDesktop(
     t,
     async () => assert.fail('No backend can run without storage.'),
@@ -802,8 +830,9 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
       initialState: 'fresh',
       platform: 'win32',
       allowStart: true,
+      reveal: (path) => revealed.push(path),
       prepareRuntime: async () => {
-        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'NOD_WSL_REQUIRED' });
+        throw Object.assign(new Error(cause), { code: 'NOD_WSL_REQUIRED', details });
       },
     },
   );
@@ -815,6 +844,38 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.equal(f.children.length, 0);
     assert.equal(f.status().needsWsl, true);
     assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
+    const window = f.windows.find((window) => window.isVisible());
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const showLog = f.handlers.get('nod:startup-log:show');
+    await assert.rejects(showLog({ ...event, senderFrame: { url: event.senderFrame.url } }));
+    assert.equal(revealed.length, 0);
+    await showLog(event);
+    assert.deepEqual(revealed, [join(f.profileRoot, 'logs', 'startup.log')]);
+    const log = await readFile(revealed[0], 'utf8');
+    assert.ok(log.includes(cause));
+    assert.ok(log.includes(details));
+    assert.equal(f.status().error, cause);
+    assert.ok(f.status().details.includes(details));
+    assert.ok(f.status().details.includes('NOD_WSL_REQUIRED'));
+    assert.ok(f.status().details.includes(`Error: ${cause}`));
+    const installation = Object.assign(new Error('Synthetic WSL install failure'), {
+      code: 'EACCES',
+      details: 'Installer native output\nInstaller native tail',
+    });
+    await assert.rejects(
+      f.installRuntime(async () => {
+        throw installation;
+      }),
+      (error) => error === installation,
+    );
+    assert.equal(f.status().error, installation.message);
+    assert.ok(f.status().details.includes(installation.stack));
+    assert.ok(f.status().details.includes(installation.code));
+    assert.ok(f.status().details.includes(installation.details));
+    assert.ok(!f.status().details.includes(cause));
+    await showLog(event);
+    const updatedLog = await readFile(revealed.at(-1), 'utf8');
+    assert.ok(updatedLog.lastIndexOf(installation.details) > updatedLog.lastIndexOf(details));
   } finally {
     await f.close();
   }
@@ -2526,6 +2587,103 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
   );
 });
 
+test('microphone access requires audio from an owned top-level app frame', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Media permissions need no engine request.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const sender = window.webContents;
+  const origin = 'http://127.0.0.1:4310';
+  const details = {
+    requestingUrl: `${origin}/`,
+    securityOrigin: origin,
+    isMainFrame: true,
+  };
+  const check = (candidate = sender, overrides = {}, requestingOrigin = origin) =>
+    f.checkPermission(candidate, 'media', requestingOrigin, {
+      ...details,
+      mediaType: 'audio',
+      ...overrides,
+    });
+  const request = (candidate = sender, overrides = {}) =>
+    f.requestPermission(candidate, 'media', { ...details, mediaTypes: ['audio'], ...overrides });
+  assert.equal(check(), true);
+  assert.equal(await request(), true);
+  for (const candidate of [null, { mainFrame: sender.mainFrame }]) {
+    assert.equal(check(candidate), false);
+    assert.equal(await request(candidate), false);
+  }
+  for (const overrides of [
+    { isMainFrame: false },
+    { isMainFrame: undefined },
+    { requestingUrl: 'https://example.test/' },
+    { requestingUrl: `${origin}/api/artifacts/synthetic` },
+    { requestingUrl: undefined },
+    { securityOrigin: 'https://example.test' },
+  ]) {
+    assert.equal(check(sender, overrides), false);
+    assert.equal(await request(sender, overrides), false);
+  }
+  assert.equal(check(sender, {}, 'https://example.test'), false);
+  for (const mediaType of ['video', 'unknown', undefined])
+    assert.equal(check(sender, { mediaType }), false);
+  for (const mediaTypes of [['video'], ['audio', 'video'], [], undefined])
+    assert.equal(await request(sender, { mediaTypes }), false);
+  for (const url of ['https://example.test/', `${origin}/api/artifacts/synthetic`]) {
+    sender.mainFrame.url = url;
+    assert.equal(check(), false);
+    assert.equal(await request(), false);
+  }
+  sender.mainFrame.url = `${origin}/`;
+  assert.equal(f.checkPermission(sender, 'notifications', origin, details), true);
+  assert.equal(await f.requestPermission(sender, 'notifications', details), true);
+  const clipboard = { requestingUrl: `${origin}/`, isMainFrame: true };
+  const checkClipboard = (candidate = sender, overrides = {}, requestingOrigin = origin) =>
+    f.checkPermission(candidate, 'clipboard-sanitized-write', requestingOrigin, {
+      ...clipboard,
+      ...overrides,
+    });
+  const requestClipboard = (candidate = sender, overrides = {}) =>
+    f.requestPermission(candidate, 'clipboard-sanitized-write', { ...clipboard, ...overrides });
+  assert.equal(checkClipboard(), true);
+  assert.equal(await requestClipboard(), true);
+  for (const candidate of [null, { mainFrame: sender.mainFrame }]) {
+    assert.equal(checkClipboard(candidate), false);
+    assert.equal(await requestClipboard(candidate), false);
+  }
+  for (const overrides of [
+    { isMainFrame: false },
+    { isMainFrame: undefined },
+    { requestingUrl: 'https://example.test/' },
+    { requestingUrl: `${origin}/api/artifacts/synthetic` },
+    { requestingUrl: undefined },
+  ]) {
+    assert.equal(checkClipboard(sender, overrides), false);
+    assert.equal(await requestClipboard(sender, overrides), false);
+  }
+  assert.equal(checkClipboard(sender, {}, 'https://example.test'), false);
+  for (const permission of [
+    'geolocation',
+    'midi',
+    'clipboard-read',
+    'display-capture',
+    'unknown',
+  ]) {
+    assert.equal(
+      f.checkPermission(sender, permission, origin, { ...details, mediaType: 'audio' }),
+      false,
+    );
+    assert.equal(
+      await f.requestPermission(sender, permission, { ...details, mediaTypes: ['audio'] }),
+      false,
+    );
+  }
+  window.destroy();
+  assert.equal(check(), false);
+  assert.equal(await request(), false);
+  assert.equal(checkClipboard(), false);
+  assert.equal(await requestClipboard(), false);
+});
+
 test('native artifact saving requires an owned main frame on the current trusted app', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('No separate download request is needed.'));
   f.showEngine();
@@ -3027,6 +3185,93 @@ test('the remote desktop starts without a local runtime and fences tokens to its
     assert.equal(requests[0].options.headers.Authorization, `Bearer ${token}`);
     assert.equal(requests[0].options.redirect, 'error');
     const frame = window.webContents.mainFrame;
+    const appSession = f.appSessions.get(window.options.webPreferences.partition);
+    assert.equal(typeof appSession.permissionCheck, 'function');
+    assert.equal(typeof appSession.permissionRequest, 'function');
+    const media = { requestingUrl: url, securityOrigin: url, isMainFrame: true };
+    const checkMicrophone = (sender = window.webContents, overrides = {}, origin = url) =>
+      appSession.permissionCheck(sender, 'media', origin, {
+        ...media,
+        mediaType: 'audio',
+        ...overrides,
+      });
+    const requestMicrophone = (sender = window.webContents, overrides = {}) =>
+      new Promise((resolve) =>
+        appSession.permissionRequest(sender, 'media', resolve, {
+          ...media,
+          mediaTypes: ['audio'],
+          ...overrides,
+        }),
+      );
+    assert.equal(checkMicrophone(), true);
+    assert.equal(await requestMicrophone(), true);
+    for (const overrides of [
+      { isMainFrame: false },
+      { requestingUrl: 'http://127.0.0.1:4310/' },
+      { securityOrigin: 'https://other.example.test' },
+      { requestingUrl: `${url}/api/artifacts/synthetic` },
+      { mediaType: 'video', mediaTypes: ['audio', 'video'] },
+    ]) {
+      assert.equal(checkMicrophone(window.webContents, overrides), false);
+      assert.equal(await requestMicrophone(window.webContents, overrides), false);
+    }
+    assert.equal(checkMicrophone(null), false);
+    assert.equal(await requestMicrophone(null), false);
+    assert.equal(checkMicrophone(window.webContents, {}, 'https://other.example.test'), false);
+    const clipboard = { requestingUrl: url, isMainFrame: true };
+    const checkClipboard = (sender = window.webContents, overrides = {}, origin = url) =>
+      appSession.permissionCheck(sender, 'clipboard-sanitized-write', origin, {
+        ...clipboard,
+        ...overrides,
+      });
+    const requestClipboard = (sender = window.webContents, overrides = {}) =>
+      new Promise((resolve) =>
+        appSession.permissionRequest(sender, 'clipboard-sanitized-write', resolve, {
+          ...clipboard,
+          ...overrides,
+        }),
+      );
+    assert.equal(checkClipboard(), true);
+    assert.equal(await requestClipboard(), true);
+    for (const sender of [null, { mainFrame: frame }]) {
+      assert.equal(checkClipboard(sender), false);
+      assert.equal(await requestClipboard(sender), false);
+    }
+    for (const overrides of [
+      { isMainFrame: false },
+      { isMainFrame: undefined },
+      { requestingUrl: 'http://127.0.0.1:4310/' },
+      { requestingUrl: `${url}/api/artifacts/synthetic` },
+      { requestingUrl: undefined },
+    ]) {
+      assert.equal(checkClipboard(window.webContents, overrides), false);
+      assert.equal(await requestClipboard(window.webContents, overrides), false);
+    }
+    assert.equal(checkClipboard(window.webContents, {}, 'https://other.example.test'), false);
+    for (const permission of [
+      'geolocation',
+      'midi',
+      'clipboard-read',
+      'display-capture',
+      'unknown',
+    ]) {
+      assert.equal(
+        appSession.permissionCheck(window.webContents, permission, url, {
+          ...media,
+          mediaType: 'audio',
+        }),
+        false,
+      );
+      assert.equal(
+        await new Promise((resolve) =>
+          appSession.permissionRequest(window.webContents, permission, resolve, {
+            ...media,
+            mediaTypes: ['audio'],
+          }),
+        ),
+        false,
+      );
+    }
     const request = {
       url: `${url}/api/session`,
       resourceType: 'xhr',
@@ -3839,6 +4084,16 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   const allowed = dom.window.document.body.innerHTML;
   const leaked = [];
   for (const [name, markup] of [
+    ['private content', '<div data-analytics-private>Synthetic private content</div>'],
+    ['password field', '<input type="password">'],
+    ['verification field', '<input autocomplete="one-time-code">'],
+    ['saved password field', '<input autocomplete="current-password">'],
+    ['new password field', '<input autocomplete="new-password">'],
+    ['native dialog', '<dialog open>Synthetic private dialog</dialog>'],
+    ['app dialog', '<div role="dialog">Synthetic private dialog</div>'],
+    ['alert dialog', '<div role="alertdialog">Synthetic private dialog</div>'],
+    ['embedded frame', '<iframe></iframe>'],
+    ['embedded browser', '<webview></webview>'],
     [
       'collapsed handoff',
       '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>',
@@ -3904,6 +4159,14 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   frame.url = 'http://127.0.0.1:4310/credentials/synthetic';
   navigated.resolve(image);
   assert.equal(await navigating, null);
+  frame.url = 'http://127.0.0.1:4310/';
+  const replaced = deferred();
+  contents.capturePage = () => replaced.promise;
+  const replacing = capture(event);
+  await new Promise(setImmediate);
+  contents.mainFrame = { ...frame };
+  replaced.resolve(image);
+  assert.equal(await replacing, null);
 });
 
 test('engine preload exposes no credential reveal and withholds privileged IPC event objects', async () => {

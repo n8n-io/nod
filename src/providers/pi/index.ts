@@ -22,6 +22,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
+import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -317,6 +318,7 @@ export function createPiAgent(options: {
                     ),
                   );
               }),
+            input.readAudio,
           )
         : undefined;
       const runtime = connection
@@ -351,7 +353,13 @@ export function createPiAgent(options: {
               },
             }
           : selectedModel;
-      const budget = modelContextBudget(model);
+      const budget = modelContextBudget({
+        ...model,
+        contextWindow: Math.min(
+          model.contextWindow,
+          connection?.textModel?.contextWindow ?? model.contextWindow,
+        ),
+      });
       if (budget.compact && input.compactInstructions)
         input = { ...input, ...input.compactInstructions };
       const boundedOutput = async (
@@ -399,9 +407,20 @@ export function createPiAgent(options: {
         ? estimateModelTokens(manager.buildSessionContext().messages)
         : 0;
       if (budget.compact && historyTokens > budget.window / 2) {
+        const entries = manager.buildContextEntries();
+        const lastAnswer = entries.findLastIndex(
+          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+        );
+        const firstPending = entries
+          .slice(lastAnswer + 1)
+          .find(
+            (entry) =>
+              (entry.type === 'message' && entry.message.role === 'user') ||
+              (entry.type === 'custom_message' && entry.customType === 'nod-audio-input'),
+          );
         let recentTokens = 0;
         let firstKept: string | null = null;
-        for (const entry of manager.buildContextEntries().toReversed()) {
+        for (const entry of entries.toReversed()) {
           if (entry.type !== 'message') continue;
           recentTokens += estimateModelTokens(entry.message);
           if (recentTokens > budget.recent) break;
@@ -409,7 +428,8 @@ export function createPiAgent(options: {
         }
         manager.appendCompaction(
           'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.',
-          firstKept,
+          entries.find((entry) => entry.id === firstKept || entry.id === firstPending?.id)?.id ??
+            null,
           historyTokens,
         );
       }
@@ -512,6 +532,7 @@ export function createPiAgent(options: {
               ]
             : []),
           recentImages,
+          audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),
         ],
@@ -633,7 +654,7 @@ export function createPiAgent(options: {
         cwd: input.workspace.path,
         agentDir: directory,
         modelRuntime: runtime,
-        model,
+        model: { ...model, contextWindow: budget.window },
         thinkingLevel: access?.effort ?? 'high',
         tools: [
           ...tools
@@ -671,8 +692,14 @@ export function createPiAgent(options: {
           result?.action !== 'end' &&
           ['stop', 'toolUse'].includes(turn.message.stopReason)
         )
-          for (const message of await input.nextMessages())
-            await session.steer(message.text, message.images);
+          for (const message of await input.nextMessages()) {
+            if (message.audio && readsNativeAudio(model))
+              await session.sendCustomMessage(
+                audioMessage(message.text, message.images, message.audio),
+                { deliverAs: 'steer' },
+              );
+            else await session.steer(message.text, message.images);
+          }
         return result ?? undefined;
       };
       let textBlock: number | undefined;
@@ -692,14 +719,15 @@ export function createPiAgent(options: {
         if (event.type === 'compaction_start')
           compaction = { id: randomUUID(), started: performance.now() };
         if (event.type === 'compaction_end') {
+          const target = readsNativeAudio(model) ? (connection?.textModel ?? model) : model;
           input.onEvent({
             type: 'provider_usage',
             usage: {
               id: compaction?.id ?? randomUUID(),
-              provider: model.provider,
+              provider: target.provider,
               category: 'agent',
               operation: 'compaction',
-              model: model.id,
+              model: target.id,
               turnId: input.turnId,
               status: event.aborted ? 'cancelled' : event.errorMessage ? 'failed' : 'succeeded',
               durationMs: compaction ? performance.now() - compaction.started : 0,
@@ -783,8 +811,9 @@ export function createPiAgent(options: {
       return {
         resumed,
         readsImages: model.input.includes('image'),
+        readsAudio: readsNativeAudio(model) && Boolean(input.readAudio),
         contextWindow: budget.window,
-        async prompt(text, images) {
+        async prompt(text, images, audio) {
           if (
             budget.compact &&
             Math.ceil(Buffer.byteLength(text) / 3) + budget.output + budget.margin > budget.window
@@ -799,7 +828,11 @@ export function createPiAgent(options: {
               { customType: ownerContextType, content: owner, display: false },
               { deliverAs: 'nextTurn' },
             );
-          await session.prompt(text, { images, expandPromptTemplates: false });
+          if (audio && readsNativeAudio(model))
+            await session.sendCustomMessage(audioMessage(text, images, audio), {
+              triggerTurn: true,
+            });
+          else await session.prompt(text, { images, expandPromptTemplates: false });
         },
         async abort() {
           await session.abort();

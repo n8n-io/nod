@@ -27,6 +27,20 @@ const catalogEndpoints = {
   together: 'https://api.together.xyz/v1/models',
 } as const;
 
+export const nativeAudioModel: Model<'openai-completions'> = {
+  id: 'gpt-audio-1.5',
+  name: 'GPT Audio 1.5',
+  provider: 'openai',
+  api: 'openai-completions',
+  baseUrl: 'https://api.openai.com/v1',
+  reasoning: false,
+  input: ['text'],
+  contextWindow: 128000,
+  maxTokens: 16384,
+  cost: { input: 2.5, output: 10, cacheRead: 0, cacheWrite: 0 },
+  compat: { supportsStrictMode: false },
+};
+
 export const antLingModel: Model<'openai-completions'> = {
   id: 'Ling-3.1-flash',
   name: 'Ling 3.1 Flash',

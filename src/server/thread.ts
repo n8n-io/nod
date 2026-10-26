@@ -23,7 +23,8 @@ import {
   type ArtifactService,
 } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
-import type { Artifact, MessageReaction } from '../shared/contracts.ts';
+import type { GeneratedAudio } from '../ports/speech.ts';
+import type { Artifact, MessageReaction, SpeechReplyMode } from '../shared/contracts.ts';
 import type {
   BrowserConnectionRequest,
   BrowserStep,
@@ -91,8 +92,11 @@ export interface SubmitUserMessageOptions {
   replyQuote?: string;
   seenMessageId?: string;
   clientMessageId?: string;
+  audioCaption?: string;
   prompt?: string;
   answer?: ChatConfirmationInput['answer'];
+  prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
+  persistSubmission?: (client: PoolClient, result: SubmitUserMessageResult) => Promise<void>;
 }
 export interface SubmitUserMessageResult {
   threadId: string;
@@ -150,7 +154,8 @@ export interface ThreadDependencies {
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
-  speech: Pick<SpeechService, 'synthesize'>;
+  speech: Pick<SpeechService, 'synthesize'> & Partial<Pick<SpeechService, 'configured'>>;
+  audioReplies?: () => Promise<SpeechReplyMode>;
   requestCredential: (
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
@@ -471,11 +476,11 @@ export async function submitUserMessage(
     seenMessageId: options.seenMessageId,
     clientMessageId: options.clientMessageId,
     sourceId: options.sourceId,
-    hasAttachments: attachments.length > 0,
+    hasAttachments: attachments.length > 0 || Boolean(options.prepareAttachments),
   };
   const answer = options.client
     ? options.answer
-    : await readAnswer(text, attachments.length > 0, options, confirmAction);
+    : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -483,7 +488,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -493,6 +498,7 @@ export async function submitUserMessage(
           previous.role !== 'user' ||
           previous.thread_id !== thread.id ||
           previous.text !== text ||
+          previous.audio_caption !== (options.audioCaption ?? null) ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
           previous.reply_quote !== (options.replyQuote ?? null) ||
           JSON.stringify((previous.attachments as Artifact[]).map((item) => item.id)) !==
@@ -563,17 +569,19 @@ export async function submitUserMessage(
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
+    const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8)",
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9)",
       [
         messageId,
         ownerId,
         text,
         thread.id,
         turnId,
-        JSON.stringify(attachments),
+        JSON.stringify([...attachments, ...prepared]),
         options.replyToMessageId ?? null,
         options.replyQuote ?? null,
+        options.audioCaption ?? null,
       ],
     );
     await sendDrain(client, thread.id);
@@ -581,7 +589,12 @@ export async function submitUserMessage(
   };
   let result: SubmitUserMessageResult;
   try {
-    result = options.client ? await submit(options.client) : await transaction(submit, pool);
+    const persist = async (client: PoolClient) => {
+      const result = await submit(client);
+      await options.persistSubmission?.(client, result);
+      return result;
+    };
+    result = options.client ? await persist(options.client) : await transaction(persist, pool);
   } catch (error) {
     const { code, constraint } = (error ?? {}) as { code?: string; constraint?: string };
     if (options.clientMessageId && code === '23505' && constraint === 'messages_pkey')
@@ -1053,7 +1066,7 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
+          `SELECT s.attachments,s.audio_caption,r.audio_caption AS reply_audio_caption,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
            s.role='user' AND NOT EXISTS (
              SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
                AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
@@ -1069,12 +1082,22 @@ async function loadMessage(messageId: string | null) {
         id: message.id as string,
         role: message.role as string,
         text: message.text as string,
+        ...(typeof message.reply_audio_caption === 'string'
+          ? { audioCaption: message.reply_audio_caption }
+          : {}),
         attachments: message.reply_attachments,
         presentation: message.presentation,
       }
     : undefined;
   return {
+    ...(typeof message?.audio_caption === 'string'
+      ? { audioCaption: message.audio_caption as string }
+      : {}),
+    voice: ((message?.attachments ?? []) as StoredAttachment[]).some((file) =>
+      file.mimeType?.startsWith('audio/'),
+    ),
     firstConversationTurn: message?.first_conversation_turn === true,
+    inputAttachments: (message?.attachments ?? []) as StoredAttachment[],
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
@@ -1102,8 +1125,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
-       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
+       SELECT role,text,audio_caption AS "audioCaption",created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
+       SELECT m.role,m.text,m.audio_caption,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
@@ -1211,6 +1234,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await ensureCurrent();
       return call(...args);
     };
+  const replies: Array<{ id: string; text: string; source: string }> = [];
+  let explicitAudio = false;
   const published = new Map<string, Artifact>();
   const post = async (
     text: string,
@@ -1219,11 +1244,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     replyToMessageId?: string,
     presentation?: Presentation,
   ) => {
+    const source = text;
     const created = new Map<string, Artifact>();
     const cleanup: Array<() => Promise<void>> = [];
     let rolledBack = false;
     try {
-      await current(async (client) => {
+      const id = await current(async (client) => {
         afterRollback(client, () => {
           rolledBack = true;
         });
@@ -1254,7 +1280,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           text = `${text.slice(0, start)}[${label}](${artifact.url})${text.slice(end)}`;
         }
         signal.throwIfAborted();
-        await insertAssistantMessage(
+        return insertAssistantMessage(
           client,
           ref,
           text,
@@ -1264,6 +1290,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           presentation,
         );
       });
+      if (text.trim()) replies.push({ id, text, source });
     } catch (error) {
       if (rolledBack) await Promise.allSettled(cleanup.map((remove) => remove()));
       throw error;
@@ -1330,13 +1357,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const loaded = await loadTurnContext(turn, dependencies);
     const proactivity = await dependencies.proactivity?.(ref, signal);
     let sourceMessageId = loaded.sourceMessageId;
+    let voice = loaded.voice;
+    let ownerMessage = turn.source === 'user';
     const stagedFiles = new Map<string, string>();
-    const stageUploads = async (items: StoredAttachment[]) => {
+    const stageUploads = async (
+      items: StoredAttachment[],
+      inputAttachments: StoredAttachment[] = [],
+    ) => {
       const ids = items.map((item) => String(item?.id ?? '')).filter(Boolean);
       const uploads = ids.length
         ? (
             await pool.query(
-              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleting_at IS NULL',
               [ownerId, ids],
             )
           ).rows
@@ -1352,6 +1384,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         stagedFiles.set(upload.id, name);
         const source = items.find((item) => item.id === upload.id)?.source;
         staged.push({
+          id: upload.id,
+          input: inputAttachments.some((file) => file.id === upload.id),
           path: join(workspacePath, name),
           mimeType: upload.mime_type,
           workspaceFile: `/workspace/${threadId}/${name}`,
@@ -1360,7 +1394,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       }
       return staged;
     };
-    const attachments = await stageUploads(loaded.uploads);
+    const attachments = await stageUploads(loaded.uploads, loaded.inputAttachments);
     const describe = ({ attachments, presentation, ...row }: Record<string, any>): any => {
       const visual =
         row.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
@@ -1429,6 +1463,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     }
     await emit('started', 'Turn started.');
     const checkIn = await dependencies.checkIn?.(turn.session_id, turnId);
+    const speech = {
+      mode: (await dependencies.audioReplies?.()) ?? defaultPreferences.speechReply,
+      available: Boolean(dependencies.speech.configured),
+    };
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1438,16 +1476,42 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       background: turn.background,
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
+      speech,
       ...(proactivity ? { proactivity } : {}),
       taskContext,
       tasks,
       ...(checkIn ? { checkIn } : {}),
       currentMessageId: loaded.sourceMessageId ?? undefined,
+      ...(loaded.audioCaption !== undefined ? { audioCaption: loaded.audioCaption } : {}),
       replyTo: loaded.replyTo && describe(loaded.replyTo),
       history: loaded.history.map(describe),
       workspacePath,
       signal,
       attachments,
+      readAudio: async (audio, requestSignal) => {
+        const operation = AbortSignal.any([signal, requestSignal]);
+        operation.throwIfAborted();
+        await ensureCurrent();
+        const file = (
+          await pool.query(
+            `SELECT a.mime_type,a.size FROM artifacts a WHERE a.id=$1 AND a.owner_id=$2 AND a.deleting_at IS NULL
+           AND EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=$2 AND m.thread_id=$3
+             AND m.attachments @> jsonb_build_array(jsonb_build_object('id',a.id::text)))`,
+            [audio.id, ownerId, threadId],
+          )
+        ).rows[0];
+        if (
+          !file ||
+          file.mime_type !== audio.mimeType ||
+          !file.mime_type.startsWith('audio/') ||
+          file.size > 25 * 1024 * 1024
+        )
+          throw new Error('This recording is unavailable.');
+        const bytes = await artifacts.readArtifact(audio.id);
+        operation.throwIfAborted();
+        await ensureCurrent();
+        return bytes;
+      },
       emit,
       reply: async (text, streamId, replyToMessageId, presentation) => {
         const pending = shared.slice();
@@ -1539,18 +1603,25 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               }
               const messages = [];
               for (const message of taken) {
-                const { uploads, replyTo } = await loadMessage(message.id);
+                const loadedMessage = await loadMessage(message.id);
+                const { uploads, replyTo } = loadedMessage;
+                voice ||= loadedMessage.voice;
+                ownerMessage = true;
                 messages.push({
                   ...message,
-                  attachments: await stageUploads(uploads),
+                  ...(loadedMessage.audioCaption !== undefined
+                    ? { audioCaption: loadedMessage.audioCaption }
+                    : {}),
+                  attachments: await stageUploads(uploads, loadedMessage.inputAttachments),
                   ...(replyTo ? { replyTo: describe(replyTo) } : {}),
                 });
               }
               return messages;
             },
       createAudio: async (text) => {
+        explicitAudio = true;
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
-        return attach(audio.bytes, audio.fileName, audio.mimeType, 'Audio generated by AI.');
+        return attach(audio.bytes, audio.fileName, audio.mimeType);
       },
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
@@ -1609,6 +1680,55 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await post(result.result, shared.splice(0));
     if (shared.length && (result.status === 'succeeded' || !result.message))
       await post('', shared.splice(0));
+    const finalReply = result.spokenReply
+      ? replies.findLast(({ source }) => source.trim() === result.spokenReply!.trim())
+      : replies.at(-1);
+    const questionText =
+      result.status === 'waiting_user' &&
+      (result.waitingFor ?? 'question') === 'question' &&
+      !result.handoffBrowserId
+        ? result.message
+        : undefined;
+    let questionAudio: GeneratedAudio | undefined;
+    const speechText = (questionText ?? finalReply?.text)
+      ?.replace(/```[\s\S]*?```/g, '')
+      .replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+\.)[ \t]+/gm, '')
+      .replace(/(\*\*|__|`)(.*?)\1/g, '$2')
+      .trim();
+    if (
+      (result.status === 'succeeded' || questionText) &&
+      ownerMessage &&
+      speechText &&
+      speechText.length <= 4096 &&
+      !explicitAudio &&
+      dependencies.speech.configured
+    ) {
+      try {
+        const mode = await dependencies.audioReplies?.();
+        if (mode === 'always' || (mode === 'voice' && voice)) {
+          const audio = await fenced(() => dependencies.speech.synthesize(speechText, signal))();
+          if (questionText) questionAudio = audio;
+          else if (finalReply) {
+            await current(async (client) => {
+              const artifact = await artifacts.storeArtifact(
+                audio.bytes,
+                audio.fileName,
+                audio.mimeType,
+                threadId,
+                client,
+              );
+              await insertAssistantMessage(client, ref, '', [artifact], undefined, finalReply.id);
+            });
+            refresh();
+          }
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        logFailure('speech_reply_failed', error, { threadId, turnId });
+      }
+    }
     await current(async (client) => {
       if (result.status === 'succeeded') return finishTurn(client, turnId, 'succeeded');
       const waiting = await finishTurn(client, turnId, 'waiting', {
@@ -1619,6 +1739,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         handoffBrowserId: result.handoffBrowserId,
       });
       if (waiting && result.message) {
+        if (questionAudio)
+          shared.push(
+            await artifacts.storeArtifact(
+              questionAudio.bytes,
+              questionAudio.fileName,
+              questionAudio.mimeType,
+              threadId,
+              client,
+            ),
+          );
         const messageId = await insertAssistantMessage(
           client,
           ref,

@@ -19,6 +19,7 @@ type RuntimeStatus = {
   stage?: StartupStage;
   message?: string;
   error?: string;
+  details?: string;
   progress?: number;
   needsWsl?: boolean;
   needsRuntimeArchive?: boolean;
@@ -53,6 +54,7 @@ type Desktop = {
   closeConnectionSettings(): Promise<void>;
   prepare(options?: { retry: boolean }): Promise<Status>;
   installWsl(): Promise<Status>;
+  showStartupLog(): Promise<void>;
   importRuntime(): Promise<Status | undefined>;
   onStatus(listener: (status: Status) => void): (() => void) | undefined;
   onPreferences(listener: (preferences: Preferences) => void): (() => void) | undefined;
@@ -252,7 +254,7 @@ function Startup() {
     if (welcomeStep === 'waiting' && status.engineReady) setWelcomeStep('intro');
   }, [welcomeStep, status.engineReady]);
 
-  async function run(action: () => Promise<Status | undefined>) {
+  async function run(action: () => Promise<Status | void>) {
     if (recoveryPending.current) return;
     recoveryPending.current = true;
     setRecovering(true);
@@ -417,6 +419,7 @@ function Startup() {
         }
         description={unlocking || error ? description : undefined}
         error={error}
+        details={error ? failure?.details : undefined}
         progress={progress}
       >
         {failure && desktop && (
@@ -452,6 +455,13 @@ function Startup() {
                 : failure.needsServerConnection
                   ? 'Reconnect to server'
                   : 'Try again'}
+            </button>
+            <button
+              type="button"
+              disabled={working}
+              onClick={() => void run(() => desktop.showStartupLog())}
+            >
+              Show startup log
             </button>
             {(failure.needsWsl || runtime?.needsWsl) && (
               <button

@@ -1051,11 +1051,17 @@ input[type='range']:disabled {
   border-radius: 0;
 }
 .message-text .setup-group > .setup-app-card {
+  display: flex;
+  align-items: center;
   width: min(100%, 500px);
+  max-width: 100%;
   padding: 12px 14px;
   gap: 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  background: var(--surface);
   color: var(--foreground);
+  font-size: var(--text-control);
 }
 .setup-app-name {
   flex: 1;

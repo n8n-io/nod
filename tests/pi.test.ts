@@ -1372,6 +1372,14 @@ test('a turn posts its opening line and final reply, shows the lines between as 
             continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
+          if (/with a follow-up/.test(text)) {
+            await input.tools
+              .find((item) => item.name === 'send_message')!
+              .execute({ text: answer });
+            await input.tools
+              .find((item) => item.name === 'follow_up')!
+              .execute({ text: 'Should I compare the other options?' });
+          }
           input.onEvent({ type: 'message_start' });
           input.onEvent({ type: 'text_delta', text: answer });
           input.onEvent({ type: 'final', text: answer });
@@ -1397,6 +1405,22 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         undefined,
         ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
         ['Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments with a follow-up',
+        undefined,
+        [
+          'Reading the synthetic comments.',
+          'The synthetic summary is ready.',
+          'Should I compare the other options?',
+        ],
+        ['Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments with a follow-up',
+        task,
+        ['The synthetic summary is ready.', 'Should I compare the other options?'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
       ],
       [
         'Summarize the synthetic comments without an answer',
@@ -1465,6 +1489,8 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       });
       assert.equal(result.status, 'succeeded');
       assert.deepEqual(posted, replies);
+      if (/with a follow-up/.test(prompt))
+        assert.equal(result.spokenReply, 'The synthetic summary is ready.');
       assert.deepEqual(
         events.filter(([type]) => type === 'step').map(([, summary]) => summary),
         steps,
@@ -1688,6 +1714,111 @@ test('follow-up offers require a completed explicit result in the current turn',
       },
     );
     assert.deepEqual(posted, [resultText, offer]);
+  });
+
+  await t.test('a spoken result unlocks the offer only after delivery completes', async () => {
+    const spoken: string[] = [];
+    let release!: () => void;
+    let delivering!: () => void;
+    const started = new Promise<void>((resolve) => {
+      delivering = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posted = await run(
+      async (input) => {
+        const send = call(input, 'create_audio', { text: resultText });
+        await started;
+        try {
+          await refuse(input);
+        } finally {
+          release();
+        }
+        await send;
+        await call(input, 'follow_up', { text: offer });
+        final(input);
+      },
+      {
+        createAudio: async (text) => {
+          delivering();
+          await pending;
+          spoken.push(text);
+          return {
+            id: randomUUID(),
+            name: 'report.ogg',
+            mimeType: 'audio/ogg',
+            size: 20,
+            url: '/api/artifacts/fixture',
+          };
+        },
+      },
+    );
+    assert.deepEqual(spoken, [resultText]);
+    assert.deepEqual(posted, [offer]);
+  });
+
+  await t.test('failed audio requires a delivered text fallback before the offer', async () => {
+    let attempts = 0;
+    const posted = await run(
+      async (input) => {
+        await assert.rejects(call(input, 'create_audio', { text: resultText }));
+        await refuse(input);
+        await call(input, 'send_message', { text: resultText });
+        await call(input, 'follow_up', { text: offer });
+        final(input);
+      },
+      {
+        createAudio: async () => {
+          attempts++;
+          throw new Error('Synthetic audio delivery failed.');
+        },
+      },
+    );
+    assert.equal(attempts, 1);
+    assert.deepEqual(posted, [resultText, offer]);
+  });
+
+  await t.test('stopping audio delivery never releases a follow-up offer', async () => {
+    const stop = new AbortController();
+    const posted: string[] = [];
+    let attempts = 0;
+    let finished!: () => void;
+    const done = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    await assert.rejects(
+      run(
+        async (input) => {
+          try {
+            await assert.rejects(call(input, 'create_audio', { text: resultText }));
+            await refuse(input);
+          } finally {
+            finished();
+          }
+        },
+        {
+          signal: stop.signal,
+          reply: async (text) => {
+            posted.push(text);
+          },
+          createAudio: async () => {
+            attempts++;
+            stop.abort();
+            return {
+              id: randomUUID(),
+              name: 'report.ogg',
+              mimeType: 'audio/ogg',
+              size: 20,
+              url: '/api/artifacts/fixture',
+            };
+          },
+        },
+      ),
+    );
+    await done;
+    assert.equal(attempts, 1);
+    assert.deepEqual(posted, []);
   });
 
   await t.test('a task-start acknowledgement does not count as a result', async () => {
@@ -4218,5 +4349,622 @@ test('restricted Pi sessions load no sandbox, web, or code tools', async () => {
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('native audio reaches the selected Pi model with tools and survives a reopened session', async (t) => {
+  const { createServer } = await import('node:http');
+  const bodies: Array<{
+    model: string;
+    messages: Array<{ role: string; content: unknown }>;
+    tools?: unknown[];
+  }> = [];
+  const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+  let promptTokens = 110;
+  let native = true;
+  let rejectNative = false;
+  let contractRejections = 0;
+  let smallCompanion = false;
+  let jsonReply = false;
+  let holdRead: Promise<Uint8Array> | undefined;
+  const server = createServer((request, response) => {
+    const parts: Buffer[] = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      bodies.push(JSON.parse(Buffer.concat(parts).toString()));
+      const body = bodies.at(-1)!;
+      if (
+        smallCompanion &&
+        body.model === 'fixture-text-model' &&
+        Math.ceil(JSON.stringify(body).length / 3.5) +
+          ((body as { max_tokens?: number }).max_tokens ?? 0) >
+          8192
+      ) {
+        contractRejections++;
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'The text companion context is full.' } }));
+        return;
+      }
+      if (
+        body.model === 'gpt-audio-1.5' &&
+        !body.messages.some(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.some((part) => part.type === 'input_audio'),
+        )
+      ) {
+        contractRejections++;
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            error: { message: 'This model requires input audio or audio output.' },
+          }),
+        );
+        return;
+      }
+      if (rejectNative && body.model === 'gpt-audio-1.5') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'Synthetic provider unavailable.' } }));
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const first = bodies.length === 1;
+      response.end(
+        chunk({
+          id: `audio-${bodies.length}`,
+          choices: [
+            {
+              index: 0,
+              delta: first
+                ? {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'inspect-once',
+                        type: 'function',
+                        function: { name: 'inspect_fixture', arguments: '{}' },
+                      },
+                    ],
+                  }
+                : {
+                    role: 'assistant',
+                    content: jsonReply ? '{"ok":true}' : 'The recording has been inspected.',
+                  },
+            },
+          ],
+        }) +
+          chunk({
+            id: `audio-${bodies.length}`,
+            choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }],
+            usage: {
+              prompt_tokens: promptTokens,
+              completion_tokens: 2,
+              total_tokens: promptTokens + 2,
+              prompt_tokens_details: {
+                audio_tokens: body.model === 'gpt-audio-1.5' ? 100 : 0,
+                cached_tokens: 0,
+              },
+            },
+          }) +
+          'data: [DONE]\n\n',
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const address = server.address() as import('node:net').AddressInfo;
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const catalog = await createPiModelBackend({
+    fetch: async () => Response.json({ data: [{ id: 'gpt-audio-1.5' }] }),
+  }).catalog('openai', 'api_key', { type: 'api_key', key: 'synthetic-audio-only-key' });
+  assert.equal(catalog.length, 1);
+  const definition = catalog[0];
+  assert.equal(definition.choice.audio, true);
+  assert.equal(definition.spec.api, 'openai-completions');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-native-audio-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const traces: import('../src/ports/traces.ts').ModelTrace[] = [];
+  const events: import('../src/ports/agent.ts').AgentEvent[] = [];
+  const id = randomUUID();
+  const initialRecordings = [id, randomUUID(), randomUUID()];
+  const known = new Set<string>(initialRecordings);
+  let queued: Awaited<ReturnType<NonNullable<AgentSessionOptions['nextMessages']>>> = [];
+  const recording = Buffer.alloc(3244);
+  recording.write('RIFF');
+  recording.writeUInt32LE(recording.length - 8, 4);
+  recording.write('WAVEfmt ', 8);
+  recording.writeUInt32LE(16, 16);
+  recording.writeUInt16LE(1, 20);
+  recording.writeUInt16LE(1, 22);
+  recording.writeUInt32LE(16000, 24);
+  recording.writeUInt32LE(32000, 28);
+  recording.writeUInt16LE(2, 32);
+  recording.writeUInt16LE(16, 34);
+  recording.write('data', 36);
+  recording.writeUInt32LE(3200, 40);
+  for (let index = 0; index < 1600; index++)
+    recording.writeInt16LE(Math.round(Math.sin(index / 8) * 5000), 44 + index * 2);
+  let reads = 0;
+  const readIds: string[] = [];
+  let calls = 0;
+  const execution = fakeExecution(randomUUID());
+  const textDefinition = {
+    choice: { ...definition.choice, id: 'fixture-text-model', audio: false },
+    spec: {
+      ...definition.spec,
+      id: 'fixture-text-model',
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      contextWindow: 128000,
+    },
+  };
+  const resolve = async (): Promise<import('../src/ports/models.ts').ModelAccess> => ({
+    provider: 'openai',
+    method: 'api_key',
+    effort: 'off',
+    read: async () => ({ type: 'api_key', key: 'synthetic-audio-only-key' }),
+    definition: native
+      ? {
+          ...definition,
+          spec: {
+            ...definition.spec,
+            baseUrl: `http://127.0.0.1:${address.port}/v1`,
+            contextWindow: 128000,
+          },
+        }
+      : textDefinition,
+    ...(native ? { textModel: { definition: textDefinition, effort: 'off' } } : {}),
+  });
+  let piSession: Awaited<ReturnType<typeof createAgentSession>>['session'];
+  const { createLedger } = await import('../src/server/ledger.ts');
+  const ledger = createLedger({
+    pool: { query: async () => ({ rows: [] }) } as never,
+    ownerId: 'synthetic-native-audio',
+  });
+  const agent = ledger.agent(
+    createPiAgent({
+      createSession: async (options) => {
+        const result = await createAgentSession(options);
+        piSession = result.session;
+        return result;
+      },
+      provider: 'openai',
+      sessionRoot: directory,
+      resolve,
+      traces: { active: () => true, record: (trace) => traces.push(trace) },
+    }),
+  );
+  t.after(() => agent.dispose());
+  const open = (
+    scope = execution,
+    instructions?: Pick<AgentSessionOptions, 'systemPrompt' | 'compactInstructions'>,
+  ) =>
+    agent.open({
+      ...scope,
+      restricted: true,
+      systemPrompt: 'Use the fixture tool if needed.',
+      ...instructions,
+      workspace: recordingWorkspace().workspace,
+      runTool: async (_name, _params, run) => run(),
+      tools: [
+        {
+          name: 'inspect_fixture',
+          description: 'Inspect the synthetic fixture.',
+          parameters: Type.Object({}),
+          execute: async () => {
+            calls++;
+            return { content: [{ type: 'text', text: 'Inspected.' }] };
+          },
+        },
+      ],
+      shouldStop: () => false,
+      onEvent: (event) => events.push(event),
+      nextMessages: async () => queued.splice(0),
+      readAudio: async (file, signal) => {
+        signal.throwIfAborted();
+        assert.ok(known.has(file.id));
+        assert.equal(file.mimeType, 'audio/wav');
+        readIds.push(file.id);
+        reads++;
+        return holdRead ?? recording;
+      },
+    });
+  const first = await open();
+  await first.prompt(
+    'Listen to this synthetic recording. ' + 'Synthetic context. '.repeat(700),
+    [],
+    {
+      files: initialRecordings.map((id) => ({ id, mimeType: 'audio/wav' })),
+      fallback: 'Internal transcription fixture words.',
+    },
+  );
+  await first.dispose();
+  assert.equal(calls, 1);
+  assert.ok(bodies[0].tools?.length);
+  const audio = (body: (typeof bodies)[number]) =>
+    body.messages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === 'input_audio')
+        : [],
+    );
+  assert.equal(audio(bodies[0]).length, 3);
+  const decoded = Buffer.from(audio(bodies[0])[0].input_audio.data, 'base64');
+  assert.equal(decoded.toString('ascii', 0, 4), 'RIFF');
+  assert.deepEqual(decoded.subarray(44), recording.subarray(44));
+  assert.equal(audio(bodies[0])[0].input_audio.format, 'wav');
+  assert.equal(audio(bodies[1]).length, 3);
+  assert.ok(!JSON.stringify(bodies).includes('Internal transcription fixture words.'));
+  const second = await open();
+  assert.equal(second.resumed, true);
+  await second.prompt('What else did you hear?', []);
+  await second.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 3);
+  assert.ok(reads >= 3);
+  const usage = events.filter((event) => event.type === 'model_usage');
+  assert.ok(usage.length >= 3);
+  for (const event of usage) assert.ok(Math.abs(event.costUsd! - 0.003245) < 1e-9);
+  promptTokens = 5000;
+  const compacting = await open();
+  await compacting.prompt(
+    'Keep the earlier recording in context. ' + 'Recent context. '.repeat(700),
+    [],
+  );
+  if (
+    !bodies.some(
+      (body) =>
+        JSON.stringify(body).includes('Internal transcription fixture words.') &&
+        audio(body).length === 0,
+    )
+  ) {
+    piSession!.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1000 } });
+    await piSession!.compact();
+  }
+  await compacting.dispose();
+  promptTokens = 110;
+  assert.ok(
+    bodies.some(
+      (body) =>
+        JSON.stringify(body).includes('Internal transcription fixture words.') &&
+        audio(body).length === 0,
+    ),
+  );
+  const compacted = await open();
+  await compacted.prompt('Follow up after compaction.', []);
+  await compacted.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 3);
+  assert.ok(JSON.stringify(bodies.at(-1)).includes('Earlier recording from'));
+  const beforeRebase = piSession!.sessionManager.getSessionFile();
+  piSession!.sessionManager.appendCustomEntry('synthetic-checkpoint-padding', {
+    value: 'x'.repeat(8 * 1024 * 1024),
+  });
+  const rebased = await open();
+  await rebased.prompt('Follow up after the session file is rebased.', []);
+  await rebased.dispose();
+  assert.notEqual(piSession!.sessionManager.getSessionFile(), beforeRebase);
+  assert.equal(audio(bodies.at(-1)!).length, 3);
+  native = false;
+  const fallback = await open();
+  assert.equal(fallback.readsAudio, false);
+  await fallback.prompt('Continue with text only.', []);
+  await fallback.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  native = true;
+  queued = Array.from({ length: 3 }, (_, index) => {
+    const nextId = randomUUID();
+    known.add(nextId);
+    return {
+      text: `New recording ${index}`,
+      images: [],
+      audio: {
+        files: [{ id: nextId, mimeType: 'audio/wav' }],
+        fallback: `Unheard fallback ${index}`,
+      },
+    };
+  });
+  const batch = await open();
+  await batch.prompt('Listen to the next recordings as they arrive.', []);
+  await batch.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 3);
+  for (let index = 0; index < 3; index++)
+    assert.ok(!JSON.stringify(bodies.at(-1)).includes(`Unheard fallback ${index}`));
+  let release!: (bytes: Uint8Array) => void;
+  holdRead = new Promise((resolve) => {
+    release = resolve;
+  });
+  const cancelling = await open();
+  const sent = bodies.length;
+  const beforeRead = reads;
+  const pending = cancelling.prompt('Stop this request.', []);
+  try {
+    for (let attempt = 0; reads === beforeRead && attempt < 500; attempt++) await setTimeout(10);
+    assert.ok(reads > beforeRead, 'The request did not reach the audio reader.');
+  } finally {
+    await cancelling.abort();
+    release(recording);
+    holdRead = undefined;
+    await pending;
+    await cancelling.dispose();
+  }
+  assert.equal(bodies.length, sent);
+  const recordings = piSession!.sessionManager
+    .getBranch()
+    .filter((entry) => entry.type === 'custom_message' && entry.customType === 'nod-audio-input');
+  for (const [index, entry] of recordings.entries())
+    piSession!.sessionManager.appendContextEdit(
+      entry.id,
+      index === recordings.length - 1 ? { content: 'Replacement recording context.' } : null,
+    );
+  const beforeEditedRead = reads;
+  const edited = await open();
+  await edited.prompt('Continue after replacing the recording context.', []);
+  await edited.dispose();
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  assert.equal(reads, beforeEditedRead);
+  assert.ok(JSON.stringify(bodies.at(-1)).includes('Replacement recording context.'));
+  for (let index = 0; index < 3; index++)
+    assert.ok(!JSON.stringify(bodies.at(-1)).includes(`Unheard fallback ${index}`));
+  const beforeEditedRebase = piSession!.sessionManager.getSessionFile();
+  piSession!.sessionManager.appendCustomEntry('synthetic-checkpoint-padding', {
+    value: 'x'.repeat(8 * 1024 * 1024),
+  });
+  const editedRebase = await open();
+  await editedRebase.prompt('Continue after rebasing the replaced recording context.', []);
+  await editedRebase.dispose();
+  assert.notEqual(piSession!.sessionManager.getSessionFile(), beforeEditedRebase);
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  assert.equal(reads, beforeEditedRead);
+  assert.ok(JSON.stringify(bodies.at(-1)).includes('Replacement recording context.'));
+  const serialized = JSON.stringify(traces);
+  assert.ok(!serialized.includes(recording.toString('base64')));
+  assert.ok(!serialized.includes('nod-audio-transport:'));
+  assert.ok(!serialized.includes('synthetic-audio-only-key'));
+  const files = await readdir(join(directory, execution.sessionId));
+  const saved = (
+    await Promise.all(
+      files
+        .filter((name) => name.endsWith('.jsonl'))
+        .map((name) => readFile(join(directory, execution.sessionId, name), 'utf8')),
+    )
+  ).join('\n');
+  assert.ok(saved.includes(id));
+  assert.ok(!saved.includes(recording.toString('base64')));
+  const beforeFreshRead = reads;
+  const fresh = await open(fakeExecution(randomUUID()));
+  await fresh.prompt('A new typed conversation.', []);
+  await fresh.dispose();
+  assert.equal(reads, beforeFreshRead);
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  const typedUsage = events.findLast((event) => event.type === 'model_usage');
+  assert.equal(typedUsage?.model, 'fixture-text-model');
+  assert.ok(Math.abs(typedUsage!.costUsd! - 0.000295) < 1e-9);
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  smallCompanion = true;
+  textDefinition.spec.contextWindow = 8192;
+  const beforeSmall = bodies.length;
+  const small = await open(fakeExecution(randomUUID()), {
+    systemPrompt: 'Large synthetic owner context. '.repeat(3000),
+    compactInstructions: { systemPrompt: 'Answer the synthetic typed request briefly.' },
+  });
+  await small.prompt('A typed request using the small text companion.', []);
+  await small.dispose();
+  assert.equal(bodies.length, beforeSmall + 1);
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(audio(bodies.at(-1)!).length, 0);
+  assert.equal(
+    events.findLast((event) => event.type === 'model_usage')?.model,
+    'fixture-text-model',
+  );
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  const { audioMessage } = await import('../src/providers/pi/audio.ts');
+  for (const change of ['pending', 'edited', 'deleted', 'typed']) {
+    const interruptedScope = fakeExecution(randomUUID());
+    const interrupted = await open(interruptedScope);
+    const pendingManager = piSession!.sessionManager;
+    pendingManager.appendMessage({ role: 'user', content: 'Earlier request.', timestamp: 1 });
+    pendingManager.appendMessage(fauxAssistantMessage('Earlier completed context. '.repeat(2000)));
+    if (change === 'typed')
+      pendingManager.appendMessage({
+        role: 'user',
+        content: 'Pending typed instruction. ' + 'Additional pending details. '.repeat(150),
+        timestamp: Date.now(),
+      });
+    const pendingIds: string[] = [];
+    const entries: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const recordingId = randomUUID();
+      pendingIds.push(recordingId);
+      known.add(recordingId);
+      const message = audioMessage(`Queued recording ${index}`, [], {
+        files: [{ id: recordingId, mimeType: 'audio/wav' }],
+        fallback: `Unheard queued transcript ${index}`,
+      });
+      entries.push(
+        pendingManager.appendCustomMessageEntry(
+          message.customType,
+          message.content,
+          message.display,
+          message.details,
+        ),
+      );
+    }
+    if (change === 'edited' || change === 'deleted')
+      pendingManager.appendContextEdit(
+        entries[0],
+        change === 'edited' ? { content: 'Replacement owner text.' } : null,
+      );
+    pendingManager.appendMessage({
+      role: 'user',
+      content: 'Also consider this queued typed follow-up.',
+      timestamp: Date.now(),
+    });
+    await interrupted.dispose();
+    const beforeReopen = bodies.length;
+    const beforeReadIds = readIds.length;
+    const reopenedPending = await open(interruptedScope);
+    await reopenedPending.prompt('Continue with the queued recordings.', []);
+    await reopenedPending.dispose();
+    const expectedIds = ['edited', 'deleted'].includes(change) ? pendingIds.slice(1) : pendingIds;
+    assert.equal(bodies.length, beforeReopen + 1);
+    assert.equal(audio(bodies.at(-1)!).length, expectedIds.length);
+    assert.deepEqual(new Set(readIds.slice(beforeReadIds)), new Set(expectedIds));
+    const submitted = JSON.stringify(bodies.at(-1));
+    assert.ok(submitted.includes('Also consider this queued typed follow-up.'));
+    assert.equal(submitted.includes('Replacement owner text.'), change === 'edited');
+    assert.equal(submitted.includes('Pending typed instruction.'), change === 'typed');
+    for (let index = 0; index < 3; index++) {
+      assert.equal(
+        submitted.includes(`Queued recording ${index}`),
+        expectedIds.includes(pendingIds[index]),
+      );
+      assert.ok(!submitted.includes(`Unheard queued transcript ${index}`));
+    }
+    const answeredPending = await open(interruptedScope);
+    await answeredPending.prompt('Continue after those recordings were answered.', []);
+    await answeredPending.dispose();
+    assert.equal(audio(bodies.at(-1)!).length, 2);
+  }
+  textDefinition.spec.contextWindow = 128000;
+  smallCompanion = false;
+  const compactions = events.filter(
+    (event) => event.type === 'provider_usage' && event.usage.operation === 'compaction',
+  );
+  assert.ok(compactions.length > 0);
+  for (const event of compactions)
+    if (event.type === 'provider_usage') assert.equal(event.usage.model, 'fixture-text-model');
+  const curatorUsage: Array<{ model: string; costUsd: number | null }> = [];
+  const curator = createPiMemoryCurator({
+    provider: 'openai',
+    resolve,
+    traces: { active: () => true, record: (trace) => traces.push(trace) },
+  });
+  jsonReply = true;
+  assert.deepEqual(
+    await curator.curate(
+      { task: 'review', instructions: 'Return JSON.', input: { synthetic: true } },
+      undefined,
+      (usage) => curatorUsage.push(usage),
+    ),
+    { ok: true },
+  );
+  assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
+  assert.equal(curatorUsage.at(-1)!.model, 'fixture-text-model');
+  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  assert.equal(contractRejections, 0);
+  rejectNative = true;
+  const failing = await open(fakeExecution(randomUUID()));
+  const beforeFailure = bodies.length;
+  await failing.prompt('Provider failure must not switch models.', [], {
+    files: [{ id, mimeType: 'audio/wav' }],
+    fallback: 'Synthetic failure transcript.',
+  });
+  await failing.dispose();
+  const failedRequests = bodies.slice(beforeFailure);
+  assert.ok(failedRequests.length > 0 && failedRequests.length <= 4);
+  assert.ok(failedRequests.every((body) => body.model === 'gpt-audio-1.5'));
+  assert.ok(failedRequests.every((body) => audio(body).length > 0));
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.type === 'error' && event.message.includes('503')));
+});
+
+test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-native-context-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const [native, contextWindow] of [
+    [false, 32_000],
+    [true, 32_000],
+    [false, 131_072],
+    [true, 131_072],
+  ] as const) {
+    const compact = contextWindow < 65_536;
+    const prompts: Array<{
+      text: string;
+      audio?: import('../src/ports/agent.ts').AgentAudioInput;
+    }> = [];
+    let steered: Awaited<ReturnType<NonNullable<AgentSessionOptions['nextMessages']>>> = [];
+    const runtime = createAgentRuntime({
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+      agent: {
+        open: async (input) => ({
+          resumed: compact,
+          contextWindow,
+          readsAudio: native,
+          abort() {},
+          dispose() {},
+          async prompt(text, _images, audio) {
+            prompts.push({ text, audio });
+            steered = await input.nextMessages!();
+            input.onEvent({ type: 'final', text: 'Synthetic answer.' });
+          },
+        }),
+        dispose() {},
+      },
+    });
+    t.after(() => runtime.dispose());
+    const id = randomUUID();
+    const attachment = {
+      id,
+      input: true,
+      path: join(directory, 'voice.wav'),
+      mimeType: 'audio/wav',
+    };
+    const original = context(directory);
+    original.prompt = 'Typed caption\n\nPrivate internal transcription';
+    original.audioCaption = 'Typed caption';
+    original.attachments = [attachment];
+    original.readAudio = async () => Buffer.from('Never decoded by this port fixture');
+    original.history = [
+      { role: 'user', text: 'Ancient transcript outside the compact window' },
+      { role: 'assistant', text: 'Ancient answer' },
+      { role: 'user', text: 'Older transcript remains available', audioCaption: '' },
+      { role: 'assistant', text: 'Earlier answer' },
+      { role: 'user', text: 'Latest historical context' },
+    ];
+    original.relatedConversation = [
+      { role: 'user', text: 'Related conversation omitted when compact' },
+    ];
+    original.takeMessages = async () => [
+      {
+        id: randomUUID(),
+        text: 'Second caption\n\nSecond internal transcription',
+        audioCaption: 'Second caption',
+        attachments: [attachment],
+      },
+    ];
+    assert.equal((await runtime.runTurn(original)).status, 'succeeded');
+    assert.equal(original.prompt, 'Typed caption\n\nPrivate internal transcription');
+    assert.equal(prompts[0].text.includes('Private internal transcription'), !native);
+    assert.equal(steered[0].text.includes('Second internal transcription'), !native);
+    assert.ok(prompts[0].text.includes('Older transcript remains available'));
+    assert.equal(
+      prompts[0].text.includes('Ancient transcript outside the compact window'),
+      !compact,
+    );
+    assert.equal(prompts[0].text.includes('Related conversation omitted when compact'), !compact);
+    if (native) {
+      assert.deepEqual(prompts[0].audio?.files, [{ id, mimeType: 'audio/wav' }]);
+      assert.ok(prompts[0].audio?.fallback.includes('Private internal transcription'));
+      assert.ok(prompts[0].audio?.fallback.includes('Older transcript remains available'));
+      assert.equal(
+        prompts[0].audio?.fallback.includes('Ancient transcript outside the compact window'),
+        !compact,
+      );
+      assert.equal(
+        prompts[0].audio?.fallback.includes('Related conversation omitted when compact'),
+        !compact,
+      );
+      assert.ok(steered[0].audio?.fallback.includes('Second internal transcription'));
+    } else assert.equal(prompts[0].audio, undefined);
+    const textReply = {
+      ...original,
+      turnId: randomUUID(),
+      prompt: 'Answer this typed follow-up.',
+      audioCaption: undefined,
+      attachments: [{ ...attachment, input: false }],
+    };
+    assert.equal((await runtime.runTurn(textReply)).status, 'succeeded');
+    assert.equal(prompts[1].audio, undefined);
+    assert.ok(prompts[1].text.includes('Answer this typed follow-up.'));
   }
 });

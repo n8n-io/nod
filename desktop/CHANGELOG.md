@@ -2,6 +2,25 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.1 - 2026-10-26
+
+### Fixes
+
+- **runtime:** Fit small models and OpenRouter routers. [#491](https://github.com/n8n-io/nod/pull/491) (1a46880)
+- **desktop:** Explain data removal and return to setup. [#492](https://github.com/n8n-io/nod/pull/492) (93620dd)
+- **apps:** Make account recovery prompts actionable. [#489](https://github.com/n8n-io/nod/pull/489) (060a60e)
+- **files:** Attach workspace file references in replies. [#490](https://github.com/n8n-io/nod/pull/490) (8bf542f)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.0...1a468808b34a820db256c4c3736ee7171e8362f7)
+
+<details>
+<summary>Build details</summary>
+
+Source: `1a468808b34a820db256c4c3736ee7171e8362f7`
+Previous release: `nod-v0.3.0`
+
+</details>
+
 ## 0.3.0 - 2026-10-26
 
 ### Features

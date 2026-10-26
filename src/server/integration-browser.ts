@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { z } from 'zod';
 import type { IntegrationConnectionBrowser } from '../ports/integrations.ts';
+import { logFailure } from './failure-log.ts';
 
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const browserKeySchema = z
@@ -195,7 +196,10 @@ export function createIntegrationBrowser(): IntegrationConnectionBrowser {
             throw new Error();
           attempts.get(id)!.remote = remote.href;
           send(200, { id, url: remote.href, expiresAt });
-        } catch {
+        } catch (error) {
+          logFailure('app_connection_start', error);
+          if (response.destroyed) finish(id);
+          else response.once('close', () => finish(id));
           send(400, {
             error: 'The app connection could not be started. Return to Nod and try again.',
           });

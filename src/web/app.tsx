@@ -18,6 +18,7 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
+import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
 import { appPagePath } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
@@ -284,16 +285,28 @@ function AuthenticatedApp({
     setFeedbackDiscovery(false);
   };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
+  const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
-  const openFeedback = () => {
-    if (feedbackOpen) return;
+  const openFeedback = async () => {
+    if (feedbackOpen || feedbackCapture.current) return;
     dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
+    const capture = captureFeedbackScreenshot();
+    feedbackCapture.current = capture;
+    const screenshot = await capture;
+    if (feedbackCapture.current !== capture) return;
+    feedbackCapture.current = null;
+    setFeedbackScreenshot(screenshot);
     setFeedbackOpen(true);
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     setFeedbackOpen(false);
+    setFeedbackScreenshot(null);
+    return () => {
+      feedbackCapture.current = null;
+    };
   }, [session.user!.id]);
   useEffect(() => {
     if (!feedbackRequest) return;
@@ -532,6 +545,7 @@ function AuthenticatedApp({
       <FeedbackDialog
         key={session.user!.id}
         ownerId={session.user!.id}
+        screenshot={feedbackScreenshot}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>

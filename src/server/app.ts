@@ -2,6 +2,9 @@ import { presentationSchema } from '../shared/presentation.ts';
 import Fastify, { type FastifyReply } from 'fastify';
 import multipart from '@fastify/multipart';
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import type { SpeechService } from './speech.ts';
+import { messageInput, registerAudioMessages } from './audio-messages.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
@@ -46,18 +49,19 @@ import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
-const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
- CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(target.text,1000))) END AS "replyTo"`;
+const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
+ CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(COALESCE(target.audio_caption,target.text),1000))) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
   receipt?: MessageReceipt,
   questionState?: Message['questionState'],
 ): Message {
-  const { assistantReaction, presentation, ...message } = row;
+  const { assistantReaction, presentation, audioCaption, ...message } = row;
   const visual =
     message.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
   return {
     ...message,
+    ...(typeof audioCaption === 'string' ? { audioCaption } : {}),
     ...(visual?.success ? { presentation: visual.data } : {}),
     ...(receipt ? { receipt } : {}),
     ...(questionState ? { questionState } : {}),
@@ -74,6 +78,8 @@ export interface AppDependencies {
   linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
   artifacts?: ArtifactService;
+  speech?: SpeechService;
+  attributeAudioUsage?: (client: PoolClient, ids: string[], turnId: string) => Promise<void>;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
@@ -134,7 +140,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, request, reply) => {
-    const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
+    const known =
+      error instanceof Error
+        ? (error as Error & { statusCode?: number; retryable?: boolean })
+        : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
     if (status >= 500)
       logFailure('request_failed', error, {
@@ -143,6 +152,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         status,
       });
     reply.code(status).send({
+      ...(known?.retryable === true ? { retryable: true } : {}),
       error:
         error instanceof z.ZodError
           ? 'Check the supplied values.'
@@ -152,6 +162,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
+  const audioMessages = registerAudioMessages(app, dependencies);
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
     const release = process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE;
@@ -279,24 +290,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
-    const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
-    for (const id of [previousThreadId, ...browsers])
-      void dependencies.computer?.discard(id).catch(() => {});
-    return reset;
+    return audioMessages.pause(async () => {
+      const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+      for (const id of [previousThreadId, ...browsers])
+        void dependencies.computer?.discard(id).catch(() => {});
+      return reset;
+    }, threadId);
   });
   app.post('/api/messages', async (request) => {
-    const input = z
-      .object({
-        text: z.string().trim().default(''),
-        attachmentIds: z.array(z.uuid()).default([]),
-        replyToMessageId: z.uuid().optional(),
-        replyQuote: z.string().trim().min(1).max(4000).optional(),
-        seenMessageId: z.uuid().optional(),
-        clientMessageId: z.uuid().optional(),
-        threadId: z.uuid().optional(),
-        verificationRequestId: z.uuid().optional(),
-      })
-      .strict()
+    const input = messageInput
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .parse(request.body);
     const clientMessageId = input.clientMessageId ?? randomUUID();
@@ -339,11 +341,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
     return submitted;
   });
-  app.post('/api/thread/stop', async () => {
-    const { browsers } = await stopThread();
-    await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
-    return { ok: true };
-  });
+  app.post('/api/thread/stop', () =>
+    audioMessages.pause(async () => {
+      const { browsers } = await stopThread();
+      await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
+      return { ok: true };
+    }),
+  );
   app.get('/api/events', async (request, reply) => {
     reply.hijack();
     streams.add(reply.raw);

@@ -20,11 +20,14 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
   en: {
     language: 'English',
     messages: [
-      `Reply in English. Find Lena's email about Meridian 427, then send her this exact reply from my Gmail account, but ask me for confirmation before sending. Recipient: ${recipient}. Subject: ${subject}. Body: "${body}".`,
+      'Olá, como estás?',
+      'Hey, how are you doing?',
+      `Find Lena's email about Meridian 427, then send her this exact reply from my Gmail account, but ask me for confirmation before sending. Recipient: ${recipient}. Subject: ${subject}. Body: "${body}".`,
     ],
     reply: 'Go ahead.',
     answer: 'yes',
-    context: 'Unconditional approval. The French source email must not change the reply language.',
+    context:
+      'The first greeting receives Portuguese. The next short but clearly English greeting switches the conversation to English without an explicit language instruction, and the task and confirmation stay English. Unconditional approval. The French source email must not change the reply language.',
   },
   'pt-pt': {
     language: 'European Portuguese',
@@ -40,12 +43,13 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
   es: {
     language: 'Spanish',
     messages: [
+      'Hallo, wie geht es dir?',
       `Busca el correo de Lena sobre Meridian 427 y envíale esta respuesta exacta desde mi cuenta de Gmail, pero pídeme confirmación antes de enviarla. Destinataria: ${recipient}. Asunto: ${subject}. Texto: "${body}".`,
     ],
     reply: 'Sí, pero solo si puedes garantizar que Lena lo leerá hoy.',
     answer: 'other',
     context:
-      'The owner writes in Spanish without naming a preferred language. Conditional approval with an unverified guarantee is not unconditional approval.',
+      'The initial greeting receives German. The following Spanish request switches the conversation and confirmation to Spanish without naming a preferred language. Conditional approval with an unverified guarantee is not unconditional approval.',
   },
   de: {
     language: 'German',
@@ -304,7 +308,7 @@ export function approvalLanguageScenario(name: string) {
         ),
         judge(
           'conversation-language-persists',
-          `Every user-visible assistant response follows the owner's current conversation or explicitly requested output language: ${frozen.language}. ${frozen.context} In the Arabic case only, the initial acknowledgement before the owner's switch should be German. Quoted email content can stay in its original language; the surrounding response and confirmation cannot adopt that language. Short OK/approval replies and the German time zone must not reset the selected language.`,
+          `Every user-visible assistant response follows the owner's current conversation or explicitly requested output language, including the language switches described here: ${frozen.context} The final task and confirmation use ${frozen.language}. In the Arabic case, the initial acknowledgement before the owner's switch should be German. Quoted email content can stay in its original language; the surrounding response and confirmation cannot adopt that language. Language-neutral OK replies and the German time zone must not reset the selected language.`,
           { aspect: 'process', failure: 'format' },
         ),
         judge(

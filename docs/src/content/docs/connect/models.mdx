@@ -208,11 +208,11 @@ If your selected connection is removed or needs reconnecting, the next connectio
 
 ## One model for everything
 
-Nod uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with.
+Nod uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with. An audio model's **Text support** label names its companion from the same connection. Requests without recordings use that companion; follow-ups that still include recordings use the audio model. Your saved model choice stays unchanged.
 
 If a model request fails, Nod doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
 
-Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. Background work and checks that use your selected model use the lightest reasoning it offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
+Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model or, for an audio model, its text companion. Background work and checks use the lightest reasoning their model offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
 
 ## Models with a small context window
 
@@ -224,15 +224,15 @@ The same server checks still decide app actions, sign-ins and payments. A smalle
 
 ## Decision checks
 
-Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email Nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
+Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email Nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model, or its visible text companion for an audio model, decides whether an action can run and writes and fact-checks confirmation questions. This choice is made before the request; a failed check never switches models.
 
-Pick a capable model if Nod acts for you: the [trust check](/trust/approvals/) runs on it. Use the [decision evals](/contribute/evals/#compare-decision-checks) to compare models on synthetic permission checks before changing the model you rely on.
+Pick a capable model if Nod acts for you: the [trust check](/trust/approvals/) runs on it or its text companion. Use the [decision evals](/contribute/evals/#compare-decision-checks) to compare models on synthetic permission checks before changing the model you rely on.
 
 | Current connection     | Confirmation replies                                   |
 | ---------------------- | ------------------------------------------------------ |
 | OpenAI API key         | GPT Decisions (`gpt-6-luna`) with the same key         |
 | OpenRouter             | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
-| Every other connection | Your selected model                                    |
+| Every other connection | Your selected model or its text companion              |
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
@@ -240,8 +240,8 @@ In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to u
 
 A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
-:::note[Voice needs an API connection]
-Spoken replies need an OpenAI API key, saved in **Models** or set through `OPENAI_API_KEY`. Transcription also works with an OpenRouter connection; a ChatGPT plan alone doesn't enable voice.
+:::note[Voice without another account]
+Open **Settings → General → Voice**. Leave **Voice provider** on **Automatic** to use an available speech connection, or choose a provider and compare **Assistant voice** samples. **Connect** or **Manage** beside the provider opens setup on the same page. Choose [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model.
 :::
 
 ## Set connections in server settings

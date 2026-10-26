@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   prepare: (options) => invoke('nod:prepare', options),
   importRuntime: () => invoke('nod:runtime:import'),
   installWsl: () => invoke('nod:runtime:install-wsl'),
+  showStartupLog: () => invoke('nod:startup-log:show'),
   onStatus: (listener) => subscribe('nod:status', listener),
   onPreferences: (listener) => subscribe('nod:preferences', listener),
 });

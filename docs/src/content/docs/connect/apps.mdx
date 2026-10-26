@@ -11,7 +11,7 @@ Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps f
 
 During onboarding, connect **Gmail** or **Outlook** so Nod can find emails that need a reply, pull out next steps and draft responses for you to review. Then connect **Google Calendar** or **Outlook Calendar** to work with upcoming meetings and available time. Outlook uses the same account connection for email and calendar, so an account connected in the email step is already shown in the calendar step. The permissions granted on the provider's consent screen still apply. Both steps are optional and have **Skip for now**. While signing in, progress and cancellation stay in the selected provider card. If the browser cannot open, use **Open sign-in** there; if signing in is interrupted, return to the card to try again.
 
-After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts. You can continue without connecting any tools. A count shows connected tools, excluding email. You can also connect apps later from **Apps**.
+After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts. While an app signs in, its card shows **Cancel**. You can continue without connecting any tools. A count shows connected tools, excluding email. You can also connect apps later from **Apps**.
 
 Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Nod checks each action before it reaches the connection service. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
@@ -36,9 +36,9 @@ flowchart TD
 
 </Steps>
 
-You can also ask Nod in chat. It searches the same catalog, then sends you a private connection link, shown as a connect button in Nod.
+You can also ask Nod in chat. It searches the same catalog, then sends you a private connection link, shown as a connect button in Nod. Sign-in links never go through Telegram or WhatsApp: there, Nod asks you to open Nod, where the button waits in the chat.
 
-If sign-in fails or the link is unavailable, select **Try again** to open a fresh sign-in window. In Apps, the same dialog keeps the account in view and confirms when it connects. If you closed the browser before finishing, select **Start again**. Finish in the newest window; a replaced link can no longer complete sign-in.
+If sign-in fails or the link is unavailable, select **Try again** to open a fresh sign-in window. Nod stops waiting as soon as the sign-in page can't start or closes, such as after a restart. In Apps, the same dialog keeps the account in view and confirms when it connects. If you closed the browser before finishing, select **Start again**. Finish in the newest window; a replaced link can no longer complete sign-in.
 
 The browser's **Return to Nod** button takes you back to check the connection. If you started in the desktop app, it reopens Nod, including when you're connected to your own server.
 

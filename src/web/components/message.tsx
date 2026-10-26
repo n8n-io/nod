@@ -36,6 +36,7 @@ import { MessageAttachments } from './attachment-card';
 import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { money } from '../lib/money';
+import { attachmentKind } from '../lib/attachment-kind';
 import { copyContent, selectedText } from '../lib/clipboard';
 import { navigate } from '../lib/navigation';
 
@@ -203,6 +204,19 @@ export function MessageBubble({
   handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
+  const visibleText = message.audioCaption ?? message.text;
+  const visibleReply =
+    message.replyTo && !(message.role === 'assistant' && message.replyTo.role === 'assistant')
+      ? message.replyTo
+      : null;
+  const audioOnly =
+    !streaming &&
+    !visibleText &&
+    !visibleReply &&
+    !message.presentation &&
+    !delivery &&
+    message.attachments.length === 1 &&
+    attachmentKind(message.attachments[0].mimeType, message.attachments[0].name) === 'audio';
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [quote, setQuote] = useState('');
@@ -429,9 +443,8 @@ export function MessageBubble({
     setPanel(null);
     try {
       const visual = presentationSchema.safeParse(message.presentation);
-      const text = visual.success
-        ? `${message.text}\n\n${presentationText(visual.data)}`
-        : message.text;
+      const content = message.audioCaption ?? message.text;
+      const text = visual.success ? `${content}\n\n${presentationText(visual.data)}` : content;
       if (markdown) await navigator.clipboard.writeText(text);
       else
         await copyContent(
@@ -480,7 +493,9 @@ export function MessageBubble({
       )}
       <div className="message-content">
         <div className="message-row">
-          <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
+          <div
+            className={`message-bubble${audioOnly ? ' message-audio-only' : ''}${!streaming && shownReaction ? ' has-reaction' : ''}`}
+          >
             <div
               className="message-body"
               onContextMenu={(event) => {
@@ -503,40 +518,39 @@ export function MessageBubble({
                 });
               }}
             >
-              {message.replyTo &&
-                !(message.role === 'assistant' && message.replyTo.role === 'assistant') && (
-                  <blockquote
-                    className="message-reply-quote"
-                    role="button"
-                    tabIndex={0}
-                    title="Go to original message"
-                    onClick={() =>
+              {visibleReply && (
+                <blockquote
+                  className="message-reply-quote"
+                  role="button"
+                  tabIndex={0}
+                  title="Go to original message"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent('nod:focus-message', {
+                        detail: { messageId: visibleReply.id },
+                      }),
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
                       window.dispatchEvent(
                         new CustomEvent('nod:focus-message', {
-                          detail: { messageId: message.replyTo!.id },
+                          detail: { messageId: visibleReply.id },
                         }),
-                      )
+                      );
                     }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        window.dispatchEvent(
-                          new CustomEvent('nod:focus-message', {
-                            detail: { messageId: message.replyTo!.id },
-                          }),
-                        );
-                      }
-                    }}
-                  >
-                    <span>{message.replyTo.text || 'Attachment'}</span>
-                  </blockquote>
-                )}
+                  }}
+                >
+                  <span>{visibleReply.text || 'Attachment'}</span>
+                </blockquote>
+              )}
               {message.role === 'user' && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
-              {message.text && (
+              {visibleText && (
                 <MessageText
-                  text={message.text}
+                  text={visibleText}
                   previews={!streaming}
                   connectedAppIds={connectedAppIds}
                   handoff={!streaming && handoff}

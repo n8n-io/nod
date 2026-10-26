@@ -53,16 +53,21 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!visible || !duration || failed) return;
+    if (!visible || failed) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
-    void loadAudioWaveform(item.url, item.size, duration, signal)
-      .then((values) => {
-        if (!signal.aborted) setPeaks(values);
+    void loadAudioWaveform(item.url, item.size, 0, signal)
+      .then((value) => {
+        if (signal.aborted) return;
+        setPeaks(value.peaks);
+        setDuration(value.duration);
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [visible, duration, item.url, item.size, failed]);
+  }, [visible, item.url, item.size, failed]);
+  useEffect(() => {
+    if (duration > 0) onDuration?.(duration);
+  }, [duration, onDuration]);
   useEffect(() => {
     const element = audio.current;
     return () => {
@@ -112,8 +117,9 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
         onDurationChange={(event) => {
           const value = event.currentTarget.duration;
           const seconds = Number.isFinite(value) && value > 0 ? value : 0;
-          setDuration(seconds);
-          if (seconds > 0) onDuration?.(seconds);
+          if (seconds > 0) {
+            setDuration(seconds);
+          }
         }}
         onPlay={(event) => {
           document.querySelectorAll('audio').forEach((other) => {
@@ -202,8 +208,9 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           className="audio-player-time"
           aria-label={`${audioTime(current)} of ${audioTime(duration)}`}
         >
-          {audioTime(current)}
-          <span className="audio-player-total"> / {duration ? audioTime(duration) : '–:––'}</span>
+          <span className="audio-player-current">{audioTime(current)}</span>
+          <span className="audio-player-separator"> / </span>
+          <span className="audio-player-total">{duration ? audioTime(duration) : '–:––'}</span>
         </span>
         <button
           type="button"
