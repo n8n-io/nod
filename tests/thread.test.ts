@@ -4018,7 +4018,7 @@ test(
         },
       );
       await t.test(
-        'private source events start automatically and reject stale preference changes',
+        'every app event wakes one quiet turn under a notification rule, private preparation without one, and nothing for unsupported apps',
         async () => {
           const threadId = (await thread.activeThread()).id;
           await waitFor(
@@ -4115,6 +4115,13 @@ test(
               ).rows[0].proactive,
               true,
             );
+            const unsupported = createTriage({ preparation: async () => false });
+            const disabledId = randomUUID();
+            assert.equal(
+              await unsupported.triageEvent('Synthetic event without a rule', disabledId),
+              undefined,
+            );
+            assert.deepEqual(await eventTurns([disabledId]), []);
           } finally {
             quietBackgroundWork = false;
             await preferences.update(original);
@@ -4159,6 +4166,10 @@ test(
                 [ownerId, connectionId],
               )
             ).rows;
+          const mine = async () => [
+            ...(await checks(app.connectionId)),
+            ...(await checks(other.connectionId)),
+          ];
           const stale = async (sourceId: string) => {
             const turnId = await thread.enqueueTurn('Synthetic stale check', {
               source: 'event',
@@ -4175,7 +4186,7 @@ test(
             await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
             currentApps = [app, other];
             await triage.heartbeat();
-            assert.deepEqual(await checks(), []);
+            assert.deepEqual(await mine(), []);
             assert.equal(
               await triage.triageEvent('Synthetic event before a rule', randomUUID()),
               undefined,
@@ -4189,14 +4200,14 @@ test(
             for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
-            for (const check of await checks()) await waitFor(settled(check.id));
+            for (const check of await mine()) await waitFor(settled(check.id));
             assert.ok(
               ran(first.id),
               `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
             );
             const { started_at: since } = (await checks(app.connectionId))[0];
             await triage.heartbeat();
-            assert.equal((await checks()).length, 2);
+            assert.equal((await mine()).length, 2);
             const continuation = randomUUID();
             await db.pool.query(
               "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE id=$1",
@@ -4208,13 +4219,13 @@ test(
               [continuation, first.id],
             );
             await triage.heartbeat();
-            assert.equal((await checks()).length, 2);
+            assert.equal((await mine()).length, 2);
             await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
             await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [first.id]);
             await triage.heartbeat();
             const [, second] = await checks(app.connectionId);
             assert.ok(second.prompt.includes(since.toISOString()));
-            assert.equal((await checks()).length, 3);
+            assert.equal((await mine()).length, 3);
             await waitFor(settled(second.id));
             const replaced = { ...app, accountId: 'account-2' };
             currentApps = [replaced, other, ...ignored];
@@ -4222,7 +4233,7 @@ test(
             const third = (await checks(app.connectionId)).at(-1);
             assert.equal(third.source_id, `activity-check:${app.connectionId}:account-2:first`);
             assert.ok(!third.prompt.includes(since.toISOString()));
-            assert.equal((await checks()).length, 4);
+            assert.equal((await mine()).length, 4);
             await waitFor(settled(third.id));
             await preferences.update({ notificationRule: '' });
             await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
@@ -4234,9 +4245,9 @@ test(
             );
             currentApps = [replaced, other];
             await preferences.update({ notificationRule: '' });
-            const count = (await checks()).length;
+            const count = (await mine()).length;
             await triage.heartbeat();
-            assert.equal((await checks()).length, count);
+            assert.equal((await mine()).length, count);
             await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
           } finally {
             quietBackgroundWork = false;

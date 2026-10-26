@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-A nudge is a normal chat message from nod about something it noticed and already prepared. It arrives in your nod chat, and in Telegram or WhatsApp if you connected them. There's no separate screen. You answer in words.
+A nudge is a normal chat message from nod about something it noticed and already prepared. When there's a next step, it ends with one short question that offers it, such as "Want me to send it?". The first nudge about a kind of thing also says, once, that nod will keep flagging things like it. It arrives in your nod chat, and in Telegram or WhatsApp if you connected them. There's no separate screen. You answer in words.
 
 Connect a supported source and nod starts preparing useful work on its own. It messages you only when that work is worth an interruption.
 

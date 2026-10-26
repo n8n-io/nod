@@ -34,12 +34,18 @@ export function createObservationSources(
       ...batch,
       records: await Promise.all(
         batch.records.map(async (record) => {
+          const deadline = new AbortController();
+          const timer = setTimeout(
+            () => deadline.abort(new Error('The source privacy check timed out.')),
+            10000,
+          );
+          const stop = AbortSignal.any([signal, deadline.signal]);
           let onAbort = () => {};
           try {
             const aborted = new Promise<never>((_resolve, reject) => {
-              onAbort = () => reject(signal.reason);
-              signal.addEventListener('abort', onAbort, { once: true });
-              if (signal.aborted) onAbort();
+              onAbort = () => reject(stop.reason);
+              stop.addEventListener('abort', onAbort, { once: true });
+              if (stop.aborted) onAbort();
             });
             return await Promise.race([
               privateEmailResult(
@@ -53,7 +59,7 @@ export function createObservationSources(
                     },
                     checkSignal,
                   ),
-                signal,
+                stop,
               ) as Promise<ObservationBatch['records'][number]>,
               aborted,
             ]);
@@ -67,7 +73,8 @@ export function createObservationSources(
               data: {},
             };
           } finally {
-            signal.removeEventListener('abort', onAbort);
+            clearTimeout(timer);
+            stop.removeEventListener('abort', onAbort);
           }
         }),
       ),

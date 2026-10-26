@@ -9,6 +9,10 @@ export async function lockKey(client: Query, key: string) {
     await client.query('INSERT INTO nod_locks(key) VALUES($1) ON CONFLICT DO NOTHING', [key]);
 }
 
+export function lockProactivity(client: Query, ownerId: string) {
+  return lockKey(client, `proactivity:${ownerId}`);
+}
+
 export async function lockSetup(client: Query, key: string) {
   await client.query('SAVEPOINT nod_locks');
   try {

@@ -9869,7 +9869,8 @@ test(
     );
     const first = (await f.service.activitySources())[0];
     assert.ok(first.revision);
-    assert.ok(first.changeToken);
+    assert.equal(first.changeToken, undefined);
+    assert.equal(first.eventDriven, true);
     await f.pool.query(
       'UPDATE app_connections SET inbox_failed=true,triggers_enabled=false,trigger_id=NULL WHERE id=$1',
       [connected.connectionId],

@@ -416,8 +416,8 @@ function Sentence({
               value={rule}
               label="Standing instruction"
               placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
-              hint="Private preparation runs automatically. This instruction can guide it or request outside actions through Trust."
-              remove="Clear instruction"
+              hint="nod reads and drafts on its own, and does only what this says."
+              remove="Stop"
               onSaved={() => {
                 close();
                 onSaved();

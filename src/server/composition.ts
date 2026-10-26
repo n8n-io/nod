@@ -110,6 +110,7 @@ import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { createProactivity } from './proactivity.ts';
+import { lockProactivity } from './locks.ts';
 import { createObservationSources } from './observation-sources.ts';
 import { createTaskObservations } from './task-observations.ts';
 import type { TrustBasis } from './trust-basis.ts';
@@ -845,6 +846,7 @@ async function initializeApplication(
     resumeConnection: resumeAfterConnection,
     writingStyle,
     wake: triage.triageEvent,
+    lockActivity: (client) => lockProactivity(client, ownerId),
     removeActivity: (id, client) => proactivity.forgetSource(`connections:${id}`, client),
     refresh,
     baseUrl: publicOrigin,
