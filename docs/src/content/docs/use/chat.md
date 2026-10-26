@@ -168,7 +168,7 @@ Select **Review** to inspect the exact report that will be attached. Untick the 
 
 Preparing a report sends recent app activity and errors to your Nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
 
-In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Nod skips private screens, open dialogs, and unsent text or files. Review, annotate, or remove the screenshot before sending. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided, so check them for personal information too.
+In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. Review, annotate, or remove the screenshot before sending. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided, so check them for personal information too.
 
 ## Start with an empty chat
 
