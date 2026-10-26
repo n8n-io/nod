@@ -2,6 +2,32 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.0 - 2026-10-26
+
+### Features
+
+- **chat:** Add native inline visuals for richer answers. [#466](https://github.com/n8n-io/nod/pull/466) (b74b986)
+
+### Fixes
+
+- **files:** Reclaim abandoned uploads. [#483](https://github.com/n8n-io/nod/pull/483) (7d7e360)
+
+### Performance
+
+- **runtime:** Reuse cached prompts and tool catalogs. [#486](https://github.com/n8n-io/nod/pull/486) (28eb93b)
+- **desktop:** Remove duplicate Mac notarization. [#487](https://github.com/n8n-io/nod/pull/487) (6e19874)
+- **ci:** Cut desktop release waits and transfers. [#485](https://github.com/n8n-io/nod/pull/485) (3ca9aae)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.6...28eb93baf0cf498017b71709950fbbdff9a8cfb6)
+
+<details>
+<summary>Build details</summary>
+
+Source: `28eb93baf0cf498017b71709950fbbdff9a8cfb6`
+Previous release: `nod-v0.2.6`
+
+</details>
+
 ## 0.2.6 - 2026-10-26
 
 ### Features
