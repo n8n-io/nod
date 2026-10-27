@@ -2994,3 +2994,73 @@ test(
     }
   },
 );
+
+test(
+  'live work keeps task status through tool calls and clears finished or stopped work without exposing another owner',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { createActivity } = await import('../src/server/activity.ts');
+    const { pool, threadId, receive, turnOf, reply, create } = await outboxFixture(t);
+    await pool.query(`ALTER TABLE turns ADD COLUMN started_at timestamptz;
+      ALTER TABLE turns ADD COLUMN session_id uuid GENERATED ALWAYS AS (thread_id) STORED;
+      CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,message_id uuid,created_at timestamptz);
+      CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text,site text,created_at timestamptz DEFAULT clock_timestamp());`);
+    const channels = await create();
+    const activity = createActivity({ pool, ownerId: 'local-development' });
+    const emit = (turnId: string, type: string, summary = '') =>
+      pool.query('INSERT INTO turn_events(turn_id,type,summary) VALUES($1,$2,$3)', [
+        turnId,
+        type,
+        summary,
+      ]);
+    try {
+      receive('111', 'live-work', 'chat-live');
+      await channels.drain();
+      const { turn_id: turnId } = await turnOf('live-work');
+      const foreignThread = randomUUID();
+      const foreignTurn = randomUUID();
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [foreignThread, 'other']);
+      await pool.query('INSERT INTO turns(id,owner_id,thread_id) VALUES($1,$2,$3)', [
+        foreignTurn,
+        'other',
+        foreignThread,
+      ]);
+      await emit(foreignTurn, 'step', 'Private work from another owner');
+      await emit(turnId, 'step', 'Finding flights back from Copenhagen');
+      await emit(turnId, 'tool_start', 'web search');
+      assert.deepEqual(
+        (await activity.read()).map(({ turnId, step }) => ({ turnId, step })),
+        [{ turnId, step: 'Finding flights back from Copenhagen' }],
+      );
+      await emit(turnId, 'step', 'Comparing flight prices');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      const milestoneId = randomUUID();
+      await reply(turnId, 'Two direct flights meet your budget.', milestoneId, 0);
+      assert.equal((await activity.read())[0]?.messageId, milestoneId);
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await emit(turnId, 'tool_start', 'fetch content');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await emit(turnId, 'tool_complete', 'fetch content');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await emit(turnId, 'tool_start', 'synthetic unknown tool with private input');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await emit(turnId, 'tool_failed', 'synthetic unknown tool with private input');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await emit(turnId, 'final');
+      assert.deepEqual(await activity.read(), []);
+      await emit(turnId, 'tool_start', 'apps');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [turnId]);
+      assert.deepEqual(await activity.read(), []);
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turnId]);
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      assert.deepEqual(await activity.read(), []);
+      await pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [threadId]);
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
+      assert.deepEqual(await activity.read(), []);
+    } finally {
+      activity.close();
+      await channels.close();
+    }
+  },
+);

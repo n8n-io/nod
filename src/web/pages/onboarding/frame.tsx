@@ -23,12 +23,14 @@ export function OnboardingFrame({
   steps = onboardingSteps,
   onFeedback,
   mainRef,
+  footer,
   children,
 }: {
   step: DisplayStep;
   steps?: readonly DisplayStep[];
   onFeedback?(): void;
   mainRef?: Ref<HTMLElement>;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const welcome = step === 'welcome' || step === 'intro';
@@ -77,6 +79,7 @@ export function OnboardingFrame({
       <main className="ob-main" ref={mainRef} tabIndex={-1} aria-label={stepNames[step]}>
         {children}
       </main>
+      {footer && <footer className="ob-frame-footer">{footer}</footer>}
     </div>
   );
 }

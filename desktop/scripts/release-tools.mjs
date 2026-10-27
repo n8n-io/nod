@@ -7,6 +7,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { runtimePlatform } from './runtime-inputs.mjs';
 
+export async function hardenElectron(application) {
+  const { flipFuses, FuseState, FuseVersion, FuseV1Options, getCurrentFuseWire } =
+    await import('@electron/fuses');
+  const productionFuses = {
+    [FuseV1Options.RunAsNode]: true,
+    [FuseV1Options.EnableCookieEncryption]: true,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
+  };
+  await flipFuses(application, { version: FuseVersion.V1, ...productionFuses });
+  const actual = await getCurrentFuseWire(application);
+  for (const [fuse, enabled] of Object.entries(productionFuses))
+    if (actual[fuse] !== (enabled ? FuseState.ENABLE : FuseState.DISABLE))
+      throw new Error('The Electron production settings failed verification.');
+}
+
 const directory = dirname(fileURLToPath(import.meta.url));
 export const minimumSystemVersion = JSON.parse(
   await readFile(join(directory, 'runtime-build-lock.json'), 'utf8'),
@@ -347,32 +364,6 @@ export async function signApplication(application, electronVersion, configuratio
   for (const file of files) await verifySignature(file, configuration, { executable: true });
   console.timeEnd('Sign and verify the application');
   return files.length;
-}
-
-export async function verifyApplicationRuntime(application, electronVersion) {
-  const engine = join(application, 'Contents/Resources/engine');
-  const environment = Object.fromEntries(
-    ['HOME', 'TMPDIR', 'PATH', 'LANG']
-      .filter((name) => process.env[name])
-      .map((name) => [name, process.env[name]]),
-  );
-  const script = `import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
-assert.equal(process.versions.electron, ${JSON.stringify(electronVersion)});
-assert.equal(process.arch, ${JSON.stringify(process.arch)});
-await import('@earendil-works/pi-coding-agent');
-await import('pi-web-access/dist/index.js');
-const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
-assert(native.getNativePlatformHelper());
-console.log('Nod engine imports verified.');`;
-  const result = await run(
-    join(application, 'Contents/MacOS/nod'),
-    ['--input-type=module', '-e', script],
-    { cwd: engine, env: { ...environment, ELECTRON_RUN_AS_NODE: '1' } },
-  );
-  if (result !== 'Nod engine imports verified.')
-    throw new Error('The signed Electron engine import check failed.');
 }
 
 export async function notarize(artifact, configuration, evidencePath) {

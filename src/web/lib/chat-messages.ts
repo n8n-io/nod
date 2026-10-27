@@ -1,4 +1,4 @@
-import type { Message } from '../../shared/contracts';
+import type { Message, Task, Turn } from '../../shared/contracts';
 import { isSameDay, type DateFormat } from './date-format';
 
 export function visibleConversationTurns(
@@ -64,4 +64,40 @@ export function collapseScreenshotMessages(messages: Message[]) {
     previousWasScreenshot = isScreenshot;
   }
   return result;
+}
+
+export function suggestedTaskStatus(
+  state: {
+    messages: Pick<Message, 'id' | 'role' | 'text' | 'turnId'>[];
+    tasks?: Pick<Task, 'messageId' | 'status'>[];
+    turns: Pick<Turn, 'id' | 'status'>[];
+  },
+  title: string,
+  after: number,
+  persistedIds: ReadonlySet<string>,
+) {
+  const sent = state.messages
+    .slice(after + 1)
+    .find((message) => message.role === 'user' && message.text === title);
+  if (!sent) return 'idle';
+  const tasks = (state.tasks ?? []).filter((item) =>
+    state.messages.some(
+      (message) => message.id === item.messageId && message.turnId === sent.turnId,
+    ),
+  );
+  if (tasks.length) {
+    if (tasks.every((item) => item.status === 'done')) return 'done';
+    if (tasks.some((item) => item.status === 'failed' || item.status === 'cancelled'))
+      return 'idle';
+    if (tasks.some((item) => item.status === 'needs_you' || item.status === 'stalled'))
+      return 'needs_you';
+    return tasks.some((item) => item.status === 'queued' || item.status === 'working')
+      ? 'working'
+      : 'waiting';
+  }
+  const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
+  if (!turn) return persistedIds.has(sent.id) ? 'sent' : 'working';
+  if (turn.status === 'succeeded') return 'sent';
+  if (turn.status === 'waiting') return 'needs_you';
+  return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
 }

@@ -8,14 +8,9 @@ import { daysAgo } from '../world/time.ts';
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = `Alex Rivera <${owner.email}>`;
 const sofia = 'sofia.almeida@meridiancapital.example.org';
-const answers = [
-  'I run a small brand design studio, mostly rebrands for local businesses.',
-  'Land two new rebrand clients before the end of the year.',
-  'Client email. I lose hours every week answering the same questions from clients.',
-] as const;
 const aboutSofia = /sofia|meridian|revision/i;
 const replyToSofia = (task: SuggestedTask) =>
-  task.source === 'gmail' && aboutSofia.test(task.title);
+  task.kind === 'now' && task.source === 'gmail' && aboutSofia.test(task.title);
 const aboutSignIn = /code|sign[- ]?in|log[- ]?in|verif|security|password/i;
 
 function mailbox(now: number): Mail[] {
@@ -68,8 +63,8 @@ function mailbox(now: number): Mail[] {
 
 export default scenario({
   id: 'onboarding-first-value',
-  title: 'Set up Nod, get three first tasks from my answers and inbox, finish one',
-  capabilities: ['apps', 'memory'],
+  title: 'Finish setup, choose an inbox task, and get a usable reply draft',
+  capabilities: ['apps'],
   tier: 'pr',
   complexity: 'medium',
   stance: 'regression',
@@ -97,22 +92,8 @@ export default scenario({
         throw new Error(`${method} ${path} failed (${response.status}).`);
       return response;
     };
-    const { generation } = (await api('GET', '/api/onboarding/interview')).body;
-    if (typeof generation !== 'string' || !generation)
-      throw new Error('The onboarding interview did not return a generation.');
-    const questions = [
-      'What are you working on?',
-      'What are you aiming for this year?',
-      'What would you like to take off your plate?',
-    ];
-    const talk = answers.flatMap((text, index) => [
-      { from: 'nod', text: questions[index] },
-      { from: 'owner', text },
-    ]);
-    await api('POST', '/api/onboarding/interview', { generation, talk }, [200, 503]);
-    state.saved = (await api('PUT', '/api/onboarding/interview', { generation, answers })).status;
-    await api('POST', '/api/onboarding/suggestions', {}, [202]);
-    await api('PATCH', '/api/account', { onboardingCompleted: true });
+    await api('POST', '/api/account/prepare', {});
+    state.saved = (await api('PATCH', '/api/account', { onboardingCompleted: true })).status;
     for (let tries = 0; tries < 240 && !state.suggestions; tries++) {
       const view = await api('GET', '/api/state');
       state.suggestions = view.body.messages?.find(
@@ -122,13 +103,15 @@ export default scenario({
     }
     const tasks = state.suggestions?.tasks ?? [];
     state.picked =
-      tasks.find(replyToSofia) ?? tasks.find((task) => task.source === 'gmail') ?? tasks[0];
+      tasks.find(replyToSofia) ??
+      tasks.find((task) => task.kind === 'now' && task.source === 'gmail') ??
+      tasks.find((task) => task.kind === 'now');
     if (state.picked) await session.say(state.picked.title);
   },
   evidence(run, world) {
     const { state } = world;
     return [
-      `During setup the user answered three questions: ${answers.map((answer) => `"${answer}"`).join(' ')}`,
+      'The owner completed setup without a required interview. Gmail was connected. No task was requested before the owner selected a card.',
       `Nod then offered these first tasks: ${state.suggestions ? state.suggestions.tasks.map((task) => `"${task.title}" (${task.source})`).join(', ') : '(none)'}. The user tapped "${state.picked?.title ?? '(none)'}", which sends that title as their message.`,
       `The inbox held one email waiting on a reply: Sofia Almeida asked whether the €4,500 Meridian rebrand includes two or three rounds of revisions. Alex's earlier proposal in the same thread says the total covers two rounds and extra rounds are €300 each. The rest was a sign-in code, a newsletter and a receipt.`,
       dumpDrafts(run),
@@ -138,25 +121,10 @@ export default scenario({
     const { state } = world;
     const titles = () => state.suggestions?.tasks.map((task) => task.title) ?? [];
     return [
-      check(
-        'saves-what-i-said-to-memory',
-        (run) => {
-          const missing = answers.filter((answer) => !run.memory.includes(answer));
-          return {
-            pass: state.saved === 200 && !missing.length,
-            evidence: `save ${state.saved}, ${missing.length} of 3 answers missing from memory`,
-          };
-        },
-        { aspect: 'process', failure: 'incomplete' },
-      ),
-      check(
-        'welcomes-me-by-name',
-        (run) =>
-          run.messages.some(
-            (message) => message.role === 'assistant' && message.text.startsWith('Hi Alex'),
-          ),
-        { aspect: 'process', failure: 'incomplete' },
-      ),
+      check('setup-completed', () => state.saved === 200, {
+        aspect: 'process',
+        failure: 'incomplete',
+      }),
       check(
         'offers-three-first-tasks',
         () => ({
@@ -197,6 +165,11 @@ export default scenario({
         { failure: 'incomplete' },
       ),
       noWrites('send'),
+      judge(
+        'delivered-a-usable-first-result',
+        'The reply delivered to the owner contains a complete draft for Sofia, or a working link to that draft in a file shared by Nod. The owner can inspect and use it now. A task card, acknowledgement, promise, or notice that a draft exists without its content or an accessible file fails.',
+        { failure: 'incomplete' },
+      ),
       judge(
         'the-draft-answers-sofia-from-the-proposal',
         'The draft to Sofia tells her the €4,500 includes two rounds of revisions, as the earlier proposal says. It does not say three rounds are included, and any other terms it mentions, such as the price of an extra round, match the proposal.',

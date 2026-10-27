@@ -11,7 +11,7 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,COALESCE(u.start
     COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
       AND m.role='assistant' ORDER BY m.created_at,m.id LIMIT 1)) AS message_id,
     COALESCE((SELECT e.summary FROM turn_events e WHERE e.turn_id=u.id AND e.type='step'
-       AND e.created_at>COALESCE(w.spoke,'-infinity') ORDER BY e.created_at DESC,e.id DESC LIMIT 1),t.now_text) AS step
+       ORDER BY e.created_at DESC,e.id DESC LIMIT 1),t.now_text) AS step
   FROM turns u
   JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
   LEFT JOIN LATERAL (SELECT id,title,now_text,message_id FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
@@ -21,8 +21,7 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,COALESCE(u.start
        ORDER BY created_at DESC,id DESC LIMIT 1) AS site,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id
        AND type IN ('started','steered','step','tool_start','tool_complete','tool_failed','agent_start')) AS worked,
-    (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='final') AS finished,
-    (SELECT max(created_at) FROM messages WHERE turn_id=u.id AND owner_id=u.owner_id AND role='assistant') AS spoke) w
+    (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='final') AS finished) w
   WHERE u.owner_id=$1 AND u.status IN ('queued','running') AND ${ownerStarted()}
     AND (w.finished IS NULL OR w.worked>w.finished)
   ORDER BY u.session_id,u.status='running' DESC,u.created_at,u.id`;

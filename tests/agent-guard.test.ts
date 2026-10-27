@@ -112,6 +112,39 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
+test('live status stays out of chat replies and removes known secrets', async () => {
+  const events: Array<{ type: string; summary: string }> = [];
+  const statuses = ['Finding flights back from Copenhagen', 'Comparing flight prices'];
+  const result = await fixture(
+    async (tools, emit) => {
+      await call(tools, 'set_status', { text: statuses[0] });
+      await call(tools, 'set_status', { text: statuses[1] });
+      await call(tools, 'set_status', { text: 'Checking synthetic-private-code' });
+      await assert.rejects(call(tools, 'set_status', { text: ' '.repeat(3) }));
+      await assert.rejects(call(tools, 'set_status', { text: 'x'.repeat(141) }));
+      emit({ type: 'final', text: 'Two flights meet your budget.' });
+    },
+    {
+      emit: async (type, summary) => {
+        events.push({ type, summary });
+      },
+    },
+    { redactError: (text) => String(text).replaceAll('synthetic-private-code', '[redacted]') },
+  );
+  assert.deepEqual(
+    events.filter(({ type }) => type === 'step').map(({ summary }) => summary),
+    [...statuses, 'Checking [redacted]'],
+  );
+  assert.deepEqual(result.replies, ['Two flights meet your budget.']);
+  assert.equal(result.result.status, 'succeeded');
+  await fixture(
+    async (tools) => {
+      assert.equal(tools.has('set_status'), false);
+    },
+    { background: true },
+  );
+});
+
 test('a chosen audio reply reaches the speech tool without repeating an internal progress note', async () => {
   const spoken: string[] = [];
   const result = await fixture(

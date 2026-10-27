@@ -404,11 +404,11 @@ function Sentence({
           text={
             paused
               ? rule
-                ? 'follows your instruction, with preparation paused'
-                : 'is paused'
+                ? 'follows your instruction, with preparation paused.'
+                : 'is paused.'
               : rule
-                ? 'follows your instruction'
-                : 'prepares private work automatically'
+                ? 'follows your instruction.'
+                : 'prepares private work automatically.'
           }
           label="Standing instruction"
         >
@@ -427,7 +427,6 @@ function Sentence({
             />
           )}
         </StatementValue>
-        {rule ? <>: “{rule}”</> : '.'}
         <br />
         {rules ? 'Everywhere, Nod keeps ' : 'You haven’t set any '}
         <StatementValue text={rules ? 'your rules' : 'rules'} label="Rules">
@@ -446,7 +445,7 @@ function Sentence({
             />
           )}
         </StatementValue>
-        {rules ? <>: “{rules}”</> : '.'}
+        .
       </p>
       {limit?.reached && (
         <Notice kind="info">

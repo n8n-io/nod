@@ -72,6 +72,10 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 ### Client access
 
+- Desktop windows use process sandboxing and context isolation, with Node integration and webviews disabled. Packaged windows disable DevTools and remote debugging switches.
+- Desktop setup uses a private protocol that serves only its five UI files. Its session denies permission requests, and its content policy blocks network access. Chat allows audio recording, clipboard writes, and notifications only from its owned main frame. Native notifications keep the app's existing controls.
+- Packaged chat pages limit external scripts and connections to the selected server. Their content policy permits inline scripts in the chat page, so it does not block inline script injection. This keeps sandboxed HTML previews and stickers working. Those frames have separate policies that block network access. The policy blocks plugins and code evaluation. Map frames use OpenStreetMap.
+- Desktop builds enable cookie encryption and disable Node option injection, Node inspector flags, and extra file-protocol privileges. Audio decoding still needs Node child processes.
 - Loopback isn't treated as identity. Local `/api` requests need the owner key from `NOD_DATA_ROOT/access-key`, or the local desktop app's per-launch token. A self-hosted server uses `NOD_AUTH_TOKEN`, presented by desktop clients as a bearer token and exchanged for an access cookie by web clients. Only verified webhooks, OAuth callbacks, the key exchange and the privacy notice go without authentication.
 - Network access requires an explicit server token and HTTPS. The server checks the request's host and browser origin against its configured public address.
 

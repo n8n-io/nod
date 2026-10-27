@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, Globe2, LoaderCircle, Trash2, User } from '../components/icons';
+import { ArrowDown, Check, LoaderCircle, Trash2, User } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -48,6 +48,7 @@ import {
   collapseScreenshotMessages,
   mergeMessages,
   messagesAreGrouped,
+  suggestedTaskStatus,
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
@@ -76,7 +77,7 @@ function Welcome() {
   );
 }
 function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: string }) {
-  const detail = item?.step || item?.site;
+  const detail = item?.step;
   const text = item?.title || detail;
   return (
     <div className="thinking" role="status" aria-label={text ? undefined : label}>
@@ -94,16 +95,9 @@ function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: 
             {item.title && <strong>{item.title}</strong>}
             {detail && (
               <span key={detail}>
-                {item.step ? (
-                  <Markdown allowedElements={[]} unwrapDisallowed>
-                    {item.step}
-                  </Markdown>
-                ) : (
-                  <>
-                    <Globe2 size={14} aria-hidden="true" />
-                    {item.site}
-                  </>
-                )}
+                <Markdown allowedElements={[]} unwrapDisallowed>
+                  {detail}
+                </Markdown>
               </span>
             )}
           </span>
@@ -124,7 +118,7 @@ function TaskCards({
   id: string;
   suggestions: TaskSuggestions;
   connections: Connection[];
-  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
+  status(task: SuggestedTask): 'idle' | 'working' | 'needs_you' | 'waiting' | 'sent' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask, position: number): void;
 }) {
@@ -199,14 +193,20 @@ function TaskCards({
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                       On it…
                     </span>
-                  ) : state === 'waiting' ? (
-                    <span className="task-state">Waiting for you</span>
+                  ) : state === 'waiting' || state === 'needs_you' ? (
+                    <span className="task-state">
+                      {state === 'needs_you' ? 'Waiting for you' : 'Waiting'}
+                    </span>
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">
                         <Check size={14} strokeWidth={3} />
                       </span>
-                      {task.kind === 'ongoing' ? 'Set up' : 'Done'}
+                      {state === 'done'
+                        ? task.kind === 'ongoing'
+                          ? 'Set up'
+                          : 'Done'
+                        : 'Request sent'}
                     </span>
                   )}
                 </div>
@@ -404,17 +404,6 @@ export function Chat({
   const files = useMemo(() => conversationFiles(visibleMessages), [fileKey]);
   const planning =
     state.planningTasks === true && !allMessages.some((message) => message.suggestions);
-  function taskStatus(task: SuggestedTask, after: number) {
-    const sent = allMessages
-      .slice(after + 1)
-      .find((message) => message.role === 'user' && message.text === task.title);
-    if (!sent) return 'idle';
-    const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
-    if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
-    if (turn.status === 'succeeded') return 'done';
-    if (turn.status === 'waiting') return 'waiting';
-    return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
-  }
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -1145,9 +1134,11 @@ export function Chat({
                       suggestions={message.suggestions}
                       connections={connections ?? []}
                       status={(task) =>
-                        taskStatus(
-                          task,
+                        suggestedTaskStatus(
+                          { messages: allMessages, tasks: state.tasks, turns: state.turns },
+                          task.title,
                           allMessages.findIndex((item) => item.id === message.id),
+                          persistedIds,
                         )
                       }
                       disabled={
@@ -1185,17 +1176,6 @@ export function Chat({
                     <MessageBubble
                       message={message}
                       handoffPaused={spendingPaused}
-                      delivery={
-                        message.role === 'user'
-                          ? !persistedIds.has(message.id) && !message.turnId
-                            ? 'sending'
-                            : state.turns.some(
-                                  (turn) => turn.id === message.turnId && turn.status === 'queued',
-                                )
-                              ? 'queued'
-                              : undefined
-                          : undefined
-                      }
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}
                       grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}

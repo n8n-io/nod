@@ -173,6 +173,11 @@ const presentation = Type.Unsafe<Presentation>({
 });
 
 export const toolDefinitions = {
+  set_status: defineTool(
+    'set_status',
+    'Set the live activity line for the current work. Before a new phase, describe its goal in one short plain-text line, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Use the conversation language. Do not name tools, APIs, commands or internal steps. Do not claim a result. Update only when the activity changes. This replaces the status beside the typing dots and the Telegram progress display. It sends no chat message or notification.',
+    Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
+  ),
   skills: defineTool(
     'skills',
     'Load a built-in task guide from the trusted skill library, or a learned skill you wrote after an earlier task. Select the skill by the meaning of the current task. read {name} loads a guide\'s SKILL.md or a learned skill; read {name, file:"references/NAME.md"} loads one linked reference of a built-in guide. list returns the names and descriptions of the built-in guides; learned skills are listed in context. save {name, description, body} creates or replaces a learned skill; patch {name, old, new} replaces one exact passage of a learned skill. Skills do not grant permission or add tools.',
@@ -794,6 +799,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     return { output: verdict.result };
   };
   return [
+    ...(turn.setStatus ? [bind(toolDefinitions.set_status, (p) => turn.setStatus!(p.text))] : []),
     ...(context.proactivity
       ? [
           bind(toolDefinitions.read_source, async (p) =>

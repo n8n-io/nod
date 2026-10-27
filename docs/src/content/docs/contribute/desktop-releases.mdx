@@ -33,6 +33,16 @@ Each release is named **Nod v0.x.x** and links these installers:
 
 Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on the same release as supporting assets.
 
+Desktop builds include the server source, built web files, production dependencies, required runtime files, and licenses. The server runs TypeScript through `tsx`.
+
+Builds exclude frontend source, duplicate public files, lockfiles, development package settings, source maps, and type declarations. Dependency tests, examples, build scripts, and unused TypeScript sources are also excluded. Files that a package declares as runtime entry points stay in the bundle. Speech source archives stay with their licenses.
+
+Packaged windows disable DevTools. The production menu excludes developer tools and force reload. It keeps standard reload, zoom, fullscreen, and onboarding replay. Source runs keep the development controls.
+
+Before signing or making an installer, both platform builds disable Node option injection, Node inspector flags, and extra file-protocol privileges. They enable cookie encryption and check the binary settings. Node execution stays enabled because the audio decoder runs in a separate child process.
+
+The runtime dependency overrides use patched Sharp and Undici versions. A single Sharp version avoids duplicate native image libraries.
+
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.

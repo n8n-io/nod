@@ -2,6 +2,35 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.5 - 2026-10-27
+
+### Fixes
+
+- **ui:** Improve chat status, spacing and onboarding. [commit](https://github.com/n8n-io/nod/commit/b7a36629e131017c42d27718251a70ac049c3978) (b7a3662)
+- **channels:** Soften the WhatsApp account risk note. [#520](https://github.com/n8n-io/nod/pull/520) (43d5694)
+- **desktop:** Keep unread replies visible in the macOS Dock. [#519](https://github.com/n8n-io/nod/pull/519) (91e5c46)
+- **models:** Validate API key providers and show inline feedback. [#517](https://github.com/n8n-io/nod/pull/517) (5c28532)
+- **agent:** Clarify consent and keep Telegram conversations responsive. [#493](https://github.com/n8n-io/nod/pull/493) (d98342d)
+- **desktop:** Make the app icon distinct and visible in dark style. [#518](https://github.com/n8n-io/nod/pull/518) (901dc72)
+- **desktop:** Keep PowerShell's module cache path in Windows commands. [#515](https://github.com/n8n-io/nod/pull/515) (0012d46)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- **apps:** Prevent regressions in GitHub sign-in completion. [#516](https://github.com/n8n-io/nod/pull/516) (cc2c3eb)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.4...b7a36629e131017c42d27718251a70ac049c3978)
+
+<details>
+<summary>Build details</summary>
+
+Source: `b7a36629e131017c42d27718251a70ac049c3978`
+Previous release: `nod-v0.3.4`
+
+</details>
+
 ## 0.3.4 - 2026-10-27
 
 ### Fixes

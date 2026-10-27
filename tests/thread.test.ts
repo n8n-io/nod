@@ -26,7 +26,13 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/objec
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
-import type { Artifact, Connection, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
+import type {
+  Artifact,
+  Connection,
+  SubmitMessageResponse,
+  Task,
+  Turn,
+} from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
@@ -34,6 +40,7 @@ import { memoryObjectStore } from './fixtures/object-store.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import { suggestedTaskStatus } from '../src/web/lib/chat-messages.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -735,6 +742,83 @@ test(
       let firstThreadId = '';
       let firstUserTurnId = '';
       const firstClientMessageId = randomUUID();
+
+      await t.test('first-card tasks stay in the ledger after 100 newer tasks', async (t) => {
+        const owner = `first-card-ledger-${randomUUID()}`;
+        const otherOwner = `other-${owner}`;
+        const conversation = randomUUID();
+        const turn = randomUUID();
+        const [card, sent, started, repeated] = Array.from({ length: 4 }, () => randomUUID());
+        const [firstTask, repeatedTask, foreignTask] = Array.from({ length: 3 }, () =>
+          randomUUID(),
+        );
+        t.after(async () => {
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=ANY($1::text[])', [
+            [owner, otherOwner],
+          ]);
+          await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
+          await db.pool.query('DELETE FROM turns WHERE owner_id=$1', [owner]);
+          await db.pool.query('DELETE FROM threads WHERE id=$1', [conversation]);
+        });
+        await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
+          conversation,
+          owner,
+        ]);
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status) VALUES($1,$2,$3,$3,'user','Draft the ledger reply','succeeded')",
+          [turn, owner, conversation],
+        );
+        await db.pool.query(
+          `INSERT INTO messages(id,owner_id,thread_id,role,text,suggestions,turn_id,created_at) VALUES
+             ($1,$5,$6,'assistant','', $8,NULL,now()-interval '4 days'),
+             ($2,$5,$6,'user','Draft the ledger reply',NULL,$7,now()-interval '3 days'),
+             ($3,$5,$6,'assistant','Started',NULL,$7,now()-interval '3 days'),
+             ($4,$5,$6,'user','Draft the ledger reply',NULL,NULL,now()-interval '2 days')`,
+          [
+            card,
+            sent,
+            started,
+            repeated,
+            owner,
+            conversation,
+            turn,
+            JSON.stringify({ tasks: [{ kind: 'now', title: 'Draft the ledger reply' }] }),
+          ],
+        );
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,now_text,state,closed_at) VALUES
+             ($1,$4,$6,$1,$7,$8,'First task','Delivered','Done','done',now()-interval '3 days'),
+             ($2,$4,NULL,$2,$9,NULL,'Repeated request','Delivered','Done','done',now()-interval '2 days'),
+             ($3,$5,NULL,$3,NULL,NULL,'Other owner','Delivered','Done','done',now())`,
+          [firstTask, repeatedTask, foreignTask, owner, otherOwner, turn, sent, started, repeated],
+        );
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,title,done_when,now_text,state,closed_at)
+           SELECT gen_random_uuid(),$1,'Recent task','Delivered','Done','done',now() FROM generate_series(1,100)`,
+          [owner],
+        );
+        const ledger = await createTasks({ pool: db.pool, ownerId: owner }).read();
+        assert.equal(ledger.length, 101);
+        assert.equal(ledger.find((task) => task.id === firstTask)?.status, 'done');
+        assert.ok(!ledger.some((task) => task.id === repeatedTask || task.id === foreignTask));
+        assert.equal(
+          suggestedTaskStatus(
+            {
+              messages: [
+                { id: card, role: 'assistant', text: '', turnId: null },
+                { id: sent, role: 'user', text: 'Draft the ledger reply', turnId: turn },
+                { id: started, role: 'assistant', text: 'Started', turnId: turn },
+              ],
+              tasks: ledger,
+              turns: [{ id: turn, status: 'succeeded' }],
+            },
+            'Draft the ledger reply',
+            0,
+            new Set([sent]),
+          ),
+          'done',
+        );
+      });
 
       await t.test(
         'presentations persist with owned images, reload safely and stop with their turn',
@@ -7380,3 +7464,33 @@ test(
     assert.equal(ran, false);
   },
 );
+
+test('a first task stays open after its chat turn ends and follows its own saved task', () => {
+  const messages = [
+    { id: 'old-request', role: 'user' as const, text: 'Draft the reply', turnId: 'old-turn' },
+    { id: 'old-start', role: 'assistant' as const, text: 'Started', turnId: 'old-turn' },
+    { id: 'cards', role: 'assistant' as const, text: '', turnId: null },
+    { id: 'request', role: 'user' as const, text: 'Draft the reply', turnId: 'chat-turn' },
+    { id: 'start', role: 'assistant' as const, text: 'Started', turnId: 'chat-turn' },
+  ];
+  const task = { messageId: 'start', status: 'working' as Task['status'] };
+  const state = {
+    messages,
+    tasks: [{ messageId: 'old-start', status: 'done' as const }, task],
+    turns: [{ id: 'chat-turn', status: 'succeeded' as Turn['status'] }],
+  };
+  const status = () => suggestedTaskStatus(state, 'Draft the reply', 2, new Set(['request']));
+  assert.equal(status(), 'working');
+  state.turns = [];
+  assert.equal(status(), 'working');
+  task.status = 'needs_you';
+  assert.equal(status(), 'needs_you');
+  task.status = 'waiting';
+  assert.equal(status(), 'waiting');
+  task.status = 'done';
+  assert.equal(status(), 'done');
+  task.status = 'failed';
+  assert.equal(status(), 'idle');
+  state.tasks = [];
+  assert.equal(status(), 'sent');
+});

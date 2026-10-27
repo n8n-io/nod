@@ -44,6 +44,24 @@ import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
 
+test('server release helpers load without desktop build dependencies', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-server-release-import-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const scripts = join(root, 'desktop', 'scripts');
+  await mkdir(scripts, { recursive: true });
+  for (const name of ['release-tools.mjs', 'runtime-inputs.mjs', 'runtime-build-lock.json'])
+    await copyFile(new URL(`../scripts/${name}`, import.meta.url), join(scripts, name));
+  await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `await import(${JSON.stringify(pathToFileURL(join(scripts, 'release-tools.mjs')).href)})`,
+    ],
+    { cwd: root, env: { PATH: process.env.PATH } },
+  );
+});
+
 test('speech distribution includes matching source and license and rejects changed archives', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-speech-sources-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -1462,19 +1480,43 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
   const dependency = join(source, 'node_modules', 'synthetic-extension');
   await mkdir(join(dependency, 'assets'), { recursive: true });
   await mkdir(join(source, 'node_modules', '.bin'));
+  await mkdir(join(source, 'node_modules', '.vite'));
+  await writeFile(join(source, 'node_modules', '.vite', 'build.mjs'), 'Synthetic build cache');
+  await writeFile(join(source, 'node_modules', '.modules.yaml'), 'Synthetic package metadata');
   await writeFile(
     join(dependency, 'package.json'),
     JSON.stringify({ name: 'synthetic-extension', type: 'module', exports: './index.mjs' }),
   );
   await writeFile(join(dependency, 'assets', 'value.json'), '{"value":42}');
+  await mkdir(join(dependency, 'dist', 'doc'), { recursive: true });
+  await writeFile(
+    join(dependency, 'dist', 'doc', 'runtime.mjs'),
+    'import { readFileSync } from "node:fs"; export default JSON.parse(readFileSync(new URL("../../assets/value.json", import.meta.url))).value;',
+  );
   await writeFile(
     join(dependency, 'index.mjs'),
-    'import { readFileSync } from "node:fs"; export default JSON.parse(readFileSync(new URL("./assets/value.json", import.meta.url))).value;',
+    'export { default } from "./dist/doc/runtime.mjs";',
   );
   await writeFile(
     join(dependency, 'cli.mjs'),
     'import value from "./index.mjs"; console.log(value);',
   );
+  for (const file of [
+    'index.d.ts',
+    'index.d.mts',
+    'index.d.cts',
+    'index.js.map',
+    'src/index.ts',
+    'test/index.test.mjs',
+    'docs/index.md',
+    'examples/demo.mjs',
+    'scripts/build.mjs',
+    'tsconfig.json',
+  ]) {
+    await mkdir(dirname(join(dependency, file)), { recursive: true });
+    await writeFile(join(dependency, file), 'Synthetic build file');
+  }
+  await writeFile(join(dependency, 'LICENSE'), 'Synthetic license');
   await symlink('../synthetic-extension/cli.mjs', join(source, 'node_modules', '.bin', 'probe'));
   await writeFile(
     join(source, 'package.json'),
@@ -1531,11 +1573,29 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'synthetic-tool',
     'synthetic-helper',
     '.bin/tool',
+    '.vite',
+    '.modules.yaml',
     'onnxruntime-node/bin/napi-v3/linux',
     'onnxruntime-node/bin/napi-v3/win32',
     'onnxruntime-node/bin/napi-v3/darwin/x64',
+    ...[
+      'index.d.ts',
+      'index.d.mts',
+      'index.d.cts',
+      'index.js.map',
+      'src/index.ts',
+      'test',
+      'docs',
+      'examples',
+      'scripts',
+      'tsconfig.json',
+    ].map((file) => `synthetic-extension/${file}`),
   ])
     await assert.rejects(stat(join(target, 'node_modules', path)), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(join(target, 'node_modules/synthetic-extension/LICENSE'), 'utf8'),
+    'Synthetic license',
+  );
   assert.equal(
     await readFile(
       join(

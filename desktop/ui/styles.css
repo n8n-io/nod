@@ -78,6 +78,13 @@ button:focus-visible {
   text-underline-offset: 4px;
 }
 
+.ob-frame-footer > .server-entry {
+  position: static;
+  min-height: 40px;
+  padding: 8px 12px;
+  transform: none;
+}
+
 .server-setup {
   min-height: 100vh;
   display: grid;

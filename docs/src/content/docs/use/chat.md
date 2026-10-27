@@ -20,7 +20,7 @@ You can paste Markdown or formatted text. Chat, feedback and message display use
 Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline.
 
 - **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. Nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
+- **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. To see the time below the bubble, hover over the message, focus one of its controls, or tap its text. The time does not change the bubble's size.
 
 Your unfinished draft stays on this device for your account and conversation. After a reload, Nod restores its text, reply target, and available uploaded files. It checks saved files before you can send them. If a check fails, select **Retry** or remove the file. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.
 
@@ -28,9 +28,9 @@ Unsent files become eligible for cleanup 24 hours after upload or their last suc
 
 Select a passage in a message, then **Reply to selection** to quote it. The quote stays separate from your own message. Select a reply quote to visit its source. **Return to where you were** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
 
-Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Select **Commands**, or press Command/Ctrl+K outside an editor, to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
 
-An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. Nod does not repeat it automatically.
+Action confirmations show the question without extra status labels. [Usage](/use/spending/) shows the recorded action results.
 
 ## Send an audio message
 
@@ -88,7 +88,13 @@ For large files or formats whose waveform your browser can't read, the player sh
 
 ## Keep talking while Nod works
 
-You don't have to wait. The message box stays open while Nod works. For work that takes more than a few seconds, Nod says in one line what it will do, then answers. While it works, a bubble from Nod at the bottom of the chat shows what it's doing right now, such as "Found two flights under budget, checking seats now", and the answer replaces it. Tasks you started show there too, with their title. In Telegram you see **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works), and in WhatsApp **typing…**. None of this sends you a notification; see [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
+The message box stays open while Nod works. You can send another message at any time. Your sent messages have no receipt or queue labels.
+
+One short status line beside the typing dots shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer.
+
+Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
+
+Telegram shows **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer chat request has one short opening message there so the activity has a place to update. A saved task uses its existing start message. WhatsApp shows **typing…** without extra progress messages. For Business Cloud connections, typing stops when the 24-hour reply window closes. QR connections have no such limit. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 

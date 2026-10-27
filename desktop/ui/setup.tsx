@@ -324,7 +324,18 @@ function Startup() {
     return (
       <>
         <div className="titlebar" aria-hidden="true" />
-        <OnboardingFrame step={welcomeStep}>
+        <OnboardingFrame
+          step={welcomeStep}
+          footer={
+            <button
+              className="server-entry"
+              type="button"
+              onClick={() => void desktop?.openConnectionSettings()}
+            >
+              Connect to a server
+            </button>
+          }
+        >
           <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
             {welcomeStep === 'welcome' ? (
               <Welcome
@@ -366,13 +377,6 @@ function Startup() {
             </p>
           )}
         </OnboardingFrame>
-        <button
-          className="server-entry"
-          type="button"
-          onClick={() => void desktop?.openConnectionSettings()}
-        >
-          Connect to a server
-        </button>
       </>
     );
 
