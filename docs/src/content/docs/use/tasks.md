@@ -66,6 +66,8 @@ On the **Tasks** page, open a preview and select **Show activity**. The details 
 
 A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Nod sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
+An email draft request saves a draft without sending it. A request to send a reply uses the full verified text; a separate saved draft is not required first.
+
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
 Select the file to read it in a panel next to the chat. Select **Download** to save it. Press **Escape** to close the panel. See [Get files from Nod](/use/workspace/#get-files-from-nod) for every file type the panel opens.
