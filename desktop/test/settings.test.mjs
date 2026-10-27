@@ -3006,12 +3006,14 @@ test('native notification confirmation follows only successful owned enable tran
     });
     await save({ notifications: false });
     assert.notEqual(delayed.closed, true);
-    shown = true;
-    delayed.emit('show');
-    assert.equal(delayed.closed, true);
     await save({ notifications: true });
     assert.equal(f.notifications.length, 3);
     const last = f.notifications.at(-1);
+    shown = true;
+    delayed.emit('show');
+    assert.equal(delayed.closed, true);
+    last.emit('show');
+    assert.notEqual(last.closed, true);
     await f.close();
     last.emit('show');
     assert.equal(last.closed, true);

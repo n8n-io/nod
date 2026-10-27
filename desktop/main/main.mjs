@@ -243,6 +243,10 @@ const readinessNotice = createReadinessNotice({
         : 'Your computer is ready. Come back to finish setup.',
     });
     displayedNotifications.add(notification);
+    notification.on('show', () => {
+      if (!displayedNotifications.has(notification) || !preferences.notifications || quitting)
+        notification.close();
+    });
     notification.on('click', () => {
       if (!quitting) showEngine();
     });
@@ -401,6 +405,10 @@ async function notifyAssistantMessage(message, threadId) {
     body: assistantNotificationPreview(message, knownSecrets),
   });
   displayedNotifications.add(notification);
+  notification.on('show', () => {
+    if (!displayedNotifications.has(notification) || !preferences.notifications || quitting)
+      notification.close();
+  });
   notification.on('click', () => {
     if (quitting) return;
     showEngine();
@@ -431,7 +439,8 @@ function showNotificationConfirmation() {
   });
   displayedNotifications.add(notification);
   notification.on('show', () => {
-    if (!preferences.notifications || quitting) notification.close();
+    if (!displayedNotifications.has(notification) || !preferences.notifications || quitting)
+      notification.close();
   });
   notification.on('close', () => displayedNotifications.delete(notification));
   notification.on('failed', () => displayedNotifications.delete(notification));
@@ -1418,6 +1427,10 @@ async function notifyUpdate(candidate) {
     body: 'Restart Nod to use the new version.',
   });
   displayedNotifications.add(notification);
+  notification.on('show', () => {
+    if (!displayedNotifications.has(notification) || !preferences.notifications || quitting)
+      notification.close();
+  });
   notification.on('click', () => {
     if (!quitting && updates?.ready) void checkForUpdates();
   });
