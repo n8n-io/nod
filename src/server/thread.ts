@@ -1159,7 +1159,9 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     dependencies.accountProfile?.().catch(() => undefined),
     dependencies.memoryContext?.().catch(() => ''),
     dependencies.learnedSkills?.().catch(() => undefined),
-    turn.background ? dependencies.connectedApps?.() : undefined,
+    turn.background
+      ? dependencies.connectedApps?.()
+      : dependencies.connectedApps?.().catch(() => undefined),
     dependencies.mcpServers?.().catch(() => undefined),
   ]);
   const preference = preferences.rows[0];

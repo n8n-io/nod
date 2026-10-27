@@ -24,6 +24,7 @@ import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { compactOwnerContext, ownerContext } from '../src/runtime/prompt.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type {
@@ -426,7 +427,11 @@ test(
     let inspectObserver:
       ((context: RuntimeContext) => Promise<RuntimeResult | undefined>) | undefined;
     let currentApps: Array<ConnectedApp & { accountId?: string }> = [];
-    const readConnectedApps = async () => structuredClone(currentApps);
+    let failConnectedApps = false;
+    const readConnectedApps = async () => {
+      if (failConnectedApps) throw new Error('Synthetic connection inventory unavailable');
+      return structuredClone(currentApps);
+    };
 
     const runs: RuntimeContext[] = [];
     let inspectAudioContext: ((context: RuntimeContext) => Promise<void>) | undefined;
@@ -1355,6 +1360,7 @@ test(
           await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [savedTask, taskTurn]);
           await thread.startThreadWorkers(dependencies);
           await waitFor(async () => (await turnStatus(missingJob)) === 'succeeded');
+          assert.deepEqual(ran(missingJob)?.connectedApps, []);
           await waitFor(
             async () =>
               (
@@ -1404,9 +1410,26 @@ test(
         },
       );
 
-      await t.test('consecutive messages run as turns on the same thread', async () => {
+      await t.test('consecutive messages run as turns on the same thread', async (t) => {
+        const previousApps = currentApps;
+        t.after(() => {
+          currentApps = previousApps;
+          failConnectedApps = false;
+        });
+        const connected: ConnectedApp = {
+          slug: 'gmail',
+          name: 'Gmail',
+          status: 'connected',
+          connectionId: randomUUID(),
+          accountName: 'Synthetic account',
+          accountEmail: 'owner@example.test',
+          access: ['api'],
+          triggersEnabled: false,
+        };
+        currentApps = [connected];
         const first = await thread.submitUserMessage('first message', [], { channel: 'web' });
         await waitFor(settled(first.turnId));
+        currentApps = [];
         const second = await thread.submitUserMessage('second message', [], {
           channel: 'web',
           threadId: first.threadId,
@@ -1420,6 +1443,20 @@ test(
         assert.equal(ran(first.turnId)?.workspacePath, ran(second.turnId)?.workspacePath);
         assert.equal(ran(first.turnId)?.currentMessageId, first.messageId);
         assert.equal(ran(second.turnId)?.currentMessageId, second.messageId);
+        firstThreadId = first.threadId;
+        assert.deepEqual(ran(first.turnId)?.connectedApps, [connected]);
+        assert.deepEqual(ran(second.turnId)?.connectedApps, []);
+        for (const render of [ownerContext, compactOwnerContext]) {
+          const prompt = render(ran(first.turnId)!);
+          assert.match(prompt, /gmail/);
+          for (const privateValue of [
+            connected.connectionId!,
+            connected.accountName!,
+            connected.accountEmail!,
+          ])
+            assert.equal(prompt.includes(privateValue), false);
+          assert.doesNotMatch(render(ran(second.turnId)!), /gmail/);
+        }
         assert.equal(ran(second.turnId)?.firstConversationTurn, false);
         assert.equal(
           (
@@ -1429,7 +1466,18 @@ test(
           ).rows[0].count,
           1,
         );
-        firstThreadId = first.threadId;
+        failConnectedApps = true;
+        const unavailable = await thread.submitUserMessage('connection inventory unavailable');
+        await waitFor(settled(unavailable.turnId));
+        assert.equal(await turnStatus(unavailable.turnId), 'succeeded');
+        assert.equal(ran(unavailable.turnId)?.connectedApps, undefined);
+        const background = await thread.enqueueTurn('background connection inventory unavailable', {
+          source: 'schedule',
+          sourceId: randomUUID(),
+        });
+        await waitFor(settled(background));
+        assert.equal(await turnStatus(background), 'failed');
+        assert.equal(ran(background), undefined);
       });
 
       await t.test(
