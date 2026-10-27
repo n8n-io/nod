@@ -2898,7 +2898,7 @@ test('runtime fingerprints cover the locked packages and every source the images
   const windows = await runtimeInputs('win32-x64');
   const locked = (inputs, name) => inputs.some((path) => path.startsWith(`lock:${name}@`));
   const dependencyManifest = (path) =>
-    /^(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|patches(?:\/|$))/.test(path);
+    /^(?:package\.json|pnpm-lock\.yaml|patches(?:\/|$))/.test(path);
   for (const path of Object.keys(bundle.metafile.inputs)) {
     if (!path.includes('node_modules/')) {
       assert.ok(browser.sources.includes(path), path);
@@ -3037,7 +3037,11 @@ test('runtime fingerprints cover the locked packages and every source the images
   await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
   assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
-  for (const path of ['src/shared/public-address.ts', 'src/providers/docker/save-video.py']) {
+  for (const path of [
+    'src/shared/public-address.ts',
+    'src/providers/docker/save-video.py',
+    'pnpm-workspace.yaml',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n// synthetic runtime change\n`);
@@ -3049,7 +3053,6 @@ test('runtime fingerprints cover the locked packages and every source the images
     'src/web/pages/chat.tsx',
     '.github/workflows/desktop-release.yml',
     'package.json',
-    'pnpm-workspace.yaml',
     'patches/libsignal@6.0.0.patch',
     'desktop/scripts/runtime-inputs.mjs',
   ]) {

@@ -42,6 +42,7 @@ import {
   subscribeDesktopSettings,
   subscribeDesktopNavigation,
   subscribeDesktopStatus,
+  desktopStatus,
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
@@ -657,7 +658,19 @@ export function App({ sessionState }: { sessionState: ReturnType<typeof useSessi
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
   const [updating, setUpdating] = useState(false);
-  useEffect(() => subscribeDesktopStatus((status) => setUpdating(status.phase === 'updating')), []);
+  useEffect(() => {
+    let received = false;
+    const stop = subscribeDesktopStatus((status) => {
+      received = true;
+      setUpdating(status.phase === 'updating');
+    });
+    void desktopStatus()
+      ?.then((status) => {
+        if (!received) setUpdating(status.phase === 'updating');
+      })
+      .catch(() => {});
+    return stop;
+  }, []);
   useEffect(() => {
     const update = () => setPath(window.location.pathname);
     window.addEventListener('popstate', update);

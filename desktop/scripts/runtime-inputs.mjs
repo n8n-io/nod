@@ -8,6 +8,7 @@ const inputs = [
   '.dockerignore',
   'Dockerfile.workspace',
   'Dockerfile.browser',
+  'pnpm-workspace.yaml',
   'desktop/pnpm-lock.yaml',
   'desktop/pnpm-workspace.yaml',
   'desktop/runtime/downloads.json',

@@ -151,6 +151,7 @@ export async function stageWindowsUpdate(
         onProgress: (progress) => onProgress((done + progress * file.bytes) / total),
       });
       done += file.bytes;
+      onProgress(done / total);
     }
     return target;
   } catch (error) {
