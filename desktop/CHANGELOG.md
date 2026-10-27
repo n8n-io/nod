@@ -2,6 +2,24 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.4 - 2026-10-27
+
+### Fixes
+
+- **maps:** Show a marked map link for every suggested location. [#511](https://github.com/n8n-io/nod/pull/511) (60bb66c)
+- **apps:** Accept any browser's sign-in key and keep validation errors in diagnostics. [#512](https://github.com/n8n-io/nod/pull/512) (6fa9fdd)
+- **proactivity:** Make progress useful and saved results inspectable. [#510](https://github.com/n8n-io/nod/pull/510) (97215a2)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.3...60bb66cd6fc9ff84a384c4878bfa1b468f7941db)
+
+<details>
+<summary>Build details</summary>
+
+Source: `60bb66cd6fc9ff84a384c4878bfa1b468f7941db`
+Previous release: `nod-v0.3.3`
+
+</details>
+
 ## 0.3.3 - 2026-10-27
 
 ### Fixes
