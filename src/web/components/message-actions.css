@@ -2,10 +2,6 @@
   max-width: min(calc(100% - 40px), 640px);
 }
 
-.chat-page .message .message-row > .message-bubble:has(.attachment-image-gallery) {
-  max-width: min(calc(100% - 40px), 352px);
-}
-
 .chat-page .message-row:not(:last-child):not(:has(.has-reaction)) {
   padding-bottom: 14px;
 }
