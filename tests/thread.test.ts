@@ -4175,44 +4175,70 @@ test(
                 }
               },
             );
-            await t.test('quiet hours, snooze and pause hold nudges until they end', async () => {
-              await reset();
-              const clock = (offset: number) =>
-                new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
-              await preferences.update({
-                quietHoursEnabled: true,
-                quietStart: clock(-1),
-                quietEnd: clock(1),
-              });
-              const important = {
-                impact: 'high',
-                deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
-              };
-              assert.equal(((await save(important)) as { status: string }).status, 'prepared');
-              const held = (await engine.view()).issues[0];
-              const wake = Date.parse(held.nextCheck ?? '') - Date.now();
-              assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
-              await preferences.update({ quietHoursEnabled: false });
-              assert.equal(((await save(important)) as { status: string }).status, 'notified');
-              await engine.control({ id: held.id, action: 'snooze', minutes: 60 });
-              version = 'v2';
-              assert.equal(
-                (
-                  (await save({ ...important, materialChange: 'condition_changed' })) as {
-                    status: string;
-                  }
-                ).status,
-                'prepared',
-              );
-              await preferences.update({ proactivePaused: true });
-              await assert.rejects(save({ matterKey: 'while paused' }), /paused/);
-              await preferences.update({ proactivePaused: false });
-              assert.equal(
-                ((await save({ matterKey: 'after pause' })) as { status: string }).status,
-                'notified',
-              );
-              assert.equal(await delivered(), 2);
-            });
+            await t.test(
+              'quiet hours, snooze and pause hold nudges until they end unless a deadline comes first',
+              async () => {
+                await reset();
+                const clock = (offset: number) =>
+                  new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
+                await preferences.update({
+                  quietHoursEnabled: true,
+                  quietStart: clock(-1),
+                  quietEnd: clock(1),
+                });
+                const important = {
+                  impact: 'high',
+                  deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
+                };
+                assert.equal(((await save(important)) as { status: string }).status, 'prepared');
+                const beforeMorning = new Date(Date.now() + 30 * 60000).toISOString();
+                assert.equal(
+                  (
+                    (await save({
+                      matterKey: 'medium before morning',
+                      impact: 'medium',
+                      deadline: beforeMorning,
+                    })) as { status: string }
+                  ).status,
+                  'prepared',
+                );
+                assert.equal(
+                  (
+                    (await save({
+                      matterKey: 'urgent before morning',
+                      impact: 'high',
+                      deadline: beforeMorning,
+                    })) as { status: string }
+                  ).status,
+                  'notified',
+                );
+                const held = (await engine.view()).issues.find(
+                  (issue) => issue.deadline === important.deadline,
+                )!;
+                const wake = Date.parse(held.nextCheck ?? '') - Date.now();
+                assert.ok(wake > 50 * 60000 && wake < 70 * 60000, String(wake));
+                await preferences.update({ quietHoursEnabled: false });
+                assert.equal(((await save(important)) as { status: string }).status, 'notified');
+                await engine.control({ id: held.id, action: 'snooze', minutes: 60 });
+                version = 'v2';
+                assert.equal(
+                  (
+                    (await save({ ...important, materialChange: 'condition_changed' })) as {
+                      status: string;
+                    }
+                  ).status,
+                  'prepared',
+                );
+                await preferences.update({ proactivePaused: true });
+                await assert.rejects(save({ matterKey: 'while paused' }), /paused/);
+                await preferences.update({ proactivePaused: false });
+                assert.equal(
+                  ((await save({ matterKey: 'after pause' })) as { status: string }).status,
+                  'notified',
+                );
+                assert.equal(await delivered(), 3);
+              },
+            );
             await t.test(
               'observer nudges reach the message API and desktop listener once across repeated events',
               async () => {
@@ -4543,6 +4569,84 @@ test(
                 }
               },
             );
+            await t.test('observer tasks started in quiet hours wait until they end', async () => {
+              await reset();
+              await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+              const clock = (offset: number) =>
+                new Date(Date.now() + offset * 3600000).toISOString().slice(11, 16);
+              await preferences.update({
+                quietHoursEnabled: true,
+                quietStart: clock(-1),
+                quietEnd: clock(1),
+              });
+              let child: RuntimeContext | undefined;
+              let action: Task | undefined;
+              inspectObserver = async (context) => {
+                if (context.taskContext?.title === 'Synthetic quiet action') {
+                  child = context;
+                  return { status: 'succeeded' };
+                }
+                if (context.prompt !== 'Synthetic quiet handoff') return;
+                action = (await context.task!({
+                  action: 'start',
+                  key: randomUUID(),
+                  title: 'Synthetic quiet action',
+                  message: 'Synthetic work is ready for review.',
+                  doneWhen: 'The synthetic work is complete',
+                  brief: 'Synthetic quiet work',
+                  now: 'Check the synthetic target',
+                })) as Task;
+                return { status: 'succeeded' };
+              };
+              let deferred: { id: string; start_after: Date } | undefined;
+              try {
+                const observer = await thread.enqueueTurn('Synthetic quiet handoff', {
+                  source: 'event',
+                  background: true,
+                  proactive: true,
+                });
+                await waitFor(settled(observer));
+                deferred = (
+                  await db.pool.query(
+                    'SELECT id,start_after FROM turns WHERE owner_id=$1 AND parent_turn_id=$2',
+                    [ownerId, observer],
+                  )
+                ).rows[0];
+                const wait = deferred!.start_after.getTime() - Date.now();
+                assert.ok(wait > 50 * 60000 && wait < 70 * 60000, String(wait));
+                await waitFor(
+                  async () =>
+                    !(
+                      await db.pool.query(
+                        `SELECT 1 FROM ${bossSchema}.job WHERE name='thread-drain' AND state IN ('created','retry','active') AND start_after<=now()`,
+                      )
+                    ).rowCount,
+                );
+                assert.equal(await turnStatus(deferred!.id), 'queued');
+                await db.pool.query('UPDATE turns SET start_after=now() WHERE id=$1', [
+                  deferred!.id,
+                ]);
+                const woken = await db.pool.query(
+                  `UPDATE ${bossSchema}.job SET start_after=now() WHERE name='thread-drain' AND state='created' AND start_after=$1`,
+                  [deferred!.start_after],
+                );
+                assert.equal(woken.rowCount, 1);
+                await waitFor(settled(deferred!.id));
+                assert.equal(child?.turnId, deferred!.id);
+              } finally {
+                inspectObserver = undefined;
+                if (deferred)
+                  await db.pool.query(
+                    "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND status='queued'",
+                    [deferred.id],
+                  );
+                if (action)
+                  await db.pool.query(
+                    "UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1",
+                    [action.id],
+                  );
+              }
+            });
             await t.test(
               'managed event bursts keep one owner job and retain later signals',
               async () => {

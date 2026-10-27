@@ -72,7 +72,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 - **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
-- **Quiet hours.** A nudge that comes up at night goes out when they end.
+- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact and its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
 - **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops everything.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.

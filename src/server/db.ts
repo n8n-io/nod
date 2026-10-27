@@ -54,6 +54,7 @@ export async function initializeDatabase() {
     END $$;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS parent_turn_id uuid;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS proactive boolean NOT NULL DEFAULT false;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS start_after timestamptz;
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
       RETURN NEW;
