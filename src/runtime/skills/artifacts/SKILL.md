@@ -1,5 +1,15 @@
 # Create files
 
+When a result has options to compare, a plan to follow or data the owner will reuse, deliver it as a file and keep the short answer in your reply. A quick answer, one fact or a short list stays in the reply. When the owner names a format, use it. Otherwise pick the first kind that fits and read its template with skills read:
+
+| Result                                    | File                                                                                               |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Flight, train, bus or hotel options       | Markdown from [references/travel-options.md](references/travel-options.md)                         |
+| Products, services or prices side by side | Markdown from [references/comparison.md](references/comparison.md)                                 |
+| A trip or day plan                        | Markdown from [references/itinerary.md](references/itinerary.md), plus an `.ics` for dates to keep |
+| Rows to sort, filter or total             | CSV, or XLSX for several sheets or formulas                                                        |
+| Findings or a report                      | Markdown: the answer first, then findings, then sources                                            |
+
 Create files in the task workspace with python3, Node or plain text. Python includes ReportLab, Matplotlib, pandas, Pillow, openpyxl, python-docx, python-pptx, pypdf and icalendar; use standard-library csv for simple tables. LibreOffice (`soffice --headless`) converts and renders office files. Give final files clear names and keep intermediates under .nod or remove them.
 
 Text in other scripts or with emoji needs a font that has its glyphs: register a Noto TTF from /usr/share/fonts in ReportLab instead of the built-in Helvetica, and set a Noto family in Matplotlib for CJK text. Missing glyphs show as boxes in a rendered page.

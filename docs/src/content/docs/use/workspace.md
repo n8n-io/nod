@@ -55,6 +55,18 @@ The workspace can reach the internet. Code that Nod runs there can download file
 
 ## Get files from Nod
 
+Nod makes a file without being asked when a result reads better as one, and keeps the short answer in its reply. Quick answers stay in chat.
+
+| Result                                    | File                                                            |
+| ----------------------------------------- | --------------------------------------------------------------- |
+| Flight, train, bus or hotel options       | A Markdown document with a table of options and booking links   |
+| Products, services or prices side by side | A Markdown comparison table with a best pick and trade-offs     |
+| A trip or day plan                        | A Markdown plan by day, plus a calendar file for fixed bookings |
+| Rows to sort, filter or total             | A CSV, or an Excel file for several sheets or formulas          |
+| Findings or a report                      | A Markdown report: the answer first, then findings and sources  |
+
+Ask for another format, such as a PDF, and Nod uses it instead.
+
 When Nod shares a file, it appears as an attachment in the Nod app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to Nod while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
 
 The panel remembers reading state for up to eight recently viewed files, with a total retention limit of 90 MB. Use the filename selector to jump between files during this conversation visit.
