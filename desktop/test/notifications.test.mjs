@@ -320,12 +320,14 @@ test('unread badges preserve their count through a runtime restart using a reope
     request = async () => {
       throw new Error('Unexpected history request');
     },
+    initialCount,
   ) {
     const cursors = createChatReadCursorStore(join(directory, 'read.json'), {
       owner: async () => owner,
     });
     const badge = createUnreadBadge({
       request,
+      initialCount,
       readCursor: (threadId) => cursors.get(owner, threadId),
       writeCursor: (threadId, cursor) => cursors.set(owner, threadId, cursor),
       onCount: (count) => counts.push(count),
@@ -335,26 +337,35 @@ test('unread badges preserve their count through a runtime restart using a reope
   }
   const first = open();
   await first.badge.update(snapshot([message(1)], false, thread));
-  await first.badge.update(snapshot([message(1), message(2)], false, thread));
+  await first.badge.update(snapshot([message(1), message(2), message(3)], false, thread));
+  await first.cursors.set(owner, thread, position(message(3)));
   first.badge.stop({ clear: false });
-  assert.deepEqual(counts, [0, 1]);
+  assert.deepEqual(counts, [0, 2]);
+  assert.equal(first.badge.count, 2);
   let resume;
   let requested = false;
+  let failed = true;
   const history = new Promise((resolve) => {
     resume = resolve;
   });
   const restarted = open(async () => {
     requested = true;
     await history;
-    return Response.json({ messages: [message(1), message(2)], hasMore: false });
-  });
-  const pending = restarted.badge.update(snapshot([message(3, 'user')], true, thread));
+    if (failed) throw new Error('Offline');
+    return Response.json({ messages: [message(1), message(2), message(3)], hasMore: false });
+  }, first.badge.count);
+  const pending = restarted.badge.update(snapshot([message(4)], true, thread));
   await eventually(() => requested);
-  assert.deepEqual(counts, [0, 1]);
+  assert.deepEqual(counts, [0, 2]);
+  const rejected = assert.rejects(pending, /Offline/);
   resume();
-  await pending;
-  assert.deepEqual(counts, [0, 1, 1]);
-  await restarted.cursors.set(owner, thread, position(message(3, 'user')));
+  await rejected;
+  assert.deepEqual(counts, [0, 2]);
+  assert.equal(restarted.badge.count, 2);
+  failed = false;
+  await restarted.badge.refresh();
+  assert.deepEqual(counts, [0, 2, 1]);
+  await restarted.cursors.set(owner, thread, position(message(4)));
   await restarted.badge.refresh();
   assert.equal(counts.at(-1), 0);
 });

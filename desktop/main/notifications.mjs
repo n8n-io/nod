@@ -121,12 +121,12 @@ export function createReadinessNotice({ notify }) {
   return { update };
 }
 
-export function createUnreadBadge({ request, readCursor, writeCursor, onCount }) {
+export function createUnreadBadge({ request, readCursor, writeCursor, onCount, initialCount }) {
   let scope;
   let controller;
   let revision = 0;
   let stopped = false;
-  let count;
+  let count = initialCount;
 
   function publish(next) {
     if (next === count) return;
@@ -265,7 +265,14 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount })
     if (clear) publish(0);
   }
 
-  return { update, refresh, stop };
+  return {
+    update,
+    refresh,
+    stop,
+    get count() {
+      return count;
+    },
+  };
 }
 
 export function watchAssistantMessages({ request, onMessage, onState, retryMs = 1000 }) {

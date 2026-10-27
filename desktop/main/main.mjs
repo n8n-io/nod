@@ -326,6 +326,7 @@ function synchronizeNotifications() {
     const cursors = chatReadCursors;
     const owner = remoteConnection?.cursorOwner;
     const badge = createUnreadBadge({
+      initialCount: unreadBadge?.count,
       request: (path, options) => engineRequest(path, options),
       readCursor: async (threadId) => cursors.get(owner ?? (await profileOwner()), threadId),
       writeCursor: async (threadId, cursor) =>
