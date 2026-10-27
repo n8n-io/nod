@@ -94,7 +94,7 @@ One short status line beside the typing dots shows the current activity, such as
 
 Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
 
-Telegram shows **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). WhatsApp shows **typing…** without extra progress messages. For Business Cloud connections, typing stops when the 24-hour reply window closes. QR connections have no such limit. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
+Telegram shows **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer chat request has one short opening message there so the activity has a place to update. A saved task uses its existing start message. WhatsApp shows **typing…** without extra progress messages. For Business Cloud connections, typing stops when the 24-hour reply window closes. QR connections have no such limit. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 
