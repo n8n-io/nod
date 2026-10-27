@@ -7,6 +7,26 @@ const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 const notificationRequests = ['pending', 'requested', 'chosen', 'unsupported', 'failed', 'legacy'];
 
+export const desktopContentPolicy =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' https: data: blob:; frame-src 'self' blob: data: https://www.openstreetmap.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+export function setupResource(value) {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol === 'nod-setup:' &&
+      url.hostname === 'app' &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      ['/index.html', '/setup.js', '/setup.css', '/styles.css', '/Geist-Variable.woff2'].includes(
+        url.pathname,
+      )
+    )
+      return url.pathname.slice(1);
+  } catch {}
+}
+
 export function serverOrigin(value) {
   try {
     if (typeof value !== 'string' || value.length > 2048) throw new Error();

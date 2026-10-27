@@ -1,3 +1,4 @@
+import { copyEngineSource } from './engine-source.mjs';
 import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +6,7 @@ import { packager } from '@electron/packager';
 import { assetHash } from '../runtime/assets.mjs';
 import { copyBundleSource, copyEngineDependencies } from './engine-dependencies.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
-import { run } from './release-tools.mjs';
+import { hardenElectron, run } from './release-tools.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Build this preview on Windows x64.');
@@ -42,22 +43,7 @@ await rm(stage, { recursive: true, force: true });
 await mkdir(source, { recursive: true });
 await mkdir(engine, { recursive: true });
 await mkdir(output, { recursive: true });
-for (const path of [
-  'src',
-  'public',
-  'dist/web',
-  'package.json',
-  'pnpm-lock.yaml',
-  'tsconfig.json',
-  'LICENSE',
-  'NOTICE',
-  'desktop/runtime',
-  'desktop/main/engine.mjs',
-  'desktop/main/onepassword.mjs',
-]) {
-  await mkdir(dirname(join(engine, path)), { recursive: true });
-  await copyBundleSource(join(root, path), join(engine, path));
-}
+await copyEngineSource({ root, target: engine, platform: 'win32' });
 await copyEngineDependencies({ root, target: engine, platform: 'win32', arch: 'x64' });
 console.log('Windows engine files prepared.');
 for (const path of ['main', 'preload'])
@@ -115,6 +101,7 @@ const [application] = await packager({
 });
 console.log('Windows application packaged.');
 await rename(engine, join(application, 'resources/engine'));
+await hardenElectron(join(application, 'nod.exe'));
 await cp(join(assets, 'guest.tar.gz'), join(output, 'nod-Runtime-win32-x64.tar.gz'));
 const installer = join(output, 'nod-Setup-x64.exe');
 const nsis =

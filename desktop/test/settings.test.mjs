@@ -23,7 +23,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
-import { createSettingsStore, serverOrigin } from '../main/settings.mjs';
+import {
+  createSettingsStore,
+  desktopContentPolicy,
+  serverOrigin,
+  setupResource,
+} from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
@@ -32,6 +37,24 @@ import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
+
+test('setup resources cannot read other origins or local files', () => {
+  assert.equal(setupResource('nod-setup://app/index.html?firstSetup=true'), 'index.html');
+  assert.equal(setupResource('nod-setup://app/setup.js'), 'setup.js');
+  for (const value of [
+    undefined,
+    'file:///etc/passwd',
+    'https://app/index.html',
+    'nod-setup://other/index.html',
+    'nod-setup://app:123/index.html',
+    'nod-setup://user@app/index.html',
+    'nod-setup://app/../../etc/passwd',
+    'nod-setup://app/%2fetc%2fpasswd',
+    'nod-setup://app/index.html/extra',
+    'nod-setup://app/package.json',
+  ])
+    assert.equal(setupResource(value), undefined);
+});
 
 test('external app links can only open named screens without action data', () => {
   for (const path of Object.keys(appPages))
@@ -423,6 +446,9 @@ async function runningDesktop(
           appSession.permissionRequest = handler;
         },
         webRequest: {
+          onHeadersReceived: (handler) => {
+            appSession.responseHeaders = handler;
+          },
           onBeforeSendHeaders: (handler) => {
             requestHeaders = handler;
           },
@@ -438,6 +464,7 @@ async function runningDesktop(
     app: {
       on: (name, listener) => appEvents.on(name, listener),
       isPackaged: packaged,
+      commandLine: { removeSwitch() {} },
       setName() {},
       setPath: (name, path) => paths.set(name, path),
       getPath: (name) => paths.get(name) || dirname(storage.path),
@@ -476,6 +503,7 @@ async function runningDesktop(
     },
     ipcMain: ipc,
     session: { fromPartition },
+    protocol: { registerSchemesAsPrivileged() {} },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
     shell: {
@@ -486,6 +514,7 @@ async function runningDesktop(
       },
     },
     URL,
+    URLSearchParams,
     dirname,
     isAbsolute,
     join,
@@ -514,6 +543,8 @@ async function runningDesktop(
     fetch: request,
     createSettingsStore: () => storage.store,
     serverOrigin,
+    setupResource,
+    desktopContentPolicy,
     createHash,
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
@@ -630,16 +661,19 @@ async function runningDesktop(
         return this.minimized === true;
       }
       loadURL(url) {
-        this.url = url;
+        const setup = setupResource(url) === 'index.html';
+        if (setup) {
+          this.path = new URL(url).pathname;
+          this.query = Object.fromEntries(new URL(url).searchParams);
+        } else this.url = url;
         this.loading = true;
         this.webContents.mainFrame = {
           url,
           routingId: this.webContents.id,
           processId: this.webContents.id + 100,
         };
-        return Promise.resolve(
-          typeof enginePageLoaded === 'function' ? enginePageLoaded() : enginePageLoaded,
-        ).then(async () => {
+        const loaded = setup ? nativePageLoaded : enginePageLoaded;
+        return Promise.resolve(typeof loaded === 'function' ? loaded() : loaded).then(async () => {
           this.loading = false;
           this.webContents.emit('did-finish-load');
           if (readyRenderers && !this.isDestroyed()) await rendererReady(this);
@@ -2594,6 +2628,38 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
   );
 });
 
+test('packaged pages add their content policy without replacing server policy or changing artifact responses', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('No request is needed.'), {
+    packaged: true,
+  });
+  const handler = [...f.appSessions.values()].find(
+    (session) => session.responseHeaders,
+  )?.responseHeaders;
+  assert.equal(typeof handler, 'function');
+  const original = "frame-ancestors 'none'";
+  const response = await new Promise((resolve) =>
+    handler(
+      {
+        url: 'http://127.0.0.1:4310/',
+        resourceType: 'mainFrame',
+        responseHeaders: { 'content-security-policy': [original] },
+      },
+      resolve,
+    ),
+  );
+  assert.equal(response.responseHeaders['content-security-policy'][0], original);
+  assert.equal(response.responseHeaders['content-security-policy'].length, 2);
+  for (const url of [
+    'https://other.example.test/',
+    'http://127.0.0.1:4310/api/artifacts/synthetic',
+  ]) {
+    const result = await new Promise((resolve) =>
+      handler({ url, resourceType: 'mainFrame' }, resolve),
+    );
+    assert.deepEqual(Object.keys(result), []);
+  }
+});
+
 test('microphone access requires audio from an owned top-level app frame', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('Media permissions need no engine request.'));
   f.showEngine();
@@ -2643,6 +2709,16 @@ test('microphone access requires audio from an owned top-level app frame', async
   sender.mainFrame.url = `${origin}/`;
   assert.equal(f.checkPermission(sender, 'notifications', origin, details), true);
   assert.equal(await f.requestPermission(sender, 'notifications', details), true);
+  assert.equal(f.checkPermission(null, 'notifications', origin, details), false);
+  assert.equal(await f.requestPermission(null, 'notifications', details), false);
+  assert.equal(
+    f.checkPermission(sender, 'notifications', 'https://other.example.test', details),
+    false,
+  );
+  assert.equal(
+    await f.requestPermission(sender, 'notifications', { ...details, isMainFrame: false }),
+    false,
+  );
   const clipboard = { requestingUrl: `${origin}/`, isMainFrame: true };
   const checkClipboard = (candidate = sender, overrides = {}, requestingOrigin = origin) =>
     f.checkPermission(candidate, 'clipboard-sanitized-write', requestingOrigin, {

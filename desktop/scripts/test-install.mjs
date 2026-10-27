@@ -6,7 +6,8 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assetHash, findRuntimeAssets, runtimeRelease } from '../runtime/assets.mjs';
-import { run, verifyApplicationRuntime } from './release-tools.mjs';
+import { run } from './release-tools.mjs';
+import { verifyApplicationRuntime } from './engine-source.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const name = 'nod Setup Test';

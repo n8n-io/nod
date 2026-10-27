@@ -1,3 +1,4 @@
+import { copyEngineSource, verifyApplicationRuntime } from './engine-source.mjs';
 import { constants } from 'node:fs';
 import {
   access,
@@ -21,6 +22,7 @@ import { checkRelease } from '../../.github/scripts/prepare-desktop-release.mjs'
 import {
   assess,
   exportCertificate,
+  hardenElectron,
   minimumSystemVersion as supportedMinimumSystemVersion,
   notarize,
   run,
@@ -30,7 +32,6 @@ import {
   signingMetadata,
   sourceRevision,
   staple,
-  verifyApplicationRuntime,
   verifyIdentity,
   verifyRuntimeRelease,
   verifySignature,
@@ -134,23 +135,7 @@ await rm(stage, { recursive: true, force: true });
 await mkdir(engine, { recursive: true });
 await mkdir(appSource, { recursive: true });
 await mkdir(output, { recursive: true });
-for (const path of [
-  'src',
-  'public',
-  'dist/web',
-  'package.json',
-  'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
-  'tsconfig.json',
-  'LICENSE',
-  'NOTICE',
-  'desktop/runtime',
-  'desktop/main/engine.mjs',
-  'desktop/main/onepassword.mjs',
-]) {
-  await mkdir(dirname(join(engine, path)), { recursive: true });
-  await copy(join(root, path), join(engine, path));
-}
+await copyEngineSource({ root, target: engine });
 await copyEngineDependencies({ root, target: engine, arch: process.arch });
 for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
 await buildDesktopUI(join(appSource, 'ui'));
@@ -230,6 +215,7 @@ for (const name of ['LICENSE', 'LICENSES.chromium.html'])
   await copy(join(paths[0], name), join(licenses, name));
 let nativeBinaries;
 let applicationNotarization;
+await hardenElectron(application);
 if (signing) {
   console.log(`Signing the application (${signing.mode}).`);
   nativeBinaries = await signApplication(application, electronVersion, signing);

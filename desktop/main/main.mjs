@@ -8,8 +8,10 @@ import {
   MessageChannelMain,
   nativeImage,
   nativeTheme,
+  net,
   Notification,
   powerMonitor,
+  protocol,
   safeStorage,
   session,
   shell,
@@ -23,7 +25,12 @@ import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from '
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createSettingsStore, serverOrigin } from './settings.mjs';
+import {
+  createSettingsStore,
+  desktopContentPolicy,
+  serverOrigin,
+  setupResource,
+} from './settings.mjs';
 import { createDesktopAnalytics } from './analytics.mjs';
 import {
   assistantNotificationPreview,
@@ -58,7 +65,26 @@ app.on('open-url', (event, value) => {
 const setupPath = app.isPackaged
   ? join(desktopRoot, 'ui', 'index.html')
   : join(engineRoot, 'dist', 'desktop-ui', 'index.html');
-const setupURL = pathToFileURL(setupPath).href;
+const setupURL = 'nod-setup://app/index.html';
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'nod-setup', privileges: { standard: true, secure: true } },
+]);
+if (app.isPackaged)
+  for (const name of [
+    'remote-debugging-port',
+    'remote-debugging-pipe',
+    'auto-open-devtools-for-tabs',
+  ])
+    app.commandLine.removeSwitch(name);
+const rendererSecurity = {
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  webSecurity: true,
+  allowRunningInsecureContent: false,
+  webviewTag: false,
+  devTools: !app.isPackaged,
+};
 const testInstall =
   app.isPackaged &&
   JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).nodBuild?.testProfile ===
@@ -406,12 +432,7 @@ async function writeDiagnostic(value) {
 }
 
 function isSetupURL(url) {
-  try {
-    const target = new URL(url);
-    return target.protocol === 'file:' && target.pathname === new URL(setupURL).pathname;
-  } catch {
-    return false;
-  }
+  return setupResource(url) === 'index.html';
 }
 
 function isSetup(event) {
@@ -536,9 +557,7 @@ function protectWindow(window, origin) {
           height: 820,
           webPreferences: {
             preload: join(desktopRoot, 'preload', 'engine.cjs'),
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
+            ...rendererSecurity,
             partition: clientPartition,
             additionalArguments: remoteConnection ? ['--nod-remote'] : [],
           },
@@ -614,9 +633,7 @@ function showSettings(section = 'general', loading = false) {
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+      ...rendererSecurity,
       partition: 'nod-settings',
     },
   });
@@ -655,13 +672,13 @@ function showSettings(section = 'general', loading = false) {
   });
   setupWindowLoaded = Promise.all([
     window
-      .loadFile(setupPath, {
-        query: {
+      .loadURL(
+        `${setupURL}?${new URLSearchParams({
           firstSetup: String(!onboardingCompleted),
           ...(section === 'server' ? { server: 'true' } : {}),
           ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
-        },
-      })
+        })}`,
+      )
       .catch(failed),
     ready,
   ]);
@@ -722,9 +739,7 @@ function showEngine({ focus = true } = {}) {
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'engine.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+      ...rendererSecurity,
       partition: clientPartition,
       additionalArguments: remoteConnection ? ['--nod-remote'] : [],
     },
@@ -1006,23 +1021,33 @@ function authenticationHeaders() {
 
 function configureAppSession() {
   const appSession = session.fromPartition(clientPartition);
+  if (app.isPackaged)
+    appSession.webRequest.onHeadersReceived((details, callback) => {
+      if (details.resourceType !== 'mainFrame' || !trustedAppURL(details.url)) return callback({});
+      const headers = { ...details.responseHeaders };
+      const name =
+        Object.keys(headers).find((key) => key.toLowerCase() === 'content-security-policy') ??
+        'Content-Security-Policy';
+      headers[name] = [...(headers[name] ?? []), desktopContentPolicy];
+      callback({ responseHeaders: headers });
+    });
   appSession.setPermissionCheckHandler((sender, permission, origin, details) => {
     return (
-      permission === 'notifications' ||
-      ((permission === 'clipboard-sanitized-write' ||
+      (permission === 'notifications' ||
+        permission === 'clipboard-sanitized-write' ||
         (permission === 'media' && details.mediaType === 'audio')) &&
-        trustedAppURL(origin) &&
-        isTrustedAppFrame(sender, details))
+      trustedAppURL(origin) &&
+      isTrustedAppFrame(sender, details)
     );
   });
   appSession.setPermissionRequestHandler((sender, permission, callback, details) => {
     callback(
-      permission === 'notifications' ||
-        ((permission === 'clipboard-sanitized-write' ||
-          (permission === 'media' &&
-            details.mediaTypes?.length === 1 &&
-            details.mediaTypes[0] === 'audio')) &&
-          isTrustedAppFrame(sender, details)),
+      (permission === 'notifications' ||
+        permission === 'clipboard-sanitized-write' ||
+        (permission === 'media' &&
+          details.mediaTypes?.length === 1 &&
+          details.mediaTypes[0] === 'audio')) &&
+        isTrustedAppFrame(sender, details),
     );
   });
   appSession.on('will-download', saveEngineDownload);
@@ -1815,6 +1840,22 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      const setupSession = session.fromPartition('nod-settings');
+      setupSession.setPermissionCheckHandler(() => false);
+      setupSession.setPermissionRequestHandler((_sender, _permission, callback) => callback(false));
+      setupSession.protocol.handle('nod-setup', async (request) => {
+        const file = setupResource(request.url);
+        if (!file || !['GET', 'HEAD'].includes(request.method))
+          return new Response('Not found', { status: 404 });
+        const response = await net.fetch(pathToFileURL(join(dirname(setupPath), file)).href);
+        const headers = new Headers(response.headers);
+        headers.set(
+          'Content-Security-Policy',
+          "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        );
+        headers.set('X-Content-Type-Options', 'nosniff');
+        return new Response(request.method === 'HEAD' ? null : response.body, { headers });
+      });
       appLinksReady = true;
       if (app.isPackaged && !testInstall) app.setAsDefaultProtocolClient('nod');
       if (
@@ -1917,10 +1958,7 @@ else {
                 enabled: Boolean(updates),
                 click: () => void checkForUpdates(),
               },
-              {
-                label: 'Replay onboarding…',
-                click: replayOnboarding,
-              },
+              { label: 'Replay onboarding…', click: replayOnboarding },
               {
                 id: 'remove-local-data',
                 label: 'Remove all data…',
@@ -1935,7 +1973,19 @@ else {
             ],
           },
           { role: 'editMenu' },
-          { role: 'viewMenu' },
+          {
+            label: 'View',
+            submenu: [
+              { role: 'reload' },
+              ...(!app.isPackaged ? [{ role: 'forceReload' }, { role: 'toggleDevTools' }] : []),
+              { type: 'separator' },
+              { role: 'resetZoom' },
+              { role: 'zoomIn' },
+              { role: 'zoomOut' },
+              { type: 'separator' },
+              { role: 'togglefullscreen' },
+            ],
+          },
           { role: 'windowMenu' },
         ]),
       );
