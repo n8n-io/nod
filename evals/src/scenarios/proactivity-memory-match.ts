@@ -105,13 +105,15 @@ export default scenario({
   evidence(run, world) {
     return JSON.stringify({
       phases:
-        'The first owner turn only saves the goal. The chat then resets. A later source event starts a separate proactive turn under the standing instruction.',
+        'The first owner turn only saves the goal. The chat then resets. Background observer work under the standing instruction then reads the changed programme, prepares work and may send one nudge.',
       standingInstruction: world.notificationRule,
       eventTurnId: world.state.turnId,
       savedGoal: goal,
       memory: run.memory,
       issues: world.state.issues,
-      messages: run.messages.filter((message) => message.turnId === world.state.turnId),
+      messages: run.messages.filter((message) =>
+        run.turns.some((turn) => turn.proactive && turn.id === message.turnId),
+      ),
       writes: run.writes,
     });
   },
@@ -128,7 +130,9 @@ export default scenario({
         'one-useful-message',
         (run) =>
           run.messages.filter(
-            (message) => message.role === 'assistant' && message.turnId === world.state.turnId,
+            (message) =>
+              message.role === 'assistant' &&
+              run.turns.some((turn) => turn.proactive && turn.id === message.turnId),
           ).length === 1,
       ),
       noWrites('send', 'post', 'draft', 'update', 'create', 'delete'),
