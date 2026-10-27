@@ -1289,6 +1289,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const scopedKey = 'fixture-anthropic-scoped-key';
     const discoveredKey = 'fixture-anthropic-discovered-key';
     const deniedKey = 'fixture-anthropic-discovered-denied-key';
+    const unavailableKey = 'fixture-anthropic-discovery-unavailable-key';
     const workspaces = ['wrkspc_First123', 'wrkspc_Second-456'];
     const requests: Array<{ key: string | null; workspaceId: string | null }> = [];
     const backend = createPiModelBackend({
@@ -1302,6 +1303,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
           'https://api.anthropic.com/v1/organizations/workspaces?include_default=true&limit=1000'
         ) {
           assert.equal(workspaceId, null);
+          if (key === unavailableKey)
+            return Response.json({ error: { message: key } }, { status: 503 });
           return Response.json({
             data: (key === sharedKey ? workspaces : [workspaces[0]]).map((id) => ({
               id,
@@ -1359,6 +1362,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     for (const [key, workspaceId] of [
       [sharedKey, undefined],
       [deniedKey, undefined],
+      [unavailableKey, undefined],
       [sharedKey, 'wrkspc_Inaccessible'],
       [sharedKey, 'org_wrong'],
       ['fixture-revoked-key', workspaces[0]],

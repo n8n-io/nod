@@ -5120,7 +5120,7 @@ test('Anthropic workspace connections keep discovery and inference bound to the 
   assert.equal(requests.length, count + 1);
 });
 
-test('Anthropic workspace discovery offers named choices without guessing and refuses malformed candidates', async (t) => {
+test('Anthropic workspace discovery offers named choices and separates retryable failures from manual recovery', async (t) => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const { ModelAuthError, ModelWorkspaceSelectionError } = await import('../src/ports/models.ts');
   const key = 'sk-ant-api-fixture-discovery-private';
@@ -5131,14 +5131,19 @@ test('Anthropic workspace discovery offers named choices without guessing and re
   };
   const otherWorkspace = { id: 'wrkspc_other', name: 'Other workspace', archived_at: null };
   const choice = { id: workspace.id, name: workspace.name };
-  const bodies: [name: string, body: unknown, choices?: { id: string; name: string }[]][] = [
+  const bodies: [
+    name: string,
+    body: unknown,
+    choices?: { id: string; name: string }[],
+    manual?: boolean,
+  ][] = [
     [
       'two workspaces',
       { data: [workspace, otherWorkspace], has_more: false },
       [choice, { id: otherWorkspace.id, name: otherWorkspace.name }],
     ],
     ['truncated page', { data: [workspace], has_more: true }, [choice]],
-    ['empty page', { data: [], has_more: false }],
+    ['empty page', { data: [], has_more: false }, undefined, true],
     ['missing pagination', { data: [workspace] }],
     ['invalid pagination', { data: [workspace], has_more: 'false' }],
     ['missing workspace list', { has_more: false }],
@@ -5164,15 +5169,24 @@ test('Anthropic workspace discovery offers named choices without guessing and re
   const cases: {
     name: string;
     choices?: { id: string; name: string }[];
+    manual?: boolean;
+    status?: number;
     response(): Response;
   }[] = [
-    ...bodies.map(([name, body, choices]) => ({
+    ...bodies.map(([name, body, choices, manual]) => ({
       name,
       choices,
+      manual,
       response: () => Response.json(body),
     })),
-    ...[401, 403, 404, 500].map((status) => ({
+    ...[400, 401, 403, 404].map((status) => ({
       name: `discovery status ${status}`,
+      manual: true,
+      response: () => Response.json({ error: { message: key } }, { status }),
+    })),
+    ...[429, 500, 503].map((status) => ({
+      name: `discovery status ${status}`,
+      status,
       response: () => Response.json({ error: { message: key } }, { status }),
     })),
     { name: 'invalid JSON', response: () => new Response('{') },
@@ -5203,11 +5217,21 @@ test('Anthropic workspace discovery offers named choices without guessing and re
       await assert.rejects(
         backend.connectKey!('anthropic', { type: 'api_key', key }),
         (error: unknown) => {
-          assert.ok(error instanceof ModelAuthError);
+          assert.ok(error instanceof Error);
           if (scenario.choices) {
             assert.ok(error instanceof ModelWorkspaceSelectionError);
             assert.deepEqual(error.workspaces, scenario.choices);
-          } else assert.ok(!(error instanceof ModelWorkspaceSelectionError));
+          } else if (scenario.manual) {
+            assert.ok(error instanceof ModelAuthError);
+            assert.ok(!(error instanceof ModelWorkspaceSelectionError));
+          } else {
+            assert.ok(!(error instanceof ModelAuthError));
+            assert.ok(error.cause instanceof Error);
+            if (scenario.status) {
+              assert.ok(error.cause.message.includes(String(scenario.status)));
+              assert.ok(!error.message.includes(String(scenario.status)));
+            }
+          }
           assert.ok(!error.message.includes(key));
           assert.ok(!JSON.stringify(error).includes(key));
           return true;

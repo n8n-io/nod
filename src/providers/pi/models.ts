@@ -703,7 +703,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         );
         if (!response.ok) {
           await response.body?.cancel();
-          throw new Error();
+          if ([400, 401, 403, 404].includes(response.status))
+            throw new ModelAuthError(
+              'Nod couldn’t discover a workspace for this key. Enter its Workspace ID from the Claude Console.',
+            );
+          throw new Error(`Anthropic workspace discovery failed (${response.status}).`);
         }
         workspaces = z
           .object({
@@ -723,10 +727,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             has_more: z.boolean(),
           })
           .parse(await response.json());
-      } catch {
-        throw new ModelAuthError(
-          'Nod couldn’t discover a workspace for this key. Enter its Workspace ID from the Claude Console.',
-        );
+      } catch (cause) {
+        if (cause instanceof ModelAuthError) throw cause;
+        throw new Error('The model list couldn’t be loaded. Try again.', { cause });
       }
       if (!workspaces.data.length)
         throw new ModelAuthError(
