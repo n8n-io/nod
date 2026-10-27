@@ -3448,3 +3448,41 @@ test('browser notification settings revoke a saved opt-in after browser permissi
   assert.equal(f.permissionRequests(), 0);
   assert.equal(f.notifications.length, 1);
 });
+
+test('browser notification settings recover a reset permission only after an explicit choice', async (t) => {
+  const f = await notificationPage(t);
+  const { BrowserNotificationSettings } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { browserNotificationStatus, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  f.setPermission('default');
+  await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
+  const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
+  const recovery = [...f.document.querySelectorAll('button')].find(
+    (button) => button.getAttribute('role') !== 'switch',
+  );
+  assert.ok(control);
+  assert.ok(recovery);
+  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(control.disabled, false);
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  f.respondPermission(async () => 'default');
+  await f.act(async () => recovery.click());
+  assert.equal(f.permissionRequests(), 1);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.ok(f.document.querySelector('[role="alert"]'));
+  f.respondPermission(async () => 'granted');
+  await f.act(async () => recovery.click());
+  assert.equal(f.permissionRequests(), 2);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(f.notifications.length, 2);
+  assert.equal(f.document.querySelectorAll('button').length, 1);
+  assert.equal(f.document.querySelector('[role="alert"]'), null);
+  await f.act(async () => control.click());
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(f.permissionRequests(), 2);
+});

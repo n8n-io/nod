@@ -119,6 +119,7 @@ export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
 export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   const choice = useNotificationChoice(ownerId);
   const optedIn = choice.choice === 'enabled';
+  const needsPermission = optedIn && choice.available && choice.permission === 'default';
   if (desktopSettingsAvailable()) return null;
   return (
     <section className="account-region" aria-label="Browser notifications">
@@ -141,8 +142,20 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
           ? 'Notifications need a supported browser and a secure connection.'
           : choice.permission === 'denied'
             ? 'Allow notifications for this site in your browser settings to enable them.'
-            : 'Get notified by Nod while you’re away. Keep this tab open to receive replies.'}
+            : needsPermission
+              ? 'Browser permission is needed before Nod can notify you.'
+              : 'Get notified by Nod while you’re away. Keep this tab open to receive replies.'}
       </p>
+      {needsPermission && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={choice.busy}
+          onClick={() => void choice.change(true)}
+        >
+          Allow notifications
+        </Button>
+      )}
       {choice.error && <Notice>{choice.error}</Notice>}
     </section>
   );

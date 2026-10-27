@@ -420,6 +420,22 @@ async function notifyAssistantMessage(message, threadId) {
   notification.show();
 }
 
+function showNotificationConfirmation() {
+  if (!preferences.notifications || quitting || !Notification.isSupported()) return;
+  const notification = new Notification({
+    title: 'Nod',
+    icon: notificationIcon,
+    body: 'Notifications are on.',
+  });
+  displayedNotifications.add(notification);
+  notification.on('show', () => {
+    if (!preferences.notifications || quitting) notification.close();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+}
+
 async function writeDiagnostic(value) {
   const directory = join(profileRoot, 'logs');
   const path = join(directory, 'startup.log');
@@ -2115,7 +2131,9 @@ else {
         }
         onboardingCompleted = remoteConnection ? true : saved.onboardingCompleted;
         if (onboardingCompleted) nativePreferencesPending = false;
+        const confirmNotifications = value.notifications === true && !preferences.notifications;
         applyPreferences(saved);
+        if (confirmNotifications) showNotificationConfirmation();
         for (const window of engineWindows) deliverAppLink(window);
         if (!['preparing', 'starting', 'error'].includes(status.phase))
           update({ message: 'Ready.' });

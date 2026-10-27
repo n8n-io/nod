@@ -579,6 +579,10 @@ async function runningDesktop(
       show() {
         notifications.push(this);
       }
+      close() {
+        this.closed = true;
+        this.emit('close');
+      }
     },
     MessageChannelMain: class {
       port1 = { end: 'engine' };
@@ -2942,6 +2946,66 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     { sender: setup, senderFrame: { url: setup.mainFrame.url } },
   ])
     await assert.rejects(invoke('nod:runtime:install-wsl', rejected));
+});
+
+test('native notification confirmation follows only successful owned enable transitions', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    allowStart: true,
+    notificationsSupported: true,
+    webPreferences: { quietHoursEnabled: true, quietStart: '00:00', quietEnd: '23:59' },
+  });
+  try {
+    await f.storage.store.save({
+      notifications: true,
+      launchAtLogin: true,
+      onboardingCompleted: true,
+    });
+    await f.launch();
+    await f.settle();
+    f.showEngine();
+    const window = f.windows.at(-1);
+    window.focus();
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const save = (value, target = event) => f.handlers.get('nod:settings:save')(target, value);
+    assert.equal(f.notifications.length, 0);
+    await save({ notifications: true });
+    await save({ notifications: false });
+    await save({ theme: 'dark' });
+    assert.equal(f.notifications.length, 0);
+    await assert.rejects(save({ notifications: true }, { ...event, sender: {} }));
+    await assert.rejects(
+      save({ notifications: true }, { ...event, senderFrame: { url: window.url } }),
+    );
+    const failedSave = t.mock.method(f.storage.store, 'save', async () => {
+      throw new Error('Synthetic settings write failure.');
+    });
+    await assert.rejects(save({ notifications: true }), /settings write failure/);
+    failedSave.mock.restore();
+    assert.equal((await f.storage.reopen().get()).notifications, false);
+    assert.equal(f.notifications.length, 0);
+    await Promise.all([save({ notifications: true }), save({ notifications: true })]);
+    assert.equal((await f.storage.reopen().get()).notifications, true);
+    assert.equal(f.notifications.length, 1);
+    const first = f.notifications[0];
+    first.emit('show');
+    assert.notEqual(first.closed, true);
+    await save({ notifications: true });
+    await save({ theme: 'light' });
+    assert.equal(f.notifications.length, 1);
+    await save({ notifications: false });
+    first.emit('show');
+    assert.equal(first.closed, true);
+    assert.equal(f.notifications.length, 1);
+    await save({ notifications: true });
+    assert.equal(f.notifications.length, 2);
+    const last = f.notifications.at(-1);
+    await f.close();
+    last.emit('show');
+    assert.equal(last.closed, true);
+  } finally {
+    await f.close();
+  }
 });
 
 test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {

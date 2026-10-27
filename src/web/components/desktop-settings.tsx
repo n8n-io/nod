@@ -99,6 +99,10 @@ export function DesktopOptions({
           />
         </div>
       ))}
+      <p className="field-hint">
+        If notifications don’t appear, allow Nod in your computer’s notification settings and check
+        Focus or Do Not Disturb.
+      </p>
     </div>
   );
 }
