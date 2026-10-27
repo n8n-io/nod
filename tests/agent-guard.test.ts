@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,12 +23,15 @@ import { personalActions, toolDefinitions } from '../src/runtime/tools.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import {
   inlineAppResult,
+  privateEmailResult,
   mailCheckText,
   type MailCheck,
 } from '../src/server/integration-result.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserActionError } from '../src/ports/computer.ts';
+import { createMailCheck } from '../src/server/mail-check.ts';
+import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 
 async function fixture(
   run: (
@@ -189,10 +193,13 @@ test('mail that grants account access stays out of app tool results and workspac
     'nested@example.test',
   ];
   const checked: Array<{ from: string; subject: string; text: string }> = [];
-  const check: MailCheck = async (email) => {
-    checked.push(email);
-    if (email.from.includes('broken@example.test')) throw new Error('Fixture check failed.');
-    return granting.some((sender) => email.from.includes(sender));
+  const check: MailCheck = async (emails) => {
+    checked.push(...emails);
+    return emails.map((email) =>
+      email.from.includes('broken@example.test')
+        ? undefined
+        : granting.some((sender) => email.from.includes(sender)),
+    );
   };
   const alert = {
     messageId: 'alert',
@@ -300,7 +307,7 @@ test('mail that grants account access stays out of app tool results and workspac
     'preview' in messages.find((mail: { messageId?: string }) => mail.messageId === 'unchecked'),
     false,
   );
-  assert.equal(checked.length, mails.length * 2);
+  assert.equal(checked.length, (mails.length + 1) * 2);
   for (const email of checked)
     assert.equal(new Set(JSON.stringify(email).match(/\[r\d\]/g)).size, 1);
   assert.ok(checked.some((email) => email.text.includes(secrets[0])));
@@ -309,6 +316,281 @@ test('mail that grants account access stays out of app tool results and workspac
       `${'Fixture newsletter text. '.repeat(1000)}Your recovery code is 553912.`,
     ).includes('553912'),
   );
+});
+
+test('mail access checks classify 100 emails in ten bounded requests and preserve result identities', async () => {
+  const emails = Array.from({ length: 100 }, (_, id) => ({
+    from: 'fixture@example.test',
+    subject: `Synthetic message ${id}`,
+    text: id % 7 === 0 ? 'Synthetic sign-in code: 451792' : 'Synthetic order receipt',
+  }));
+  const requests: Array<{ emails: Array<{ id: number }> }> = [];
+  const check = createMailCheck({
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ task, input }) {
+        assert.equal(task, 'access');
+        const request = input as { emails: Array<{ id: number }> };
+        requests.push(request);
+        assert.ok(request.emails.length <= 10);
+        assert.ok(JSON.stringify(input).length <= 32_000);
+        return {
+          results: request.emails.toReversed().map(({ id }) => ({ id, access: id % 7 === 0 })),
+        };
+      },
+    },
+  });
+  assert.deepEqual(
+    await check(emails),
+    emails.map((_, id) => id % 7 === 0),
+  );
+  assert.equal(requests.length, 10);
+  assert.deepEqual(
+    requests.flatMap(({ emails }) => emails.map(({ id }) => id)),
+    Array.from({ length: 100 }, (_, id) => id),
+  );
+});
+
+test('mail access requests respect serialized size and hide oversized mail without truncation', async () => {
+  const emails = Array.from({ length: 12 }, (_, id) => ({
+    from: 'fixture@example.test',
+    subject: `Synthetic long message ${id}`,
+    text: '"\\'.repeat(id === 11 ? 16_001 : 2_000),
+  }));
+  const requests: object[] = [];
+  const check = createMailCheck({
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        requests.push(input);
+        assert.ok(JSON.stringify(input).length <= 32_000);
+        const batch = input as {
+          emails?: Array<{ id: number; text: string }>;
+          email?: { text: string };
+        };
+        if (batch.email) {
+          assert.equal(batch.email.text, emails[0]!.text);
+          return { access: false };
+        }
+        assert.ok(batch.emails!.every(({ text }) => text === emails[0]!.text));
+        return { results: batch.emails!.map(({ id }) => ({ id, access: false })) };
+      },
+    },
+  });
+  assert.deepEqual(await check(emails), [...Array<boolean>(11).fill(false), undefined]);
+  assert.ok(requests.length > 2);
+});
+
+test('malformed batch mail decisions hide the entire batch', async (t) => {
+  const responses = [
+    null,
+    { access: false },
+    { results: [] },
+    { results: [{ id: 0, access: false }] },
+    {
+      results: [
+        { id: 0, access: false },
+        { id: 0, access: false },
+      ],
+    },
+    {
+      results: [
+        { id: 0, access: false },
+        { id: 2, access: false },
+      ],
+    },
+    {
+      results: [
+        { id: 0, access: false },
+        { id: '1', access: false },
+      ],
+    },
+    {
+      results: [
+        { id: 0, access: false },
+        { id: 1, access: 'false' },
+      ],
+    },
+    { results: [{ id: 0, access: false }, null] },
+    {
+      results: [
+        { id: 0, access: false },
+        { id: 1, access: false },
+        { id: 2, access: false },
+      ],
+    },
+  ];
+  for (const [index, response] of responses.entries())
+    await t.test(`malformed response ${index + 1}`, async () => {
+      const check = createMailCheck({
+        curator: { id: 'fixture', configured: true, curate: async () => response },
+      });
+      assert.deepEqual(
+        await check([
+          { from: 'receipt@example.test', subject: 'Receipt', text: 'Order dispatched' },
+          { from: 'security@example.test', subject: 'Sign in', text: 'Synthetic code 451792' },
+        ]),
+        [undefined, undefined],
+      );
+    });
+});
+
+test('mail decisions retain configured provider results and batch only unavailable checks', async () => {
+  const subjects = [
+    'sensitive',
+    'ordinary',
+    'unavailable-sensitive',
+    'unavailable-ordinary',
+    'error',
+    'malformed',
+  ];
+  const checked: string[] = [];
+  const fallbackIds: number[][] = [];
+  const check = createMailCheck({
+    decisions: {
+      async check({ input, question }) {
+        const { email } = input as { email: { subject: string } };
+        checked.push(email.subject);
+        assert.equal(question.name, 'access');
+        if (email.subject === 'error') throw new Error('Synthetic provider failure');
+        if (email.subject === 'malformed') return { access: 'false' };
+        if (email.subject.startsWith('unavailable')) return undefined;
+        return { access: email.subject === 'sensitive' };
+      },
+    },
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        const { emails } = input as { emails: Array<{ id: number }> };
+        fallbackIds.push(emails.map(({ id }) => id));
+        return {
+          results: [
+            { id: 3, access: false },
+            { id: 2, access: true },
+          ],
+        };
+      },
+    },
+  });
+  assert.deepEqual(
+    await check(
+      subjects.map((subject) => ({
+        from: 'fixture@example.test',
+        subject,
+        text: 'Synthetic message',
+      })),
+    ),
+    [true, false, true, false, undefined, undefined],
+  );
+  assert.deepEqual(checked, subjects);
+  assert.deepEqual(fallbackIds, [[2, 3]]);
+});
+
+test('single mail checks keep their provider contract and fail closed without a classifier', async () => {
+  const email = { from: 'fixture@example.test', subject: 'Receipt', text: 'Synthetic receipt' };
+  const curator: MemoryCurator = {
+    id: 'fixture',
+    configured: true,
+    async curate({ input }) {
+      assert.deepEqual(input, { email });
+      return { access: false };
+    },
+  };
+  assert.deepEqual(await createMailCheck({ curator })([email]), [false]);
+  assert.deepEqual(await createMailCheck({ curator: { ...curator, configured: false } })([email]), [
+    undefined,
+  ]);
+  assert.deepEqual(await createMailCheck({ curator })([]), []);
+});
+
+test('queued mail checks preserve caller attribution, cancel without invoking providers and bound concurrency', async () => {
+  const scope = new AsyncLocalStorage<string>();
+  let active = 0;
+  let maximum = 0;
+  const pending: Array<() => void> = [];
+  const observed: string[] = [];
+  const check = createMailCheck({
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        const { emails } = input as { emails: Array<{ id: number; from: string }> };
+        observed.push(`${scope.getStore()}:${emails[0]!.from}`);
+        active += 1;
+        maximum = Math.max(maximum, active);
+        return new Promise((resolve) =>
+          pending.push(() => {
+            active -= 1;
+            resolve({ results: emails.map(({ id }) => ({ id, access: false })) });
+          }),
+        );
+      },
+    },
+  });
+  const first = Array.from({ length: 100 }, () => ({
+    from: 'first@example.test',
+    subject: 'Receipt',
+    text: 'Synthetic receipt',
+  }));
+  const second = Array.from({ length: 20 }, () => ({
+    from: 'second@example.test',
+    subject: 'Receipt',
+    text: 'Synthetic receipt',
+  }));
+  const controller = new AbortController();
+  const cancelled = scope.run('first', () => check(first, controller.signal));
+  const retained = scope.run('second', () => check(second));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, Array<string>(6).fill('first:first@example.test'));
+  controller.abort();
+  assert.deepEqual(await cancelled, Array.from({ length: 100 }));
+  assert.equal(observed.length, 6);
+  pending.splice(0).forEach((finish) => finish());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed.slice(6), ['second:second@example.test', 'second:second@example.test']);
+  pending.splice(0).forEach((finish) => finish());
+  assert.deepEqual(await retained, Array<boolean>(20).fill(false));
+  assert.equal(maximum, 6);
+  assert.equal(active, 0);
+  assert.deepEqual(await check(second, AbortSignal.abort()), Array.from({ length: 20 }));
+  assert.equal(observed.length, 8);
+});
+
+test('mail check timeout includes queued requests and does not wait for an unresponsive provider', async (t) => {
+  const timeout = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', (duration: number) => {
+    assert.equal(duration, 15_000);
+    return timeout.signal;
+  });
+  let called = 0;
+  const pending: Array<() => void> = [];
+  const check = createMailCheck({
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate() {
+        called += 1;
+        return new Promise((resolve) => pending.push(() => resolve({ access: false })));
+      },
+    },
+  });
+  const result = check(
+    Array.from({ length: 100 }, () => ({
+      from: 'fixture@example.test',
+      subject: 'Receipt',
+      text: 'Synthetic receipt',
+    })),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(called, 6);
+  timeout.abort(new DOMException('Synthetic timeout', 'TimeoutError'));
+  assert.deepEqual(await result, Array.from({ length: 100 }));
+  pending.forEach((finish) => finish());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(called, 6);
 });
 
 test('skill reads cannot escape the trusted library or load workspace instructions', async () => {
@@ -1091,4 +1373,16 @@ test('a spending check-in stops the observer from starting more tasks', async ()
   );
   assert.equal(started, 0);
   assert.equal(result.result.status, 'waiting_user');
+});
+
+test('parsed email results never return raw content when preparation fails', async () => {
+  const result =
+    '{"nested":'.repeat(20000) +
+    JSON.stringify({
+      from: 'login@example.test',
+      subject: 'Sign in',
+      body: 'Your synthetic code is 839174.',
+    }) +
+    '}'.repeat(20000);
+  await assert.rejects(privateEmailResult(result, async (emails) => emails.map(() => true)));
 });

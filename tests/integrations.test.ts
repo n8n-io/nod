@@ -1874,7 +1874,7 @@ async function appsFixture(
     },
   };
   const service = await createIntegrations(pool, {
-    mailCheck: async () => false,
+    mailCheck: async (emails) => emails.map(() => false),
     ...listing,
     ownerId: 'local-development',
     provider,
@@ -8123,7 +8123,7 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
         assert.equal(JSON.stringify(mail).includes(secret), false);
         begin();
         if (hold) await pending;
-        return true;
+        return mail.map(() => true);
       },
     },
   );
@@ -8171,7 +8171,9 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
     ],
     {
       check: async (mail) =>
-        mail.from.startsWith('slow') ? new Promise<boolean>(() => {}) : false,
+        mail.some((email) => email.from.startsWith('slow'))
+          ? new Promise<Array<boolean>>(() => {})
+          : mail.map(() => false),
     },
   );
   const started = Date.now();

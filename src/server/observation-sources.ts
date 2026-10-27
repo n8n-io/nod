@@ -53,11 +53,11 @@ export function createObservationSources(
                 record,
                 (mail, checkSignal) =>
                   (options.check ?? noMailCheck)(
-                    {
-                      from: safeText(mail.from),
-                      subject: safeText(mail.subject),
-                      text: safeText(mail.text),
-                    },
+                    mail.map((email) => ({
+                      from: safeText(email.from),
+                      subject: safeText(email.subject),
+                      text: safeText(email.text),
+                    })),
                     checkSignal,
                   ),
                 stop,

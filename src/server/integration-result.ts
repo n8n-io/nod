@@ -51,10 +51,12 @@ function emailText(value: unknown, field = ''): string {
     .join('\n');
 }
 
+export type Mail = { from: string; subject: string; text: string };
+
 export type MailCheck = (
-  email: { from: string; subject: string; text: string },
+  emails: Mail[],
   signal?: AbortSignal,
-) => Promise<boolean>;
+) => Promise<Array<boolean | undefined>>;
 
 export const mailCheckChars = 8000;
 
@@ -87,89 +89,89 @@ export async function privateEmailResult(
   check: MailCheck,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      return value;
+  const emails: Mail[] = [];
+  type Render = (checks: Array<boolean | undefined>) => unknown;
+  function prepare(value: unknown): Render {
+    if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return () => value;
+      }
+      const render = prepare(parsed);
+      return (checks) => JSON.stringify(render(checks));
     }
-    return JSON.stringify(await privateEmailResult(parsed, check, signal));
-  }
-  if (Array.isArray(value))
-    return Promise.all(value.map((entry) => privateEmailResult(entry, check, signal)));
-  if (!value || typeof value !== 'object') return value;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return value;
-  const record = value as Record<string, unknown>;
-  const payload = record.payload as Record<string, unknown> | undefined;
-  const headers = [record.headers, payload?.headers].flatMap((entries) =>
-    Array.isArray(entries)
-      ? entries.filter(
-          (entry): entry is { name: string; value: string } =>
-            entry && typeof entry.name === 'string' && typeof entry.value === 'string',
-        )
-      : [],
-  );
-  const isMail =
-    Object.entries(record).some(
-      ([key, entry]) =>
-        ['sender', 'from', 'to', 'recipient', 'recipients'].includes(fieldName(key)) &&
-        /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(
-          typeof entry === 'string' ? entry : (JSON.stringify(entry) ?? ''),
-        ),
-    ) ||
-    headers.some(
-      (entry) =>
-        ['from', 'to'].includes(entry.name.toLowerCase()) &&
-        /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(entry.value),
+    if (Array.isArray(value)) {
+      const children = value.map(prepare);
+      return (checks) => children.map((render) => render(checks));
+    }
+    if (!value || typeof value !== 'object') return () => value;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return () => value;
+    const record = value as Record<string, unknown>;
+    const payload = record.payload as Record<string, unknown> | undefined;
+    const headers = [record.headers, payload?.headers].flatMap((entries) =>
+      Array.isArray(entries)
+        ? entries.filter(
+            (entry): entry is { name: string; value: string } =>
+              entry && typeof entry.name === 'string' && typeof entry.value === 'string',
+          )
+        : [],
     );
-  const hidden =
-    isMail &&
-    (await check(
-      {
+    const isMail =
+      Object.entries(record).some(
+        ([key, entry]) =>
+          ['sender', 'from', 'to', 'recipient', 'recipients'].includes(fieldName(key)) &&
+          /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(
+            typeof entry === 'string' ? entry : (JSON.stringify(entry) ?? ''),
+          ),
+      ) ||
+      headers.some(
+        (entry) =>
+          ['from', 'to'].includes(entry.name.toLowerCase()) &&
+          /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(entry.value),
+      );
+    const index = isMail ? emails.length : undefined;
+    if (isMail)
+      emails.push({
         from: (fieldValue(record, ['sender', 'from']) || headerValue(headers, 'from')).slice(
           0,
           300,
         ),
         subject: (fieldValue(record, ['subject']) || headerValue(headers, 'subject')).slice(0, 300),
         text: mailCheckText(emailText(record)),
-      },
-      signal,
-    ).then(
-      (verification) =>
-        verification
-          ? 'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.'
-          : undefined,
-      () => 'Nod could not check whether this email is for signing in, so its content is private.',
-    ));
-  if (hidden) {
-    const safe = Object.fromEntries(
-      Object.entries(record).filter(
-        ([key, entry]) =>
-          emailMetadataFields.has(fieldName(key)) &&
-          (typeof entry === 'string' ||
-            typeof entry === 'number' ||
-            (Array.isArray(entry) && entry.every((item) => typeof item === 'string'))),
-      ),
-    );
-    const metadata = headers
-      .filter((entry) => emailMetadataHeaders.has(entry.name.toLowerCase()))
-      .map(({ name, value }) => ({ name, value }));
-    return {
-      ...safe,
-      ...(metadata.length && { headers: metadata }),
-      message: hidden,
+      });
+    const children = Object.entries(record).map(([key, entry]) => [key, prepare(entry)] as const);
+    return (checks) => {
+      if (index !== undefined && checks[index] !== false) {
+        const safe = Object.fromEntries(
+          Object.entries(record).filter(
+            ([key, entry]) =>
+              emailMetadataFields.has(fieldName(key)) &&
+              (typeof entry === 'string' ||
+                typeof entry === 'number' ||
+                (Array.isArray(entry) && entry.every((item) => typeof item === 'string'))),
+          ),
+        );
+        const metadata = headers
+          .filter((entry) => emailMetadataHeaders.has(entry.name.toLowerCase()))
+          .map(({ name, value }) => ({ name, value }));
+        return {
+          ...safe,
+          ...(metadata.length && { headers: metadata }),
+          message:
+            checks[index] === true
+              ? 'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.'
+              : 'Nod could not check whether this email is for signing in, so its content is private.',
+        };
+      }
+      return Object.fromEntries(children.map(([key, render]) => [key, render(checks)]));
     };
   }
-  return Object.fromEntries(
-    await Promise.all(
-      Object.entries(record).map(async ([key, entry]) => [
-        key,
-        await privateEmailResult(entry, check, signal),
-      ]),
-    ),
-  );
+  const render = prepare(value);
+  const checks = emails.length ? await check(emails, signal).catch(() => []) : [];
+  return render(checks);
 }
 
 export async function inlineAppResult(
