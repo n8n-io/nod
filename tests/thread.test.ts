@@ -6404,6 +6404,10 @@ test('feedback journal redacts before persistence, survives restart, rotates and
     {
       message: `Provider failed for ${privateText}`,
       stack: `Error: Provider failed for ${privateText}\n    at operation (runtime.js:12:4)`,
+      error: z
+        .object({ kty: z.literal('EC') })
+        .strict()
+        .safeParse({ kty: 'EC', alg: 'ES256' }).error,
     },
     { turnId, callId: 'call_synthetic-123' },
   );
@@ -6411,6 +6415,7 @@ test('feedback journal redacts before persistence, survives restart, rotates and
   assert.equal(initial.entries.length, 1);
   assert.equal(initial.entries[0].scope.turnId, turnId);
   assert.ok(JSON.stringify(initial.entries).includes('runtime.js:12:4'));
+  assert.ok(JSON.stringify(initial.entries).includes('Unrecognized key: \\"alg\\"'));
   const parent = join(root, 'feedback-logs');
   const [ownerDirectory] = await readdir(parent);
   assert.match(ownerDirectory, /^[a-f0-9]{64}$/);

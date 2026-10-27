@@ -103,7 +103,7 @@ function capture(value: unknown) {
     const result: Record<string, unknown> = Object.create(null);
     if (item instanceof Error) {
       result.name = 'Error';
-      for (const key of ['name', 'message', 'stack', 'cause'])
+      for (const key of ['name', 'message', 'stack', 'cause', 'issues'])
         if (Object.hasOwn(item, key)) result[key] = property(key, key === 'stack');
     }
     let count = 0;
