@@ -8,13 +8,18 @@ import type { Visit } from './world/sites.ts';
 import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
 
 export interface ToolCall {
+  id?: string;
   turnId?: string;
+  sessionId?: string;
+  runId?: string;
+  parentRunId?: string;
   browser?: string;
   name: string;
   input: any;
   output: string;
   isError: boolean;
   at: number;
+  finishedAt?: number;
   lead: string;
 }
 
@@ -128,7 +133,11 @@ function capturedTools(stack: Stack) {
     if (event.type === 'tool_start') {
       if (started.has(id)) continue;
       const call: ToolCall = {
+        id: event.id,
         turnId,
+        sessionId: event.execution.sessionId,
+        runId: event.execution.runId,
+        parentRunId: event.execution.parentRunId,
         browser: event.execution?.browserId && browserSessionId(event.execution.browserId),
         name: event.name,
         input: event.input,
@@ -155,6 +164,7 @@ function capturedTools(stack: Stack) {
               ? output
               : JSON.stringify(output);
         call.isError = event.status !== 'succeeded';
+        call.finishedAt = Date.parse(event.finishedAt);
       }
     }
   }
@@ -215,7 +225,9 @@ export async function collect(options: {
         if (block.type !== 'toolCall') continue;
         const id = `${sessionId}:${block.id}`;
         const call: ToolCall = {
+          id: block.id,
           turnId: currentTurns.get(sessionId),
+          sessionId,
           browser: browserSessionId(sessionId),
           name: block.name,
           input: block.arguments,
@@ -234,6 +246,7 @@ export async function collect(options: {
           .map((block: any) => (block.type === 'text' ? block.text : `[${block.type}]`))
           .join('\n');
         call.isError = message.isError === true;
+        call.finishedAt = Date.parse(entry.timestamp);
       }
     }
   }
@@ -388,24 +401,46 @@ export async function collect(options: {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';
     },
     transcript(limit = 60_000) {
+      const scope = (turnId?: string | null, call?: ToolCall) => {
+        const turn = turns.find((item) => item.id === turnId);
+        const context = {
+          ...(call?.id ? { toolCallId: call.id } : {}),
+          ...(turnId ? { turnId } : {}),
+          ...(call?.sessionId ? { sessionId: call.sessionId } : {}),
+          ...(call?.runId ? { runId: call.runId } : {}),
+          ...(call?.parentRunId ? { parentRunId: call.parentRunId } : {}),
+          ...(turn ? { background: turn.background, source: turn.source } : {}),
+        };
+        return Object.keys(context).length ? ` ${JSON.stringify(context)}` : '';
+      };
       const build = (outputCap: number) => {
         return [
           ...messages
             .filter((m) => m.text.trim())
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
             })),
-          ...tools.map((call) => ({
-            at: call.at,
-            text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, outputCap)}`,
-          })),
+          ...tools.flatMap((call) => [
+            {
+              at: call.at,
+              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : 1200)}`,
+            },
+            ...(call.finishedAt !== undefined || call.output
+              ? [
+                  {
+                    at: call.finishedAt ?? call.at,
+                    text: `TOOL RESULT ${call.name}${scope(call.turnId, call)}${call.isError ? ' (error)' : ''}${call.finishedAt === undefined ? ' (completion time unavailable)' : ''}\n  output: ${clip(call.output, outputCap)}`,
+                  },
+                ]
+              : []),
+          ]),
         ]
           .sort((a, b) => a.at - b.at)
           .map((item) => `[${new Date(item.at).toISOString()}] ${item.text}`)
           .join('\n\n');
       };
-      for (const cap of [6000, 3000, 1500]) {
+      for (const cap of [limit, 6000, 3000, 1500]) {
         const text = build(cap);
         if (text.length <= limit) return text;
       }

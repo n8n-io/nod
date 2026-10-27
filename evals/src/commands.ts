@@ -23,6 +23,7 @@ import { defaultJudge, defaultModel, runSuite, slug, type RunOptions } from './r
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
 import { listRuns, loadRun, resultsRoot, saveRun } from './store.ts';
+import type { RunSummary } from './results.ts';
 
 export const help = `Nod capability evals
 
@@ -33,7 +34,7 @@ export const help = `Nod capability evals
     analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
                                (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
-                               (--baseline main, --repeat 3, --label name, --out directory)
+                               (--baseline main, --repeat 3, --scenario a,b, --label name, --out directory)
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Nod, graded by the official judge
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)
@@ -83,7 +84,7 @@ export const help = `Nod capability evals
     --label <name>             name the run               --resume               redo only incomplete attempts
     --no-diagnose              skip the failure analysis  --retries 2            retries for provider or infrastructure faults
     --no-canary                skip the harness canary that runs before the suite
-    --min-pass 0.8             exit with an error if the pass rate is lower
+    --min-pass 0.8             exit with an error if the rate passing all required checks is lower
 
   Examples
     pnpm run eval:capability doctor --fix
@@ -174,6 +175,10 @@ function idList(value: string | undefined, flag: string) {
   return ids;
 }
 
+export function meetsMinimumPassRate(summary: RunSummary, minimum?: number) {
+  return summary.combined.total > 0 && (summary.combined.percent ?? 0) >= (minimum ?? 0);
+}
+
 export async function main(args: Args) {
   const root = resultsRoot(text(args, 'out'));
   const [first, ...others] = args.positional;
@@ -215,11 +220,7 @@ export async function main(args: Args) {
     case 'run': {
       const minimum = number(args, 'min-pass', 0, 1);
       const result = await runSuite(runOptions(args));
-      if (
-        !result.summary.regression.total ||
-        (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
-      )
-        process.exitCode = 1;
+      if (!meetsMinimumPassRate(result.summary, minimum)) process.exitCode = 1;
       return;
     }
     case 'decisions': {
@@ -231,6 +232,7 @@ export async function main(args: Args) {
         root,
         label: text(args, 'label') ?? new Date().toISOString().replace(/[:.]/g, '-'),
         repeat: whole(args, 'repeat', 3),
+        caseIds: text(args, 'scenario')?.split(','),
       });
       console.log(JSON.stringify(result, null, 2));
       return;

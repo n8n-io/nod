@@ -14,6 +14,7 @@ import { createDecisionModel } from '../src/providers/decisions.ts';
 import { BrowserActionError, type CredentialInput } from '../src/ports/computer.ts';
 import { authenticatorKey } from '../src/shared/authenticator-key.ts';
 import { authenticatorCode } from '../src/server/authenticator.ts';
+import { termsInstructions } from '../src/server/trust-terms.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -75,6 +76,8 @@ test(
     const connectionLabels: unknown[] = [];
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
+    const termChecks: object[] = [];
+    const termUsageIds: string[] = [];
     const executedApps: string[] = [];
     const uploads: string[] = [];
     const workspaceFiles = new Map<string, Uint8Array>();
@@ -340,7 +343,16 @@ test(
         onboardingCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, input }, _signal, report) => {
+          curate: async ({ task, instructions, input }, _signal, report) => {
+            if (task === 'review' && instructions === termsInstructions) {
+              termChecks.push(input);
+              if (checkCost !== undefined) {
+                const id = randomUUID();
+                termUsageIds.push(id);
+                report?.({ id, model: 'fixture', costUsd: checkCost });
+              }
+              return { verdict: 'compatible', comparisons: [], reason: 'Synthetic term review.' };
+            }
             if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
               return connectionLabels.shift();
             if ('purpose' in input && input.purpose === 'confirmation') {
@@ -371,7 +383,13 @@ test(
                       asked.has(words.userMessages?.at(-1)?.text ?? '') ||
                       cleared.has(String(words.action?.arguments?.recipient_email));
                     return run
-                      ? { run, because: words.userMessages?.at(-1)?.text ?? 'read' }
+                      ? {
+                          run,
+                          because:
+                            words.action?.name === 'GMAIL_FETCH_EMAILS'
+                              ? 'read'
+                              : (words.userMessages?.at(-1)?.text ?? 'read'),
+                        }
                       : { run };
                   })()
                 : undefined;
@@ -1320,52 +1338,96 @@ test(
         },
       );
 
-      await t.test('trust check costs stop later tools at the task check-in', async () => {
-        const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
-        assert.equal(reset.statusCode, 200, reset.body);
-        const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
-        const checks = fallbackChecks.length;
-        const text = `Read the synthetic inbox three times ${randomUUID()}`;
-        asked.add(text);
-        batches.set(text, {
-          subagents: false,
-          sequential: true,
-          calls: Array.from({ length: 3 }, () => ({
-            action: 'GMAIL_FETCH_EMAILS',
-            args: { max_results: 1 },
-          })),
-        });
-        await pool.query(
-          'INSERT INTO spending_limits(owner_id,task_usd) VALUES($1,1) ON CONFLICT(owner_id) DO UPDATE SET task_usd=excluded.task_usd',
-          [ownerId],
-        );
-        checkCost = 0.6;
-        try {
-          const response = await request('POST', '/api/messages', { text });
-          assert.equal(response.statusCode, 200, response.body);
-          const turnId = response.json().turnId;
-          await waitFor(turnId, 'failed|succeeded');
-          assert.equal(
-            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
-            before + 2,
-          );
-          assert.equal(fallbackChecks.length, checks + 2);
-          const rows = (
+      await t.test(
+        'authorization and term review costs stop later tools at the task check-in',
+        async () => {
+          for (const item of [
+            {
+              action: 'GMAIL_FETCH_EMAILS',
+              args: { max_results: 1 },
+              instruction: 'Read the synthetic inbox three times',
+              completed: 2,
+              comparisons: 0,
+              mailChecks: 2,
+            },
+            {
+              action: 'GMAIL_SEND_EMAIL',
+              args: {
+                recipient_email: 'budget@example.test',
+                subject: 'Synthetic update',
+                body: 'Synthetic budget check.',
+              },
+              instruction: 'Send the synthetic update three times to budget@example.test',
+              completed: 1,
+              comparisons: 1,
+              mailChecks: 0,
+            },
+          ]) {
+            const reset = await request('POST', '/api/conversation/reset', {
+              threadId: ids.at(-1),
+            });
+            assert.equal(reset.statusCode, 200, reset.body);
+            const before = executedApps.filter((action) => action === item.action).length;
+            const checks = fallbackChecks.length;
+            const compared = termChecks.length;
+            const usageIds = termUsageIds.length;
+            const text = `${item.instruction} ${randomUUID()}`;
+            asked.add(text);
+            batches.set(text, {
+              subagents: false,
+              sequential: true,
+              calls: Array.from({ length: 3 }, () => ({ action: item.action, args: item.args })),
+            });
             await pool.query(
-              "SELECT cost_usd,details->>'operation' AS operation FROM model_usage WHERE turn_id=$1",
-              [turnId],
-            )
-          ).rows;
-          assert.deepEqual(
-            rows.filter((row) => row.operation !== 'access').map((row) => row.cost_usd),
-            [0.6, 0.6],
-          );
-          assert.equal(rows.filter((row) => row.operation === 'access').length, 2);
-        } finally {
-          checkCost = undefined;
-          await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
-        }
-      });
+              'INSERT INTO spending_limits(owner_id,task_usd) VALUES($1,1) ON CONFLICT(owner_id) DO UPDATE SET task_usd=excluded.task_usd',
+              [ownerId],
+            );
+            checkCost = 0.6;
+            try {
+              const response = await request('POST', '/api/messages', { text });
+              assert.equal(response.statusCode, 200, response.body);
+              const turnId = response.json().turnId;
+              ids.push(response.json().threadId);
+              await waitFor(turnId, 'failed|succeeded');
+              assert.equal(
+                executedApps.filter((action) => action === item.action).length,
+                before + item.completed,
+              );
+              assert.equal(fallbackChecks.length, checks + item.completed);
+              assert.equal(termChecks.length, compared + item.comparisons);
+              assert.deepEqual(
+                termChecks.slice(compared),
+                fallbackChecks.slice(checks, checks + item.comparisons),
+              );
+              assert.deepEqual(await approvalsFor(turnId), []);
+              const rows = (
+                await pool.query(
+                  "SELECT id,cost_usd,details->>'operation' AS operation FROM model_usage WHERE turn_id=$1",
+                  [turnId],
+                )
+              ).rows;
+              const reviews = rows.filter((row) => row.operation === 'review');
+              assert.deepEqual(
+                reviews.map((row) => row.cost_usd),
+                [0.6, 0.6],
+              );
+              assert.equal(
+                reviews.filter((row) => termUsageIds.slice(usageIds).includes(row.id)).length,
+                item.comparisons,
+              );
+              assert.equal(
+                rows.filter((row) => row.operation === 'access').length,
+                item.mailChecks,
+              );
+              assert.equal(rows.length, 2 + item.mailChecks);
+            } finally {
+              checkCost = undefined;
+              asked.delete(text);
+              await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+            }
+          }
+        },
+      );
 
       await t.test(
         'a file attached to an action that asks is uploaded only after the owner approves it',

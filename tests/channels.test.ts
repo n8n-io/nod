@@ -11,6 +11,7 @@ import pg from 'pg';
 import { channelReply, createChannels } from '../src/server/channels.ts';
 import { createAgentReactionService } from '../src/server/agent-reactions.ts';
 import { createChatVerification } from '../src/server/chat-verification.ts';
+import { createCommunication } from '../src/server/communication.ts';
 import { createVault } from '../src/server/vault.ts';
 import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
@@ -2774,6 +2775,161 @@ test(
     await sendId('voice-without-speech');
     await fixture.channels.drain();
     assert.equal(presentations.at(-1)?.reason, 'speech_setup_required');
+  },
+);
+
+test(
+  'media recovery carries only the authenticated caption into language context without admitting a task',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_channel_media_language_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const ownerId = 'fixture-owner';
+    const threadId = await createFixtureTables(pool, ownerId);
+    await pool.query('ALTER TABLE messages ADD COLUMN suggestions jsonb');
+    await pool.query('CREATE TABLE chat_verification_submissions(message_id uuid PRIMARY KEY)');
+    const reviewed: Array<{
+      purpose: string;
+      languageContext: { userMessages: Array<{ at: string; text: string }> };
+      data: object;
+    }> = [];
+    const notice = 'Não consegui ler o anexo. Envia uma mensagem de texto.';
+    const communication = createCommunication({
+      pool,
+      ownerId,
+      review: async (_instructions, input) => {
+        reviewed.push(structuredClone(input) as (typeof reviewed)[number]);
+        return { text: notice };
+      },
+    });
+    const sent: string[] = [];
+    let submissions = 0;
+    let message: InboundMessage = {
+      channelId: 'telegram',
+      accountId: 'fixture-account',
+      senderId: 'fixture-sender',
+      messageId: 'caption-with-history',
+      threadId: 'fixture-chat',
+      text: '',
+      sentAt: new Date(),
+      attachments: [{ ...attachment('voice.ogg', 'audio/ogg', 'synthetic audio'), voice: true }],
+    };
+    const channels = await createChannels(pool, {
+      ownerId,
+      transport: {
+        channels: [
+          {
+            id: 'telegram',
+            status: 'configured',
+            accountId: 'fixture-account',
+            allowedSenderIds: ['fixture-sender'],
+            missing: [],
+          },
+        ],
+        receive: async () => ({ status: 200, body: 'ok', messages: [message] }),
+        post: async ({ text }) => {
+          sent.push(text);
+          return { id: `fixture-reply-${sent.length}` };
+        },
+        close: async () => {},
+      },
+      media: createChannelMedia({
+        artifacts: {
+          storeArtifact: async () => {
+            throw new Error('Failed media must not be saved.');
+          },
+        },
+        speech: { transcribe: async () => `unaccepted transcript ${'x'.repeat(100_001)}` },
+      }),
+      modelConfigured: () => true,
+      activeThread: async () => ({ id: threadId }),
+      present: communication.present,
+      submit: async () => {
+        submissions++;
+        throw new Error('Failed media must not start a task.');
+      },
+      subscribe: () => () => {},
+      intervalMs: 600_000,
+    });
+    const app = Fastify();
+    channels.registerRoutes(app);
+    t.after(() => app.close());
+    const addHistory = async (text: string, at: Date, owner = ownerId) => {
+      const id = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'user',$4,$5)",
+        [id, owner, threadId, text, at],
+      );
+      return id;
+    };
+    const now = Date.now();
+    await addHistory('Please reply in English.', new Date(now - 3000));
+    await addHistory('Foreign owner language request.', new Date(now - 1000), 'other-owner');
+    const privateId = await addHistory('483729', new Date(now - 2000));
+    await pool.query('INSERT INTO chat_verification_submissions VALUES($1)', [privateId]);
+    const caption =
+      'Responde em português. password=fixture-caption-secret https://example.test/private /vault/private-caption';
+    message = { ...message, text: caption, sentAt: new Date(now) };
+    const send = async () => {
+      assert.equal(
+        (await app.inject({ method: 'POST', url: '/api/webhooks/telegram', payload: {} }))
+          .statusCode,
+        200,
+      );
+      await channels.drain();
+    };
+    await send();
+    await send();
+    assert.equal(reviewed.length, 1);
+    assert.equal(reviewed[0].purpose, 'media_failure');
+    assert.deepEqual(reviewed[0].languageContext.userMessages, [
+      { at: new Date(now - 3000).toISOString(), text: 'Please reply in English.' },
+      { at: new Date(now).toISOString(), text: 'Responde em português. password=[redacted]' },
+    ]);
+    assert.deepEqual(reviewed[0].data, { kind: 'media_failure', reason: 'text_too_long' });
+    assert.deepEqual(sent, [notice]);
+    await pool.query("DELETE FROM messages WHERE role='user'");
+    message = {
+      ...message,
+      messageId: 'caption-no-history',
+      text: 'Olá, responde em português.',
+      sentAt: new Date(now + 1),
+    };
+    await send();
+    assert.deepEqual(reviewed[1].languageContext.userMessages, [
+      { at: new Date(now + 1).toISOString(), text: message.text },
+    ]);
+    await addHistory('Réponds en français.', new Date(now + 3));
+    message = { ...message, messageId: 'delayed-caption', sentAt: new Date(now + 2) };
+    await send();
+    assert.equal(reviewed[2].languageContext.userMessages.at(-1)!.text, 'Réponds en français.');
+    for (const text of ['Código: 483729', 'cvv: 123']) {
+      message = { ...message, messageId: randomUUID(), text };
+      await send();
+      assert.deepEqual(reviewed.at(-1)!.languageContext.userMessages, [
+        { at: new Date(now + 3).toISOString(), text: 'Réponds en français.' },
+      ]);
+    }
+    assert.equal(submissions, 0);
+    assert.deepEqual(sent, Array(5).fill(notice));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 0);
+    const stored = await pool.query('SELECT text,attachments FROM channel_inbox');
+    assert.ok(stored.rows.every((row) => row.text === '' && row.attachments.length === 0));
+    const queued = await pool.query('SELECT presentation FROM channel_outbox');
+    assert.doesNotMatch(
+      JSON.stringify([reviewed, stored.rows, queued.rows]),
+      /fixture-caption-secret|private-caption|example\.test|unaccepted transcript|483729|cvv: 123|Foreign owner/,
+    );
   },
 );
 

@@ -7,6 +7,20 @@ import type { Run } from './trace.ts';
 
 type Judged = Extract<Expectation, { kind: 'judge' }>;
 
+export function productExpectations(definition: Scenario) {
+  const explanations = definition.productCriterionExplanations ?? {};
+  for (const id of Object.keys(explanations))
+    if (!productCriteria.some((item) => item.id === id))
+      throw new Error(`Unknown product criterion: ${id}`);
+  return (productCriteria as Judged[]).map((item) => ({
+    ...item,
+    criterion:
+      explanations[item.id] === undefined
+        ? item.criterion
+        : `${item.criterion}\n\n${explanations[item.id]}`,
+  }));
+}
+
 export async function grade(options: {
   definition: Scenario;
   world: World;
@@ -16,6 +30,7 @@ export async function grade(options: {
   skipJudges: boolean;
 }) {
   const { definition, world, trace, judge, truth } = options;
+  const product = productExpectations(definition);
   const checks: CheckResult[] = [];
   const task: Judged[] = [];
   const rescued = new Set<string>();
@@ -60,7 +75,7 @@ export async function grade(options: {
   if (!options.skipJudges) {
     for (const [group, list, standardText] of [
       ['task', task, undefined],
-      ['product', productCriteria as Judged[], standard],
+      ['product', product, standard],
     ] as const) {
       if (!list.length) continue;
       try {

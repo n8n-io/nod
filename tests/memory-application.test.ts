@@ -29,6 +29,7 @@ import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import { termsInstructions } from '../src/server/trust-terms.ts';
 
 type Step = {
   tool: string;
@@ -162,8 +163,14 @@ test(
         memoryCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, input }) => {
+          curate: async ({ task, instructions, input }) => {
             if (task === 'review') reviews.push(JSON.stringify(input));
+            if (task === 'review' && instructions === termsInstructions)
+              return {
+                verdict: 'compatible',
+                comparisons: [],
+                reason: 'Synthetic memory terms unchanged.',
+              };
             if (task === 'remember') {
               rememberInputs.push(JSON.stringify(input));
               return rememberAnswer(input as Remembered);

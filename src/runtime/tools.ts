@@ -175,7 +175,7 @@ const presentation = Type.Unsafe<Presentation>({
 export const toolDefinitions = {
   set_status: defineTool(
     'set_status',
-    'Set the live activity line for the current work. Before a new phase, describe its goal in one short plain-text line, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Use the conversation language. Do not name tools, APIs, commands or internal steps. Do not claim a result. Update only when the activity changes. This replaces the status beside the typing dots and the Telegram live draft. It sends no chat message or notification.',
+    'Set the live activity line for the current work. Before a new phase, describe its goal in one short plain-text line, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Use the conversation language. Do not name tools, APIs, commands or internal steps. Do not claim a result. Update only when the activity changes. This replaces the status beside the typing dots and the Telegram progress display. It sends no chat message or notification.',
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
   ),
   skills: defineTool(
