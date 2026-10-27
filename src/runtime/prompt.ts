@@ -22,7 +22,7 @@ const replyStyle =
 const liveStatusGuide =
   'For work the owner requested in chat or a saved task, use set_status before you start and when the main activity changes. Write one short line in the conversation language about the goal, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Name the useful work, not tools, APIs, commands or internal checks. Do not claim results or use send_message for this line. The line replaces a live indicator without another notification. In Telegram direct chat, first write one short opening sentence about the task before your first tool call. Telegram uses that first message for quoted live progress. Do not add an opening message when you start a saved task; its start message already serves this purpose. In other channels, do not send a separate opening message. Keep routine progress out of chat. Private event work and subagents must not publish status.';
 const channelGuide =
-  'The supported ways to chat with Nod are Nod web or desktop, and Telegram or WhatsApp when connected through Channels. App connections provide access to app data and actions; they do not add chat channels. App read and write access depends on available tools and permissions. Do not infer read-only access from a catalog description or connected status.';
+  'Chat with Nod on web or desktop, or Telegram or WhatsApp connected through Channels. Apps provide data access and actions, not chat channels. Read and write support depends on tools and permissions. Do not infer read-only access from catalog copy or rank setup options without evidence.';
 const firstConversationGuide =
   'When the owner answers your opening question about what they are working on, get to know them through the conversation. Respond warmly to what they said and ask at most one useful question about their current focus, goal or what eats their time. Skip what you already know, and never turn this into a required interview. When you see one concrete thing you could take off their plate, offer it once. If they ask for work, start that work instead of continuing questions. If they are unsure or change the subject, follow their lead. Their answers are ordinary chat messages and follow the normal memory rules. Desktop notifications are an optional delivery setting controlled by the operating system and Settings; they are distinct from permission to monitor apps, notificationRule, schedules or actions. Never infer any of those permissions from enabling desktop notifications.';
 
@@ -49,7 +49,7 @@ Follow an explicit conversation-language instruction; otherwise use the latest o
 
 export function compactOwnerContext(context: RuntimeContext) {
   return `${userFormat(context, formatExample)}
-${connectedAppsContext(context)}
+${connectedAppsContext(context, true)}
 Saved memory and learned skills are available through the memory and skills tools. Read relevant entries when needed.
 Connected MCP namespaces and guide names: ${
     mcpNamespaces(context.mcpServers ?? [])
@@ -132,19 +132,25 @@ function mcpContext(servers: NonNullable<RuntimeContext['mcpServers']>) {
     .join('');
 }
 
-function connectedAppsContext(context: RuntimeContext) {
-  return `Saved connected apps are last-known availability, not verified access or permission. Use manage_apps list for account details, unavailable accounts, or state not established here before offering setup.
+function connectedAppsContext(context: RuntimeContext, compact = false) {
+  return `${compact ? 'Connected apps (last-known access, not permission; use manage_apps list for accounts):' : 'Last-known app availability, not verified access or permission. Check manage_apps list for account details or unknown state before offering setup.'}
 ${untrustedBlock(
   'connected app availability',
   context.connectedApps
-    ? JSON.stringify(
-        context.connectedApps.map(({ slug, name, status, access }) => ({
-          slug,
-          name,
-          status,
-          access,
-        })),
-      )
+    ? compact
+      ? [
+          ...new Set(
+            context.connectedApps.map(({ slug, access }) => `${slug}: ${access.join(', ')}`),
+          ),
+        ].join('\n') || '(none currently connected)'
+      : JSON.stringify(
+          context.connectedApps.map(({ slug, name, status, access }) => ({
+            slug,
+            name,
+            status,
+            access,
+          })),
+        )
     : 'unknown',
 )}`;
 }

@@ -194,6 +194,9 @@ test('small models and routers complete tool discovery inside the endpoint conte
                 (await readFile(join(directory, 'synthetic.png'))).toString('base64'),
               ),
             );
+            if (id === 'fixture-vision')
+              for (const slug of ['gmail', 'slack', 'googlecalendar'])
+                assert.ok(JSON.stringify(body).includes(slug));
           }
           if (id === 'fixture-resumed' && requests === 0) {
             assert.ok(JSON.stringify(body).includes('Synthetic retained recent turn.'));
@@ -308,7 +311,19 @@ test('small models and routers complete tool discovery inside the endpoint conte
             }
           : {}),
         ...(id === 'fixture-vision'
-          ? { attachments: [{ path: join(directory, 'synthetic.png'), mimeType: 'image/png' }] }
+          ? {
+              attachments: [{ path: join(directory, 'synthetic.png'), mimeType: 'image/png' }],
+              connectedApps: [
+                { slug: 'gmail', name: 'Gmail' },
+                { slug: 'slack', name: 'Slack' },
+                { slug: 'googlecalendar', name: 'Google Calendar' },
+              ].map((app) => ({
+                ...app,
+                status: 'connected' as const,
+                access: ['api' as const],
+                triggersEnabled: false,
+              })),
+            }
           : {}),
         publish: async (path) => {
           const bytes = await readFile(join(directory, path));
