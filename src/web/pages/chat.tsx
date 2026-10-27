@@ -118,7 +118,7 @@ function TaskCards({
   id: string;
   suggestions: TaskSuggestions;
   connections: Connection[];
-  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'sent' | 'done';
+  status(task: SuggestedTask): 'idle' | 'working' | 'needs_you' | 'waiting' | 'sent' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask, position: number): void;
 }) {
@@ -193,8 +193,10 @@ function TaskCards({
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                       On it…
                     </span>
-                  ) : state === 'waiting' ? (
-                    <span className="task-state">Waiting for you</span>
+                  ) : state === 'waiting' || state === 'needs_you' ? (
+                    <span className="task-state">
+                      {state === 'needs_you' ? 'Waiting for you' : 'Waiting'}
+                    </span>
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">

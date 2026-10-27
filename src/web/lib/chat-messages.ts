@@ -89,6 +89,8 @@ export function suggestedTaskStatus(
     if (tasks.every((item) => item.status === 'done')) return 'done';
     if (tasks.some((item) => item.status === 'failed' || item.status === 'cancelled'))
       return 'idle';
+    if (tasks.some((item) => item.status === 'needs_you' || item.status === 'stalled'))
+      return 'needs_you';
     return tasks.some((item) => item.status === 'queued' || item.status === 'working')
       ? 'working'
       : 'waiting';
@@ -96,6 +98,6 @@ export function suggestedTaskStatus(
   const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
   if (!turn) return persistedIds.has(sent.id) ? 'sent' : 'working';
   if (turn.status === 'succeeded') return 'sent';
-  if (turn.status === 'waiting') return 'waiting';
+  if (turn.status === 'waiting') return 'needs_you';
   return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
 }

@@ -7407,6 +7407,8 @@ test('a first task stays open after its chat turn ends and follows its own saved
   state.turns = [];
   assert.equal(status(), 'working');
   task.status = 'needs_you';
+  assert.equal(status(), 'needs_you');
+  task.status = 'waiting';
   assert.equal(status(), 'waiting');
   task.status = 'done';
   assert.equal(status(), 'done');
