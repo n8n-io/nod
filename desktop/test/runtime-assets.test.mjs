@@ -44,6 +44,24 @@ import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
 
+test('server release helpers load without desktop build dependencies', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-server-release-import-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const scripts = join(root, 'desktop', 'scripts');
+  await mkdir(scripts, { recursive: true });
+  for (const name of ['release-tools.mjs', 'runtime-inputs.mjs', 'runtime-build-lock.json'])
+    await copyFile(new URL(`../scripts/${name}`, import.meta.url), join(scripts, name));
+  await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `await import(${JSON.stringify(pathToFileURL(join(scripts, 'release-tools.mjs')).href)})`,
+    ],
+    { cwd: root, env: { PATH: process.env.PATH } },
+  );
+});
+
 test('speech distribution includes matching source and license and rejects changed archives', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-speech-sources-'));
   t.after(() => rm(root, { recursive: true, force: true }));

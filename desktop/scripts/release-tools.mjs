@@ -6,23 +6,17 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { runtimePlatform } from './runtime-inputs.mjs';
-import {
-  flipFuses,
-  FuseState,
-  FuseVersion,
-  FuseV1Options,
-  getCurrentFuseWire,
-} from '@electron/fuses';
-
-const productionFuses = {
-  [FuseV1Options.RunAsNode]: true,
-  [FuseV1Options.EnableCookieEncryption]: true,
-  [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-  [FuseV1Options.EnableNodeCliInspectArguments]: false,
-  [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
-};
 
 export async function hardenElectron(application) {
+  const { flipFuses, FuseState, FuseVersion, FuseV1Options, getCurrentFuseWire } =
+    await import('@electron/fuses');
+  const productionFuses = {
+    [FuseV1Options.RunAsNode]: true,
+    [FuseV1Options.EnableCookieEncryption]: true,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
+  };
   await flipFuses(application, { version: FuseVersion.V1, ...productionFuses });
   const actual = await getCurrentFuseWire(application);
   for (const [fuse, enabled] of Object.entries(productionFuses))

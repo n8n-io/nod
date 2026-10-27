@@ -41,6 +41,8 @@ Packaged windows disable DevTools. The production menu excludes developer tools 
 
 Before signing or making an installer, both platform builds disable Node option injection, Node inspector flags, and extra file-protocol privileges. They enable cookie encryption and check the binary settings. Node execution stays enabled because the audio decoder runs in a separate child process.
 
+The runtime dependency overrides use patched Sharp and Undici versions. A single Sharp version avoids duplicate native image libraries.
+
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
