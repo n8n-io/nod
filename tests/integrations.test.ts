@@ -2864,7 +2864,7 @@ test(
       dataRoot: root,
       ownerId: 'local-development',
       keyStore: installationKeyStore,
-      checkpoint: fixtureIdentityCheckpoint,
+      checkpoint: createIntegrationIdentityCheckpoint(f.pool, 'local-development'),
       browser,
       url: 'https://proxy.example.test',
       request: async (input, init) => {
