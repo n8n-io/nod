@@ -427,7 +427,7 @@ export async function collect(options: {
           ...tools.flatMap((call) => [
             {
               at: call.at,
-              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : 1200)}`,
+              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : Math.min(outputCap, 1200))}`,
             },
             ...(call.finishedAt !== undefined || call.output
               ? [
@@ -443,11 +443,11 @@ export async function collect(options: {
           .map((item) => `[${new Date(item.at).toISOString()}] ${item.text}`)
           .join('\n\n');
       };
-      for (const cap of [limit, 6000, 3000, 1500]) {
+      for (const cap of [limit, 6000, 3000, 1500, 800, 400, 200]) {
         const text = build(cap);
         if (text.length <= limit) return text;
       }
-      return clip(build(800), limit);
+      throw new Error('The complete conversation and tool records exceed the transcript limit.');
     },
     groundTruth() {
       const failedTurns = turns.filter(

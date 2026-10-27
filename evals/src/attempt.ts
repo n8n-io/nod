@@ -219,7 +219,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       judgeReplies: llm.replies,
       judgeRequests: llm.requests,
       final: trace.final,
-      transcript: trace.transcript(60_000),
+      transcript: trace.transcript(Infinity),
       groundTruth: truth,
     };
     return result;

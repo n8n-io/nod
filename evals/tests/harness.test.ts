@@ -3161,6 +3161,36 @@ test('persisted background sessions and child captures count each request and to
   assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
   ledger[0].cost_usd = null;
   assert.deepEqual((await read()).usage, { modelCalls: 4, tokens: 36, costUsd: null });
+  const start = Date.parse('2026-10-22T22:00:00Z');
+  const delivered = 'The complete verified reply drafts are ready for review.';
+  run.messages.push(
+    { role: 'assistant', text: delivered, at: start + 20_500, turnId: 'background' },
+    {
+      role: 'assistant',
+      text: 'Want this every Monday?',
+      at: start + 41_000,
+      turnId: 'background',
+    },
+  );
+  for (let index = 0; index < 40; index++)
+    run.tools.push({
+      id: `read-${index}`,
+      name: 'apps',
+      turnId: 'background',
+      sessionId: 'background',
+      input: { action: 'READ_RECORD', record: 's'.repeat(3000) },
+      output: 'r'.repeat(5000),
+      isError: false,
+      at: start + index * 1000,
+      finishedAt: start + index * 1000 + 500,
+      lead: '',
+    });
+  const crowded = run.transcript();
+  assert.ok(crowded.length <= 60_000);
+  assert.ok(crowded.includes(delivered));
+  assert.equal((crowded.match(/TOOL CALL apps/g) ?? []).length, 43);
+  assert.throws(() => run.transcript(100), /complete conversation/);
+  assert.ok(run.transcript(Infinity).includes('r'.repeat(5000)));
 });
 
 test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {
