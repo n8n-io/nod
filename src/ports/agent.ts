@@ -104,6 +104,7 @@ export interface RuntimeContext {
     sources: Array<Omit<import('./proactivity.ts').ObservationSource, 'revision'>>;
     read(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
     update(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+    screen?(owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean>;
   };
   threadId: string;
   turnId: string;
@@ -303,6 +304,8 @@ export interface AgentAudioInput {
 export interface AgentSessionOptions extends ExecutionScope {
   restricted?: boolean;
   ephemeral?: boolean;
+  restartable?: boolean;
+  keepWarm?(): Promise<boolean>;
   systemPrompt: string;
   ownerContext?: string;
   compactInstructions?: { systemPrompt: string; ownerContext?: string };

@@ -131,6 +131,7 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
+  keepWarm?(threadId: string): Promise<boolean>;
   analyzeImages?(
     images: AgentImage[],
     request: string,
@@ -440,6 +441,20 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
+      if (
+        await context.proactivity?.screen?.(
+          {
+            notificationRule: context.notificationRule ?? null,
+            rules: context.rules ?? null,
+            memory: context.memory ?? '',
+            timeZone: context.timeZone ?? null,
+          },
+          signal,
+        )
+      ) {
+        completed = true;
+        return { status };
+      }
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
       const rootWorkspace = dependencies.workspace.open(context);
       let workspace = rootWorkspace;
@@ -780,7 +795,10 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
-        ...(context.proactivity ? { restricted: true } : {}),
+        ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
+        ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
+          ? { keepWarm: () => dependencies.keepWarm!(threadId) }
+          : {}),
         systemPrompt: system,
         ownerContext: ownerContext(context),
         compactInstructions,

@@ -54,7 +54,7 @@ Tell Nod "Fewer of these" and it uses that next time. To stop preparation itself
 
 ## What Nod reads
 
-Nod reads every app you connect, with nothing to turn on. Gmail and the work Nod saved for you are read as soon as they change, and your primary Google Calendar is checked for changes every 30 minutes. Other apps, including MCP and HTTP connections, are read through their own read tools every 30 minutes, and only calls that read can run. A failed or partial check never means nothing needs you.
+Nod reads every app you connect, with nothing to turn on. Gmail is checked for new mail every 15 minutes, the work Nod saved for you is read as soon as it changes, and your primary Google Calendar is checked for changes every 30 minutes. Other apps, including MCP and HTTP connections, are read through their own read tools every 30 minutes, and only calls that read can run. A failed or partial check never means nothing needs you.
 
 ## What stays private
 

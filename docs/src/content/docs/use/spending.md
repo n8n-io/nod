@@ -63,7 +63,7 @@ A task checks in with you when its spending since your last message to it passes
 
 ![Nod in chat: the first draft is ready and both revisions remain, the run has reached the $5 check-in, and Nod asks whether to continue. The reply is yes, keep going.](../../../assets/screens/trust-check-in.png)
 
-The count covers every turn of the task and its helpers, so a task that works in small steps over several days checks in too. Chat, schedules, and the background observer check in the same way. The persistent observer counts across turns until you answer its check-in.
+The count covers every turn of the task and its helpers, so a task that works in small steps over several days checks in too. Chat, schedules, and the background observer check in the same way. The observer counts across its turns until you answer its check-in.
 
 Trust checks, confirmation fact checks and the [decision check](/connect/models/#decision-checks) count toward the monthly limit. Those made during a running task, and its other model calls, also count toward its check-in. The approval-reply check runs before the task resumes. Each request counts once.
 

@@ -166,6 +166,8 @@ For Anthropic API models, Nod moves the system text's cache marker to that same 
 
 ChatGPT subscriptions and other model APIs keep their existing cache settings.
 
+When a model's cache lifetime is known, as for Anthropic, the chat's Pi session stays open after a turn so Pi can keep a large conversation's cache warm for up to 30 minutes. Each refresh is recorded in Usage.
+
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 
 - A session gets the full current owner context with its first turn, and again with the first turn after it changes. The newest copy gives the current values.

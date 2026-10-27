@@ -238,7 +238,7 @@ export function createLedger({
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'vision'
+                request.task === 'vision' || request.task === 'attention'
                   ? 'agent'
                   : request.task === 'review' || request.task === 'access'
                     ? 'review'

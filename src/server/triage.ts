@@ -22,20 +22,22 @@ export function createTriage(options: {
     await options.sweep?.();
     await options.due().catch((error: unknown) => logFailure('proactive_due', error));
   }
-  async function triageEvent(
+  async function recordEvent(
     summary: string,
     _eventId: string,
     current?: (client: PoolClient) => Promise<boolean>,
     connectionId?: string | string[],
   ) {
     const sources = Array.isArray(connectionId) ? connectionId : connectionId ? [connectionId] : [];
-    if (!sources.length) return;
-    const accepted = await transaction(async (client) => {
+    if (!sources.length) return false;
+    return transaction(async (client) => {
       if (current && !(await current(client))) return false;
       for (const source of new Set(sources)) await options.signal(source, client, summary);
       return true;
     }, pool);
-    if (!accepted) return;
+  }
+  async function triageEvent(...event: Parameters<typeof recordEvent>) {
+    if (!(await recordEvent(...event))) return;
     const queued = await options.due();
     return typeof queued === 'string' ? queued : undefined;
   }
@@ -57,6 +59,7 @@ export function createTriage(options: {
   return {
     getPreferences,
     updatePreferences,
+    recordEvent,
     triageEvent,
     heartbeat,
     initializeHeartbeat,

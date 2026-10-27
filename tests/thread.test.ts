@@ -4852,6 +4852,48 @@ test(
               }
             });
             await t.test(
+              'screening ends a quiet batch, and an escalated batch goes back unread to the full check',
+              async () => {
+                await reset();
+                let verdict = false;
+                const screening = createProactivity({
+                  ...options,
+                  curator: {
+                    id: 'fixture',
+                    configured: true,
+                    curate: async () => ({ attention: verdict }),
+                  },
+                });
+                const screen = async () => {
+                  version = randomUUID();
+                  screening.release(turnId);
+                  await db.pool.query(
+                    'UPDATE proactive_sources SET claimed_turn=$3,signal_version=signal_version+1 WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId, turnId],
+                  );
+                  const quiet = await (await screening.context(ref))!.screen!(
+                    {},
+                    new AbortController().signal,
+                  );
+                  const { dirty } = (
+                    await db.pool.query(
+                      'SELECT signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                      [ownerId, sourceId],
+                    )
+                  ).rows[0];
+                  return [quiet, dirty];
+                };
+                await transaction((client) => engine.signal(sourceId, client), db.pool);
+                assert.deepEqual(await screen(), [true, false]);
+                verdict = true;
+                assert.deepEqual(await screen(), [false, true]);
+                verdict = false;
+                await save({ matterKey: 'screened-matter' });
+                assert.deepEqual(await screen(), [false, true]);
+                screening.release(turnId);
+              },
+            );
+            await t.test(
               'managed event bursts keep one owner job and retain later signals',
               async () => {
                 await reset();
@@ -5325,6 +5367,20 @@ test(
                   ).rows[0].count,
                 );
                 assert.equal(after, before + 1);
+                const nextCheck = async () =>
+                  (
+                    await db.pool.query(
+                      'SELECT next_check FROM proactive_issues WHERE owner_id=$1',
+                      [ownerId],
+                    )
+                  ).rows[0].next_check;
+                assert.equal(await nextCheck(), null);
+                await db.pool.query(
+                  "UPDATE turns SET status='failed' WHERE owner_id=$1 AND starts_with(source_id,'proactivity:')",
+                  [ownerId],
+                );
+                await engine.due();
+                assert.notEqual(await nextCheck(), null);
                 const resumed = await thread.enqueueTurn('Synthetic read approval resume', {
                   source: 'resume',
                   parentTurnId: turnId,
