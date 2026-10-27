@@ -26,7 +26,7 @@ import {
   safeMessageLink,
   setupLink,
 } from '../lib/message-links';
-import { rehypeLocalLinks, remarkLinkDestinations } from '../lib/markdown';
+import { rehypeLocalLinks, rehypeMessageBreaks, remarkLinkDestinations } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
@@ -112,7 +112,12 @@ export const MessageText = memo(function MessageText({
       <div className="message-text" ref={content}>
         <Markdown
           remarkPlugins={[remarkGfm, remarkLinkDestinations]}
-          rehypePlugins={[rehypeRaw, rehypeLocalLinks, [rehypeSanitize, messageSchema]]}
+          rehypePlugins={[
+            rehypeRaw,
+            rehypeMessageBreaks,
+            rehypeLocalLinks,
+            [rehypeSanitize, messageSchema],
+          ]}
           components={{
             table: ({ node, ...props }) => (
               <CopyBlock table>

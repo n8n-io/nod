@@ -12,6 +12,23 @@ export function remarkLinkDestinations() {
   };
 }
 
+export function rehypeMessageBreaks() {
+  return (tree: Root) => {
+    visit(tree, 'element', (paragraph) => {
+      if (['pre', 'code', 'table'].includes(paragraph.tagName)) return SKIP;
+      if (paragraph.tagName !== 'p') return;
+      visit(paragraph, (node, index, parent) => {
+        if (node.type !== 'element') return;
+        if (node.tagName === 'pre' || node.tagName === 'code') return SKIP;
+        if (node.tagName !== 'br' || index === undefined) return;
+        const next = parent?.children[index + 1];
+        if (next?.type === 'text' && next.value.startsWith('\n')) next.value = next.value.slice(1);
+      });
+      return SKIP;
+    });
+  };
+}
+
 function unlinkCode(node: Element) {
   node.children = node.children.flatMap((child) => {
     if (child.type !== 'element') return [child];
