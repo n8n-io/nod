@@ -1745,6 +1745,53 @@ test('visual browser actions fence the session when releasing the pointer fails'
 });
 
 test(
+  'native browser pages cannot request notifications or push across origins and reopened sessions',
+  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'nod-notifications-native-'));
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<button id="go" onclick="this.textContent=\'Accepted\'">Continue</button>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      for (const host of ['127.0.0.1', 'localhost', '127.0.0.1']) {
+        await computer.act('notifications', {
+          action: 'open',
+          url: `http://${host}:${address.port}`,
+        });
+        await computer.act('notifications', { action: 'click', selector: '#go' });
+        const result = await computer.act('notifications', {
+          action: 'evaluate',
+          script:
+            '({ secure: isSecureContext, notifications: typeof Notification, push: typeof PushManager, button: document.querySelector("#go").textContent })',
+        });
+        assert.deepEqual(JSON.parse(result.text.slice(result.text.indexOf('\n') + 1)), {
+          secure: true,
+          notifications: 'undefined',
+          push: 'undefined',
+          button: 'Accepted',
+        });
+        await computer.close('notifications');
+      }
+    } finally {
+      await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'native container browser stays responsive, streams live frames and refuses passkeys after heavy stderr output',
   {
     skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',

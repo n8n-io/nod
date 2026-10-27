@@ -558,7 +558,7 @@ export function createAgentBrowserComputer(options: {
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled,--disable-features=BackForwardCache' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-notifications,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled,--disable-features=BackForwardCache,NativeNotifications' +
             `,--disk-cache-dir=${cachePath(state)},--disk-cache-size=67108864` +
             (locale ? `,--accept-lang=${locale}` : '') +
             (sandbox ? '' : ',--no-sandbox') +

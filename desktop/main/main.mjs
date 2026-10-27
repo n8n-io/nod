@@ -52,6 +52,7 @@ const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
   ? join(process.resourcesPath, 'engine')
   : resolve(desktopRoot, '..');
+const notificationIcon = join(engineRoot, app.isPackaged ? 'dist/web' : 'public', 'nod-logo.png');
 const appPages = JSON.parse(readFileSync(join(engineRoot, 'src/shared/app-pages.json'), 'utf8'));
 let pendingAppPath = process.argv.map((value) => appOpenPath(value, appPages)).find(Boolean);
 let appLinksReady = false;
@@ -236,6 +237,7 @@ const readinessNotice = createReadinessNotice({
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
       title: 'Nod is ready',
+      icon: notificationIcon,
       body: onboardingCompleted
         ? 'Your workspace and browser are ready.'
         : 'Your computer is ready. Come back to finish setup.',
@@ -393,6 +395,7 @@ async function notifyAssistantMessage(message, threadId) {
     return;
   const notification = new Notification({
     title: 'Nod',
+    icon: notificationIcon,
     body: assistantNotificationPreview(message, knownSecrets),
   });
   displayedNotifications.add(notification);
@@ -1393,6 +1396,7 @@ async function notifyUpdate(candidate) {
   if (isQuietTime((await appPreferences.get()).preferences)) return true;
   const notification = new Notification({
     title: `Nod ${candidate.version} is ready`,
+    icon: notificationIcon,
     body: 'Restart Nod to use the new version.',
   });
   displayedNotifications.add(notification);

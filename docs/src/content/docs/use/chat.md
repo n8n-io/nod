@@ -102,6 +102,8 @@ Quick answers, single lookups, brief summaries of supplied content and simple ac
 
 ## Notice new messages on macOS
 
+Desktop notification banners use Nod's name and icon. Select a reply notification to open its message in Chat.
+
 With desktop notifications enabled, Nod's Dock badge shows how many replies you haven't read, up to **99+**. It stays visible after a banner disappears, while the window is closed, and when you reopen Nod. Read the latest messages in Chat to clear it; opening another screen doesn't clear it.
 
 A new reply briefly bounces the Dock icon while Nod is in the background. Quiet hours suppress banners and bouncing, but keep the unread badge. Turning off desktop notifications clears the badge; turning them on restores unread replies.
