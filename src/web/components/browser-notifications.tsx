@@ -20,6 +20,8 @@ function useNotificationChoice(ownerId: string) {
       active: true,
       pending: false,
       epoch: sessionStore.getSnapshot().epoch,
+      consent: browserNotificationStatus(ownerId),
+      consentGeneration: 0,
       confirmations: new Set<Notification>(),
     }),
     [ownerId],
@@ -36,10 +38,14 @@ function useNotificationChoice(ownerId: string) {
     setBusy(false);
     setError('');
     const unsubscribe = subscribeBrowserNotifications(() => {
-      if (!browserNotificationStatus(ownerId).enabled) {
+      const consent = browserNotificationStatus(ownerId);
+      if (!consent.enabled) {
+        if (scope.consent.enabled || scope.consent.choice !== consent.choice)
+          scope.consentGeneration++;
         for (const notification of scope.confirmations) notification.close();
         scope.confirmations.clear();
       }
+      scope.consent = consent;
       refresh((value) => value + 1);
     });
     return () => {
@@ -53,10 +59,12 @@ function useNotificationChoice(ownerId: string) {
     scope.pending = true;
     setBusy(true);
     setError('');
+    const consentGeneration = scope.consentGeneration;
+    const isAllowed = () => isCurrent() && scope.consentGeneration === consentGeneration;
     try {
-      const notification = await setBrowserNotifications(ownerId, enabled, isCurrent);
+      const notification = await setBrowserNotifications(ownerId, enabled, isAllowed);
       if (notification) {
-        if (!isCurrent()) notification.close();
+        if (!isAllowed()) notification.close();
         else {
           scope.confirmations.add(notification);
           notification.onclose = () => scope.confirmations.delete(notification);

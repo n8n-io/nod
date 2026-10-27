@@ -3276,17 +3276,25 @@ test('browser notifications close after delayed display when consent or their ow
     await import('../src/web/components/browser-notifications.tsx');
   const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
   const { setBrowserNotifications } = await import('../src/web/lib/browser-notifications.ts');
-  f.setPermission('granted');
+  let grant: (permission: NotificationPermission) => void = () => {};
+  f.respondPermission(() => new Promise((resolve) => (grant = resolve)));
   f.delayShow(true);
   const prompt = () =>
     f.render(f.createElement(BrowserNotificationPrompt, { key: f.owner(), ownerId: f.owner() }));
   await prompt();
   await f.click(0);
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  await f.act(async () => grant('granted'));
+  assert.equal(f.permissionRequests(), 1);
   const disabledConfirmation = f.notifications.at(-1)!;
+  assert.ok(disabledConfirmation);
   await f.act(async () => setBrowserNotifications(f.owner(), false));
   assert.equal(disabledConfirmation.closed, 0);
+  await f.act(async () => setBrowserNotifications(f.owner(), true));
+  const reenabledConfirmation = f.notifications.at(-1)!;
   disabledConfirmation.show();
-  assert.equal(disabledConfirmation.visible, false);
+  reenabledConfirmation.show();
+  const confirmationVisibility = [disabledConfirmation.visible, reenabledConfirmation.visible];
   f.setOwner('notification-delayed-owner');
   await prompt();
   await f.click(0);
@@ -3339,8 +3347,19 @@ test('browser notifications close after delayed display when consent or their ow
   const disabledReply = f.notifications.at(-1)!;
   await f.act(async () => setBrowserNotifications(f.owner(), false));
   assert.equal(disabledReply.closed, 0);
+  await f.act(async () => setBrowserNotifications(f.owner(), true));
+  const beforeReply = f.notifications.length;
+  add();
+  await render();
+  assert.equal(f.notifications.length, beforeReply + 1);
+  const reenabledReply = f.notifications.at(-1)!;
+  assert.notEqual(reenabledReply, disabledReply);
   disabledReply.show();
-  assert.equal(disabledReply.visible, false);
+  reenabledReply.show();
+  assert.deepEqual(
+    { confirmationVisibility, replyVisibility: [disabledReply.visible, reenabledReply.visible] },
+    { confirmationVisibility: [false, true], replyVisibility: [false, true] },
+  );
 });
 
 test('browser notification deduplication delivers distinct equal-time replies and rejects either replay', async (t) => {
