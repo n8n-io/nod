@@ -98,6 +98,11 @@
   scrollbar-gutter: stable both-edges;
   scroll-padding-bottom: calc(var(--ob-navigation-height) + 24px);
 }
+.ob-frame-footer {
+  flex-shrink: 0;
+  padding: 0 24px 24px;
+  text-align: center;
+}
 .ob-main:focus,
 .ob-desktop-preference:focus {
   outline: none;
