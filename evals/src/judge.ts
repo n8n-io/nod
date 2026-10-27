@@ -4,6 +4,7 @@ import { parseModel, type Model } from './stack.ts';
 
 export interface Llm {
   model: Model;
+  replies?: string[];
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
   fallbackCalls?(): number;
@@ -26,8 +27,10 @@ export async function createLlm(model: Model): Promise<Llm> {
   let tokens = 0;
   let cost = 0;
   let costKnown = false;
+  const replies: string[] = [];
   return {
     model,
+    replies,
     spent: () => ({ tokens, costUsd: costKnown ? cost : null }),
     async complete(system, input, maxTokens = 4096) {
       let failure = '';
@@ -46,10 +49,13 @@ export async function createLlm(model: Model): Promise<Llm> {
           cost += reply.usage.cost.total;
           costKnown = true;
         }
-        if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted')
-          return reply.content
+        if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted') {
+          const text = reply.content
             .flatMap((block) => (block.type === 'text' ? [block.text] : []))
             .join('');
+          replies.push(text);
+          return text;
+        }
         failure = String((reply as { errorMessage?: string }).errorMessage ?? reply.stopReason);
         if (!transient.test(failure)) break;
       }

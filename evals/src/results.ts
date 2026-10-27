@@ -46,6 +46,7 @@ export interface AttemptResult {
   toolErrors: number;
   firstReplySeconds: number | null;
   judgeCostUsd: number | null;
+  judgeReplies?: string[];
   final: string;
   transcript: string;
   groundTruth: string;

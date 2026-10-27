@@ -193,6 +193,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
       judgeCostUsd: judgeLlm.spent().costUsd,
+      judgeReplies: judgeLlm.replies,
       final: trace.final,
       transcript: trace.transcript(60_000),
       groundTruth: truth,

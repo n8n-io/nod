@@ -26,7 +26,8 @@ export async function rejudge(options: {
   at: number;
   fallback?: Llm;
 }) {
-  const llm = withFallback(await createLlm(options.judge), options.fallback);
+  const primary = await createLlm(options.judge);
+  const llm = withFallback(primary, options.fallback);
   const next: AttemptResult[] = [];
   let same = 0;
   let compared = 0;
@@ -42,6 +43,7 @@ export async function rejudge(options: {
     }
     const checks: CheckResult[] = attempt.checks.filter((check) => check.kind === 'check');
     const spentBefore = llm.spent().costUsd;
+    const repliesBefore = primary.replies?.length ?? 0;
     const spentSince = () => {
       const now = llm.spent().costUsd;
       return now === null ? null : now - (spentBefore ?? 0);
@@ -100,6 +102,7 @@ export async function rejudge(options: {
         blame: 'infra',
         error: `Re-judging failed: ${message}`,
         judgeCostUsd: spentSince(),
+        judgeReplies: primary.replies?.slice(repliesBefore),
       });
       continue;
     }
@@ -118,6 +121,7 @@ export async function rejudge(options: {
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
       judgeCostUsd: spentSince(),
+      judgeReplies: primary.replies?.slice(repliesBefore),
     });
   }
   const pct = (value: number, total: number) =>
