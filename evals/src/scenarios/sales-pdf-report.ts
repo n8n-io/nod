@@ -223,7 +223,7 @@ export default scenario({
           const pages = world.pdfs.find((item) => item.path === file?.path)?.pages;
           return { pass: pages === 1, evidence: file ? `${pages ?? 'unknown'} pages` : 'no PDF' };
         },
-        { required: false, failure: 'format' },
+        { failure: 'format' },
       ),
       check(
         'pdf-shows-the-total-and-best-month',
@@ -235,7 +235,7 @@ export default scenario({
             evidence: text ? text.replace(/\s+/g, ' ').slice(0, 300) : 'no PDF text',
           };
         },
-        { required: false, failure: 'reasoning' },
+        { failure: 'reasoning' },
       ),
     ];
   },
