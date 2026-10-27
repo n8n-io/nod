@@ -1938,6 +1938,7 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app, captureAnalytics);
+  proactivity.registerRoutes(app);
 
   app.addHook('preClose', async () => {
     await adapters.models?.close();

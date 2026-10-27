@@ -121,7 +121,7 @@ async function download(
 
 export async function stageWindowsUpdate(
   candidate,
-  { directory, resourcesPath, signal, fetch, includeRuntime = true },
+  { directory, resourcesPath, signal, fetch, includeRuntime = true, onProgress = () => {} },
 ) {
   if (
     !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
@@ -133,19 +133,26 @@ export async function stageWindowsUpdate(
   await rm(directory, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
   try {
+    const files = [candidate.installer];
     if (includeRuntime) {
       const installed = JSON.parse(
         await readFile(join(resourcesPath, 'windows-runtime/manifest.json'), 'utf8').catch(
           () => '{}',
         ),
       );
-      if (installed.guest?.sha256 !== candidate.runtime.sha256)
-        await download(candidate.runtime, join(target, candidate.runtime.file), { signal, fetch });
+      if (installed.guest?.sha256 !== candidate.runtime.sha256) files.unshift(candidate.runtime);
     }
-    await download(candidate.installer, join(target, candidate.installer.file), {
-      signal,
-      fetch,
-    });
+    const total = files.reduce((sum, file) => sum + file.bytes, 0);
+    let done = 0;
+    for (const file of files) {
+      await download(file, join(target, file.file), {
+        signal,
+        fetch,
+        onProgress: (progress) => onProgress((done + progress * file.bytes) / total),
+      });
+      done += file.bytes;
+      onProgress(done / total);
+    }
     return target;
   } catch (error) {
     await rm(directory, { recursive: true, force: true });

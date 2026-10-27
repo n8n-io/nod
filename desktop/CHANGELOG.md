@@ -2,6 +2,46 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.4 - 2026-10-27
+
+### Fixes
+
+- **maps:** Show a marked map link for every suggested location. [#511](https://github.com/n8n-io/nod/pull/511) (60bb66c)
+- **apps:** Accept any browser's sign-in key and keep validation errors in diagnostics. [#512](https://github.com/n8n-io/nod/pull/512) (6fa9fdd)
+- **proactivity:** Make progress useful and saved results inspectable. [#510](https://github.com/n8n-io/nod/pull/510) (97215a2)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.3...60bb66cd6fc9ff84a384c4878bfa1b468f7941db)
+
+<details>
+<summary>Build details</summary>
+
+Source: `60bb66cd6fc9ff84a384c4878bfa1b468f7941db`
+Previous release: `nod-v0.3.3`
+
+</details>
+
+## 0.3.3 - 2026-10-27
+
+### Fixes
+
+- **desktop:** Rebuild the runtime less often and show update progress. [#508](https://github.com/n8n-io/nod/pull/508) (54ee04e)
+- **proactivity:** Keep quiet hours quiet for work Nod starts. [#507](https://github.com/n8n-io/nod/pull/507) (8e147f5)
+- **evals:** Attribute background messages and tools by observer work. [#504](https://github.com/n8n-io/nod/pull/504) (5e6e7d6)
+- **apps:** Word connection links as an invitation to sign in. [#502](https://github.com/n8n-io/nod/pull/502) (37d7d62)
+- **proactivity:** Act on a yes to a nudge in chat even when its task waits. [#505](https://github.com/n8n-io/nod/pull/505) (b31069b)
+- **vault:** Use the saved login's password method instead of asking. [#503](https://github.com/n8n-io/nod/pull/503) (a63f097)
+- **vault:** Scroll the submit control into view before private entry clicks. [#501](https://github.com/n8n-io/nod/pull/501) (faffa63)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.2...54ee04e7790367004ef6c24b4a64d668057b7c26)
+
+<details>
+<summary>Build details</summary>
+
+Source: `54ee04e7790367004ef6c24b4a64d668057b7c26`
+Previous release: `nod-v0.3.2`
+
+</details>
+
 ## 0.3.2 - 2026-10-26
 
 ### Features

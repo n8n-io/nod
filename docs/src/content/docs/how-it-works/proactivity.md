@@ -64,7 +64,9 @@ A separate task sends a draft only when your words permit it, through the [trust
 
 A nudge doesn't replace the work. The worker saves a complete draft, plan, comparison or decision aid, with the references, amounts, dates and time zones the reader needs, and states what it couldn't confirm. It never invents eligibility, a cause, a deadline or an action that didn't happen.
 
-The nudge itself states what changed and what's ready in one or two sentences, then asks one short question offering the next step. The first nudge about a kind of thing says once that Nod will keep flagging things like it.
+The nudge states the concrete finding and why it needs your attention now. It asks a next-step question only when that helps you decide, and follows your requested format. An internal draft update alone does not justify a notification. When useful, Nod explains once what it will keep flagging and how to stop it.
+
+Every nudge includes a link to the saved result. Open it to read the full draft, facts that still need checking, and source references with links where available. The page shows the latest saved work. It needs your Nod access and cannot show another owner's work. If its source account is removed or replaced, the old result becomes unavailable. Nod adds this link from the saved record; the model does not invent it.
 
 ## Deliver at the right time
 
@@ -72,7 +74,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 - **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
-- **Quiet hours.** A nudge that comes up at night goes out when they end.
+- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
 - **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops everything.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.

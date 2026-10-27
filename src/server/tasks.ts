@@ -16,6 +16,7 @@ import {
   type TurnRef,
 } from './thread.ts';
 import { transaction } from './transaction.ts';
+import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 
@@ -131,6 +132,7 @@ export function createTasks(options: {
 }) {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
+  const preferences = createPreferencesStore(pool, ownerId);
 
   async function read(
     client: Pick<PoolClient, 'query'>,
@@ -327,6 +329,7 @@ export function createTasks(options: {
     let id: string;
     if (request.action === 'start') {
       if (current.task_id) throw failure('This session already has a task. Use update.');
+      let startAfter: Date | undefined;
       if (current.proactive) {
         if (!request.key)
           throw failure('Use a stable source record and change as the key for this work.');
@@ -338,6 +341,8 @@ export function createTasks(options: {
           ).rows[0]?.proactive_paused
         )
           throw failure('Private preparation is paused.');
+        const prefs = await preferences.get();
+        if (isQuietTime(prefs)) startAfter = deliveryTime(prefs, Date.now()) ?? undefined;
         const existing = (
           await client.query<{ id: string }>(
             `SELECT t.id FROM tasks t JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
@@ -394,6 +399,7 @@ export function createTasks(options: {
             channel: current.channel,
             channelSourceId: current.channel_source_id,
             background: true,
+            startAfter,
             client,
           },
         );

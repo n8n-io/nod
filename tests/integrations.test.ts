@@ -777,7 +777,9 @@ test('connection bridge binds a single browser bootstrap to one installation att
     fetch(`${origin}/start`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify({ browserKey: key }),
+      body: JSON.stringify({
+        browserKey: { ...key, alg: 'ES256', ext: true, key_ops: ['verify'] },
+      }),
     });
   for (const headers of [
     {},

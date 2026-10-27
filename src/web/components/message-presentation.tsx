@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { presentationSchema, type Presentation } from '../../shared/presentation';
+import { mapLocationUrl, presentationSchema, type Presentation } from '../../shared/presentation';
 import { ArrowRight, ChevronDown, ExternalLink, Link2, MapPin } from './icons';
 import { useArtifactDrawer } from './artifact-context';
 import { Booking } from './presentation-booking';
@@ -206,23 +206,28 @@ function Places({ visual }: { visual: Visual<'map'> }) {
                 {item.description && <span>{item.description}</span>}
               </span>
             </button>
-            {item.url && (
-              <SourceLink href={item.url}>
-                <span className="sr-only">View {item.name}</span>
+            <div className="place-links">
+              <SourceLink href={mapLocationUrl(item)}>
+                <span>
+                  View map<span className="sr-only"> for {item.name}</span>
+                </span>
               </SourceLink>
-            )}
+              {item.url && (
+                <SourceLink href={item.url}>
+                  <span>
+                    Source<span className="sr-only"> for {item.name}</span>
+                  </span>
+                </SourceLink>
+              )}
+            </div>
           </li>
         ))}
       </ol>
       <div className="place-detail" aria-live="polite">
+        <span>{place.name}</span>
         <span>
           {place.latitude.toFixed(5)}, {place.longitude.toFixed(5)}
         </span>
-        <SourceLink
-          href={`https://www.openstreetmap.org/?mlat=${place.latitude}&mlon=${place.longitude}#map=15/${place.latitude}/${place.longitude}`}
-        >
-          Open location
-        </SourceLink>
       </div>
     </>
   );

@@ -30,6 +30,7 @@ interface Case {
   body(date: string): string;
   criterion: string;
   image?: string[];
+  expectedPlaces?: Array<{ name: string; latitude: number; longitude: number }>;
 }
 
 export function inlineVisualScenario(definition: Case) {
@@ -115,6 +116,60 @@ export function inlineVisualScenario(definition: Case) {
           }),
           { failure: 'scope' },
         ),
+        ...(definition.expectedPlaces
+          ? [
+              check(
+                'preserves-the-sourced-locations',
+                (run) => {
+                  const expected = definition.expectedPlaces!;
+                  const name = (value: unknown) =>
+                    ` ${
+                      String(value ?? '')
+                        .normalize('NFKD')
+                        .replace(/\p{M}/gu, '')
+                        .toLowerCase()
+                        .match(/[\p{L}\p{N}]+/gu)
+                        ?.join(' ') ?? ''
+                    } `;
+                  const found = presentations(run)
+                    .filter((value) => value.type === 'map')
+                    .map((value) =>
+                      Array.isArray(value.places)
+                        ? value.places.map((place) => ({
+                            name: place?.name,
+                            latitude: place?.latitude,
+                            longitude: place?.longitude,
+                          }))
+                        : [],
+                    );
+                  const matched = found.map((places) =>
+                    places.map((place) =>
+                      expected.flatMap((source, index) =>
+                        name(place.name).includes(name(source.name)) &&
+                        place.latitude === source.latitude &&
+                        place.longitude === source.longitude
+                          ? [index]
+                          : [],
+                      ),
+                    ),
+                  );
+                  return {
+                    pass:
+                      found.length > 0 &&
+                      matched.every(
+                        (places) =>
+                          places.length > 0 &&
+                          places.every((matches) => matches.length === 1) &&
+                          new Set(places.flat()).size === places.length,
+                      ) &&
+                      new Set(matched.flat(2)).size === expected.length,
+                    evidence: JSON.stringify({ expected, found }),
+                  };
+                },
+                { failure: 'hallucination' },
+              ),
+            ]
+          : []),
         ...(definition.type === 'image'
           ? [
               check('image-is-an-owned-available-file', async (run) => {

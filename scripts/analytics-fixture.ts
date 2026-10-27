@@ -237,6 +237,23 @@ const server = createServer(async (request, response) => {
     });
     json({ messageId: body.clientMessageId, turnId: 'fixture-turn' });
   } else if (url.pathname === '/api/channel-settings') json({ ready: false, channels: [] });
+  else if (url.pathname === '/api/prepared/00000000-0000-4000-8000-000000000705')
+    json({
+      id: '00000000-0000-4000-8000-000000000705',
+      url: '/prepared/00000000-0000-4000-8000-000000000705',
+      title: `Supplier reply ${privateText}`,
+      updatedAt: '2026-10-27T08:30:00.000Z',
+      draft: `Subject: Confirm the unused credit\n\nHello, please confirm whether the EUR 280 credit can be used on the next invoice. ${privateText}`,
+      unknowns: [`The expiry date is not supplied. ${privateText}`],
+      sources: [
+        {
+          sourceId: 'synthetic-statements',
+          id: 'synthetic-statement',
+          label: `Supplier statement ${privateText}`,
+          url: 'https://example.test/statement',
+        },
+      ],
+    });
   else if (url.pathname === '/api/channels') json({ channels: [], error: null });
   else if (url.pathname === '/api/browser' && request.method === 'GET')
     json({ currentBrowser: null });

@@ -88,6 +88,7 @@ export interface RuntimeContext {
       Pick<
         ProactiveIssue,
         | 'id'
+        | 'url'
         | 'category'
         | 'matterKey'
         | 'primary'

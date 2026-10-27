@@ -1,0 +1,39 @@
+.prepared-work {
+  --page-width: 960px;
+  overflow-wrap: anywhere;
+}
+.prepared-work .prepared-work-heading {
+  display: grid;
+  justify-content: stretch;
+  gap: 12px;
+  margin: 24px 0 32px;
+  overflow-wrap: anywhere;
+}
+.prepared-work-time {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.prepared-work section {
+  max-width: 72ch;
+  margin: 28px 0;
+}
+.prepared-work-draft {
+  white-space: pre-wrap;
+  font-size: var(--text-body);
+  line-height: 1.65;
+}
+.prepared-work h2 {
+  margin-bottom: 12px;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.prepared-work-notes ul,
+.prepared-work-sources ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+}
+.prepared-work-sources a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

@@ -5,16 +5,12 @@ import type { IntegrationConnectionBrowser } from '../ports/integrations.ts';
 import { logFailure } from './failure-log.ts';
 
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-const browserKeySchema = z
-  .object({
-    kty: z.literal('EC'),
-    crv: z.literal('P-256'),
-    x: token,
-    y: token,
-    ext: z.literal(true).optional(),
-    key_ops: z.array(z.literal('verify')).max(1).optional(),
-  })
-  .strict();
+const browserKeySchema = z.object({
+  kty: z.literal('EC'),
+  crv: z.literal('P-256'),
+  x: token,
+  y: token,
+});
 
 export function renderIntegrationBrowser(
   brokerOrigin: string,

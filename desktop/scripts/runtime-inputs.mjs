@@ -8,10 +8,7 @@ const inputs = [
   '.dockerignore',
   'Dockerfile.workspace',
   'Dockerfile.browser',
-  'package.json',
-  'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
-  'patches',
   'desktop/pnpm-lock.yaml',
   'desktop/pnpm-workspace.yaml',
   'desktop/runtime/downloads.json',
@@ -23,7 +20,6 @@ const inputs = [
   'desktop/scripts/prepare-runtime.mjs',
   'desktop/scripts/release-tools.mjs',
   'desktop/scripts/runtime-build-lock.json',
-  'desktop/scripts/runtime-inputs.mjs',
   'desktop/scripts/runtime-pack.mjs',
   'desktop/runtime/assets.mjs',
   'src/providers/container-browser/chromium.sh',
@@ -44,17 +40,56 @@ export const browserEntries = [
   'src/providers/container-browser/bridge.ts',
 ];
 
-export async function browserSources(root = repository) {
-  const seen = new Set();
+export const browserTools = ['agent-browser', 'esbuild'];
+
+export async function browserInputs(root = repository) {
+  const sources = new Set();
+  const packages = new Set(browserTools);
   const visit = async (path) => {
-    if (seen.has(path)) return;
-    seen.add(path);
+    if (sources.has(path)) return;
+    sources.add(path);
     const source = await readFile(join(root, path), 'utf8');
-    for (const [, target] of source.matchAll(/(?:from|import)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g))
-      await visit(posix.join(posix.dirname(path), target));
+    for (const [, target] of source.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g))
+      if (target.startsWith('.')) await visit(posix.join(posix.dirname(path), target));
+      else if (!target.startsWith('node:')) packages.add(target.match(/^(?:@[^/]+\/)?[^/]+/)[0]);
   };
   for (const entry of browserEntries) await visit(entry);
-  return [...seen].sort();
+  return { sources: [...sources].sort(), packages: [...packages].sort() };
+}
+
+async function lockedPackages(names) {
+  const lock = await readFile(join(repository, 'pnpm-lock.yaml'), 'utf8');
+  if (!lock.startsWith("lockfileVersion: '9.0'\n"))
+    throw new Error('The runtime fingerprint needs a version 9 pnpm lockfile.');
+  const section = (name) =>
+    new Map(
+      (lock.split(`\n${name}:\n`)[1] ?? '')
+        .split(/\n(?=\S)/)[0]
+        .split(/^(?= {2}\S)/m)
+        .map((entry) => [entry.match(/^ {2}'?([^'\s]+?)'?:(?: \{\})?\n/)?.[1], entry.trim()]),
+    );
+  const versions = new Map(
+    [
+      ...(section('importers').get('.') ?? '').matchAll(
+        /^ {6}'?([^'\s]+?)'?:\n {8}specifier: .*\n {8}version: (\S+)$/gm,
+      ),
+    ].map(([, name, version]) => [name, version]),
+  );
+  const packages = section('packages');
+  const snapshots = section('snapshots');
+  const queue = names.map((name) => `${name}@${versions.get(name)}`);
+  const entries = new Map();
+  for (const key of queue) {
+    if (entries.has(key)) continue;
+    const snapshot = snapshots.get(key);
+    const resolution = packages.get(key.replace(/\(.*$/, ''));
+    if (!snapshot || !resolution)
+      throw new Error(`The pnpm lockfile has no runtime entry for ${key}.`);
+    entries.set(key, createHash('sha256').update(`${resolution}\n${snapshot}`).digest('hex'));
+    for (const [, name, version] of snapshot.matchAll(/^ {6}'?([^'\s]+?)'?: (\S+)$/gm))
+      queue.push(`${name}@${version}`);
+  }
+  return [...entries].map(([key, hash]) => [`lock:${key}`, hash]);
 }
 
 export function runtimePlatform(env = process.env) {
@@ -86,8 +121,12 @@ export async function runtimeInputs(platform = runtimePlatform()) {
       await collect(`${path}/${child.name}`);
   }
   const windows = platform === 'win32-x64';
-  for (const input of [...inputs, ...(windows ? windowsInputs : []), ...(await browserSources())])
+  const browser = await browserInputs();
+  for (const input of [...inputs, ...(windows ? windowsInputs : []), ...browser.sources])
     await collect(input);
+  entries.push(...(await lockedPackages(browser.packages)));
+  const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
+  entries.push(['pnpm:packageManager', manifest.packageManager]);
   if (!windows) {
     const configuration = JSON.parse(
       await readFile(join(repository, 'desktop/package.json'), 'utf8'),

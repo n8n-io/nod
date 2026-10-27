@@ -1363,6 +1363,10 @@ export function createAgentBrowserComputer(options: {
                 (await devtools.document()) !== document
               )
                 throw new Error('The submit control is not on this page.');
+              await command(state, {
+                action: 'scrollintoview',
+                selector: selector(submitSelector),
+              });
               await command(state, { action: 'click', selector: selector(submitSelector) });
             }
           }

@@ -36,6 +36,8 @@ import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 test('external app links can only open named screens without action data', () => {
   for (const path of Object.keys(appPages))
     assert.equal(appOpenPath(`nod://open${path}`, appPages), path);
+  const prepared = `/prepared/${randomUUID()}`;
+  assert.equal(appOpenPath(`nod://open${prepared}`, appPages), prepared);
   for (const value of [
     undefined,
     'https://example.test/settings/models',
@@ -48,6 +50,10 @@ test('external app links can only open named screens without action data', () =>
     'nod://open/settings/../apps',
     'nod://open/credentials/request-id',
     'nod://open@evil.test/apps',
+    'nod://open/prepared/not-an-id',
+    `nod://open${prepared}?action=send`,
+    `nod://open${prepared}#secret`,
+    `nod://open${prepared}/../apps`,
   ])
     assert.equal(appOpenPath(value, appPages), null);
 });
@@ -3280,6 +3286,20 @@ test('the remote desktop starts without a local runtime and fences tokens to its
       requestHeaders: { authorization: 'forged', 'X-Nod-Desktop-Token': 'forged' },
     };
     assert.equal((await f.headers(request)).requestHeaders.Authorization, `Bearer ${token}`);
+    const prepared = `/prepared/${randomUUID()}`;
+    f.openLink(`nod://open${prepared}`);
+    assert.deepEqual(window.sent.at(-1), ['nod:navigate', prepared]);
+    frame.url = `${url}${prepared}`;
+    const preparedRequest = { ...request, url: `${url}/api${prepared}` };
+    assert.equal(
+      (await f.headers(preparedRequest)).requestHeaders.Authorization,
+      `Bearer ${token}`,
+    );
+    for (const path of ['/prepared/not-an-id', `${prepared}/extra`, '/api/artifacts/synthetic']) {
+      frame.url = `${url}${path}`;
+      assert.equal(Object.keys((await f.headers(preparedRequest)).requestHeaders).length, 0);
+    }
+    frame.url = url;
     for (const change of [
       { url: 'https://other.example.test/api/session' },
       { url: 'http://assistant.example.test/api/session' },
@@ -4890,7 +4910,7 @@ async function updatePreparation({
   runtime,
 }) {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
-  const start = source.indexOf('          prepareRuntime: async (candidate, signal) => {');
+  const start = source.indexOf('          prepareRuntime: async (candidate, signal, report) => {');
   const callback = source.slice(
     start,
     source.indexOf('          restart: restartForUpdate,', start),
@@ -5069,8 +5089,18 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   }).latest('0.1.0');
   downloads.length = 0;
   await installRuntime(Buffer.from('older Windows runtime pack'));
-  await stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request });
+  const progress = [];
+  await stageWindowsUpdate(candidate, {
+    directory,
+    resourcesPath,
+    fetch: request,
+    onProgress: (value) => progress.push(value),
+  });
   assert.deepEqual(downloads, ['nod-Runtime-win32-x64.tar.gz', 'nod-Setup-x64.exe']);
+  assert.ok(progress.length >= 2);
+  assert.ok(progress.every((value, index) => value > 0 && value >= (progress[index - 1] ?? 0)));
+  assert.ok(progress.some((value) => value < 1));
+  assert.equal(progress.at(-1), 1);
   for (const [name, value] of Object.entries(bytes))
     assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
 
@@ -5099,7 +5129,9 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
       request,
     });
     downloads.length = 0;
-    await prepare(candidate);
+    const statuses = [];
+    await prepare(candidate, undefined, (phase, value) => statuses.push([phase, value]));
+    assert.deepEqual(statuses.at(-1), ['downloading', 1]);
     assert.deepEqual(
       downloads,
       mode === 'local'

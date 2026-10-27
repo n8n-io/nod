@@ -73,7 +73,7 @@ Select a schedule title to rename it in place. Timing changes show the next run 
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → General → Quiet hours**.
 
-During quiet hours, Nod keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time.
+During quiet hours, Nod keeps preparing from new mail and app activity. Its nudges wait until they end, except a high-impact one with strong evidence whose deadline comes first. Any task it starts on its own waits too, with its questions and approvals. Schedules you created still run and deliver on time.
 
 ## Keep Nod running
 

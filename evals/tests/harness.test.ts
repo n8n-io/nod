@@ -34,6 +34,7 @@ import {
   amounts,
   asksForSecret,
   finished,
+  inspectableNudges,
   mentions,
   showsNumber,
   urlsGrounded,
@@ -69,6 +70,60 @@ import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 import { ambiguousDelegationScenario } from '../src/world/ambiguous-delegation.ts';
+
+test('map evidence accepts split and detail maps but rejects duplicate, wrong or missing locations', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-map')!;
+  const locations = definition
+    .expect(definition.world({ now: Date.now }))
+    .find((item) => item.id === 'preserves-the-sourced-locations');
+  assert.equal(locations?.kind, 'check');
+  if (locations?.kind !== 'check') throw new Error('Missing sourced-location check');
+  const places = [
+    { name: 'Studio Aurora (meeting)', latitude: 38.714, longitude: -9.14 },
+    { name: 'Café Lume (recommended)', latitude: 38.7152, longitude: -9.1414 },
+    { name: 'Pátio Azul', latitude: 38.7126, longitude: -9.1378 },
+    { name: 'Mesa Clara', latitude: 38.7163, longitude: -9.1359 },
+  ];
+  const score = async (groups: (typeof places)[]) =>
+    (
+      await locations.check({
+        messages: groups.map((places) => ({
+          role: 'assistant',
+          presentation: { type: 'map', places },
+        })),
+      } as Run)
+    ).pass;
+  assert.equal(await score([places]), true);
+  assert.equal(await score([places.slice(0, 2), places.slice(2)]), true);
+  assert.equal(
+    await score([places, [{ ...places[1]!, name: '1. CAFE LUME — recommended' }]]),
+    true,
+  );
+  for (const [reason, groups] of [
+    ['wrong coordinate', [[{ ...places[0]!, latitude: 38.715 }, ...places.slice(1)]]],
+    ['missing place', [places.slice(1)]],
+    ['duplicate added to complete map', [[...places, places[1]!]]],
+    [
+      'duplicate with a different annotation',
+      [[...places, { ...places[1]!, name: '1. CAFE LUME — recommended' }]],
+    ],
+    ['duplicate replacing missing place', [[places[1]!, ...places.slice(1)]]],
+    ['unsupported extra place', [[...places, { ...places[1]!, name: 'Unknown café' }]]],
+    ['partial name match', [[{ ...places[0]!, name: 'Studio Auroral' }, ...places.slice(1)]]],
+    [
+      'swapped place coordinates',
+      [
+        [
+          { ...places[0]!, latitude: places[1]!.latitude, longitude: places[1]!.longitude },
+          { ...places[1]!, latitude: places[0]!.latitude, longitude: places[0]!.longitude },
+          ...places.slice(2),
+        ],
+      ],
+    ],
+    ['incorrect extra map', [places, [{ ...places[1]!, longitude: 9.1414 }]]],
+  ] as const)
+    assert.equal(await score(groups.map((group) => [...group])), false, reason);
+});
 
 test(
   'the onboarding eval saves its answers through the real interview routes with a reply or fallback',
@@ -1908,6 +1963,40 @@ test('a cut-off background check does not fail a finished task', async () => {
     );
   assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
   assert.equal((await verdict([turn('interrupted', false)])).pass, false);
+});
+
+test('a nudge must open the same saved result that its link names', async () => {
+  const issues = ['first', 'second'].map((id) => ({
+    id,
+    url: `/prepared/${id}`,
+    draft: `${id} draft`,
+  }));
+  const message = { role: 'assistant', turnId: 'observer', text: '[Result](/prepared/second)' };
+  let result = { status: 404, body: {} };
+  const paths: string[] = [];
+  const run = {
+    turns: [{ id: 'observer', proactive: true }],
+    messages: [message],
+    proactivity: { view: async () => ({ issues }) },
+    api: async (_method: string, path: string) => {
+      paths.push(path);
+      return result;
+    },
+  } as unknown as Run;
+  const verdict = async () => {
+    assert.equal(inspectableNudges.kind, 'check');
+    return inspectableNudges.kind === 'check' && (await inspectableNudges.check(run)).pass;
+  };
+  assert.equal(await verdict(), false);
+  assert.deepEqual(paths, ['/api/prepared/second']);
+  result = { status: 200, body: issues[0] };
+  assert.equal(await verdict(), false);
+  result = { status: 200, body: issues[1] };
+  assert.equal(await verdict(), true);
+  message.text = 'The private plan is ready.';
+  assert.equal(await verdict(), false);
+  run.messages = [];
+  assert.equal(await verdict(), true);
 });
 
 test('a task-specific completion gate preserves secret checks and default completion', async () => {

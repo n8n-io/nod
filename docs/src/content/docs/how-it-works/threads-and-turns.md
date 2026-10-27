@@ -75,7 +75,7 @@ flowchart TD
   observer --> task[Separate action or question task]
 ```
 
-A task that needs an action, question, or approval uses its own session. It keeps the event's authority and the normal Trust check. Its wait leaves the observer free. A spending check-in pauses the observer until you answer; source signals remain saved. Explicit schedules keep their own timing and instructions.
+A task that needs an action, question, or approval uses its own session. It keeps the event's authority and the normal Trust check. Its wait leaves the observer free. If the observer starts it during quiet hours, its first turn stays queued until they end. A spending check-in pauses the observer until you answer; source signals remain saved. Explicit schedules keep their own timing and instructions.
 
 ## Messages you send while Nod works
 

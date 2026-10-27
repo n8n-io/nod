@@ -347,7 +347,7 @@ export function createAgentRuntime(dependencies: {
         ) {
           if (source === execution) checkInBlocked = true;
           throw new Error(
-            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to say in a line what is done and what is left, and ask whether to keep going.`,
+            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to state the cost and what continuing would do, then ask whether to keep going. Follow the shared reporting rules for any result you include.`,
           );
         }
         const id = randomUUID();

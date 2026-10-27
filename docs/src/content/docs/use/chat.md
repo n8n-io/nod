@@ -64,6 +64,8 @@ When a visual makes an answer easier to understand, nod can include images, maps
 
 Each visual stays beside its explanation. Open **Sources** to check its references and information date. nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it at full size.
 
+Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Source** link opens its supplied reference separately.
+
 Flight comparisons give each option its own numbered card, price and expandable journey. Connection airports, technical stops and supplied stop durations stay visible before you expand it. The details keep each leg of an outbound, return or multi-city journey, with supplied local dates and time zones. Airport changes and self-transfers stay visible. Missing transfer information remains unknown.
 
 Seat plans group the supplied rows by cabin and deck, preserving different layouts, aisles and empty positions. The coverage states whether the source shows the whole aircraft, a cabin or selected rows. Each plan refers to one flight or aircraft configuration. The view is schematic; nod can show the original image when exact geometry matters. Inspecting a seat doesn't reserve it or confirm its availability.
@@ -72,7 +74,7 @@ Venue cards can include photos, review summaries with their source rating and re
 
 Charts use bars for comparisons, lines for trends, and pie or donut charts for parts of a whole. Select a category to inspect its values, or open the data table for the underlying numbers.
 
-Telegram and WhatsApp receive the answer and visual details as text, with source links. Flight options keep their numbers and separate journey details. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. The WhatsApp Cloud API receives PNG and JPEG images up to 5 MB each. If a file cannot be delivered in the channel, the answer points you back to nod to open it. Interactive visuals stay in nod's chat.
+Telegram and WhatsApp receive the answer and visual details as text, with source links. Locations keep their marked map links. Flight options keep their numbers and separate journey details. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. The WhatsApp Cloud API receives PNG and JPEG images up to 5 MB each. If a file cannot be delivered in the channel, the answer points you back to nod to open it. Interactive visuals stay in nod's chat.
 
 ## Listen to audio
 

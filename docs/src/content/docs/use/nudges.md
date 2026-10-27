@@ -48,7 +48,7 @@ Only your own messages can snooze, close or dismiss a nudge. If you don't answer
 
 ## When Nod nudges you
 
-Nod saves useful work privately first and messages you only when it's worth an interruption. There's no daily count. Each matter nudges you once, however often its source repeats, and again only if something really changes. Quiet hours always hold: a nudge that comes up at night goes out when they end. Set them in **Settings → General**, or tell Nod.
+Nod saves useful work privately first and messages you only when it's worth an interruption. There's no daily count. Each matter nudges you once, however often its source repeats, and again only if something really changes. Quiet hours hold: a nudge that comes up at night goes out when they end. Only a high-impact one with strong evidence and a deadline before then goes out at once. Set them in **Settings → General**, or tell Nod.
 
 Tell Nod "Fewer of these" and it uses that next time. To stop preparation itself, tell Nod "Pause preparation", and "Resume preparation" to turn it back on. Preparation runs when a source changes or a saved matter is due, and its cost counts toward your monthly limit in **Usage**, like everything else Nod does.
 

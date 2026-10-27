@@ -260,8 +260,7 @@
   list-style: none;
 }
 .places-list li {
-  display: flex;
-  align-items: center;
+  display: grid;
   border-bottom: 1px solid var(--border);
 }
 .places-list li.is-selected {
@@ -271,8 +270,8 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  flex: 1;
-  padding: 14px 20px;
+  min-width: 0;
+  padding: 14px 20px 0;
   border: 0;
   text-align: left;
   color: var(--foreground);
@@ -302,10 +301,15 @@
   background: var(--surface);
   font-size: 11px;
 }
-.places-list li > a {
-  min-width: 44px;
+.place-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  padding: 0 20px 4px 56px;
+  font-size: 12px;
+}
+.place-links a {
   min-height: 44px;
-  justify-content: center;
 }
 .place-detail {
   display: flex;
@@ -316,9 +320,6 @@
   padding: 8px 20px;
   font-size: 11px;
   color: var(--muted-foreground);
-}
-.place-detail a {
-  min-height: 32px;
 }
 .diagram-scroll {
   max-height: 420px;
