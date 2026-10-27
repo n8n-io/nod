@@ -41,6 +41,12 @@ export function publicText(value: string) {
   return redactSecretText(value).replace(privateLink, '[private link]');
 }
 
+export function languageText(value: string) {
+  return redactSecretText(
+    value.replace(privateLink, '').replace(/https?:\/\/[^\s<>]+/gi, ''),
+  ).trim();
+}
+
 export function createCommunication(options: {
   pool: Pool;
   ownerId: string;
@@ -54,12 +60,6 @@ export function createCommunication(options: {
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [key, privateLinks(entry)]),
     );
-  }
-
-  function languageText(value: string) {
-    return redactSecretText(
-      value.replace(privateLink, '').replace(/https?:\/\/[^\s<>]+/gi, ''),
-    ).trim();
   }
 
   async function languageContext(threadId: string | null) {
@@ -111,12 +111,17 @@ export function createCommunication(options: {
     purpose: string,
     data: object,
     signal?: AbortSignal,
+    languageMessage?: { at: string; text: string },
   ) {
     signal?.throwIfAborted();
     const description = privateLinks(withoutSecretKeys(data));
     const withheld = withheldPaths(data, description);
     const hidden = withheld.length > 0 ? { withheld } : {};
     const language = await languageContext(threadId);
+    if (languageMessage?.text) {
+      language.userMessages.push({ ...languageMessage, text: languageText(languageMessage.text) });
+      language.userMessages.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    }
     for (let attempt = 0; ; attempt++) {
       signal?.throwIfAborted();
       const result = await options.review(
@@ -165,6 +170,19 @@ export function createCommunication(options: {
     input: ChannelPresentation | { kind: string; [key: string]: unknown },
     signal?: AbortSignal,
   ) {
+    if (input.kind === 'media_failure' && 'languageMessage' in input) {
+      const { languageMessage, ...data } = input;
+      const supplied = z
+        .object({ at: z.iso.datetime(), text: z.string() })
+        .safeParse(languageMessage);
+      return generate(
+        threadId,
+        input.kind,
+        data,
+        signal,
+        supplied.success ? supplied.data : undefined,
+      );
+    }
     return generate(threadId, input.kind, input, signal);
   }
 

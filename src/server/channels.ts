@@ -8,6 +8,7 @@ import { classifyVerificationReply, securityCodeIn } from '../shared/verificatio
 import { isMessageReaction } from '../shared/emoji.ts';
 import { transaction } from './transaction.ts';
 import { logFailure } from './failure-log.ts';
+import { languageText } from './communication.ts';
 import { ChannelMediaFailure, type ChannelMedia } from './channel-media.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { LiveWork } from './activity.ts';
@@ -34,7 +35,12 @@ export type ChannelPresentation =
       files?: string[];
     }
   | { kind: 'verification_refused' }
-  | { kind: 'media_failure'; reason: ChannelMediaFailure['reason']; fileLimitMb?: number }
+  | {
+      kind: 'media_failure';
+      reason: ChannelMediaFailure['reason'];
+      fileLimitMb?: number;
+      languageMessage?: { at: string; text: string };
+    }
   | { kind: 'verification_failure'; verification: 'otp' }
   | { kind: 'paired'; channel: string }
   | {
@@ -619,6 +625,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             await requestModelSetup();
             return;
           }
+          const caption =
+            classifyVerificationReply(parsed.data.text).kind === 'ordinary' &&
+            !securityCodeIn(parsed.data.text)
+              ? languageText(parsed.data.text)
+              : '';
           await transaction(async (client) => {
             if (!(await currentConversation(client))) return;
             return replyWithoutTurn(
@@ -628,6 +639,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                 text: '',
                 presentation: {
                   kind: 'media_failure',
+                  ...(caption
+                    ? { languageMessage: { at: sentAt.toISOString(), text: caption } }
+                    : {}),
                   reason: error instanceof ChannelMediaFailure ? error.reason : 'unavailable',
                   ...(error instanceof ChannelMediaFailure && error.fileLimitMb
                     ? { fileLimitMb: error.fileLimitMb }
