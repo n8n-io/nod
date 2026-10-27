@@ -1128,8 +1128,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       ['Anthropic key in OpenAI', 'openai', 'sk-ant-api03-synthetic-foreign-key'],
       ['OpenRouter key in Anthropic', 'anthropic', 'sk-or-v1-synthetic-foreign-key'],
       ['OpenAI project key in OpenRouter', 'openrouter', 'sk-proj-synthetic-foreign-key'],
+      ['long-term Bedrock key in OpenAI', 'openai', 'ABSKsynthetic-foreign-key'],
+      ['short-term Bedrock key in Anthropic', 'anthropic', 'bedrock-api-key-synthetic-foreign-key'],
       ['embedded whitespace', 'openai', 'fixture invalid key'],
       ['embedded control character', 'openai', 'fixture-invalid\u0000key'],
+      ['first C1 control character', 'openai', 'fixture-invalid\u0080key'],
+      ['C1 next-line control character', 'openai', 'fixture-invalid\u0085key'],
+      ['last C1 control character', 'openai', 'fixture-invalid\u009fkey'],
       ['bundled provider', 'baseten', 'sk-ant-api03-synthetic-bundled-key'],
     ] as const) {
       await t.test(name, async () => {
@@ -1154,10 +1159,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     }
   });
 
-  test('API key validation leaves unfamiliar formats and owner-configured model endpoints usable', async (t) => {
+  test('API key validation leaves unfamiliar formats, matching providers and owner-configured model endpoints usable', async (t) => {
     const f = await fixture(t);
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const requests: Array<{ url: string; key: string | null }> = [];
+    const bedrockKeys = ['ABSKsynthetic-bedrock-key', 'bedrock-api-key-synthetic-key'];
     const owner = await f.create(
       'fixture-owner',
       createPiModelBackend({
@@ -1169,6 +1175,16 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
             return Response.json({ data: [{ id: 'gpt-6.1-sol' }] });
           if (url === 'https://api.anthropic.com/v1/models?limit=1000')
             return Response.json({ data: [{ id: 'claude-opus-5-5' }] });
+          if (
+            url ===
+            'https://bedrock.us-east-1.amazonaws.com/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT'
+          )
+            return Response.json({ modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }] });
+          if (
+            url ===
+            'https://bedrock.us-east-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000'
+          )
+            return Response.json({ inferenceProfileSummaries: [] });
           if (url === 'http://127.0.0.1:11434/v1/models')
             return Response.json({ data: [{ id: 'fixture-local' }] });
           assert.ok(
@@ -1197,6 +1213,28 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       assert.equal(await owner.apiKey(provider), key.trim());
       assert.ok(!response.body.includes(key.trim()));
     }
+    for (const key of bedrockKeys) {
+      const existing = new Set(owner.view().connections.map((row) => row.id));
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: { provider: 'amazon-bedrock', key, region: 'us-east-1' },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.ok(!response.body.includes(key));
+      const connection = owner.view().connections.find((row) => !existing.has(row.id))!;
+      const model = connection.models[0]!;
+      await owner.select({
+        connectionId: connection.id,
+        modelId: model.id,
+        effort: model.efforts[0]!,
+      });
+      assert.deepEqual(await (await owner.resolve()).read(), {
+        type: 'bedrock',
+        key,
+        region: 'us-east-1',
+      });
+    }
     const proxyKey = 'sk-ant-api03-synthetic-proxy-key';
     const endpoint = await app.inject({
       method: 'POST',
@@ -1223,6 +1261,15 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         url: 'https://api.anthropic.com/v1/models?limit=1000',
         key: 'sk-synthetic-shared-prefix',
       },
+      ...bedrockKeys.flatMap((key) =>
+        [
+          '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT',
+          '/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        ].map((path) => ({
+          url: `https://bedrock.us-east-1.amazonaws.com${path}`,
+          key: `Bearer ${key}`,
+        })),
+      ),
       ...['/v1/models', '/api/version', '/api/v1/models'].map((path) => ({
         url: `http://127.0.0.1:11434${path}`,
         key: `Bearer ${proxyKey}`,

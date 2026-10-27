@@ -394,7 +394,12 @@ export function ModelSettings({
     ?.models.find((model) => model.id === data.selection?.modelId);
   const busy = models.busy || signingIn || !!signIn;
   const keyFormatError = keyProvider && key ? modelKeyError(keyProvider, key) : undefined;
-  const keyError = models.error || keyFormatError;
+  const keySubmissionError = ['/api/models/keys', '/api/models/endpoints'].includes(
+    models.errorPath ?? '',
+  )
+    ? models.error
+    : '';
+  const keyError = keySubmissionError || keyFormatError;
   const searching = showProviders || !!providerSearch.trim();
   const listedProviders = modelProviders.filter((provider) =>
     `${modelProviderNames[provider]} ${provider === 'compatible' ? 'Ollama LM Studio vLLM local server' : provider}`
@@ -786,7 +791,9 @@ export function ModelSettings({
           </form>
         </div>
       )}
-      {(!keyProvider || searching) && models.error && <Notice>{models.error}</Notice>}
+      {(!keySubmissionError || !keyProvider || searching) && models.error && (
+        <Notice>{models.error}</Notice>
+      )}
       <details className="model-details">
         <summary>Connection details</summary>
         <p className="model-footnote">
