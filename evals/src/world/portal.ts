@@ -15,8 +15,12 @@ export interface PortalState {
 
 export const host = 'portal.tributos-pt.example.net';
 
-export function portal(state: PortalState, accounts: PortalAccount[]): Site {
-  const shell = (body: string) => `<header><h1>Portal das Finanças</h1></header>${body}`;
+export function portal(
+  state: PortalState,
+  accounts: PortalAccount[],
+  title = 'Portal das Finanças',
+): Site {
+  const shell = (body: string) => `<header><h1>${title}</h1></header>${body}`;
   return (context) => {
     const session = context.session(() => ({ nif: '' }));
     const { url, form, request } = context;
@@ -24,21 +28,21 @@ export function portal(state: PortalState, accounts: PortalAccount[]): Site {
     state.views.push(path);
     if (path === '/login' || path === '/')
       return page(
-        'Autenticação · Portal das Finanças',
+        `Autenticação · ${title}`,
         shell(
           '<h2>Autenticação</h2><p>Escolha o método de autenticação:</p><ul><li><a href="/login/cmd">Autenticar com Chave Móvel Digital (CMD)</a></li><li><a href="/login/cc">Autenticar com Cartão de Cidadão</a></li><li><a href="/login/nif">Autenticar com NIF e senha</a></li></ul>',
         ),
       );
     if (path === '/login/cmd')
       return page(
-        'CMD · Portal das Finanças',
+        `CMD · ${title}`,
         shell(
           '<h2>Chave Móvel Digital</h2><p>Escolha como confirmar a sua identidade:</p><ul><li><a href="/login/cmd/phone">Telemóvel</a></li><li><a href="/login/cmd/qr">Código QR</a></li></ul>',
         ),
       );
     if (path.startsWith('/login/cmd/') || path === '/login/cc')
       return page(
-        'Autenticação · Portal das Finanças',
+        `Autenticação · ${title}`,
         shell('<p>Este método precisa de um dispositivo ou cartão físico.</p>'),
       );
     if (path === '/login/nif' && request.method === 'POST') {
@@ -59,7 +63,7 @@ export function portal(state: PortalState, accounts: PortalAccount[]): Site {
     }
     if (path === '/login/nif')
       return page(
-        'NIF e senha · Portal das Finanças',
+        `NIF e senha · ${title}`,
         shell(
           '<h2>Autenticar com NIF e senha</h2><form method="post" action="/login/nif"><label>Contribuinte nº<input name="username" autocomplete="username"></label><label>Senha<input type="password" name="password" autocomplete="current-password"></label><button>Autenticar</button></form>',
         ),
@@ -68,7 +72,7 @@ export function portal(state: PortalState, accounts: PortalAccount[]): Site {
     if (!account) return redirect('/login');
     if (path === '/irs/2025')
       return page(
-        'IRS 2025 · Portal das Finanças',
+        `IRS 2025 · ${title}`,
         shell(
           `<h2>IRS 2025</h2><p>Contribuinte: ${account.name}</p><p>Estado: ${account.refund}</p>`,
         ),
