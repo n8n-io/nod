@@ -390,9 +390,11 @@ test('native decision batches reject incomplete or malformed answers without cur
 });
 
 test('queued native decision batches recheck spending limits, provider changes and cancellation', async (t) => {
-  for (const stop of ['limit', 'provider', 'cancel'] as const)
+  for (const stop of ['limit', 'provider', 'configuration', 'cancel'] as const)
     await t.test(stop, async () => {
       let spent = 0;
+      let configured = true;
+      let limitChecks = 0;
       let provider: DecisionConnection['provider'] = 'openai';
       let calls = 0;
       let fallback = 0;
@@ -400,14 +402,17 @@ test('queued native decision batches recheck spending limits, provider changes a
       const ledger = createLedger({
         ownerId: 'synthetic-queued-decisions',
         pool: {
-          query: async (sql: string) => ({
-            rows: sql.startsWith('SELECT monthly_usd') ? [{ monthly_usd: 1, spent }] : [],
-          }),
+          query: async (sql: string) => {
+            if (!sql.startsWith('SELECT monthly_usd')) return { rows: [] };
+            limitChecks++;
+            return { rows: [{ monthly_usd: 1, spent }] };
+          },
         } as never,
       });
       const check = createMailCheck({
         decisions: ledger.decisions(
           createDecisionModel({
+            configured: () => configured,
             canBatch: () => provider === 'openai',
             resolve: async () => ({ provider, key: 'synthetic-key' }),
             fetch: async (_url, options) => {
@@ -452,6 +457,7 @@ test('queued native decision batches recheck spending limits, provider changes a
       assert.equal(calls, 6);
       if (stop === 'limit') spent = 1;
       if (stop === 'provider') provider = 'typesafe';
+      if (stop === 'configuration') configured = false;
       if (stop === 'cancel') {
         controller.abort();
         assert.deepEqual(await result, Array.from({ length: 70 }));
@@ -466,6 +472,7 @@ test('queued native decision batches recheck spending limits, provider changes a
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(calls, 6);
       assert.equal(fallback, 0);
+      if (stop === 'configuration') assert.equal(limitChecks, 6);
     });
 });
 
