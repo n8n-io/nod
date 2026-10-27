@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   Brain,
   Check,
@@ -15,6 +15,7 @@ import {
   X,
 } from './icons';
 import type { ModelConnection, ModelProvider } from '../../shared/models';
+import { modelKeyError } from '../../shared/model-keys';
 import {
   modelProviderInfo,
   modelProviderNames,
@@ -360,6 +361,7 @@ export function ModelSettings({
   onDirtyChange?(dirty: boolean): void;
 } = {}) {
   const models = useModels();
+  const keyErrorId = useId();
   const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
   const [key, setKey] = useState('');
   const [url, setUrl] = useState('');
@@ -391,6 +393,8 @@ export function ModelSettings({
     .find((connection) => connection.id === data.selection?.connectionId)
     ?.models.find((model) => model.id === data.selection?.modelId);
   const busy = models.busy || signingIn || !!signIn;
+  const keyFormatError = keyProvider && key ? modelKeyError(keyProvider, key) : undefined;
+  const keyError = models.error || keyFormatError;
   const searching = showProviders || !!providerSearch.trim();
   const listedProviders = modelProviders.filter((provider) =>
     `${modelProviderNames[provider]} ${provider === 'compatible' ? 'Ollama LM Studio vLLM local server' : provider}`
@@ -406,6 +410,7 @@ export function ModelSettings({
     )
     .toSorted((a, b) => Number(b === keyProvider) - Number(a === keyProvider));
   function addKey(provider: ModelProvider) {
+    models.setError('');
     setKey('');
     setUrl(localServerAddress);
     setSettings(noKeySettings);
@@ -509,6 +514,7 @@ export function ModelSettings({
                     disabled={busy}
                     onClick={() => {
                       if (keyProvider === provider) {
+                        models.setError('');
                         setKey('');
                         setUrl('');
                         setSettings(noKeySettings);
@@ -526,18 +532,18 @@ export function ModelSettings({
                   className="model-key-form"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    const value = key;
-                    setKey('');
+                    if (keyFormatError) return;
                     void models
                       .change(
                         provider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
                         'POST',
                         provider === 'compatible'
-                          ? { url: url.trim(), key: value }
-                          : keyConnection(provider, value, settings),
+                          ? { url: url.trim(), key }
+                          : keyConnection(provider, key, settings),
                       )
                       .then((saved) => {
                         if (saved) {
+                          setKey('');
                           setUrl('');
                           setSettings(noKeySettings);
                           setKeyProvider(null);
@@ -592,9 +598,19 @@ export function ModelSettings({
                         ].includes(provider)
                       }
                       disabled={busy}
-                      onChange={(event) => setKey(event.target.value)}
+                      aria-invalid={!!keyError}
+                      aria-describedby={keyError ? keyErrorId : undefined}
+                      onChange={(event) => {
+                        setKey(event.target.value);
+                        models.setError('');
+                      }}
                     />
                   </Field>
+                  {keyError && (
+                    <div id={keyErrorId}>
+                      <Notice>{keyError}</Notice>
+                    </div>
+                  )}
                   {provider !== 'compatible' && <ModelKeyHelp provider={provider} />}
                   {provider === 'compatible' && (
                     <p className="model-key-note">
@@ -608,6 +624,7 @@ export function ModelSettings({
                       size="sm"
                       disabled={
                         busy ||
+                        !!keyFormatError ||
                         !(provider === 'compatible'
                           ? url.trim()
                           : key.trim() && keySettingsReady(provider, settings))
@@ -625,6 +642,7 @@ export function ModelSettings({
                       variant="ghost"
                       disabled={busy}
                       onClick={() => {
+                        models.setError('');
                         setKey('');
                         setUrl('');
                         setSettings(noKeySettings);
@@ -768,7 +786,7 @@ export function ModelSettings({
           </form>
         </div>
       )}
-      {models.error && <Notice>{models.error}</Notice>}
+      {(!keyProvider || searching) && models.error && <Notice>{models.error}</Notice>}
       <details className="model-details">
         <summary>Connection details</summary>
         <p className="model-footnote">
