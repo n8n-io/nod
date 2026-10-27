@@ -1989,6 +1989,7 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await appsFixture(t);
+    f.provider.configurationId = 'current-configuration';
     const supported = f.provider.supportedServices!;
     f.provider.supportedServices = supported.filter((slug) => slug !== 'outlook');
     f.provider.listServices = async () => [];
@@ -2026,6 +2027,13 @@ test(
           logoUrl: 'https://logos.composio.dev/api/gmail',
           categories: ['Email'],
         },
+        { slug: 'slack', name: 'Slack', description: '' },
+        { slug: 'slackbot', name: 'Slackbot', description: '' },
+        ...Array.from({ length: 31 }, (_, index) => ({
+          slug: `catalog_${index}`,
+          name: `Catalog item ${index}`,
+          description: '',
+        })),
       ];
     };
     const catalog = await f.app.inject({ url: '/api/apps/catalog' });
@@ -2064,6 +2072,91 @@ test(
        VALUES($1,'foreign-owner','foo_mcp','foreign-account','fixture',true,now())`,
       [foreign],
     );
+    await t.test('catalog discovery includes only matching owned saved account state', async () => {
+      type SavedConnection = Pick<
+        AppConnection,
+        | 'connectionId'
+        | 'status'
+        | 'accountName'
+        | 'accountEmail'
+        | 'reconnectRequired'
+        | 'canReconnect'
+        | 'disconnectPending'
+      >;
+      const discover = async (query: string) =>
+        JSON.parse(
+          JSON.stringify(
+            await f.service.manageConnections(
+              'discover',
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              query,
+            ),
+          ),
+        ) as {
+          services: Array<{ slug: string; connections: SavedConnection[] }>;
+          total: number;
+          hasMore: boolean;
+        };
+      const expected = (connection: AppConnection): SavedConnection => ({
+        connectionId: connection.connectionId,
+        status: 'connected',
+        accountName: connection.accountName,
+        reconnectRequired: false,
+        canReconnect: false,
+        disconnectPending: false,
+      });
+      const work = await f.connect('slack');
+      const personal = await f.connect('slack');
+      await f.pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+        work.connectionId,
+        'work@example.test',
+      ]);
+      const connected = await discover('slack');
+      assert.deepEqual(
+        connected.services.map(({ slug }) => slug),
+        ['slack', 'slackbot'],
+      );
+      const workState = { ...expected(work), accountEmail: 'work@example.test' };
+      assert.deepEqual(connected.services.find(({ slug }) => slug === 'slack')?.connections, [
+        workState,
+        expected(personal),
+      ]);
+      assert.deepEqual(connected.services.find(({ slug }) => slug === 'slackbot')?.connections, []);
+      const neighbors = await discover('foo');
+      assert.deepEqual(
+        neighbors.services.map(({ slug, connections }) => ({ slug, connections })),
+        [
+          { slug: 'foo', connections: [expected(foo)] },
+          { slug: 'foo_mcp', connections: [expected(mcp)] },
+        ],
+      );
+      for (const [mutation, state] of [
+        ['account_active=false', {}],
+        ['account_active=true,revoked=true', { disconnectPending: true }],
+        ["revoked=false,configuration_id='previous-configuration'", { reconnectRequired: true }],
+      ] as const) {
+        await f.pool.query(`UPDATE app_connections SET ${mutation} WHERE id=$1`, [
+          personal.connectionId,
+        ]);
+        assert.deepEqual(
+          (await discover('slack')).services.find(({ slug }) => slug === 'slack')?.connections,
+          [workState, { ...expected(personal), status: 'disconnected', ...state }],
+        );
+      }
+      const page = await discover('catalog item');
+      assert.equal(page.total, 31);
+      assert.equal(page.hasMore, true);
+      assert.equal(page.services.length, 30);
+      assert.ok(page.services.every(({ connections }) => connections.length === 0));
+      assert.deepEqual(await discover('not-in-the-catalog'), {
+        services: [],
+        total: 0,
+        hasMore: false,
+      });
+    });
     await assert.rejects(
       f.service.execute('local-development', 'FOO_MCP_LIST', { connectionId: foreign }),
       { statusCode: 404 },

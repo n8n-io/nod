@@ -2606,7 +2606,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       if (action === 'discover') {
         const search = z.string().trim().max(200).optional().parse(query) ?? '';
         const words = search.toLowerCase().split(/\s+/).filter(Boolean);
-        const matches = (await catalog()).filter((entry) => {
+        const [services, connections] = await Promise.all([
+          catalog(),
+          list(configuredOwner, { refresh: false }),
+        ]);
+        const matches = services.filter((entry) => {
           const text =
             `${entry.slug} ${entry.name} ${entry.description ?? ''} ${entry.categories?.join(' ') ?? ''}`.toLowerCase();
           return words.every((word) => text.includes(word));
@@ -2620,6 +2624,30 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               description,
               ...(logoUrl ? { logoUrl } : {}),
               ...(categories?.length ? { categories } : {}),
+              connections: connections
+                .filter(
+                  (connection) =>
+                    connection.slug === slug && connection.connectionId && !connection.savedLogin,
+                )
+                .map(
+                  ({
+                    connectionId,
+                    status,
+                    accountName,
+                    accountEmail,
+                    reconnectRequired,
+                    canReconnect,
+                    disconnectPending,
+                  }) => ({
+                    connectionId,
+                    status,
+                    accountName,
+                    accountEmail,
+                    reconnectRequired,
+                    canReconnect,
+                    disconnectPending,
+                  }),
+                ),
             })),
           total: matches.length,
           hasMore: matches.length > 30,
