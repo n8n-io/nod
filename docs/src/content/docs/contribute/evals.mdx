@@ -86,7 +86,7 @@ Judge request records include retries, status, input size, token limit, and avai
 
 The `usage` folder keeps judge request receipts as JSON Lines. A receipt is written before a request starts and after its reply. An interrupted attempt can still have cost evidence. Request IDs stay unique across whole-attempt retries.
 
-Ordinary simulator replies receive the current owner request and earlier chat replies, as follow-up replies do. A conversation reset starts a new request history. The simulator keeps the requested target unless its own facts support a correction.
+Both simulator reply paths receive the current owner request and earlier chat replies. A conversation reset starts a new request history. Both paths keep the requested target unless the owner's facts support a correction. A proposed target from the assistant is not an owner fact.
 
 Each judge criterion needs one verdict with boolean result and applicability fields and a reason. Missing, duplicate, or invalid fields use the existing retry path. A reply that stays invalid is a measurement error. A valid failure stays a failure, regardless of its reason's wording.
 

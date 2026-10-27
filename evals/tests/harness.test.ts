@@ -1588,11 +1588,14 @@ test('the simulated owner selects a sign-in method through the private form', as
   }
 });
 
-test('simulated question replies keep the current owner request and discard history after reset', async () => {
+test('simulated replies keep the current owner request and discard history after reset', async () => {
   const first = randomUUID();
   const second = randomUUID();
+  const firstReply = randomUUID();
+  const secondReply = randomUUID();
   const inputs: string[] = [];
   let waiting = false;
+  let conversation = 0;
   const stack = {
     waiting: (alias: string) => `${alias}.status='waiting'`,
     pool: {
@@ -1600,7 +1603,10 @@ test('simulated question replies keep the current owner request and discard hist
         if (sql.includes('AS waiting FROM turns'))
           return { rows: [{ id: 'turn', waiting_reason: 'question', waiting }], rowCount: 1 };
         if (sql.includes("role='assistant'"))
-          return { rows: [{ text: 'Should I use a different target?' }], rowCount: 1 };
+          return {
+            rows: [{ text: `Should I use a different target? (${conversation})` }],
+            rowCount: 1,
+          };
         if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
           return { rows: [{}], rowCount: 1 };
         return { rows: [], rowCount: 0 };
@@ -1614,12 +1620,13 @@ test('simulated question replies keep the current owner request and discard hist
     },
     resetConversation: async () => {
       waiting = false;
+      conversation++;
     },
   } as unknown as Stack;
   const simulator = createSimulator({
     complete: async (_system: string, input: string) => {
       inputs.push(input);
-      return 'Keep the requested target.';
+      return inputs.length === 1 ? firstReply : inputs.length === 3 ? secondReply : 'NONE';
     },
   } as never);
   const session = createSession({
@@ -1629,12 +1636,19 @@ test('simulated question replies keep the current owner request and discard hist
     deadline: Date.now() + 5000,
   });
   await session.say(first);
+  await session.followUp();
   await session.reset();
   await session.say(second);
-  assert.equal(inputs.length, 2);
-  assert.ok(inputs[0].includes(first));
-  assert.ok(inputs[1].includes(second));
-  assert.equal(inputs[1].includes(first), false);
+  await session.followUp();
+  assert.equal(inputs.length, 4);
+  for (const input of inputs.slice(0, 2)) assert.ok(input.includes(first));
+  assert.ok(inputs[1].includes(firstReply));
+  for (const input of inputs.slice(2)) {
+    assert.ok(input.includes(second));
+    assert.equal(input.includes(first), false);
+    assert.equal(input.includes(firstReply), false);
+  }
+  assert.ok(inputs[3].includes(secondReply));
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
