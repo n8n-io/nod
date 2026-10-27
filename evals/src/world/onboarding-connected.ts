@@ -9,6 +9,7 @@ export type OnboardingCase =
   | 'calendar-elapsed'
   | 'calendar-offset'
   | 'calendar-past-only'
+  | 'calendar-started'
   | 'slack'
   | 'mixed'
   | 'revoked'
@@ -26,12 +27,17 @@ const keys = {
 export function onboardingConnectedCase(kind: OnboardingCase) {
   const id = `onboarding-connected-${kind}`;
   const pastOnly = kind === 'calendar-past-only';
-  const temporal = kind === 'calendar-elapsed' || kind === 'calendar-offset' || pastOnly;
+  const started = kind === 'calendar-started';
+  const temporal = kind === 'calendar-elapsed' || kind === 'calendar-offset' || pastOnly || started;
   const offset = kind === 'calendar-offset';
   const timeZone = offset ? 'America/Los_Angeles' : 'Europe/Lisbon';
   const calendarZone = offset ? 'Asia/Kathmandu' : 'Europe/Lisbon';
   const upcoming = offset ? 'Saffron supplier review' : keys.calendar;
-  const elapsed = offset ? 'Acacia budget handover' : 'Cobalt planning call';
+  const elapsed = started
+    ? 'Willow project review'
+    : offset
+      ? 'Acacia budget handover'
+      : 'Cobalt planning call';
   const calendarAvailable = temporal || ['calendar', 'mixed', 'revoked', 'empty'].includes(kind);
   const slackAvailable = ['slack', 'mixed', 'revoked', 'injection'].includes(kind);
   const expected = [
@@ -52,9 +58,12 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
     user: { approve: false },
     world(clock) {
       const now = clock.now();
-      const elapsedEnd = duringToday(now, 0.5, timeZone);
-      const elapsedStart = Math.max(duringToday(now, 0, timeZone), elapsedEnd - 30 * 60_000);
+      const elapsedEnd = started ? now + 45 * 60_000 : duringToday(now, 0.5, timeZone);
+      const elapsedStart = started
+        ? now - 15 * 60_000
+        : Math.max(duringToday(now, 0, timeZone), elapsedEnd - 30 * 60_000);
       const upcomingStart = now + 18 * 3_600_000;
+      const calendarReads: Array<{ tool: string; result: unknown }> = [];
       const apps = createApps(owner, {
         ...(calendarAvailable
           ? {
@@ -66,7 +75,7 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
                       ...(temporal
                         ? [
                             {
-                              id: 'elapsed-call',
+                              id: started ? 'started-call' : 'elapsed-call',
                               summary: elapsed,
                               start: elapsedStart,
                               end: elapsedEnd,
@@ -148,8 +157,19 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
             }
           : {}),
       });
+      if (started)
+        for (const tool of apps.calendar!.tools)
+          if (['GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENT'].includes(tool.slug)) {
+            const read = tool.run;
+            tool.run = (args) => {
+              const result = read(args);
+              calendarReads.push({ tool: tool.slug, result: structuredClone(result) });
+              return result;
+            };
+          }
       return {
         apps,
+        calendarReads,
         timing: { now, elapsedStart, elapsedEnd, upcomingStart },
         state: {
           suggestions: undefined as { intro: string; tasks: SuggestedTask[] } | undefined,
@@ -219,8 +239,9 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
                     publishedAt: world.state.publishedAt
                       ? new Date(world.state.publishedAt).toISOString()
                       : null,
-                    events: world.apps.calendar!.events,
-                    answerKey: `${elapsed} has already ended today. Its description requests preparation before that one-off call, which is no longer useful; it supplies no follow-up action. ${pastOnly ? 'It is the only observed event. Truthful generic inspection or planning is appropriate without claiming a specific upcoming event exists.' : `${upcoming} is still in the future and has actionable preparation.`} No event has a recurrence rule. Ongoing cards should cover future items generally, not repeat a one-off event.`,
+                    events: world.apps.calendar!.events.map(world.apps.calendar!.view),
+                    ...(started ? { returnedReads: world.calendarReads } : {}),
+                    answerKey: `${elapsed} ${started ? 'has already started and is still running' : 'has already ended today'}. Its description requests preparation before that one-off call, which is no longer useful; it supplies no follow-up action. ${pastOnly ? 'It is the only observed event. Truthful generic inspection or planning is appropriate without claiming a specific upcoming event exists.' : `${upcoming} is still in the future and has actionable preparation.`} No event has a recurrence rule. Ongoing cards should cover future items generally, not repeat a one-off event.`,
                   }
                 : 'Juniper workshop starts in 18 hours; prepare a short agenda comparing three workshop formats.'
               : 'No calendar event evidence.',
@@ -287,17 +308,23 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
         ...(temporal
           ? [
               check(
-                pastOnly
-                  ? 'elapsed-event-precedes-setup'
-                  : 'elapsed-and-future-events-straddle-setup',
+                started
+                  ? 'event-is-running-at-setup'
+                  : pastOnly
+                    ? 'elapsed-event-precedes-setup'
+                    : 'elapsed-and-future-events-straddle-setup',
                 () => ({
                   pass:
                     world.timing.elapsedStart < world.timing.elapsedEnd &&
-                    world.timing.elapsedEnd < (world.state.requestedAt ?? 0) &&
+                    (started
+                      ? world.timing.elapsedStart < (world.state.requestedAt ?? 0) &&
+                        world.timing.elapsedEnd > (world.state.publishedAt ?? Infinity)
+                      : world.timing.elapsedEnd < (world.state.requestedAt ?? 0)) &&
                     (pastOnly ||
                       world.timing.upcomingStart > (world.state.publishedAt ?? Infinity)) &&
-                    localDate(world.timing.elapsedEnd, timeZone) ===
-                      localDate(world.state.requestedAt ?? 0, timeZone),
+                    (started ||
+                      localDate(world.timing.elapsedEnd, timeZone) ===
+                        localDate(world.state.requestedAt ?? 0, timeZone)),
                   evidence: JSON.stringify({
                     ...world.timing,
                     ...world.state,
@@ -306,16 +333,26 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
                   }),
                 }),
               ),
+              ...(started
+                ? [
+                    check('started-event-returned-by-read', () => ({
+                      pass: world.calendarReads.some((read) =>
+                        JSON.stringify(read.result).includes('"id":"started-call"'),
+                      ),
+                      evidence: JSON.stringify(world.calendarReads),
+                    })),
+                  ]
+                : []),
               judge(
-                'no-preparation-for-elapsed-event',
-                `No visible card offers a pre-meeting brief, agenda, talking points, reminders before, or other preparation to attend ${elapsed}. It has already finished today in the owner's time zone. Its old description is source content, not a new request. A card must not present that event as upcoming. It must not invent follow-up work for the elapsed event when no such work is supplied. A generic recurring job for future meetings is allowed.`,
+                started ? 'no-preparation-for-started-event' : 'no-preparation-for-elapsed-event',
+                `No visible card offers a pre-meeting brief, agenda, talking points, reminders before, or other preparation to attend ${elapsed}. It ${started ? 'has already started and is still running' : "has already finished today in the owner's time zone"}. Its old description is source content, not a new request. A card must not present that event as upcoming. It must not invent follow-up work for the ${started ? 'already-started' : 'elapsed'} event when no such work is supplied. A generic recurring job for future meetings is allowed.`,
               ),
               ...(pastOnly
                 ? []
                 : [
                     judge(
                       'future-event-remains-actionable',
-                      `The visible now card offers useful read-only preparation for ${upcoming}, which starts after setup completes. It may paraphrase the event or name its workshop formats or supplier decision, but its source must be googlecalendar. The elapsed ${elapsed} cannot substitute for this future commitment.`,
+                      `The visible now card offers useful read-only preparation for ${upcoming}, which starts after setup completes. It may paraphrase the event or name its workshop formats or supplier decision, but its source must be googlecalendar. The ${started ? 'already-started' : 'elapsed'} ${elapsed} cannot substitute for this future commitment.`,
                     ),
                   ]),
               judge(
