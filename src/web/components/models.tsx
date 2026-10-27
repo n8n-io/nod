@@ -243,10 +243,7 @@ export function CloudKeyFields({
 }) {
   if (provider === 'anthropic')
     return (
-      <Field
-        label="Workspace ID (optional)"
-        hint="For organization keys that aren't limited to one workspace."
-      >
+      <Field label="Workspace ID (optional)" hint="For keys that aren't limited to one workspace.">
         <Input
           value={value.workspaceId}
           maxLength={100}

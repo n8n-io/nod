@@ -244,20 +244,28 @@ export function modelEnvironment(
         apiKeyConnectionProviders.flatMap((id) => {
           const key = env[modelProviderInfo[id].env]?.trim();
           if (!key) return [];
-          return [
-            [
-              id,
-              modelKeyCredential(id, key, {
-                region: env.AWS_REGION,
-                url: env.AZURE_OPENAI_ENDPOINT,
-                model: env.AZURE_OPENAI_MODEL,
-                deployment: env.AZURE_OPENAI_DEPLOYMENT,
-                accountId: env.CLOUDFLARE_ACCOUNT_ID,
-                gatewayId: env.CLOUDFLARE_GATEWAY_ID,
-                workspaceId: env.ANTHROPIC_WORKSPACE_ID,
-              }),
-            ],
-          ];
+          try {
+            return [
+              [
+                id,
+                modelKeyCredential(id, key, {
+                  region: env.AWS_REGION,
+                  url: env.AZURE_OPENAI_ENDPOINT,
+                  model: env.AZURE_OPENAI_MODEL,
+                  deployment: env.AZURE_OPENAI_DEPLOYMENT,
+                  accountId: env.CLOUDFLARE_ACCOUNT_ID,
+                  gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+                  workspaceId: env.ANTHROPIC_WORKSPACE_ID,
+                }),
+              ],
+            ];
+          } catch (error) {
+            if (id === 'anthropic')
+              throw new Error(
+                'ANTHROPIC_WORKSPACE_ID must be a Workspace ID from the Claude Console.',
+              );
+            throw error;
+          }
         }),
       ),
       ...(endpoint && {

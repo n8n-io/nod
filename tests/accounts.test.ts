@@ -1287,7 +1287,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const sharedKey = 'fixture-anthropic-unscoped-key';
     const scopedKey = 'fixture-anthropic-scoped-key';
-    const workspaces = ['wrkspc_First123', 'wrkspc_Second456'];
+    const workspaces = ['wrkspc_First123', 'wrkspc_Second-456'];
     const requests: Array<{ key: string | null; workspaceId: string | null }> = [];
     const backend = createPiModelBackend({
       fetch: async (input, init) => {
@@ -1343,6 +1343,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     for (const [key, workspaceId] of [
       [sharedKey, undefined],
       [sharedKey, 'wrkspc_Inaccessible'],
+      [sharedKey, 'org_wrong'],
       ['fixture-revoked-key', workspaces[0]],
       ['fixture-forbidden-key', workspaces[0]],
     ] as const) {
@@ -1354,9 +1355,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     }
     const previousRequests = requests.length;
     for (const workspaceId of [
-      'org_wrong',
-      'wrkspc_',
-      'wrkspc_bad/path',
+      'wrkspc_bad workspace',
+      'wrkspc_bad\u0000workspace',
       'wrkspc_bad\r\nheader',
       `wrkspc_${'a'.repeat(100)}`,
     ])

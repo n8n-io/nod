@@ -4974,7 +4974,7 @@ test('Anthropic workspace connections keep discovery and inference bound to the 
     await import('../src/providers/pi/models.ts');
   const { modelKeyCredential } = await import('../src/server/models.ts');
   const workspaceA = 'wrkspc_011SyntheticWorkspaceA';
-  const workspaceB = 'wrkspc_011SyntheticWorkspaceB';
+  const workspaceB = 'wrkspc_011SyntheticWorkspace-B';
   const accounts = new Map<string, string | null>([
     ['sk-ant-api-fixture-scoped', null],
     ['sk-ant-api-fixture-first', workspaceA],
@@ -5093,6 +5093,7 @@ test('Anthropic connection failures explain workspace access without leaking pro
       'The anthropic-workspace-id header is required. sk-ant-api-fixture-private',
       /Workspace ID/,
     ],
+    [400, 'sk-ant-api-fixture-private', /Workspace ID/],
     [401, 'sk-ant-api-fixture-private', /API key/],
     [403, 'sk-ant-api-fixture-private', /access/],
     [404, 'sk-ant-api-fixture-private', /access/],

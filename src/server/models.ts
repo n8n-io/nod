@@ -106,10 +106,8 @@ export function modelKeyCredential(
 ): ModelCredential {
   if (provider === 'anthropic') {
     const workspaceId = settings.workspaceId?.trim();
-    if (workspaceId && (workspaceId.length > 100 || !/^wrkspc_[A-Za-z0-9]+$/.test(workspaceId)))
-      throw new ConnectionError(
-        'Enter a Workspace ID from the Claude Console, starting with wrkspc_.',
-      );
+    if (workspaceId && (workspaceId.length > 100 || !/^[\x21-\x7e]+$/.test(workspaceId)))
+      throw new ConnectionError('Enter a Workspace ID from the Claude Console.');
     return { type: 'api_key', key, ...(workspaceId ? { workspaceId } : {}) };
   }
   if (provider === 'amazon-bedrock') {

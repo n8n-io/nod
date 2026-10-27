@@ -151,9 +151,9 @@ function entries<T>(value: unknown, schema: z.ZodType<T>) {
     });
 }
 
-async function modelErrorMessage(response: Response) {
+async function modelListRestricted(response: Response) {
   const reader = response.body?.getReader();
-  if (!reader) return undefined;
+  if (!reader) return false;
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   try {
@@ -161,24 +161,20 @@ async function modelErrorMessage(response: Response) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.length;
-      if (bytes > 4096) return undefined;
+      if (bytes > 4096) return false;
       chunks.push(value);
     }
     const body = z
       .object({ error: z.union([z.string(), z.object({ message: z.string() })]) })
       .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    return typeof body.error === 'string' ? body.error : body.error.message;
+    const message = typeof body.error === 'string' ? body.error : body.error.message;
+    const scopes = [...message.matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
+    return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
   } catch {
-    return undefined;
+    return false;
   } finally {
     await reader.cancel().catch(() => {});
   }
-}
-
-async function modelListRestricted(response: Response) {
-  const message = await modelErrorMessage(response);
-  const scopes = [...(message ?? '').matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
-  return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -731,13 +727,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           : { Authorization: `Bearer ${key}` };
       const accepted = async (response: Response) => {
         if (provider === 'anthropic' && response.status === 400) {
-          const message = await modelErrorMessage(response);
-          if (message?.includes('anthropic-workspace-id'))
-            throw new ModelAuthError(
-              credential.type === 'api_key' && credential.workspaceId
-                ? 'Anthropic didn’t accept this Workspace ID. Check it in the Claude Console.'
-                : 'Enter the Workspace ID for this Anthropic key, or use a key scoped to one workspace.',
-            );
+          await response.body?.cancel();
+          throw new ModelAuthError(
+            'Anthropic didn’t accept this connection. Check the API key and Workspace ID in the Claude Console. Keys that aren’t scoped to one workspace need a Workspace ID.',
+          );
         }
         if (provider === 'anthropic' && [403, 404].includes(response.status)) {
           await response.body?.cancel();
