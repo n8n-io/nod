@@ -2,6 +2,10 @@
   max-width: min(calc(100% - 40px), 640px);
 }
 
+.chat-page .message-row:not(:last-child):not(:has(.has-reaction)) {
+  padding-bottom: 14px;
+}
+
 .chat-page .message .message-bubble > .message-body {
   padding: 10px 40px 10px 16px;
 }
