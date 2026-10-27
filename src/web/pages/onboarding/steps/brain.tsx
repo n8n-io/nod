@@ -578,9 +578,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     setRestore(undefined);
   }, [view, restore]);
 
-  function back() {
+  async function back() {
     c.clearError();
-    if (c.flow.signIn) void c.flow.cancel();
+    if (c.flow.signIn && !(await c.flow.cancel())) return;
     setRestore(picked);
     setPicked(undefined);
   }
@@ -756,8 +756,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
       </Rise>
       <Footer
         show={revealed >= 3}
-        onBack={keepCurrent ?? onBack}
+        onBack={view === 'setup' ? back : (keepCurrent ?? onBack)}
         backLabel={keepCurrent ? 'Keep current' : 'Back'}
+        busy={c.flow.pending || c.checking}
         onNext={onNext}
         nextDisabled={!c.ready || c.models.busy || c.checking || c.signingIn}
       />
