@@ -78,6 +78,12 @@ pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
+Use `--out <directory>` to save results outside the repository. Each run keeps its canary attempts and logs in its `canaries` folder. The run budget counts completed task attempts. Keep a separate total for canaries, retries, diagnosis, and incomplete attempts.
+
+For a comparison, set `--model` and `--judge` to different models. Capability attempts use the selected judge without a fallback model. A failed judge request leaves the attempt incomplete.
+
+The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.

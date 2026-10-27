@@ -6,6 +6,7 @@ import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
+import type { Artifact } from '../../src/shared/contracts.ts';
 
 export interface ToolCall {
   turnId?: string;
@@ -24,6 +25,7 @@ export interface ChatMessage {
   at: number;
   turnId: string | null;
   presentation?: unknown;
+  attachments?: Artifact[];
 }
 
 export interface Run {
@@ -251,13 +253,14 @@ export async function collect(options: {
   const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
   const messages = (
     await stack.pool.query(
-      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
+      "SELECT role,text,turn_id,created_at,attachments,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
+    ...(row.attachments?.length ? { attachments: row.attachments } : {}),
     ...(row.presentation ? { presentation: row.presentation } : {}),
   }));
   const artifacts = (

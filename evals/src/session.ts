@@ -415,8 +415,15 @@ export function createSession(options: {
         headers: { 'content-type': 'application/json', origin: stack.origin },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      const text = await response.text();
-      return { status: response.status, body: text ? JSON.parse(text) : {} };
+      const bytes = Buffer.from(await response.arrayBuffer());
+      return {
+        status: response.status,
+        body: !bytes.length
+          ? {}
+          : response.headers.get('content-type')?.includes('json')
+            ? JSON.parse(bytes.toString('utf8'))
+            : bytes,
+      };
     },
     async fireSchedules() {
       const id = await thread();

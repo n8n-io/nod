@@ -1,5 +1,26 @@
 import type { Run } from './trace.ts';
+import type { Artifact } from '../../src/shared/contracts.ts';
 import { check, type Expectation } from './scenario.ts';
+
+export async function deliveredFiles(run: Run) {
+  const shared = new Map(
+    run.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.attachments ?? [])
+      .map((file) => [file.id, file]),
+  );
+  const files: Array<Artifact & { bytes: Buffer }> = [];
+  for (const file of shared.values()) {
+    const response = await run.api('GET', file.url);
+    if (
+      response.status === 200 &&
+      Buffer.isBuffer(response.body) &&
+      response.body.length === file.size
+    )
+      files.push({ ...file, bytes: response.body });
+  }
+  return files;
+}
 
 export function nudges(run: Run) {
   const proactive = new Set(run.turns.filter((turn) => turn.proactive).map((turn) => turn.id));

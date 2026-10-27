@@ -1,3 +1,5 @@
+import { unzipSync } from 'fflate';
+import { deliveredFiles } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { pdf, pdfText } from '../world/pdf.ts';
@@ -194,6 +196,25 @@ export default scenario({
     const folder = (run: { files: string[] }) =>
       run.files.filter((path) => path.includes(`/Taxes ${year}/`));
     return [
+      check('documents-reach-the-owner', async (run) => {
+        const files = await deliveredFiles(run);
+        const contents = files.flatMap((file) =>
+          /\.zip$/i.test(file.name)
+            ? Object.values(unzipSync(file.bytes)).map((bytes) => Buffer.from(bytes))
+            : [file.bytes],
+        );
+        const missing: string[] = [];
+        for (const path of folder(run)) {
+          const bytes = await run.read(path);
+          if (!bytes || !contents.some((content) => content.equals(bytes))) missing.push(path);
+        }
+        return {
+          pass: folder(run).length === 4 && !missing.length,
+          evidence: missing.length
+            ? `Not delivered: ${missing.join(', ')}`
+            : `${files.length} attachments`,
+        };
+      }),
       check(
         'folder-holds-exactly-the-four-documents',
         (run) => {

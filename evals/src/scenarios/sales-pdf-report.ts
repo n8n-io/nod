@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { deliveredFiles } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps } from '../world/apps.ts';
@@ -114,21 +114,14 @@ const namesDecemberBest = (text: string) =>
 
 async function delivered(run: Run) {
   const found: Array<{ name: string; path: string; bytes: Buffer }> = [];
-  for (const call of run.tools) {
-    if (call.name !== 'share_file' || call.isError) continue;
-    const path = String(call.input?.path ?? '');
-    const relative = path.replace(/^(\.\/)+/, '');
-    let artifact: { name?: string; size?: number } = {};
-    try {
-      artifact = JSON.parse(call.output);
-    } catch {}
-    let chosen: { path: string; bytes: Buffer } | undefined;
-    for (const file of run.files.filter((item) => item === path || item.endsWith(`/${relative}`))) {
-      const read = await run.read(file);
-      if (read && (!chosen || read.length === artifact.size)) chosen = { path: file, bytes: read };
+  for (const file of await deliveredFiles(run)) {
+    for (const path of run.files) {
+      const bytes = await run.read(path);
+      if (bytes?.equals(file.bytes)) {
+        found.push({ name: file.name, path, bytes: file.bytes });
+        break;
+      }
     }
-    if (chosen)
-      found.push({ name: artifact.name ?? (call.input?.name || basename(path)), ...chosen });
   }
   return found;
 }

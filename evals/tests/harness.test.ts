@@ -24,6 +24,7 @@ import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analy
 import { summarizeDecisions, type DecisionAttempt } from '../src/decisions.ts';
 import {
   amounts,
+  deliveredFiles,
   asksForSecret,
   finished,
   inspectableNudges,
@@ -830,6 +831,10 @@ test('scenario API calls use authenticated local transport and refuse outside ta
       started++;
     },
   }).register(app);
+  const file = Buffer.from('%PDF-1.4\nSynthetic delivered document\n%%EOF\n');
+  app.get('/api/artifacts/delivered', (_request, reply) =>
+    reply.type('application/pdf').send(file),
+  );
   await app.listen({ host: '127.0.0.1', port });
   const body = { onboardingCompleted: true };
   let calls = 0;
@@ -864,6 +869,28 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
+  const attachment = {
+    id: 'delivered',
+    name: 'report.pdf',
+    mimeType: 'application/pdf',
+    size: file.length,
+    url: '/api/artifacts/delivered',
+  };
+  const run = {
+    api: session.api,
+    messages: [{ role: 'user', attachments: [attachment] }],
+  } as unknown as Run;
+  assert.deepEqual(await deliveredFiles(run), []);
+  run.messages[0].role = 'assistant';
+  assert.deepEqual(
+    (await deliveredFiles(run)).map((item) => item.bytes),
+    [file],
+  );
+  attachment.url = '/api/artifacts/missing';
+  assert.deepEqual(await deliveredFiles(run), []);
+  attachment.url = '/api/artifacts/delivered';
+  attachment.size++;
+  assert.deepEqual(await deliveredFiles(run), []);
 });
 
 test('approval language grading distinguishes refusal from an unresolved decision', async () => {

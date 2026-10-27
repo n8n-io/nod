@@ -180,9 +180,9 @@ async function attemptOnce(options: {
     });
 }
 
-async function checkHarness(model: string, judge: string) {
+async function checkHarness(model: string, judge: string, runDirectory: string) {
   const item = scenarios.find((entry) => entry.id === 'harness-canary')!;
-  const directory = join(tmpdir(), `nod-eval-canary-${randomUUID()}`);
+  const directory = join(runDirectory, 'canaries', randomUUID());
   await mkdir(join(directory, 'attempts'), { recursive: true });
   await mkdir(join(directory, 'logs'), { recursive: true });
   let broken = '';
@@ -239,7 +239,7 @@ export async function runSuite(options: RunOptions) {
   } else delete process.env.NOD_EVAL_SOURCE;
   try {
     if (options.canary !== false && selected.some((item) => item.tier !== 'canary'))
-      await checkHarness(model, judge);
+      await checkHarness(model, judge, directory);
     const digest = async (image: string) =>
       (await runProcess('docker', ['image', 'inspect', image, '--format', '{{.Id}}'])).stdout
         .trim()

@@ -1,14 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
-import {
-  createLlm,
-  createSimulator,
-  fallbackLlm,
-  providerRefusal,
-  simulatorFailure,
-  withFallback,
-} from './judge.ts';
+import { createLlm, createSimulator, providerRefusal, simulatorFailure } from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { createSession } from './session.ts';
@@ -90,10 +83,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   let phase = 'start';
   try {
-    const judgeLlm = withFallback(
-      await createLlm(judgeModel),
-      await fallbackLlm(environment, judgeModel.provider),
-    );
+    const judgeLlm = await createLlm(judgeModel);
     stack = await (starting = startStack({
       model,
       observations: world.observations,
