@@ -57,6 +57,17 @@ function statement(month: number, year: number) {
   ]);
 }
 
+function assessment(year: number) {
+  return pdf([
+    `Income tax assessment notice ${year}`,
+    'Taxpayer: Alex Rivera',
+    `Tax year: ${year}`,
+    'Tax due: EUR 3,184.60',
+    'Withheld at source: EUR 2,950.00',
+    'Balance to pay: EUR 234.60',
+  ]);
+}
+
 function bankSite(state: State): Site {
   return (context) => {
     const session = context.session(() => ({ auth: false }));
@@ -121,14 +132,7 @@ function taxSite(state: State): Site {
       state.taxDownloads.push(download[1]);
       return file(
         `notificacao_liquidacao_${download[1]}.pdf`,
-        pdf([
-          `Income tax assessment notice ${download[1]}`,
-          'Taxpayer: Alex Rivera',
-          `Tax year: ${download[1]}`,
-          'Tax due: EUR 3,184.60',
-          'Withheld at source: EUR 2,950.00',
-          'Balance to pay: EUR 234.60',
-        ]),
+        assessment(Number(download[1])),
         'application/pdf',
       );
     }
@@ -196,6 +200,22 @@ export default scenario({
     const folder = (run: { files: string[] }) =>
       run.files.filter((path) => path.includes(`/Taxes ${year}/`));
     return [
+      check(
+        'copies-original-documents',
+        async (run) => {
+          const files = await Promise.all(folder(run).map((path) => run.read(path)));
+          const originals = [6, 7, 8].map((month) => statement(month, year));
+          originals.push(assessment(year - 1));
+          const copied = originals.filter((original) =>
+            files.some((bytes) => bytes?.equals(original)),
+          );
+          return {
+            pass: copied.length === 4,
+            evidence: `${copied.length} of 4 original documents`,
+          };
+        },
+        { failure: 'reasoning' },
+      ),
       check('documents-reach-the-owner', async (run) => {
         const files = await deliveredFiles(run);
         const contents = files.flatMap((file) =>

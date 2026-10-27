@@ -88,7 +88,7 @@ The `usage` folder keeps judge request receipts as JSON Lines. A receipt is writ
 
 Each judge criterion needs one verdict with boolean result and applicability fields and a reason. Missing, duplicate, or invalid fields use the existing retry path. A reply that stays invalid is a measurement error. A valid failure stays a failure, regardless of its reason's wording.
 
-The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file.
+The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file. Each saved statement and assessment must also match the original source bytes.
 
 The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
 

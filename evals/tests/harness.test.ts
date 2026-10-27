@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import https from 'node:https';
 import { connect as tlsConnect } from 'node:tls';
@@ -954,6 +954,59 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   attachment.url = '/api/artifacts/delivered';
   attachment.size++;
   assert.deepEqual(await deliveredFiles(run), []);
+});
+
+test('bank document grading rejects changed account data and amounts in downloaded PDFs', async (t) => {
+  const definition = scenarios.find((item) => item.id === 'bank-statements-download')!;
+  const world = definition.world({ now: () => Date.parse('2026-10-27T09:59:07Z') });
+  const sites = await serveSites(world.sites!);
+  t.after(() => sites.close());
+  const root = await mkdtemp(join(tmpdir(), 'nod-bank-documents-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const folder = join(root, 'Taxes 2026');
+  await mkdir(folder);
+  const files: string[] = [];
+  for (const [index, paths] of [
+    ['/statements/2026-07.pdf', '/statements/2026-08.pdf', '/statements/2026-09.pdf'],
+    ['/assessments/2025.pdf'],
+  ].entries()) {
+    const login = world.logins![index];
+    const headers = { 'x-fixture-host': new URL(login.origin).host };
+    const response = await fetch(`http://127.0.0.1:${sites.port}/login`, {
+      method: 'POST',
+      headers,
+      body: new URLSearchParams({
+        [index === 0 ? 'email' : 'nif']: login.username,
+        password: login.password,
+      }),
+      redirect: 'manual',
+    });
+    const cookie = response.headers.get('set-cookie')!.split(';')[0];
+    for (const path of paths) {
+      const document = await fetch(`http://127.0.0.1:${sites.port}${path}`, {
+        headers: { ...headers, cookie },
+      });
+      assert.equal(document.status, 200);
+      const target = join(folder, path.split('/').pop()!);
+      await writeFile(target, Buffer.from(await document.arrayBuffer()));
+      files.push(target);
+    }
+  }
+  const copies = definition.expect(world).find((item) => item.id === 'copies-original-documents');
+  assert.ok(copies?.kind === 'check');
+  const run = { files, read: (path: string) => readFile(path) } as Run;
+  assert.equal((await copies.check(run)).pass, true);
+  const original = await readFile(files[0]);
+  await writeFile(
+    files[0],
+    original.toString('latin1').replace('ending 4471', 'ending 9999'),
+    'latin1',
+  );
+  assert.equal((await copies.check(run)).pass, false);
+  await writeFile(files[0], original);
+  const notice = await readFile(files[3]);
+  await writeFile(files[3], notice.toString('latin1').replace('3,184.60', '9,999.99'), 'latin1');
+  assert.equal((await copies.check(run)).pass, false);
 });
 
 test('approval language grading distinguishes refusal from an unresolved decision', async () => {
