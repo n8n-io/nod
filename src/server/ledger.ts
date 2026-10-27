@@ -264,23 +264,38 @@ export function createLedger({
   }
 
   function decisions(base: DecisionModel): DecisionModel {
+    async function run(
+      work: (report: (usage: ProviderUsageEvent) => void) => Promise<unknown>,
+      signal?: AbortSignal,
+      report?: (usage: ProviderUsageEvent) => void,
+    ) {
+      signal?.throwIfAborted();
+      if (await limitReached()) throw new Error(spendingLimitReached);
+      try {
+        return await work((usage) => {
+          record(usage);
+          activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
+          report?.(usage);
+        });
+      } finally {
+        await flushUsage();
+      }
+    }
     return {
       get configured() {
         return base.configured;
       },
+      get checkBatch(): DecisionModel['checkBatch'] {
+        const check = base.checkBatch;
+        return check
+          ? (request, signal, report) =>
+              run((usage) => check.call(base, request, signal, usage), signal, report)
+          : undefined;
+      },
       async check(request, signal, report) {
         signal?.throwIfAborted();
         if (base.configured === false) return undefined;
-        if (await limitReached()) throw new Error(spendingLimitReached);
-        try {
-          return await base.check(request, signal, (usage) => {
-            record(usage);
-            activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
-            report?.(usage);
-          });
-        } finally {
-          await flushUsage();
-        }
+        return run((usage) => base.check(request, signal, usage), signal, report);
       },
     };
   }

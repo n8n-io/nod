@@ -73,14 +73,70 @@ export function createMailCheck({
     batch.length === 1
       ? { email: { from: batch[0]!.from, subject: batch[0]!.subject, text: batch[0]!.text } }
       : { emails: batch };
+  function batches(entries: Entry[], input = inputFor) {
+    const result: Entry[][] = [];
+    let batch: Entry[] = [];
+    for (const entry of entries) {
+      if (batch.length === 10 || JSON.stringify(input([...batch, entry])).length > 32_000) {
+        if (batch.length) result.push(batch);
+        batch = [];
+      }
+      if (JSON.stringify(input([entry])).length <= 32_000) batch.push(entry);
+    }
+    if (batch.length) result.push(batch);
+    return result;
+  }
   return async (emails, signal) => {
     const checked: Array<boolean | undefined> = Array.from({ length: emails.length });
     if (!emails.length || signal?.aborted) return checked;
     const availableDecisions = decisions?.configured === false ? undefined : decisions;
+    const checkBatch = availableDecisions?.checkBatch;
     const fallback = new Set<number>();
     if (!availableDecisions) {
       for (let id = 0; id < emails.length; id++) fallback.add(id);
-    } else
+    } else if (checkBatch)
+      await Promise.all(
+        batches(
+          emails.map((email, id) => ({ ...email, id })),
+          (emails) => ({ emails }),
+        ).map(async (batch) => {
+          try {
+            const result = await request(
+              (stop) =>
+                checkBatch.call(
+                  availableDecisions,
+                  {
+                    instructions: accessInstructions,
+                    input: { emails: batch },
+                    operation: 'access',
+                    questions: batch.map(({ id }) => ({
+                      ...accessQuestion,
+                      name: `access_${id}`,
+                      instructions: `Evaluate only the email whose id is ${id}. Other emails are separate records and must not affect this answer.`,
+                    })),
+                  },
+                  stop,
+                ),
+              signal,
+            );
+            if (result === undefined) {
+              for (const { id } of batch) fallback.add(id);
+              return;
+            }
+            if (!result || typeof result !== 'object') return;
+            const expected = new Set(batch.map(({ id }) => `access_${id}`));
+            const answers = Object.entries(result);
+            if (
+              answers.length !== expected.size ||
+              answers.some(([name, value]) => !expected.has(name) || typeof value !== 'boolean')
+            )
+              return;
+            for (const { id } of batch)
+              checked[id] = (result as Record<string, boolean>)[`access_${id}`];
+          } catch {}
+        }),
+      );
+    else
       await Promise.all(
         emails.map(async (email, id) => {
           try {
@@ -105,19 +161,11 @@ export function createMailCheck({
         }),
       );
     if (!curator.configured || signal?.aborted) return checked;
-    const batches: Entry[][] = [];
-    let batch: Entry[] = [];
-    for (const id of [...fallback].sort((left, right) => left - right)) {
-      const entry = { ...emails[id]!, id };
-      if (batch.length === 10 || JSON.stringify(inputFor([...batch, entry])).length > 32_000) {
-        if (batch.length) batches.push(batch);
-        batch = [];
-      }
-      if (JSON.stringify(inputFor([entry])).length <= 32_000) batch.push(entry);
-    }
-    if (batch.length) batches.push(batch);
+    const pending = batches(
+      [...fallback].sort((left, right) => left - right).map((id) => ({ ...emails[id]!, id })),
+    );
     await Promise.all(
-      batches.map(async (batch) => {
+      pending.map(async (batch) => {
         try {
           const result = await request(
             (stop) =>

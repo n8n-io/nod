@@ -371,6 +371,12 @@ export function createDefaultAdapters(
     traces,
   });
   const decisions = createDecisionModel({
+    canBatch: () => {
+      if (env.TYPESAFE_API_KEY?.trim() || !models.configured) return false;
+      const { connections, selection } = models.view();
+      const connection = connections.find((entry) => entry.id === selection?.connectionId);
+      return connection?.provider === 'openai' && connection.method === 'api_key';
+    },
     configured: () => {
       if (env.TYPESAFE_API_KEY?.trim()) return true;
       if (!models.configured) return false;
