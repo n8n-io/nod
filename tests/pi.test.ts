@@ -4968,3 +4968,154 @@ test('the runtime sends a recording caption natively while retaining its trusted
     assert.ok(prompts[1].text.includes('Answer this typed follow-up.'));
   }
 });
+
+test('Anthropic workspace connections keep discovery and inference bound to the current owned key', async (t) => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { modelKeyCredential } = await import('../src/server/models.ts');
+  const workspaceA = 'wrkspc_011SyntheticWorkspaceA';
+  const workspaceB = 'wrkspc_011SyntheticWorkspaceB';
+  const accounts = new Map<string, string | null>([
+    ['sk-ant-api-fixture-scoped', null],
+    ['sk-ant-api-fixture-first', workspaceA],
+    ['sk-ant-api-fixture-second', workspaceB],
+  ]);
+  const previous = process.env.ANTHROPIC_WORKSPACE_ID;
+  process.env.ANTHROPIC_WORKSPACE_ID = 'wrkspc_011UnrelatedAmbient';
+  t.after(() => {
+    if (previous === undefined) delete process.env.ANTHROPIC_WORKSPACE_ID;
+    else process.env.ANTHROPIC_WORKSPACE_ID = previous;
+  });
+  const requests: { path: string; key: string; workspace: string | null }[] = [];
+  const transport: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, 'https://api.anthropic.com');
+    const headers = new Headers(init?.headers);
+    const key = headers.get('x-api-key')!;
+    const workspace = headers.get('anthropic-workspace-id');
+    requests.push({ path: url.pathname, key, workspace });
+    if (!accounts.has(key))
+      return Response.json(
+        { error: { type: 'authentication_error', message: key } },
+        { status: 401 },
+      );
+    if (workspace !== accounts.get(key))
+      return Response.json(
+        {
+          error: {
+            type: 'invalid_request_error',
+            message: 'This request requires the anthropic-workspace-id header.',
+          },
+        },
+        { status: 400 },
+      );
+    if (url.pathname === '/v1/models') {
+      assert.equal(init?.redirect, 'error');
+      return Response.json({ data: [{ id: 'claude-sonnet-5-5' }] });
+    }
+    assert.equal(url.pathname, '/v1/messages');
+    assert.equal(JSON.parse(String(init?.body)).model, 'claude-sonnet-5-5');
+    const events = [
+      {
+        type: 'message_start',
+        message: {
+          id: 'msg_fixture',
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-5-5',
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 8, output_tokens: 0 },
+        },
+      },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Connected.' } },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn', stop_sequence: null },
+        usage: { output_tokens: 2 },
+      },
+      { type: 'message_stop' },
+    ];
+    return new Response(
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+  };
+  const backend = createPiModelBackend({ fetch: transport });
+  let credential = modelKeyCredential('anthropic', 'sk-ant-api-fixture-scoped', {});
+  const [definition] = await backend.catalog('anthropic', 'api_key', credential);
+  assert.ok(definition);
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'anthropic',
+    method: 'api_key',
+    definition,
+    effort: 'off',
+    read: async () => credential,
+  });
+  for (const [key, workspaceId] of accounts) {
+    credential = modelKeyCredential('anthropic', key, { workspaceId: workspaceId ?? undefined });
+    const models = await backend.catalog('anthropic', 'api_key', credential);
+    assert.deepEqual(
+      models.map(({ choice }) => choice.id),
+      ['claude-sonnet-5-5'],
+    );
+    assert.ok(!JSON.stringify(models).includes('wrkspc_'));
+    const result = await runtime.completeSimple(
+      model,
+      { messages: [{ role: 'user', content: 'Say hello.', timestamp: 1 }] },
+      { fetch: transport },
+    );
+    assert.equal(result.stopReason, 'stop', result.errorMessage);
+    assert.deepEqual(result.content, [{ type: 'text', text: 'Connected.' }]);
+    assert.deepEqual(requests.at(-1), { path: '/v1/messages', key, workspace: workspaceId });
+  }
+  const count = requests.length;
+  credential = { type: 'api_key', key: 'sk-ant-api-fixture-invalid', workspaceId: workspaceA };
+  const refused = await runtime.completeSimple(
+    model,
+    { messages: [{ role: 'user', content: 'Say hello.', timestamp: 1 }] },
+    { fetch: transport, maxRetries: 5 },
+  );
+  assert.equal(refused.stopReason, 'error');
+  assert.ok(!JSON.stringify(refused).includes('sk-ant-api-fixture-invalid'));
+  assert.equal(requests.length, count + 1);
+});
+
+test('Anthropic connection failures explain workspace access without leaking provider responses', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { ModelAuthError } = await import('../src/ports/models.ts');
+  for (const [status, message, expected] of [
+    [
+      400,
+      'The anthropic-workspace-id header is required. sk-ant-api-fixture-private',
+      /Workspace ID/,
+    ],
+    [401, 'sk-ant-api-fixture-private', /API key/],
+    [403, 'sk-ant-api-fixture-private', /access/],
+    [404, 'sk-ant-api-fixture-private', /access/],
+  ] as const) {
+    let calls = 0;
+    const backend = createPiModelBackend({
+      fetch: async () => {
+        calls++;
+        return Response.json({ error: { type: 'invalid_request_error', message } }, { status });
+      },
+    });
+    await assert.rejects(
+      backend.catalog('anthropic', 'api_key', {
+        type: 'api_key',
+        key: 'sk-ant-api-fixture-private',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ModelAuthError);
+        assert.match(error.message, expected);
+        assert.ok(!error.message.includes('sk-ant-api-fixture-private'));
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  }
+});

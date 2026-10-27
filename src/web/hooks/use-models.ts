@@ -16,6 +16,7 @@ export type Models = ReturnType<typeof useModels>;
 export const localServerAddress = 'http://localhost:11434/v1';
 
 export interface KeySettings {
+  workspaceId: string;
   region: string;
   url: string;
   model: string;
@@ -25,6 +26,7 @@ export interface KeySettings {
 }
 
 export const noKeySettings: KeySettings = {
+  workspaceId: '',
   region: '',
   url: '',
   model: '',
@@ -47,6 +49,9 @@ export function keyConnection(provider: ModelProvider, key: string, settings: Ke
   return {
     provider,
     key,
+    ...(provider === 'anthropic' && settings.workspaceId.trim()
+      ? { workspaceId: settings.workspaceId.trim() }
+      : {}),
     ...(provider === 'amazon-bedrock' ? { region: settings.region.trim() } : {}),
     ...(provider === 'azure'
       ? {

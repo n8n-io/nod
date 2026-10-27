@@ -48,6 +48,7 @@ const keySchema = z
     deployment: z.string().trim().max(200).optional(),
     accountId: z.string().trim().max(100).optional(),
     gatewayId: z.string().trim().max(100).optional(),
+    workspaceId: z.string().trim().max(100).optional(),
   })
   .strict();
 export const modelSelectionInput = z
@@ -100,8 +101,17 @@ export function modelKeyCredential(
     deployment?: string;
     accountId?: string;
     gatewayId?: string;
+    workspaceId?: string;
   },
 ): ModelCredential {
+  if (provider === 'anthropic') {
+    const workspaceId = settings.workspaceId?.trim();
+    if (workspaceId && (workspaceId.length > 100 || !/^wrkspc_[A-Za-z0-9]+$/.test(workspaceId)))
+      throw new ConnectionError(
+        'Enter a Workspace ID from the Claude Console, starting with wrkspc_.',
+      );
+    return { type: 'api_key', key, ...(workspaceId ? { workspaceId } : {}) };
+  }
   if (provider === 'amazon-bedrock') {
     if (!settings.region || !bedrockRegionPattern.test(settings.region))
       throw new ConnectionError('Enter an AWS Region, such as us-east-1.');
@@ -148,6 +158,8 @@ function sameAccount(
 }
 
 function connectionLabel(provider: ModelProvider, method: ModelMethod, value: ModelCredential) {
+  if (provider === 'anthropic' && value.type === 'api_key' && value.workspaceId)
+    return value.workspaceId;
   if (value.type === 'oauth') return value.email ?? 'ChatGPT account';
   if (value.type === 'endpoint') return new URL(value.url).host;
   if (value.type === 'bedrock') return value.region;
@@ -808,6 +820,7 @@ export function createModelService(options: {
         deployment?: string;
         accountId?: string;
         gatewayId?: string;
+        workspaceId?: string;
       } = {},
     ) {
       key = key.trim();

@@ -241,6 +241,23 @@ export function CloudKeyFields({
   onChange(value: KeySettings): void;
   disabled?: boolean;
 }) {
+  if (provider === 'anthropic')
+    return (
+      <Field
+        label="Workspace ID (optional)"
+        hint="For organization keys that aren't limited to one workspace."
+      >
+        <Input
+          value={value.workspaceId}
+          maxLength={100}
+          placeholder="wrkspc_…"
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled}
+          onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
+        />
+      </Field>
+    );
   if (provider === 'amazon-bedrock')
     return (
       <Field label="Region">
@@ -575,7 +592,10 @@ export function ModelSettings({
                   <CloudKeyFields
                     provider={provider}
                     value={settings}
-                    onChange={setSettings}
+                    onChange={(next) => {
+                      setSettings(next);
+                      models.setError('');
+                    }}
                     disabled={busy}
                   />
                   <Field

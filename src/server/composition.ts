@@ -254,6 +254,7 @@ export function modelEnvironment(
                 deployment: env.AZURE_OPENAI_DEPLOYMENT,
                 accountId: env.CLOUDFLARE_ACCOUNT_ID,
                 gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+                workspaceId: env.ANTHROPIC_WORKSPACE_ID,
               }),
             ],
           ];

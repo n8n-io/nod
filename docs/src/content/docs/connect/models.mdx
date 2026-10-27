@@ -83,9 +83,13 @@ ChatGPT sign-in listens on port `1455` where Nod's server runs. If another progr
 <Steps>
 
 1. Next to **Anthropic**, select **Add API key**.
-2. Paste your key into **Anthropic API key**, then select **Save connection**.
+2. Paste your key into **Anthropic API key**.
+3. If your organization key can access multiple workspaces, enter the workspace to use in **Workspace ID (optional)**.
+4. Select **Save connection**.
 
 </Steps>
+
+Find the workspace ID in [Anthropic's workspace settings](https://platform.claude.com/settings/workspaces). Leave it empty for keys limited to one workspace.
 
 </TabItem>
 <TabItem label="OpenRouter">
@@ -300,6 +304,7 @@ Additional settings:
 
 | Service           | Settings                                                                                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic         | `ANTHROPIC_WORKSPACE_ID`, required for organization keys that aren't limited to one workspace. Leave empty for keys limited to one workspace.              |
 | Amazon Bedrock    | `AWS_REGION`, such as `us-east-1`. Set `LLM_MODEL` to select a model or inference profile when several are available.                                      |
 | Azure OpenAI      | `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_MODEL`, the model ID your deployment runs. Set `AZURE_OPENAI_DEPLOYMENT` if the deployment has a different name. |
 | Cloudflare        | `CLOUDFLARE_ACCOUNT_ID`, the 32-character hexadecimal account ID. AI Gateway also requires `CLOUDFLARE_GATEWAY_ID`.                                        |

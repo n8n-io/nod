@@ -151,9 +151,9 @@ function entries<T>(value: unknown, schema: z.ZodType<T>) {
     });
 }
 
-async function modelListRestricted(response: Response) {
+async function modelErrorMessage(response: Response) {
   const reader = response.body?.getReader();
-  if (!reader) return false;
+  if (!reader) return undefined;
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   try {
@@ -161,20 +161,24 @@ async function modelListRestricted(response: Response) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.length;
-      if (bytes > 4096) return false;
+      if (bytes > 4096) return undefined;
       chunks.push(value);
     }
     const body = z
       .object({ error: z.union([z.string(), z.object({ message: z.string() })]) })
       .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    const message = typeof body.error === 'string' ? body.error : body.error.message;
-    const scopes = [...message.matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
-    return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
+    return typeof body.error === 'string' ? body.error : body.error.message;
   } catch {
-    return false;
+    return undefined;
   } finally {
     await reader.cancel().catch(() => {});
   }
+}
+
+async function modelListRestricted(response: Response) {
+  const message = await modelErrorMessage(response);
+  const scopes = [...(message ?? '').matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
+  return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -717,9 +721,30 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             : `${resource}/models`;
       const headers: Record<string, string> =
         provider === 'anthropic'
-          ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+          ? {
+              'x-api-key': key,
+              'anthropic-version': '2023-06-01',
+              ...(credential.type === 'api_key' && credential.workspaceId
+                ? { 'anthropic-workspace-id': credential.workspaceId }
+                : {}),
+            }
           : { Authorization: `Bearer ${key}` };
       const accepted = async (response: Response) => {
+        if (provider === 'anthropic' && response.status === 400) {
+          const message = await modelErrorMessage(response);
+          if (message?.includes('anthropic-workspace-id'))
+            throw new ModelAuthError(
+              credential.type === 'api_key' && credential.workspaceId
+                ? 'Anthropic didn’t accept this Workspace ID. Check it in the Claude Console.'
+                : 'Enter the Workspace ID for this Anthropic key, or use a key scoped to one workspace.',
+            );
+        }
+        if (provider === 'anthropic' && [403, 404].includes(response.status)) {
+          await response.body?.cancel();
+          throw new ModelAuthError(
+            'Anthropic denied access. Check that the key can use this workspace and list its models.',
+          );
+        }
         if (response.status !== 401) return response;
         await response.body?.cancel();
         throw method === 'subscription'
@@ -971,6 +996,12 @@ export async function createPiModelRuntime(
       if (credential.type === 'oauth')
         throw new Error('The selected model connection is unavailable.');
       if (credential.key) secrets.add(credential.key);
+      if (provider === 'anthropic' && credential.type === 'api_key')
+        return {
+          type: 'api_key',
+          key: credential.key,
+          env: { ANTHROPIC_WORKSPACE_ID: credential.workspaceId ?? '' },
+        };
       if (provider === 'cloudflare-workers-ai' || provider === 'cloudflare-ai-gateway') {
         const value = cloudflareCredential(provider, credential);
         return {
@@ -1012,6 +1043,24 @@ export async function createPiModelRuntime(
     refreshOnCreate: false,
     allowModelNetwork: false,
   });
+  if (provider === 'anthropic') {
+    const getAuth = runtime.getAuth.bind(runtime);
+    runtime.getAuth = async (target, overrides) => {
+      const result =
+        typeof target === 'string'
+          ? await getAuth(target, overrides)
+          : await getAuth(target, overrides);
+      const workspaceId = result?.env?.ANTHROPIC_WORKSPACE_ID;
+      if (!result || !workspaceId) return result;
+      return {
+        ...result,
+        auth: {
+          ...result.auth,
+          headers: { ...result.auth.headers, 'anthropic-workspace-id': workspaceId },
+        },
+      };
+    };
+  }
   runtime.registerProvider(provider, {
     models: [access.definition, ...(access.textModel ? [access.textModel.definition] : [])].map(
       ({ spec }) => ({
