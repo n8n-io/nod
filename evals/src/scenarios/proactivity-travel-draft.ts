@@ -37,7 +37,7 @@ export default scenario({
           clock.now,
         ),
       }),
-      state: { turnId: '', updates: [] as unknown[] },
+      state: { turnId: '', updates: [] as unknown[], resultReadable: false },
     };
   },
   async play(session, world) {
@@ -47,6 +47,11 @@ export default scenario({
     await session.waitForTurn(world.state.turnId);
     await session.settle();
     world.state.updates = (await session.proactivity.view()).issues;
+    const issue = world.state.updates[0] as { id?: string; draft?: string } | undefined;
+    if (issue?.id) {
+      const result = await session.api('GET', `/api/prepared/${issue.id}`);
+      world.state.resultReadable = result.status === 200 && result.body.draft === issue.draft;
+    }
   },
   evidence(run, world) {
     return JSON.stringify({
@@ -73,6 +78,23 @@ export default scenario({
             issue.draft?.trim() && issue.sources?.some((source) => source.id === 'travel-thread'),
           );
         }),
+      ),
+      check(
+        'notification-opens-the-saved-result',
+        (run) =>
+          world.state.resultReadable &&
+          world.state.updates.some((item) => {
+            const issue = item as { url?: string };
+            return Boolean(
+              issue.url &&
+              run.messages.some(
+                (message) =>
+                  message.turnId === world.state.turnId &&
+                  message.role === 'assistant' &&
+                  message.text.includes(issue.url!),
+              ),
+            );
+          }),
       ),
       check(
         'one-useful-notification',

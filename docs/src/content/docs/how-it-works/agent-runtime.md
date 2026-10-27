@@ -192,12 +192,14 @@ Live status covers work you started: a chat request, a task, a reply to a task, 
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Start               | A short opening message for a chat request that takes more than a few seconds. A saved task uses its existing start message. | Acknowledge the request without repeating the same start.               |
 | Routine work        | Keep activity visible. Use a short status for a useful change of phase.                                                      | Show the current work without narrating each tool call.                 |
-| Milestone           | Send a useful, verified partial result in chat. State what is complete and what remains.                                     | Give the user something useful before the whole job is done.            |
+| Milestone           | Send a verified result the user can use now. Include the result, an attachment or a checked link.                            | Give the user something they can inspect before the whole job is done.  |
 | Something needs you | Send a question, blocker or decision as a message.                                                                           | Make a required response clear.                                         |
 | End                 | Deliver the final result. State a failure, interruption or spending limit when it stops requested work.                      | Mark the actual outcome and avoid repeating messages already delivered. |
 | After               | Make at most one relevant offer. Do not repeat an offer the user ignored or declined.                                        | Keep follow-up useful and easy to dismiss.                              |
 
-Milestones follow useful progress, not a fixed clock or message count. A partial result does not mean the whole task is finished. Background schedules and events keep routine checks quiet and deliver only what their standing instruction asks for.
+Nod reports progress when you can use a result now, a change affects your next step, or it needs your help. A claim that work was created, updated or completed needs a successful tool result. The message includes the result, an attachment or a checked link you can open. Internal record changes and private preparation stay quiet unless you ask about them. These instructions guide the model. For a proactive nudge, the server also adds the saved result's verified link.
+
+A partial result does not mean the whole task is finished. Background schedules and events keep routine checks quiet and deliver only what their standing instruction asks for.
 
 The runtime's conversation guidance defines these message breaks. The confirmation and notice writer uses the same voice and paragraph rules, but returns one message for its supplied purpose. It does not receive instructions to send progress messages or start another part of a conversation.
 

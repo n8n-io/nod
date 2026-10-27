@@ -3291,6 +3291,12 @@ test('channel presentation isolates private links from the model and rejects uns
   assert.doesNotMatch(modelsLink, /localhost|127\.0\.0\.1|nod:\/\//);
   const informationLink = await channelReply('See [Usage](/usage).', { threadId: 'owned-thread' });
   assert.match(informationLink, /Usage: https:\/\/nod-docs\.pages\.dev\/open\/#\/usage/);
+  const prepared = `/prepared/${randomUUID()}`;
+  const resultLink = await channelReply(`See [Contract \\[reply\\]](${prepared}).`, {
+    threadId: 'owned-thread',
+  });
+  assert.ok(resultLink.includes(`https://nod-docs.pages.dev/open/#${prepared}`));
+  assert.doesNotMatch(resultLink, /localhost|127\.0\.0\.1|nod:\/\//);
   const adapted = await channelReply('/credentials/request-id', {
     threadId: 'owned-thread',
     present: async () => 'Open [Settings > Models](/settings/models).',

@@ -36,6 +36,8 @@ import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 test('external app links can only open named screens without action data', () => {
   for (const path of Object.keys(appPages))
     assert.equal(appOpenPath(`nod://open${path}`, appPages), path);
+  const prepared = `/prepared/${randomUUID()}`;
+  assert.equal(appOpenPath(`nod://open${prepared}`, appPages), prepared);
   for (const value of [
     undefined,
     'https://example.test/settings/models',
@@ -48,6 +50,10 @@ test('external app links can only open named screens without action data', () =>
     'nod://open/settings/../apps',
     'nod://open/credentials/request-id',
     'nod://open@evil.test/apps',
+    'nod://open/prepared/not-an-id',
+    `nod://open${prepared}?action=send`,
+    `nod://open${prepared}#secret`,
+    `nod://open${prepared}/../apps`,
   ])
     assert.equal(appOpenPath(value, appPages), null);
 });

@@ -54,7 +54,7 @@ Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In t
 
 ## Task check-ins
 
-A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Nod stops before its next step, says what's done and what's left, and asks whether to keep going.
+A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Nod stops before its next step. It states the cost and what continuing would do, then asks whether to keep going. It includes a completed result only when that helps your decision and you can inspect the result.
 
 - Say yes, and the task continues until it spends that amount again.
 - Say no, and Nod stops the task.

@@ -4072,9 +4072,42 @@ test(
                   "SELECT text FROM messages WHERE turn_id=$1 AND starts_with(stream_id,'proactive:')",
                   [turnId],
                 );
-                for (const { text } of nudges.rows) assert.doesNotMatch(text, /\]\(|\/updates/);
+                for (const { text } of nudges.rows) {
+                  const id = /\]\(\/prepared\/([a-f0-9-]+)\)/.exec(text)?.[1];
+                  assert.ok(id);
+                  const [work] = await engine.prepared({ id });
+                  assert.ok(work && 'draft' in work && work.draft);
+                }
               },
             );
+            await t.test('a saved result link reads only current work for its owner', async () => {
+              await reset();
+              await save();
+              const issue = (await engine.view()).issues[0];
+              const owned = Fastify();
+              const foreign = Fastify();
+              engine.registerRoutes(owned);
+              createProactivity({
+                ...options,
+                ownerId: 'synthetic-link-other-owner',
+              }).registerRoutes(foreign);
+              try {
+                const path = `/api/prepared/${issue.id}`;
+                const result = await owned.inject({ url: path });
+                assert.equal(result.statusCode, 200);
+                assert.equal(result.json().draft, issue.draft);
+                assert.equal(result.json().url, `/prepared/${issue.id}`);
+                assert.deepEqual(result.json().sources, issue.sources);
+                assert.equal((await foreign.inject({ url: path })).statusCode, 404);
+                revision = 'account-two';
+                assert.equal((await owned.inject({ url: path })).statusCode, 404);
+                revision = 'account-one';
+                connected = false;
+                assert.equal((await owned.inject({ url: path })).statusCode, 404);
+              } finally {
+                await Promise.all([owned.close(), foreign.close()]);
+              }
+            });
             await t.test(
               'explicit source removal deletes private work and closures only for that owner and source',
               async () => {

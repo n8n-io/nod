@@ -1,7 +1,3 @@
----
-import appPages from '../../../src/shared/app-pages.json';
----
-
 <!doctype html>
 <html lang="en">
   <head>
@@ -20,16 +16,17 @@ import appPages from '../../../src/shared/app-pages.json';
       <p>On a phone? Open Nod on the computer where you installed it, then go to the location above.</p>
       <p id="fallback">If the link does not open Nod, use the same location in the app.</p>
     </main>
-    <script define:vars={{ appPages }}>
-      const path = window.location.hash.slice(1);
-      if (Object.hasOwn(appPages, path)) {
-        const link = document.getElementById('open');
+    <script>
+      import { appPagePath, appPages } from '../../../src/shared/app-links';
+      const path = appPagePath(window.location.hash.slice(1));
+      if (path) {
+        const link = document.getElementById('open') as HTMLAnchorElement;
         link.href = `nod://open${path}`;
         link.hidden = false;
-        document.getElementById('location').textContent = `Nod > ${appPages[path]}`;
+        document.getElementById('location')!.textContent = `Nod > ${appPages[path as keyof typeof appPages] ?? 'Prepared work'}`;
       } else {
-        document.getElementById('location').textContent = 'This app link is not valid. Open Nod on your computer.';
-        document.getElementById('fallback').hidden = true;
+        document.getElementById('location')!.textContent = 'This app link is not valid. Open Nod on your computer.';
+        document.getElementById('fallback')!.hidden = true;
       }
     </script>
   </body>

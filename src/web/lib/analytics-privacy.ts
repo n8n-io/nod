@@ -6,6 +6,7 @@ const routes = new Set([
   '/apps',
   '/channels',
   '/tasks',
+  '/prepared',
   '/usage',
   '/vault',
   '/settings',
@@ -19,6 +20,7 @@ export function analyticsRoute(value: string) {
     const path = new URL(value, 'https://nod.invalid').pathname.replace(/\/$/, '') || '/';
     if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
+    if (path.startsWith('/prepared/')) return '/prepared';
     if (path.startsWith('/browser-connect/')) return '/apps';
     if (path === '/you') return '/';
     if (['/settings/models', '/settings/memory'].includes(path)) return '/settings';
