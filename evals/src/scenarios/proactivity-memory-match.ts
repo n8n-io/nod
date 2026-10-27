@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { noWrites, nudges } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 
 const goal =
@@ -111,9 +111,7 @@ export default scenario({
       savedGoal: goal,
       memory: run.memory,
       issues: world.state.issues,
-      messages: run.messages.filter((message) =>
-        run.turns.some((turn) => turn.proactive && turn.id === message.turnId),
-      ),
+      messages: nudges(run),
       writes: run.writes,
     });
   },
@@ -126,15 +124,7 @@ export default scenario({
         'goal-survived-reset',
         (run) => /ceramics/i.test(run.memory) && /1[,. ]?500/.test(run.memory),
       ),
-      check(
-        'one-useful-message',
-        (run) =>
-          run.messages.filter(
-            (message) =>
-              message.role === 'assistant' &&
-              run.turns.some((turn) => turn.proactive && turn.id === message.turnId),
-          ).length === 1,
-      ),
+      check('one-useful-message', (run) => nudges(run).length === 1),
       noWrites('send', 'post', 'draft', 'update', 'create', 'delete'),
       judge(
         'uses-memory-to-select-a-fitting-option',
