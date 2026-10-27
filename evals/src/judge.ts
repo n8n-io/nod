@@ -227,11 +227,19 @@ export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeV
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    const missing = criteria.filter(
-      (item) => !verdicts.some((verdict: any) => verdict.id === item.id),
-    );
-    if (missing.length) {
-      last = `missing ${missing.map((item) => item.id).join(', ')}; the reply began ${JSON.stringify(text.trim().slice(0, 160))}`;
+    const invalid = criteria.filter((item) => {
+      const matches = verdicts.filter((verdict: any) => verdict?.id === item.id);
+      const verdict = matches[0];
+      return (
+        matches.length !== 1 ||
+        typeof verdict?.pass !== 'boolean' ||
+        typeof verdict?.applicable !== 'boolean' ||
+        typeof verdict?.reasoning !== 'string' ||
+        !verdict.reasoning.trim()
+      );
+    });
+    if (invalid.length || verdicts.length !== criteria.length) {
+      last = `invalid or missing verdicts: ${invalid.map((item) => item.id).join(', ') || 'unexpected IDs'}; the reply began ${JSON.stringify(text.trim().slice(0, 160))}`;
       return undefined;
     }
     return criteria.map((item): JudgeVerdict => {

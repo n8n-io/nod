@@ -1750,7 +1750,7 @@ test('a simulated user blocked by its provider falls back to a second model', as
   );
 });
 
-test('a judge that cannot return every verdict at once is asked one criterion at a time', async () => {
+test('judge verdicts require complete, typed, unique records and keep valid failures', async () => {
   const llm = {
     complete: async (_system: string, input: string) => {
       const ids = [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
@@ -1774,6 +1774,46 @@ test('a judge that cannot return every verdict at once is asked one criterion at
     ['first-check', 'second-check'],
   );
   assert.ok(verdicts.every((verdict) => verdict.pass));
+  const input = {
+    task: 't',
+    transcript: 'x',
+    groundTruth: 'g',
+    criteria: [{ id: 'first-check', criterion: 'A' }],
+  };
+  const valid = {
+    id: 'first-check',
+    reasoning: 'Supported by the source.',
+    applicable: true,
+    pass: true,
+  };
+  for (const records of [
+    [{ ...valid, pass: 'true' }],
+    [{ ...valid, applicable: undefined }],
+    [{ ...valid, applicable: 'false' }],
+    [{ ...valid, reasoning: '' }],
+    [valid, { ...valid, pass: false }],
+    [{ ...valid, id: 'unexpected' }],
+  ])
+    await assert.rejects(
+      judgeCriteria(
+        { complete: async () => JSON.stringify({ verdicts: records }) } as never,
+        input,
+      ),
+      /did not return a verdict/,
+    );
+  const failed = await judgeCriteria(
+    { complete: async () => JSON.stringify({ verdicts: [{ ...valid, pass: false }] }) } as never,
+    input,
+  );
+  assert.equal(failed[0].pass, false);
+  const notApplicable = await judgeCriteria(
+    {
+      complete: async () => JSON.stringify({ verdicts: [{ ...valid, applicable: false }] }),
+    } as never,
+    input,
+  );
+  assert.equal(notApplicable[0].pass, true);
+  assert.equal(notApplicable[0].na, true);
 });
 
 test('morning brief checks reject remembered preferences without a working daily schedule', async () => {
