@@ -50,8 +50,9 @@ export function isQuietTime(preferences: QuietHours, now = new Date()) {
   );
 }
 export function deliveryTime(preferences: QuietHours, now: number) {
-  for (let time = now; time < now + 86400000; time += 60000)
-    if (!isQuietTime(preferences, new Date(time))) return new Date(time);
+  const minute = 60000;
+  for (let time = now - (now % minute); time < now + 2880 * minute; time += minute)
+    if (!isQuietTime(preferences, new Date(time))) return new Date(Math.max(time, now));
   return null;
 }
 function canonicalLocale(value: string) {
