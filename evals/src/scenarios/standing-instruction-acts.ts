@@ -111,7 +111,7 @@ export default scenario({
         (run) =>
           run.messages.some(
             (message) =>
-              message.turnId === world.state.ben &&
+              run.turns.some((turn) => turn.background && turn.id === message.turnId) &&
               message.role === 'assistant' &&
               /KP-1093|Ben/i.test(message.text),
           ),

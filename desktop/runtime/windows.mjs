@@ -121,7 +121,7 @@ async function download(
 
 export async function stageWindowsUpdate(
   candidate,
-  { directory, resourcesPath, signal, fetch, includeRuntime = true },
+  { directory, resourcesPath, signal, fetch, includeRuntime = true, onProgress = () => {} },
 ) {
   if (
     !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
@@ -133,19 +133,26 @@ export async function stageWindowsUpdate(
   await rm(directory, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
   try {
+    const files = [candidate.installer];
     if (includeRuntime) {
       const installed = JSON.parse(
         await readFile(join(resourcesPath, 'windows-runtime/manifest.json'), 'utf8').catch(
           () => '{}',
         ),
       );
-      if (installed.guest?.sha256 !== candidate.runtime.sha256)
-        await download(candidate.runtime, join(target, candidate.runtime.file), { signal, fetch });
+      if (installed.guest?.sha256 !== candidate.runtime.sha256) files.unshift(candidate.runtime);
     }
-    await download(candidate.installer, join(target, candidate.installer.file), {
-      signal,
-      fetch,
-    });
+    const total = files.reduce((sum, file) => sum + file.bytes, 0);
+    let done = 0;
+    for (const file of files) {
+      await download(file, join(target, file.file), {
+        signal,
+        fetch,
+        onProgress: (progress) => onProgress((done + progress * file.bytes) / total),
+      });
+      done += file.bytes;
+      onProgress(done / total);
+    }
     return target;
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
@@ -163,13 +170,18 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   const wsl = join(hostEnvironment.SYSTEMROOT, 'System32/wsl.exe');
   try {
     await execute(wsl, ['--status'], { env: hostEnvironment, signal, timeout: 15_000 });
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted();
     throw Object.assign(
       new Error(
-        'Nod needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open Nod.',
+        `Nod could not start WSL 2. Select Install WSL, then restart Windows and open Nod. ${error.message}`,
       ),
-      { code: 'NOD_WSL_REQUIRED' },
+      {
+        code: 'NOD_WSL_REQUIRED',
+        details: [error.code, error.stack || error.message, error.details]
+          .filter(Boolean)
+          .join('\n'),
+      },
     );
   }
   await protectWindowsProfile(dataRoot, resourcesPath);

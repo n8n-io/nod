@@ -32,7 +32,8 @@ export const defaultPreferences: Preferences = {
   quietEnd: '08:00',
   proactivePaused: false,
 };
-export function isQuietTime(preferences: Preferences, now = new Date()) {
+type QuietHours = Pick<Preferences, 'quietHoursEnabled' | 'quietStart' | 'quietEnd' | 'timeZone'>;
+export function isQuietTime(preferences: QuietHours, now = new Date()) {
   if (!preferences.quietHoursEnabled) return false;
   const current = new Intl.DateTimeFormat('en-GB', {
     timeZone: preferences.timeZone ?? 'UTC',
@@ -47,6 +48,12 @@ export function isQuietTime(preferences: Preferences, now = new Date()) {
       ? current >= quietStart && current < quietEnd
       : current >= quietStart || current < quietEnd)
   );
+}
+export function deliveryTime(preferences: QuietHours, now: number) {
+  const minute = 60000;
+  for (let time = now - (now % minute); time < now + 2880 * minute; time += minute)
+    if (!isQuietTime(preferences, new Date(time))) return new Date(Math.max(time, now));
+  return null;
 }
 function canonicalLocale(value: string) {
   try {

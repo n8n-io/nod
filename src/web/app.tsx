@@ -7,6 +7,7 @@ import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
 import { Tasks } from './pages/tasks';
+import { PreparedWork } from './pages/prepared';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
@@ -18,8 +19,9 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
+import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
-import { appPagePath } from '../shared/app-links';
+import { appPagePath, preparedWorkId } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -40,6 +42,8 @@ import {
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
   subscribeDesktopNavigation,
+  subscribeDesktopStatus,
+  desktopStatus,
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
@@ -237,8 +241,12 @@ function Workspace({
             )}
             {currentPath === '/channels' && <Channels />}
             {currentPath === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
+            {preparedWorkId(currentPath) && (
+              <PreparedWork key={currentPath} id={preparedWorkId(currentPath)!} />
+            )}
             {settings}
             {!settingsPage(currentPath) &&
+              !preparedWorkId(currentPath) &&
               !sidebarItems.some((item) => item.path === currentPath) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>
@@ -284,16 +292,28 @@ function AuthenticatedApp({
     setFeedbackDiscovery(false);
   };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
+  const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
-  const openFeedback = () => {
-    if (feedbackOpen) return;
+  const openFeedback = async () => {
+    if (feedbackOpen || feedbackCapture.current) return;
     dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
+    const capture = captureFeedbackScreenshot();
+    feedbackCapture.current = capture;
+    const screenshot = await capture;
+    if (feedbackCapture.current !== capture) return;
+    feedbackCapture.current = null;
+    setFeedbackScreenshot(screenshot);
     setFeedbackOpen(true);
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     setFeedbackOpen(false);
+    setFeedbackScreenshot(null);
+    return () => {
+      feedbackCapture.current = null;
+    };
   }, [session.user!.id]);
   useEffect(() => {
     if (!feedbackRequest) return;
@@ -532,6 +552,7 @@ function AuthenticatedApp({
       <FeedbackDialog
         key={session.user!.id}
         ownerId={session.user!.id}
+        screenshot={feedbackScreenshot}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>
@@ -641,6 +662,20 @@ function AccountApp({
 export function App({ sessionState }: { sessionState: ReturnType<typeof useSession> }) {
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
+  const [updating, setUpdating] = useState(false);
+  useEffect(() => {
+    let received = false;
+    const stop = subscribeDesktopStatus((status) => {
+      received = true;
+      setUpdating(status.phase === 'updating');
+    });
+    void desktopStatus()
+      ?.then((status) => {
+        if (!received) setUpdating(status.phase === 'updating');
+      })
+      .catch(() => {});
+    return stop;
+  }, []);
   useEffect(() => {
     const update = () => setPath(window.location.pathname);
     window.addEventListener('popstate', update);
@@ -657,7 +692,9 @@ export function App({ sessionState }: { sessionState: ReturnType<typeof useSessi
   return (
     <>
       {desktopSettingsAvailable() && <div className="desktop-titlebar" aria-hidden="true" />}
-      {/^\/privacy\/?$/.test(path) ? (
+      {updating ? (
+        <SetupProgress title="Updating Nod…" description="Nod reopens when it’s done." />
+      ) : /^\/privacy\/?$/.test(path) ? (
         <Privacy />
       ) : (
         <AccountApp

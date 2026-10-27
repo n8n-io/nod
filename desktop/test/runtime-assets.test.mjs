@@ -592,9 +592,11 @@ async function releaseFixture(
       ...[...input.inputs, ...windows.inputs].filter(
         (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
       ),
+      'package.json',
       'pnpm-lock.yaml',
       'desktop/package.json',
       'desktop/pnpm-lock.yaml',
+      'desktop/scripts/runtime-inputs.mjs',
     ])) {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await copyFile(join(repository, path), join(root, path));
@@ -2008,8 +2010,16 @@ test('a failed runtime command names its cause from the end of its output, inclu
       '-e',
       'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
-    {
-      message: /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+    (error) => {
+      assert.match(
+        error.message,
+        /^Nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+      );
+      assert.equal(
+        error.details,
+        `started\n${'x'.repeat(400)}\nError response from daemon: Pool overlaps`,
+      );
+      return true;
     },
   );
   await assert.rejects(
@@ -2326,7 +2336,14 @@ test('Windows storage starts on a free port, and a readiness failure names its c
   const taken = createServer();
   await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
   t.after(() => taken.close());
-  for (const failure of ['pg_isready', 'connect', 'query']) {
+  for (const [failure, expectedCode] of [
+    ['pg_isready', 'NOD_DATABASE_NOT_READY'],
+    ['connect', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['query', 'NOD_DATABASE_CONNECTION_FAILED'],
+    ['stopped', 'NOD_DATABASE_STOPPED'],
+    ['memory', 'NOD_DATABASE_OUT_OF_MEMORY'],
+    ['wsl', 'NOD_DATABASE_NOT_READY'],
+  ]) {
     const containers = new Map();
     const commands = [];
     const connections = [];
@@ -2353,7 +2370,11 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               connections.push(new URL(connectionString).port);
             }
             async connect() {
-              if (fault === 'connect') throw new Error('Synthetic connect failure');
+              if (['connect', 'stopped', 'memory', 'wsl'].includes(fault))
+                throw Object.assign(
+                  new Error(`Synthetic ${fault} failure: synthetic-fixture-password`),
+                  { code: 'ECONNRESET' },
+                );
             }
             async query() {
               if (fault === 'query') throw new Error('Synthetic query failure');
@@ -2383,8 +2404,13 @@ test('Windows storage starts on a free port, and a readiness failure names its c
             prepareImage: async (name) => {
               if (name === fault) throw new Error(`Synthetic ${name} startup failure`);
             },
-            runDocker: async (args) => {
+            runDocker: async (args, options) => {
               commands.push(args);
+              if (options?.timeout === 10_000) {
+                assert.ok(['inspect', 'exec'].includes(args[0]));
+                if (fault === 'wsl')
+                  throw new Error('Synthetic WSL check failure: synthetic-fixture-password');
+              }
               if (args[0] === 'container' && args[1] === 'inspect') {
                 if (!containers.has(args[2])) throw new Error('Absent synthetic container');
                 return JSON.stringify([containers.get(args[2])]);
@@ -2405,6 +2431,15 @@ test('Windows storage starts on a free port, and a readiness failure names its c
               }
               if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
                 throw new Error('Synthetic pg_isready failure');
+              if (
+                args[0] === 'inspect' &&
+                args.includes('{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}')
+              )
+                return fault === 'memory'
+                  ? 'exited 137 true'
+                  : fault === 'stopped'
+                    ? 'exited 1 false'
+                    : 'running 0 false';
               if (args[0] === 'inspect') return 'true';
               return '';
             },
@@ -2431,10 +2466,12 @@ test('Windows storage starts on a free port, and a readiness failure names its c
       await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
       assert.equal(postgres(), original);
       fault = failure;
-      await assert.rejects(
-        lifecycle.start({ retry: true }),
-        new RegExp(`Synthetic ${failure} failure`),
-      );
+      await assert.rejects(lifecycle.start({ retry: true }), (error) => {
+        assert.equal(error.code, expectedCode);
+        assert.match(error.details, new RegExp(`Synthetic ${failure} failure`));
+        assert.ok(!JSON.stringify(error).includes('synthetic-fixture-password'));
+        return true;
+      });
       assert.equal(postgres(), original);
       assert.equal(stopped, 0);
       const attempted = commands.length;
@@ -2838,10 +2875,10 @@ test('runtime hands off verified storage before browser readiness and fences fai
   }
 });
 
-test('runtime fingerprints cover dependencies and every source the images use, and reject symlinked input roots', async (t) => {
+test('runtime fingerprints cover the locked packages and every source the images use, and reject symlinked input roots', async (t) => {
   const { cp, realpath } = await import('node:fs/promises');
   const { build } = await import('esbuild');
-  const { browserEntries, browserSources, runtimeInputs } =
+  const { browserEntries, browserInputs, browserTools, runtimeInputs } =
     await import('../scripts/runtime-inputs.mjs');
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-runtime-inputs-')));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -2857,13 +2894,31 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     outdir: 'out',
     logLevel: 'silent',
   });
-  const sources = await browserSources();
-  for (const path of Object.keys(bundle.metafile.inputs))
-    if (!path.startsWith('node_modules/')) assert.ok(sources.includes(path), path);
-  const browserDockerfile = await readFile(join(repository, 'Dockerfile.browser'), 'utf8');
-  assert.ok(browserDockerfile.includes(`esbuild ${browserEntries.join(' ')} `));
+  const browser = await browserInputs();
   const input = await runtimeInputs();
   const windows = await runtimeInputs('win32-x64');
+  const locked = (inputs, name) => inputs.some((path) => path.startsWith(`lock:${name}@`));
+  const dependencyManifest = (path) =>
+    /^(?:package\.json|pnpm-lock\.yaml|patches(?:\/|$))/.test(path);
+  for (const path of Object.keys(bundle.metafile.inputs)) {
+    if (!path.includes('node_modules/')) {
+      assert.ok(browser.sources.includes(path), path);
+      continue;
+    }
+    const name = path
+      .split('node_modules/')
+      .at(-1)
+      .match(/^(?:@[^/]+\/)?[^/]+/)[0];
+    assert.ok(locked(input.inputs, name) && locked(windows.inputs, name), path);
+  }
+  const browserDockerfile = await readFile(join(repository, 'Dockerfile.browser'), 'utf8');
+  assert.ok(browserDockerfile.includes(`esbuild ${browserEntries.join(' ')} `));
+  for (const [, name] of browserDockerfile.matchAll(
+    /node_modules\/(?:\.bin\/)?((?:@[\w.-]+\/)?[\w.-]+)/g,
+  )) {
+    assert.ok(browserTools.includes(name), name);
+    assert.ok(locked(input.inputs, name) && locked(windows.inputs, name), name);
+  }
   const windowsCopies = [
     ...(
       await readFile(join(repository, 'desktop/scripts/prepare-windows-runtime.mjs'), 'utf8')
@@ -2888,7 +2943,8 @@ test('runtime fingerprints cover dependencies and every source the images use, a
       /^(?:COPY|ADD)(?! --from)(?:\s+--\S+)*\s+(.+)\s+\S+$/gm,
     ))
       for (const source of sources.split(/\s+/))
-        if (source !== 'src') assert.ok(covered(input.inputs, source), `${path}: ${source}`);
+        if (source !== 'src' && !dependencyManifest(source))
+          assert.ok(covered(input.inputs, source), `${path}: ${source}`);
     for (const [source] of dockerfile.matchAll(/\bsrc\/[\w./-]+/g))
       assert.ok(covered(input.inputs, source), `${path}: ${source}`);
   }
@@ -2901,10 +2957,15 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   ]) {
     const seen = new Set();
     const visit = async (path) => {
-      if (seen.has(path)) return;
+      if (
+        seen.has(path) ||
+        path === 'desktop/scripts/runtime-inputs.mjs' ||
+        dependencyManifest(path)
+      )
+        return;
       seen.add(path);
       assert.ok(covered(inputs, path), path);
-      if (!path.endsWith('.mjs') || path === 'desktop/scripts/runtime-inputs.mjs') return;
+      if (!path.endsWith('.mjs')) return;
       const source = await readFile(join(repository, path), 'utf8');
       const targets = [
         ...[...source.matchAll(/(?:from\s*|import\(\s*)'(\.{1,2}\/[^']+\.mjs)'/g)].map(
@@ -2942,9 +3003,11 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   );
   for (const path of new Set([
     ...sourcePaths,
+    'package.json',
     'pnpm-lock.yaml',
     'desktop/package.json',
     'desktop/pnpm-lock.yaml',
+    'desktop/scripts/runtime-inputs.mjs',
   ])) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await cp(join(repository, path), join(root, path));
@@ -2954,23 +3017,43 @@ test('runtime fingerprints cover dependencies and every source the images use, a
       env: { PATH: process.env.PATH },
     });
   const before = JSON.parse((await run()).stdout).fingerprint;
+  const lockPath = join(root, 'pnpm-lock.yaml');
+  const lockSource = await readFile(lockPath, 'utf8');
+  for (const [name, image] of [
+    ['zod', true],
+    ['agent-browser', true],
+    ['@esbuild/linux-arm64', true],
+    ['posthog-node', false],
+    ['react', false],
+  ]) {
+    const entry = new RegExp(
+      `^( {2}'?${name.replaceAll('/', '\\/')}@[^:\\s]+'?:\\n {4}resolution: \\{integrity: )\\S+\\}`,
+      'm',
+    );
+    assert.match(lockSource, entry, name);
+    await writeFile(lockPath, lockSource.replace(entry, '$1sha512-synthetic}'));
+    const fingerprint = JSON.parse((await run()).stdout).fingerprint;
+    if (image) assert.notEqual(fingerprint, before, name);
+    else assert.equal(fingerprint, before, name);
+  }
+  await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
+  assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
+  await writeFile(lockPath, lockSource);
   const manifestPath = join(root, 'package.json');
   const manifestSource = await readFile(manifestPath, 'utf8');
   const manifest = JSON.parse(manifestSource);
-  manifest.dependencies['agent-browser'] = '0.0.0-synthetic';
-  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(
+    manifestPath,
+    JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, synthetic: '1.0.0' } }),
+  );
+  assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, packageManager: 'pnpm@0.0.0' }));
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(manifestPath, manifestSource);
-  const lockPath = join(root, 'pnpm-lock.yaml');
-  const lockSource = await readFile(lockPath, 'utf8');
-  await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
-  assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
-  await writeFile(lockPath, lockSource);
   for (const path of [
     'src/shared/public-address.ts',
     'src/providers/docker/save-video.py',
-    'patches/libsignal@6.0.0.patch',
-    'patches/@whiskeysockets__baileys@7.0.0-rc14.patch',
+    'pnpm-workspace.yaml',
   ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
@@ -2982,9 +3065,13 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     'src/server/index.ts',
     'src/web/pages/chat.tsx',
     '.github/workflows/desktop-release.yml',
+    'patches/libsignal@6.0.0.patch',
+    'desktop/scripts/runtime-inputs.mjs',
   ]) {
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), 'export const syntheticAppChange = true;\n');
+    const file = join(root, path);
+    await mkdir(dirname(file), { recursive: true });
+    const source = await readFile(file, 'utf8').catch(() => '');
+    await writeFile(file, `${source}\nexport const syntheticAppChange = true;\n`);
   }
   assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   const windowsRun = (env = {}) =>

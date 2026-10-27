@@ -623,6 +623,19 @@ export async function createDiscoveredConnections(
     const { id, name } = await create(official(service, connectionId), undefined, returnTo);
     return { name, ...(await beginOAuth(id, { returnTo })) };
   }
+  async function abandonSetup(linkHash: string, reason: 'cancelled' | 'unavailable' | 'unknown') {
+    const abandoned = await transaction(async (client) => {
+      const { rows } = await client.query<ProposalRow>(
+        `UPDATE discovered_connection_proposals SET oauth_status='cancelled',oauth_state_hash=NULL
+         WHERE owner_id=$1 AND link_hash=$2 AND oauth_status='pending' RETURNING *`,
+        [owner, linkHash],
+      );
+      for (const row of rows) await options.grantVault.remove(row.id, client);
+      return rows;
+    }, pool);
+    for (const row of abandoned) track(row, 'failed', reason);
+    return abandoned.length > 0;
+  }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
       await client.query<ProposalRow>(
@@ -1480,6 +1493,7 @@ export async function createDiscoveredConnections(
     analyticsConnections,
     list,
     setupServices,
+    abandonSetup,
     propose,
     signIn,
     authorize,

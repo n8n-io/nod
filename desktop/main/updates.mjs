@@ -308,7 +308,7 @@ export function createDesktopUpdater({
         if (compareVersions(candidate.version, currentVersion) <= 0)
           throw new Error('The desktop update is not newer than this app.');
         onStatus('preparing');
-        await prepareRuntime(candidate, controller.signal);
+        await prepareRuntime(candidate, controller.signal, onStatus);
         controller.signal.throwIfAborted();
         onStatus('downloading');
         if (native)

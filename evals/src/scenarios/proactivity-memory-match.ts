@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { noWrites, nudges } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 
 const goal =
@@ -105,13 +105,13 @@ export default scenario({
   evidence(run, world) {
     return JSON.stringify({
       phases:
-        'The first owner turn only saves the goal. The chat then resets. A later source event starts a separate proactive turn under the standing instruction.',
+        'The first owner turn only saves the goal. The chat then resets. Background observer work under the standing instruction then reads the changed programme, prepares work and may send one nudge.',
       standingInstruction: world.notificationRule,
       eventTurnId: world.state.turnId,
       savedGoal: goal,
       memory: run.memory,
       issues: world.state.issues,
-      messages: run.messages.filter((message) => message.turnId === world.state.turnId),
+      messages: nudges(run),
       writes: run.writes,
     });
   },
@@ -124,13 +124,7 @@ export default scenario({
         'goal-survived-reset',
         (run) => /ceramics/i.test(run.memory) && /1[,. ]?500/.test(run.memory),
       ),
-      check(
-        'one-useful-message',
-        (run) =>
-          run.messages.filter(
-            (message) => message.role === 'assistant' && message.turnId === world.state.turnId,
-          ).length === 1,
-      ),
+      check('one-useful-message', (run) => nudges(run).length === 1),
       noWrites('send', 'post', 'draft', 'update', 'create', 'delete'),
       judge(
         'uses-memory-to-select-a-fitting-option',

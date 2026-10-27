@@ -2,6 +2,52 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.3.3 - 2026-10-27
+
+### Fixes
+
+- **desktop:** Rebuild the runtime less often and show update progress. [#508](https://github.com/n8n-io/nod/pull/508) (54ee04e)
+- **proactivity:** Keep quiet hours quiet for work Nod starts. [#507](https://github.com/n8n-io/nod/pull/507) (8e147f5)
+- **evals:** Attribute background messages and tools by observer work. [#504](https://github.com/n8n-io/nod/pull/504) (5e6e7d6)
+- **apps:** Word connection links as an invitation to sign in. [#502](https://github.com/n8n-io/nod/pull/502) (37d7d62)
+- **proactivity:** Act on a yes to a nudge in chat even when its task waits. [#505](https://github.com/n8n-io/nod/pull/505) (b31069b)
+- **vault:** Use the saved login's password method instead of asking. [#503](https://github.com/n8n-io/nod/pull/503) (a63f097)
+- **vault:** Scroll the submit control into view before private entry clicks. [#501](https://github.com/n8n-io/nod/pull/501) (faffa63)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.2...54ee04e7790367004ef6c24b4a64d668057b7c26)
+
+<details>
+<summary>Build details</summary>
+
+Source: `54ee04e7790367004ef6c24b4a64d668057b7c26`
+Previous release: `nod-v0.3.2`
+
+</details>
+
+## 0.3.2 - 2026-10-26
+
+### Features
+
+- **audio:** Add voice messages and customizable spoken replies. [#465](https://github.com/n8n-io/nod/pull/465) (b538af4)
+
+### Fixes
+
+- **channels:** Format Telegram and WhatsApp replies readably. [#495](https://github.com/n8n-io/nod/pull/495) (49a1211)
+- **proactivity:** Use one persistent observer. [#499](https://github.com/n8n-io/nod/pull/499) (db6b9e2)
+- **apps:** End abandoned app sign-ins and retry malformed message drafts. [#497](https://github.com/n8n-io/nod/pull/497) (168a042)
+- **desktop:** Show original Windows startup errors. [#498](https://github.com/n8n-io/nod/pull/498) (7fc8955)
+- **feedback:** Remember diagnostics and restore screenshots. [#496](https://github.com/n8n-io/nod/pull/496) (4aed2b5)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.1...49a1211cbf42f9718407be1664739d8e44030077)
+
+<details>
+<summary>Build details</summary>
+
+Source: `49a1211cbf42f9718407be1664739d8e44030077`
+Previous release: `nod-v0.3.1`
+
+</details>
+
 ## 0.3.1 - 2026-10-26
 
 ### Fixes

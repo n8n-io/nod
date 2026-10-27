@@ -11,7 +11,7 @@ import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
 import { searchApps } from '../../../lib/app-search';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { connectionUrl } from '../../../lib/connection-url';
+import { cancelSetup, connectionUrl, setupLinkHash } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import { AppAccountManager } from '../../../components/app-account-manager';
@@ -105,8 +105,6 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
       group.accounts.some((account) => !connectionIssue(account) && !account.disconnectPending),
   ).length;
   const locked = opening || disconnecting || Boolean(signIn) || Boolean(discoveryId);
-  const pendingName =
-    signIn?.name ?? groups.find((group) => group.service.slug === openingService)?.name;
   const results = useMemo(() => searchApps(groups, query), [groups, query]);
   const searching = Boolean(query.trim());
   const ordered = useMemo(
@@ -219,6 +217,12 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
     setSignIn(undefined);
   }
 
+  function cancel() {
+    if (signIn?.url) cancelSetup(signIn.url);
+    closeSignIn();
+    window.requestAnimationFrame(() => returnFocus()?.focus({ preventScroll: true }));
+  }
+
   function fail(service: string, message: string) {
     setErrors((current) => ({ ...current, [service.replace(/_mcp$/, '')]: message }));
     setAnnouncement(message);
@@ -249,10 +253,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
     };
     const read = async () => {
       try {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
-        const hash = Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, '0'),
-        ).join('');
+        const hash = await setupLinkHash(url);
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({ hashes: [hash], pairingUrl: url }),
@@ -265,7 +266,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
           return true;
         }
         const app = result.apps.find((entry) => entry.hash === hash);
-        if (!app) {
+        if (!app || app.available === false) {
           settle('failed');
           return true;
         }
@@ -361,6 +362,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
     }
     setOpening(true);
     setOpeningService(connection.slug);
+    setAnnouncement(`Connecting to ${connection.name}…`);
     setErrors((current) => ({ ...current, [connection.slug.replace(/_mcp$/, '')]: '' }));
     if (!internal)
       setSignIn({
@@ -380,11 +382,13 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
               ? { connectionId: connection.connectionId }
               : {}),
           }),
-          signal: controller.signal,
         },
       );
-      if (controller.signal.aborted) return;
       const url = connectionUrl(result.url, window.location.origin);
+      if (controller.signal.aborted) {
+        cancelSetup(url);
+        return;
+      }
       const proposal = new URL(url);
       if (proposal.origin === window.location.origin && proposal.pathname === '/apps') {
         const id = proposal.searchParams.get('connect');
@@ -496,14 +500,23 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
                 <h3 title={service.name}>{service.name}</h3>
                 {issue && <p data-analytics-private>{issue}</p>}
               </div>
-              {accounts.length ? (
+              {pending ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Cancel connecting ${service.name}`}
+                  onClick={cancel}
+                >
+                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                  Cancel
+                </Button>
+              ) : accounts.length ? (
                 <Button
                   variant="ghost"
                   size="sm"
                   className="ob-apps-manage"
                   data-status={connected ? 'connected' : 'attention'}
                   aria-label={`Manage ${service.name} accounts`}
-                  aria-busy={pending}
                   disabled={locked}
                   onClick={(event) => {
                     trigger.current = event.currentTarget;
@@ -511,11 +524,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
                     setManageService(key);
                   }}
                 >
-                  {pending ? (
-                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  ) : (
-                    'Manage'
-                  )}
+                  Manage
                 </Button>
               ) : (
                 <Button
@@ -523,18 +532,9 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
                   size="sm"
                   disabled={unavailable || locked}
                   aria-label={`Connect ${service.name}`}
-                  aria-busy={pending}
                   onClick={(event) => void connect(service, event.currentTarget)}
                 >
-                  {pending ? (
-                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  ) : unavailable ? (
-                    'Unavailable'
-                  ) : issue ? (
-                    'Try again'
-                  ) : (
-                    'Connect'
-                  )}
+                  {unavailable ? 'Unavailable' : issue ? 'Try again' : 'Connect'}
                 </Button>
               )}
             </article>
@@ -554,6 +554,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
           type="search"
           aria-label="Search apps"
           placeholder="Search apps"
+          disabled={locked}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onClear={() => {
@@ -561,21 +562,6 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
             search.current?.focus({ preventScroll: true });
           }}
         />
-        {pendingName && (
-          <div className="ob-apps-pending">
-            <span role="status">Connecting to {pendingName}…</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                closeSignIn();
-                window.requestAnimationFrame(() => returnFocus()?.focus({ preventScroll: true }));
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        )}
       </header>
       <div className="ob-apps-scroll" data-fade-top={fades.top} data-fade-bottom={fades.bottom}>
         <div

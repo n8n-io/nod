@@ -799,10 +799,21 @@ export function stressScenario(
         noWrites('send', 'post', 'draft', 'update', 'create', 'delete'),
         check('background-tools-remain-read-only', (run) =>
           run.tools
-            .filter((t) => world.state.turnIds.includes(t.turnId ?? ''))
+            .filter(
+              (t) =>
+                !t.isError &&
+                (world.state.turnIds.includes(t.turnId ?? '') ||
+                  run.turns.some((turn) => turn.proactive && turn.id === t.turnId)),
+            )
             .every(
               (t) =>
-                ['read_source', 'proactive_issue', 'manage_personal_context'].includes(t.name) &&
+                ['read_source', 'proactive_issue', 'manage_personal_context', 'task'].includes(
+                  t.name,
+                ) &&
+                (t.name !== 'task' ||
+                  ['start', 'update', 'list'].includes(
+                    String((t.input as { action?: unknown })?.action),
+                  )) &&
                 (t.name !== 'manage_personal_context' ||
                   [
                     'memory_read',

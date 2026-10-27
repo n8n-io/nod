@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Chat, ConsoleLogger, convertEmojiPlaceholders } from 'chat';
-import { TelegramAdapter } from '@chat-adapter/telegram';
+import { Chat, ConsoleLogger, convertEmojiPlaceholders, type Root } from 'chat';
+import { TelegramAdapter, TelegramFormatConverter } from '@chat-adapter/telegram';
 import { WhatsAppAdapter, WhatsAppApiError, splitMessage } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
@@ -14,6 +14,7 @@ import type {
 } from '../../ports/messaging.ts';
 import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
 import { telegramMessage, telegramPairing, telegramAttachments } from './telegram.ts';
+import { telegramText, whatsappText } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
 
 type Environment = Record<string, string | undefined>;
@@ -36,7 +37,24 @@ const telegramReaction = z.object({
     .array(z.object({ type: z.string(), emoji: z.string().min(1).max(64).optional() }))
     .max(10),
 });
+class TelegramMarkdown extends TelegramFormatConverter {
+  override fromMarkdown(markdown: string) {
+    return telegramText(markdown);
+  }
+
+  override fromAst(ast: Root) {
+    return telegramText(ast);
+  }
+}
+
 class Telegram extends TelegramAdapter {
+  protected override readonly formatConverter = new TelegramMarkdown();
+
+  constructor(...options: ConstructorParameters<typeof TelegramAdapter>) {
+    super(...options);
+    Reflect.set(this, 'richMessagesAvailable', false);
+  }
+
   fits(text: string, limit: number) {
     return [
       text,
@@ -72,9 +90,7 @@ class WhatsApp extends WhatsAppAdapter {
   }
 
   chunks(text: string) {
-    return splitMessage(
-      convertEmojiPlaceholders(this.formatConverter.fromMarkdown(text), 'whatsapp'),
-    );
+    return splitMessage(convertEmojiPlaceholders(whatsappText(text), 'whatsapp'));
   }
 
   async typing(messageId: string) {

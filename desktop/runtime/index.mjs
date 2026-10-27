@@ -90,15 +90,21 @@ export function execute(
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
       if (signal?.aborted) return reject(new Error('Nod setup was cancelled.'));
+      const failure = (message) =>
+        Object.assign(new Error(message), {
+          details: [spawnError?.stack, output.replaceAll('\0', '').trim()]
+            .filter(Boolean)
+            .join('\n'),
+        });
       if (spawnError)
         return reject(
-          new Error(`Nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
+          failure(`Nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
         );
-      if (timedOut) return reject(new Error('Nod runtime setup took too long. Please retry.'));
+      if (timedOut) return reject(failure('Nod runtime setup took too long. Please retry.'));
       if (code !== 0) {
         const detail = output.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
         return reject(
-          new Error(
+          failure(
             `Nod runtime command failed (${code})${
               detail ? `: ${detail.length > 300 ? '…' : ''}${detail.slice(-300)}` : '.'
             }`,
@@ -605,7 +611,18 @@ export async function finishRuntime({
   status('starting', 'Waiting for your database to be ready…', 'storage');
   try {
     await waitFor(
-      () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'nod', '-d', 'nod']),
+      () =>
+        runDocker([
+          'exec',
+          names.postgres,
+          'pg_isready',
+          '-h',
+          '127.0.0.1',
+          '-U',
+          'nod',
+          '-d',
+          'nod',
+        ]),
       { signal },
     );
     const { default: pg } = await import('pg');
@@ -619,10 +636,6 @@ export async function finishRuntime({
         try {
           await client.connect();
           await client.query('SELECT 1');
-        } catch (error) {
-          throw new Error(
-            `Nod could not unlock local storage (${error.message || error.code}). Retry without resetting your data.`,
-          );
         } finally {
           await client.end().catch(() => {});
         }
@@ -631,7 +644,63 @@ export async function finishRuntime({
     );
   } catch (error) {
     if (storage) storage.postgres = undefined;
-    throw error;
+    signal?.throwIfAborted();
+    let details = [error.code, error.stack || error.message, error.details]
+      .filter(Boolean)
+      .join('\n')
+      .replaceAll(saved.password, '[redacted]');
+    let message = 'Nod could not connect to its local PostgreSQL database.';
+    let code = 'NOD_DATABASE_CONNECTION_FAILED';
+    if (process.platform === 'win32') {
+      const [inspection, readiness] = await Promise.allSettled([
+        runDocker(
+          [
+            'inspect',
+            '--format',
+            '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}',
+            names.postgres,
+          ],
+          { timeout: 10_000 },
+        ),
+        runDocker(
+          ['exec', names.postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'nod', '-d', 'nod'],
+          { timeout: 10_000 },
+        ),
+      ]);
+      signal?.throwIfAborted();
+      const [state, exitCode, outOfMemory] =
+        inspection.status === 'fulfilled' ? inspection.value.trim().split(' ') : [];
+      details += `\n\nWSL container check:\n${
+        inspection.status === 'fulfilled'
+          ? inspection.value
+          : inspection.reason.details || inspection.reason.stack || inspection.reason.message
+      }\n\nWSL TCP check:\n${
+        readiness.status === 'fulfilled'
+          ? readiness.value
+          : readiness.reason.details || readiness.reason.stack || readiness.reason.message
+      }`;
+      if (outOfMemory === 'true') {
+        code = 'NOD_DATABASE_OUT_OF_MEMORY';
+        message =
+          'PostgreSQL stopped after it reached a memory limit. Close other apps before you retry.';
+      } else if (state && state !== 'running') {
+        code = 'NOD_DATABASE_STOPPED';
+        message = `PostgreSQL is not running in WSL (state: ${state}, exit code: ${exitCode}).`;
+      } else if (readiness.status === 'fulfilled') {
+        message = `PostgreSQL accepts TCP connections inside WSL, but Windows could not complete the database check at 127.0.0.1:${port}.`;
+      } else {
+        code = 'NOD_DATABASE_NOT_READY';
+        message = state
+          ? 'PostgreSQL does not answer TCP checks inside WSL.'
+          : 'Nod could not check PostgreSQL inside WSL.';
+      }
+    }
+    throw Object.assign(
+      new Error(
+        `${message} Quit Nod and open it again. If this repeats${process.platform === 'win32' ? ', restart Windows' : ', restart your computer'}. Keep your app data.`,
+      ),
+      { code, details: details.replaceAll(saved.password, '[redacted]') },
+    );
   }
   const wrapperRoot = join(controlRoot, 'bin');
   if (process.platform !== 'win32') {

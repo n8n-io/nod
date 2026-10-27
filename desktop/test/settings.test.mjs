@@ -36,6 +36,8 @@ import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 test('external app links can only open named screens without action data', () => {
   for (const path of Object.keys(appPages))
     assert.equal(appOpenPath(`nod://open${path}`, appPages), path);
+  const prepared = `/prepared/${randomUUID()}`;
+  assert.equal(appOpenPath(`nod://open${prepared}`, appPages), prepared);
   for (const value of [
     undefined,
     'https://example.test/settings/models',
@@ -48,6 +50,10 @@ test('external app links can only open named screens without action data', () =>
     'nod://open/settings/../apps',
     'nod://open/credentials/request-id',
     'nod://open@evil.test/apps',
+    'nod://open/prepared/not-an-id',
+    `nod://open${prepared}?action=send`,
+    `nod://open${prepared}#secret`,
+    `nod://open${prepared}/../apps`,
   ])
     assert.equal(appOpenPath(value, appPages), null);
 });
@@ -720,6 +726,7 @@ async function runningDesktop(
       showConnectionSettings,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
+      installRuntime: (installer) => lifecycle.install(installer, { warmup: false }),
       close: async () => { quitting = true; await lifecycle.close(); },
       profileRoot,
       profileOwner,
@@ -819,6 +826,9 @@ test('the normal engine uses the release boundary for analytics during first set
 });
 
 test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+  const revealed = [];
+  const cause = `Synthetic WSL missing: ${'x'.repeat(450)} HCS_E_HYPERV_NOT_INSTALLED`;
+  const details = `Error: ${cause}\n${'Synthetic WSL output\n'.repeat(200)}End of native error`;
   const f = await runningDesktop(
     t,
     async () => assert.fail('No backend can run without storage.'),
@@ -826,8 +836,9 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
       initialState: 'fresh',
       platform: 'win32',
       allowStart: true,
+      reveal: (path) => revealed.push(path),
       prepareRuntime: async () => {
-        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'NOD_WSL_REQUIRED' });
+        throw Object.assign(new Error(cause), { code: 'NOD_WSL_REQUIRED', details });
       },
     },
   );
@@ -839,6 +850,38 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.equal(f.children.length, 0);
     assert.equal(f.status().needsWsl, true);
     assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
+    const window = f.windows.find((window) => window.isVisible());
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const showLog = f.handlers.get('nod:startup-log:show');
+    await assert.rejects(showLog({ ...event, senderFrame: { url: event.senderFrame.url } }));
+    assert.equal(revealed.length, 0);
+    await showLog(event);
+    assert.deepEqual(revealed, [join(f.profileRoot, 'logs', 'startup.log')]);
+    const log = await readFile(revealed[0], 'utf8');
+    assert.ok(log.includes(cause));
+    assert.ok(log.includes(details));
+    assert.equal(f.status().error, cause);
+    assert.ok(f.status().details.includes(details));
+    assert.ok(f.status().details.includes('NOD_WSL_REQUIRED'));
+    assert.ok(f.status().details.includes(`Error: ${cause}`));
+    const installation = Object.assign(new Error('Synthetic WSL install failure'), {
+      code: 'EACCES',
+      details: 'Installer native output\nInstaller native tail',
+    });
+    await assert.rejects(
+      f.installRuntime(async () => {
+        throw installation;
+      }),
+      (error) => error === installation,
+    );
+    assert.equal(f.status().error, installation.message);
+    assert.ok(f.status().details.includes(installation.stack));
+    assert.ok(f.status().details.includes(installation.code));
+    assert.ok(f.status().details.includes(installation.details));
+    assert.ok(!f.status().details.includes(cause));
+    await showLog(event);
+    const updatedLog = await readFile(revealed.at(-1), 'utf8');
+    assert.ok(updatedLog.lastIndexOf(installation.details) > updatedLog.lastIndexOf(details));
   } finally {
     await f.close();
   }
@@ -3243,6 +3286,20 @@ test('the remote desktop starts without a local runtime and fences tokens to its
       requestHeaders: { authorization: 'forged', 'X-Nod-Desktop-Token': 'forged' },
     };
     assert.equal((await f.headers(request)).requestHeaders.Authorization, `Bearer ${token}`);
+    const prepared = `/prepared/${randomUUID()}`;
+    f.openLink(`nod://open${prepared}`);
+    assert.deepEqual(window.sent.at(-1), ['nod:navigate', prepared]);
+    frame.url = `${url}${prepared}`;
+    const preparedRequest = { ...request, url: `${url}/api${prepared}` };
+    assert.equal(
+      (await f.headers(preparedRequest)).requestHeaders.Authorization,
+      `Bearer ${token}`,
+    );
+    for (const path of ['/prepared/not-an-id', `${prepared}/extra`, '/api/artifacts/synthetic']) {
+      frame.url = `${url}${path}`;
+      assert.equal(Object.keys((await f.headers(preparedRequest)).requestHeaders).length, 0);
+    }
+    frame.url = url;
     for (const change of [
       { url: 'https://other.example.test/api/session' },
       { url: 'http://assistant.example.test/api/session' },
@@ -4047,6 +4104,16 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   const allowed = dom.window.document.body.innerHTML;
   const leaked = [];
   for (const [name, markup] of [
+    ['private content', '<div data-analytics-private>Synthetic private content</div>'],
+    ['password field', '<input type="password">'],
+    ['verification field', '<input autocomplete="one-time-code">'],
+    ['saved password field', '<input autocomplete="current-password">'],
+    ['new password field', '<input autocomplete="new-password">'],
+    ['native dialog', '<dialog open>Synthetic private dialog</dialog>'],
+    ['app dialog', '<div role="dialog">Synthetic private dialog</div>'],
+    ['alert dialog', '<div role="alertdialog">Synthetic private dialog</div>'],
+    ['embedded frame', '<iframe></iframe>'],
+    ['embedded browser', '<webview></webview>'],
     [
       'collapsed handoff',
       '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>',
@@ -4112,6 +4179,14 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   frame.url = 'http://127.0.0.1:4310/credentials/synthetic';
   navigated.resolve(image);
   assert.equal(await navigating, null);
+  frame.url = 'http://127.0.0.1:4310/';
+  const replaced = deferred();
+  contents.capturePage = () => replaced.promise;
+  const replacing = capture(event);
+  await new Promise(setImmediate);
+  contents.mainFrame = { ...frame };
+  replaced.resolve(image);
+  assert.equal(await replacing, null);
 });
 
 test('engine preload exposes no credential reveal and withholds privileged IPC event objects', async () => {
@@ -4835,7 +4910,7 @@ async function updatePreparation({
   runtime,
 }) {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
-  const start = source.indexOf('          prepareRuntime: async (candidate, signal) => {');
+  const start = source.indexOf('          prepareRuntime: async (candidate, signal, report) => {');
   const callback = source.slice(
     start,
     source.indexOf('          restart: restartForUpdate,', start),
@@ -5014,8 +5089,18 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   }).latest('0.1.0');
   downloads.length = 0;
   await installRuntime(Buffer.from('older Windows runtime pack'));
-  await stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request });
+  const progress = [];
+  await stageWindowsUpdate(candidate, {
+    directory,
+    resourcesPath,
+    fetch: request,
+    onProgress: (value) => progress.push(value),
+  });
   assert.deepEqual(downloads, ['nod-Runtime-win32-x64.tar.gz', 'nod-Setup-x64.exe']);
+  assert.ok(progress.length >= 2);
+  assert.ok(progress.every((value, index) => value > 0 && value >= (progress[index - 1] ?? 0)));
+  assert.ok(progress.some((value) => value < 1));
+  assert.equal(progress.at(-1), 1);
   for (const [name, value] of Object.entries(bytes))
     assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
 
@@ -5044,7 +5129,9 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
       request,
     });
     downloads.length = 0;
-    await prepare(candidate);
+    const statuses = [];
+    await prepare(candidate, undefined, (phase, value) => statuses.push([phase, value]));
+    assert.deepEqual(statuses.at(-1), ['downloading', 1]);
     assert.deepEqual(
       downloads,
       mode === 'local'

@@ -222,11 +222,13 @@ function channelText(text: string) {
   };
   const safe = text
     .replace(
-      /\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
+      /\[((?:\\.|[^\]\\])*)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
       (match, label: string, url: string) => {
         const path = appPagePath(url);
-        if (path)
-          return `${label === appPages[path] ? label : `${label} (${appPages[path]})`}: ${appPageUrl(path)}`;
+        if (path) {
+          const page = appPages[path as keyof typeof appPages];
+          return `${page && label !== page ? `${label} (${page})` : label}: ${appPageUrl(path)}`;
+        }
         return privateUrl(url) ? label : match;
       },
     )

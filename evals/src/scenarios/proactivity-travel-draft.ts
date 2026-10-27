@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { inspectableNudges, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail } from '../world/apps.ts';
 
@@ -74,6 +74,7 @@ export default scenario({
           );
         }),
       ),
+      inspectableNudges,
       check(
         'one-useful-notification',
         (run) =>

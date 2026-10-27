@@ -13,7 +13,7 @@ import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { connectionUrl } from '../../../lib/connection-url';
+import { cancelSetup, connectionUrl, setupLinkHash } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import type { StepProps } from '..';
@@ -158,10 +158,7 @@ export function PersonalConnection({
     };
     const read = async () => {
       try {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signInUrl));
-        const hash = Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, '0'),
-        ).join('');
+        const hash = await setupLinkHash(signInUrl);
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({ hashes: [hash], pairingUrl: signInUrl }),
@@ -335,9 +332,11 @@ export function PersonalConnection({
       const response = await api<{ url: string; attempt?: string }>(`/api/apps/${slug}/connect`, {
         method: 'POST',
         body: JSON.stringify({ returnTo: external ? 'desktop' : 'window', connectionId }),
-        signal: controller.signal,
       });
-      if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
+      if (controller.signal.aborted) {
+        cancelSetup(connectionUrl(response.url, window.location.origin));
+        throw new DOMException('Cancelled.', 'AbortError');
+      }
       const url = connectionUrl(response.url, window.location.origin);
       if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
         throw new Error(connectionMessage(slug, 'failed'));
@@ -411,6 +410,7 @@ export function PersonalConnection({
   }
 
   function cancel() {
+    if (signInUrl) cancelSetup(signInUrl);
     request.current?.abort();
     request.current = null;
     clearAttempt();

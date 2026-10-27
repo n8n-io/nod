@@ -81,6 +81,7 @@ export interface EnqueueTurnOptions {
   sessionId?: string;
   parentTurnId?: string;
   proactive?: boolean;
+  startAfter?: Date;
   client?: PoolClient;
 }
 export interface SubmitUserMessageOptions {
@@ -251,7 +252,7 @@ export async function withTurnLock<T>(
   return database ? execute(database) : transaction(execute, pool, signal);
 }
 
-async function sendDrain(client: PoolClient | undefined, threadId: string) {
+async function sendDrain(client: PoolClient | undefined, threadId: string, startAfter?: Date) {
   await boss.send(
     queue,
     { threadId },
@@ -259,6 +260,7 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       ...(client
         ? { db: { executeSql: (sql: string, values: unknown[]) => client.query(sql, values) } }
         : {}),
+      ...(startAfter ? { startAfter } : {}),
       retryLimit: 2,
     },
   );
@@ -389,10 +391,18 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   validateSource(options.sourceId, options.channel);
   const create = async (client: PoolClient) => {
     const thread = await lockThread(client);
+    const sessionId = options.proactive
+      ? (
+          await client.query<{ observer_session_id: string }>(
+            'SELECT observer_session_id FROM threads WHERE id=$1 AND owner_id=$2',
+            [thread.id, ownerId],
+          )
+        ).rows[0]!.observer_session_id
+      : options.sessionId;
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id,proactive)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,(SELECT proactive FROM turns WHERE id=$11 AND owner_id=$2),false))
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id,proactive,start_after)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,(SELECT proactive FROM turns WHERE id=$11 AND owner_id=$2),false),$13)
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
         id,
@@ -404,9 +414,10 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.channel ?? 'web',
         options.background ?? options.source !== 'resume',
         options.channelSourceId ?? null,
-        options.sessionId ?? null,
+        sessionId ?? null,
         options.parentTurnId ?? null,
         options.proactive ?? null,
+        options.startAfter ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -416,7 +427,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
           options.sourceId,
         ])
       ).rows[0].id as string;
-    await sendDrain(client, thread.id);
+    await sendDrain(client, thread.id, options.startAfter);
     return id;
   };
   const turnId = options.client ? await create(options.client) : await transaction(create, pool);
@@ -974,16 +985,14 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const { rows } = await client.query(
-      `SELECT * FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='queued'
+      `SELECT * FROM turns u WHERE thread_id=$1 AND owner_id=$2 AND status='queued'
+       AND NOT EXISTS (SELECT 1 FROM turns d WHERE d.owner_id=$2 AND d.session_id=u.session_id AND d.status='queued' AND d.start_after>now())
        ORDER BY created_at,id FOR UPDATE`,
       [threadId, ownerId],
     );
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
-    let proactiveBusy = busy.rows.some((row) => row.proactive);
     const claimed = rows.filter((row) => {
       if (sessions.has(row.session_id)) return false;
-      if (row.proactive && proactiveBusy) return false;
-      proactiveBusy ||= row.proactive;
       sessions.add(row.session_id);
       return true;
     });

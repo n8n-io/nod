@@ -1,5 +1,9 @@
 type UiPreference =
-  'nod.sidebar' | 'nod.chat-layout' | 'nod.artifact-width' | `nod.feedback.discovery.${string}`;
+  | 'nod.sidebar'
+  | 'nod.chat-layout'
+  | 'nod.artifact-width'
+  | `nod.feedback.discovery.${string}`
+  | `nod.feedback.report.${string}`;
 
 export function readUiPreference(key: UiPreference) {
   try {
