@@ -1784,7 +1784,7 @@ async function initializeApplication(
               origin,
               kind: 'sign_in',
               itemId: login.id,
-              ...(login.usernameHint ? { account: login.usernameHint } : {}),
+              account: [login.label, login.usernameHint].filter(Boolean).join(' · '),
             });
             if ('question' in access) return { [appConfirmation]: access.question };
             if (await vault.fillAuthenticatorCode(turn, ownerId, login.id, request)) {
@@ -1820,7 +1820,7 @@ async function initializeApplication(
           ...(chosen
             ? {
                 itemId: chosen.id,
-                ...(chosen.usernameHint ? { account: chosen.usernameHint } : {}),
+                account: [chosen.label, chosen.usernameHint].filter(Boolean).join(' · '),
               }
             : {}),
         });
