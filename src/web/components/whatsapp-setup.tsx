@@ -206,7 +206,11 @@ export function WhatsAppSetup({
               Use <strong>Message yourself</strong> to chat with Nod. Other chats stay outside Nod.
             </p>
           )}
-          <p>This uses an unofficial connection. WhatsApp may restrict your account.</p>
+          <p>
+            WhatsApp doesn’t officially support this connection, so there’s a small risk of account
+            restrictions. Nod only messages you.
+            {!selfChatOnly && ' A separate bot number keeps your own chats safe.'}
+          </p>
           <label className="channel-policy">
             <Checkbox
               checked={policy}

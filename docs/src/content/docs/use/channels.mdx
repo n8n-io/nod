@@ -25,7 +25,7 @@ Nod uses your conversation language for pairing notices and private-step guidanc
 | Files from Nod      | Images, documents, video and audio  | Images, documents, video and audio          |
 | When Nod can write  | While Nod runs                      | While Nod runs and WhatsApp is connected    |
 
-The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client. WhatsApp can restrict the account or change how it connects. Check the WhatsApp terms before you connect.
+The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client, so there's a small risk of account restrictions, and a WhatsApp update can break the connection for a while. Nod only messages you. A separate bot number keeps your own chats safe. Check the WhatsApp terms before you connect.
 
 Replies keep their bold text, lists, links, quotes, and code. A table arrives as one short labelled list per row. On Telegram, names of `.md`, `.py`, `.sh`, `.java`, `.zip` and `.mov` files show as code, so they don't open as web links. On WhatsApp, a literal `*`, `_` or `~` pair shows as code, so it doesn't turn into formatting. A long reply arrives as several messages. If a file doesn't arrive, open Nod to get it. When the model can't write a required notice, even on a second try, that channel message stays blocked and isn't retried later.
 
