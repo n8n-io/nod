@@ -1389,20 +1389,16 @@ test(
       assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);
       await application.channels!.drain();
       assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);
-      await pool.query(
-        `UPDATE model_usage m SET created_at=u.created_at-interval '1 second'
-         FROM turns u WHERE m.id=$1 AND m.owner_id='local-development' AND u.id=m.turn_id`,
-        [voiceUsageId],
-      );
       const voiceUsage = (
         await pool.query(
-          `SELECT m.turn_id,m.session_id FROM model_usage m
+          `SELECT m.turn_id,m.session_id,m.created_at<u.created_at AS before_turn FROM model_usage m
          JOIN turns u ON u.id=m.turn_id WHERE m.id=$1 AND m.owner_id='local-development'`,
           [voiceUsageId],
         )
       ).rows[0];
       assert.equal(voiceCalls, 1);
       assert.equal(voiceUsage.session_id, taskSession);
+      assert.equal(voiceUsage.before_turn, true);
       assert.deepEqual(
         await createLedger({ pool, ownerId: 'local-development' }).checkIn(
           taskSession,

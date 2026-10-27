@@ -68,43 +68,15 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 228 cases: 181 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 223 cases: 176 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 316 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 311 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
-
-Use `--out <directory>` to save results outside the repository. Each run keeps its canary attempts and logs in its `canaries` folder. The budget includes recorded costs for final results, including incomplete results. It excludes canaries and costs from whole-attempt retries that are replaced. Keep a separate total for canaries, retries, diagnosis and requests without a final cost record.
-
-For a comparison, set `--model` and `--judge` to different models. Capability attempts use the selected judge without a fallback model. A failed judge request leaves the attempt incomplete. Each attempt JSON file keeps the judge's replies for review.
-
-Judge request records include retries, purpose, status, input size, token limit, and available cost. They contain no prompts. Simulator replies and requests have separate fields from judge evidence. The `judgeCostUsd` total includes both. If an attempt fails before grading finishes, it keeps their available cost and request records.
-
-The `usage` folder keeps judge and simulator request receipts as JSON Lines, with a purpose on each request. A receipt is written before a request starts and after its reply. An interrupted attempt can still have cost evidence. Request IDs stay unique across whole-attempt retries.
-
-Both simulator reply paths receive the current owner request and earlier chat replies. A conversation reset starts a new request history and permits a new reply to the same question. Both paths keep the requested target unless the owner's facts support a correction. A proposed target from the assistant is not an owner fact.
-
-The tax account-choice case uses a private tax adviser client portal. Its request, saved account labels and page identify that source. Its records do not establish independent government verification. The case still requires a choice between the saved accounts and private sign-in to the correct account.
-
-Each judge criterion needs one verdict with boolean result and applicability fields and a reason. Missing, duplicate, or invalid fields use the existing retry path. A reply that stays invalid is a measurement error. A valid failure stays a failure, regardless of its reason's wording.
-
-Judge transcripts keep every user and assistant message, including attachment metadata when a message has no text. Large tool inputs and outputs can be shortened, with each call and result kept in time order. If those records cannot fit, grading is incomplete. The attempt file keeps the full transcript for review.
-
-Normal conversations wait for foreground work and saved tasks. They can answer a pending owner question while the independent private observer runs. The observer does not hold a finished request open or reset its progress timer. Explicit `session.settle()` and schedule waits still wait for all running turns. Observer and schedule scenarios must use those waits when their result depends on background work.
-
-The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. File checks keep the original bytes, including JSON files. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file. An unreadable ZIP fails the delivery check. Each saved statement and assessment must also match the original source bytes.
-
-The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
-
-Each attempt uses its own Pi settings directory. Parallel campaigns do not share these temporary settings.
-
-Controlled cases restrict browser and server-side web tools to the case's synthetic sites. Each redirect must stay within those sites. Model requests and harness control requests use a separate path. Live-tier cases keep access to public sites through the normal network guard.
-
-Use `--world-time 2026-10-27T09:00:00Z` to build both sides' synthetic sources from one fixed time. The manifest and each attempt record it. A resumed run refuses saved attempts with a different source time. This sets only the source clock; Nod's current time, deadlines, private forms, and spending controls keep the real clock. Use a source time on the run's date when the request uses words such as “today” or “tomorrow”. Without the option, sources use the current time.
 
 ### Commands
 
@@ -309,7 +281,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 320 cases: 88 controlled cases, 228 release cases, three live web cases and the harness canary.
+The suite has 315 cases: 88 controlled cases, 223 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -406,7 +378,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 181 everyday release cases</summary>
+<summary>All 176 everyday release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -432,7 +404,6 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `daily-agenda-schedule`            | Every weekday at 8:00, send me my agenda for the day                                                                              | apps, schedules                 |
 | `dm-running-late`                  | DM Priya on Slack that I'm running 10 minutes late for our 3pm                                                                    | apps, approvals                 |
 | `docs-brief-summary`               | From the Meridian project brief, what's the deadline, the budget and who signs off?                                               | apps, files                     |
-| `docs-brief-table`                 | Read the approved project facts from a table                                                                                      | apps, files                     |
 | `docs-notes-to-doc`                | Turn these notes into a Google Doc called 'Kickoff notes: Harborline'                                                             | apps, files                     |
 | `docs-site-how-to`                 | How do I rotate an API key in Northwind, and does the old key keep working?                                                       | research, browser               |
 | `docs-update-phone`                | In my CV doc, change my phone number to +351 912 345 678                                                                          | apps, files                     |
@@ -526,13 +497,9 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `reply-in-their-language`          | Reply to Lucía: yes, two instalments are fine, half now and half at the end of next month.                                        | apps                            |
 | `reply-in-thread-confirm-time`     | Reply to Marta: Thursday at 10:00 works, see you then.                                                                            | apps                            |
 | `reply-launch-thread`              | In #launch, reply to the launch-date thread that we're moving it                                                                  | apps, approvals                 |
-| `portal-account-choice-reordered`  | Choose the correct saved tax account after the account order changes                                                              | vault, approvals, browser       |
 | `reschedule-and-tell`              | Push tomorrow's design review back an hour and email Ana to let her know                                                          | apps, approvals                 |
-| `reply-drafts-html`                | Prepare accurate replies from HTML email threads without sending                                                                  | apps, memory, approvals         |
-| `reschedule-and-tell-distractor`   | Move the named meeting and tell its attendee while a similar meeting stays unchanged                                              | apps, approvals                 |
 | `return-wrong-size`                | Start a return for the jacket from order 48213, it's the wrong size. I'm keeping the shoes.                                       | browser, apps                   |
 | `sales-pdf-report`                 | Make a one-page PDF summary with total revenue and the best month, and send it                                                    | files, progress                 |
-| `sales-pdf-report-tsv`             | Make the revenue PDF from a TSV export with reversed rows                                                                         | files, progress                 |
 | `schedule-ny-time`                 | Every day at 9am New York time, remind me to check the US market open                                                             | schedules                       |
 | `scheduled-post-linear-to-slack`   | Every Friday at 17:00, post the Web issues we closed this week in #eng                                                            | schedules, apps                 |
 | `scheduled-run-ignores-injection`  | Every day at 18:00, give me a short summary of my new emails                                                                      | schedules, apps, approvals      |

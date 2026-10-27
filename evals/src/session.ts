@@ -21,12 +21,7 @@ export interface Session {
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
-  api(
-    method: string,
-    path: string,
-    body?: unknown,
-    raw?: boolean,
-  ): Promise<{ status: number; body: any }>;
+  api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
   proactivity: Stack['proactivity'];
   fireSchedules(): Promise<number>;
   event(summary: string, sources?: string[]): Promise<string>;
@@ -92,38 +87,33 @@ export function createSession(options: {
     return threadId;
   }
 
-  async function activity(includeObserver: boolean) {
+  async function activity() {
     const id = await thread();
     const result = await pool.query(
-      `WITH eligible AS (
-         SELECT t.id FROM turns t WHERE t.thread_id=$1
-           AND ($2 OR NOT COALESCE((to_jsonb(t)->>'proactive')::boolean,false))
-       )
-       SELECT (SELECT count(*) FROM turn_events WHERE turn_id IN (SELECT id FROM eligible)) AS events,
-              (SELECT count(*) FROM messages WHERE thread_id=$1 AND (turn_id IS NULL OR turn_id IN (SELECT id FROM eligible))) AS messages,
-              (SELECT count(*) FROM eligible) AS turns`,
-      [id, includeObserver],
+      `SELECT (SELECT count(*) FROM turn_events e JOIN turns t ON t.id=e.turn_id WHERE t.thread_id=$1) AS events,
+              (SELECT count(*) FROM messages WHERE thread_id=$1) AS messages,
+              (SELECT count(*) FROM turns WHERE thread_id=$1) AS turns`,
+      [id],
     );
     return JSON.stringify(result.rows[0]);
   }
 
-  async function settle(includeObserver = true) {
+  async function settle() {
     const id = await thread();
-    let seen = await activity(includeObserver);
+    let seen = await activity();
     let changed = Date.now();
     for (;;) {
-      const busy = await pool.query<{ proactive: boolean }>(
-        `SELECT COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive
-         FROM turns t WHERE thread_id=$1 AND status IN ('queued','running')`,
+      const busy = await pool.query(
+        "SELECT 1 FROM turns WHERE thread_id=$1 AND status IN ('queued','running') LIMIT 1",
         [id],
       );
-      if (!busy.rows.some((turn) => includeObserver || !turn.proactive)) return;
+      if (!busy.rowCount) return;
       const now = Date.now();
       if (now > deadline) {
         await post('/api/thread/stop', {});
         throw new Error('The scenario exceeded its time limit.');
       }
-      const current = await activity(includeObserver);
+      const current = await activity();
       if (current !== seen) {
         seen = current;
         changed = now;
@@ -322,14 +312,7 @@ export function createSession(options: {
     const reply =
       scripted?.say ??
       (user.persona && options.simulator
-        ? await options.simulator.reply(
-            user.persona,
-            pending.text,
-            userMessages
-              .slice(taskFrom)
-              .map((message) => message.text)
-              .join('\n'),
-          )
+        ? await options.simulator.reply(user.persona, pending.text)
         : undefined);
     if (!reply) {
       interactions.push({ kind: 'unanswered', text: pending.text, at });
@@ -345,8 +328,8 @@ export function createSession(options: {
   }
 
   async function converse() {
-    await settle(false);
-    for (let round = 0; round < 12 && (await respond()); round++) await settle(false);
+    await settle();
+    for (let round = 0; round < 12 && (await respond()); round++) await settle();
   }
 
   const answered = new Set<string>();
@@ -424,7 +407,7 @@ export function createSession(options: {
       return (await response.json()).id as string;
     },
     proactivity: stack.proactivity,
-    async api(method, path, body, raw = false) {
+    async api(method, path, body) {
       if (new URL(path, stack.origin).origin !== stack.origin)
         throw new Error('Scenario API calls must stay on the Nod server.');
       const response = await stack.request(path, {
@@ -432,17 +415,8 @@ export function createSession(options: {
         headers: { 'content-type': 'application/json', origin: stack.origin },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      const bytes = Buffer.from(await response.arrayBuffer());
-      return {
-        status: response.status,
-        body: raw
-          ? bytes
-          : !bytes.length
-            ? {}
-            : response.headers.get('content-type')?.includes('json')
-              ? JSON.parse(bytes.toString('utf8'))
-              : bytes,
-      };
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : {} };
     },
     async fireSchedules() {
       const id = await thread();
@@ -495,7 +469,6 @@ export function createSession(options: {
       taskFrom = userMessages.length;
       await stack.resetConversation();
       threadId = undefined;
-      answered.clear();
     },
     lastReply: lastAssistantText,
     async assistantCount() {

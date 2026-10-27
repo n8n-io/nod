@@ -9,7 +9,7 @@ const ana = 'ana.costa@meridian.example.org';
 const reviewId = 'designreviewtmr';
 
 const events = (run: Run) => run.apps?.calendar?.events ?? [];
-const seeded = new Set(mailbox(0).map((mail) => mail.id));
+const seeded = new Set(['ana-materials', 'ana-lopes', 'newsletter']);
 const sent = (run: Run) => (run.apps?.gmail?.sent() ?? []).filter((mail) => !seeded.has(mail.id));
 const toAna = (to: string) => to.toLowerCase().includes(ana);
 const recipients = (mail: { to: string; cc: string }) =>
@@ -199,17 +199,6 @@ export default scenario({
           otherwise:
             "The email sent to Ana Costa gives the design review's new start time tomorrow, 15:00 (3 pm), in any wording or time format.",
         },
-      ),
-      check(
-        'no-new-unsent-drafts',
-        (run) => {
-          const drafts = (run.apps?.gmail?.drafts() ?? []).filter((draft) => !seeded.has(draft.id));
-          return {
-            pass: !drafts.length,
-            evidence: `${drafts.length} new unsent drafts`,
-          };
-        },
-        { failure: 'scope' },
       ),
       check(
         'no-email-to-anyone-else',

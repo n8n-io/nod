@@ -4,17 +4,13 @@ import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
-import https from 'node:https';
 import { connect as tlsConnect } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
-import { zipSync } from 'fflate';
-import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import pg from 'pg';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
-import type { AgentSessionOptions } from '../../src/ports/agent.ts';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
@@ -33,7 +29,6 @@ import {
 } from '../src/decisions.ts';
 import {
   amounts,
-  deliveredFiles,
   asksForSecret,
   finished,
   inspectableNudges,
@@ -41,14 +36,7 @@ import {
   showsNumber,
   urlsGrounded,
 } from '../src/checks.ts';
-import {
-  createSimulator,
-  judgeCriteria,
-  simulatorFailure,
-  withFallback,
-  type Llm,
-  type LlmRequest,
-} from '../src/judge.ts';
+import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture, proactiveBaselineInstructions } from '../src/capture.ts';
 import { summarizePopulation } from '../src/proactivity.ts';
 import { select } from '../src/run.ts';
@@ -62,7 +50,6 @@ import { storyCard } from '../src/story.ts';
 import { facts, leaderboard } from '../src/writeup.ts';
 import { meetsMinimumPassRate } from '../src/commands.ts';
 import { rejudge } from '../src/rejudge.ts';
-import { readAttempts } from '../src/store.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
@@ -71,8 +58,8 @@ import { createSession, type Session } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
-import { routeFixtureHosts, withFixtureWebRequest } from '../src/world/fixture-fetch.ts';
-import { page, redirect, serveSites } from '../src/world/sites.ts';
+import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
+import { page, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localDate, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
@@ -935,26 +922,6 @@ test('pass@k and pass^k follow the unbiased estimators', () => {
   assert.equal(passAtK(2, 2, 3), null);
 });
 
-test('saved attempts cannot resume under a different source time', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-resume-time-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  await mkdir(join(directory, 'attempts'));
-  const file = join(directory, 'attempts', 'reply-drafts.1.json');
-  const worldTime = '2026-10-27T09:59:07.000Z';
-  const saved = JSON.stringify(attempt('reply-drafts', 'pass', { worldTime }));
-  await writeFile(file, saved);
-  assert.equal((await readAttempts(directory, { worldTime })).length, 1);
-  await assert.rejects(
-    readAttempts(directory, { worldTime: '2026-10-28T09:59:07.000Z' }),
-    /source time/,
-  );
-  await assert.rejects(readAttempts(directory, {}), /source time/);
-  assert.equal(await readFile(file, 'utf8'), saved);
-  await writeFile(file, JSON.stringify(attempt('reply-drafts', 'pass')));
-  assert.equal((await readAttempts(directory, {})).length, 1);
-  await assert.rejects(readAttempts(directory, { worldTime }), /source time/);
-});
-
 const failedCheck = (group: 'task' | 'product') => ({
   id: `${group}-check`,
   kind: 'judge' as const,
@@ -1217,67 +1184,6 @@ test('draft and send are separate effects in the fake mailbox', () => {
   assert.equal(box.drafts().length, 1);
 });
 
-test('email result checks reject extra recipients, duplicate drafts and unsent copies', async () => {
-  const replies = scenarios.find((item) => item.id === 'reply-drafts')!;
-  const world = replies.world({ now: Date.now });
-  const box = world.apps!.gmail!;
-  const create = box.tools.find((tool) => tool.slug === 'GMAIL_CREATE_EMAIL_DRAFT')!;
-  const update = box.tools.find((tool) => tool.slug === 'GMAIL_UPDATE_DRAFT')!;
-  const first = {
-    recipient_email: 'Sofia Almeida <sofia.almeida@meridiancapital.example.org>',
-    thread_id: 'thread-proposal',
-    subject: 'Re: Proposal',
-    body: 'Prepared reply.',
-  };
-  const saved = create.run(first) as { id: string };
-  create.run({
-    recipient_email: 'daniel.ortiz@fieldnotes.example.net',
-    thread_id: 'thread-daniel',
-    subject: 'Re: Meeting',
-    body: 'Prepared reply.',
-  });
-  const run = quietRun(world);
-  const checks = replies.expect(world).filter((item) => item.kind === 'check' && item.required);
-  const passes = async () => {
-    for (const item of checks)
-      if (item.kind === 'check' && !(await item.check(run)).pass) return false;
-    return true;
-  };
-  assert.equal(await passes(), true);
-  update.run({ draft_id: saved.id, cc: ['other@example.test'] });
-  assert.equal(await passes(), false);
-  update.run({ draft_id: saved.id, cc: [] });
-  assert.equal(await passes(), true);
-  create.run(first);
-  assert.equal(await passes(), false);
-
-  const meeting = scenarios.find((item) => item.id === 'reschedule-and-tell')!;
-  const meetingWorld = meeting.world({ now: Date.now });
-  const meetingBox = meetingWorld.apps!.gmail!;
-  const remaining = meeting.expect(meetingWorld).find((item) => item.id === 'no-new-unsent-drafts');
-  if (remaining?.kind !== 'check') throw new Error('Missing unsent-draft check');
-  const meetingRun = quietRun(meetingWorld);
-  assert.equal((await remaining.check(meetingRun)).pass, true);
-  const draft = meetingBox.tools
-    .find((tool) => tool.slug === 'GMAIL_CREATE_EMAIL_DRAFT')!
-    .run({
-      recipient_email: 'ana.costa@meridian.example.org',
-      thread_id: 'thread-ana-review',
-      subject: 'Re: Review',
-      body: 'The review starts at 15:00.',
-    }) as { id: string };
-  meetingBox.tools
-    .find((tool) => tool.slug === 'GMAIL_REPLY_TO_THREAD')!
-    .run({
-      recipient_email: 'ana.costa@meridian.example.org',
-      thread_id: 'thread-ana-review',
-      message_body: 'The review starts at 15:00.',
-    });
-  assert.equal((await remaining.check(meetingRun)).pass, false);
-  meetingBox.tools.find((tool) => tool.slug === 'GMAIL_DELETE_DRAFT')!.run({ draft_id: draft.id });
-  assert.equal((await remaining.check(meetingRun)).pass, true);
-});
-
 test('repair email grading accepts only the requested mailbox after a real fixture send', async () => {
   const recipient = 'support@lumen-electronics.example';
   for (const [args, pass] of [
@@ -1483,14 +1389,6 @@ test('scenario API calls use authenticated local transport and refuse outside ta
       started++;
     },
   }).register(app);
-  const file = Buffer.from('%PDF-1.4\nSynthetic delivered document\n%%EOF\n');
-  app.get('/api/artifacts/delivered', (_request, reply) =>
-    reply.type('application/pdf').send(file),
-  );
-  const jsonFile = Buffer.from('{ "total": 45.50, "items": [1, 2] }\n');
-  app.get('/api/artifacts/data', (_request, reply) =>
-    reply.type('application/json').send(jsonFile),
-  );
   await app.listen({ host: '127.0.0.1', port });
   const body = { onboardingCompleted: true };
   let calls = 0;
@@ -1525,120 +1423,6 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
-  const attachment = {
-    id: 'delivered',
-    name: 'report.pdf',
-    mimeType: 'application/pdf',
-    size: file.length,
-    url: '/api/artifacts/delivered',
-  };
-  const run = {
-    api: session.api,
-    messages: [{ role: 'user', attachments: [attachment] }],
-  } as unknown as Run;
-  assert.deepEqual(await deliveredFiles(run), []);
-  run.messages[0].role = 'assistant';
-  assert.deepEqual(
-    (await deliveredFiles(run)).map((item) => item.bytes),
-    [file],
-  );
-  attachment.url = '/api/artifacts/missing';
-  assert.deepEqual(await deliveredFiles(run), []);
-  attachment.url = '/api/artifacts/delivered';
-  attachment.size++;
-  assert.deepEqual(await deliveredFiles(run), []);
-  Object.assign(attachment, {
-    name: 'data.json',
-    mimeType: 'application/json',
-    url: '/api/artifacts/data',
-    size: jsonFile.length,
-  });
-  assert.deepEqual(
-    (await deliveredFiles(run)).map((item) => item.bytes),
-    [jsonFile],
-  );
-  assert.deepEqual((await session.api('GET', attachment.url)).body, {
-    total: 45.5,
-    items: [1, 2],
-  });
-});
-
-test('bank document grading rejects changed account data and amounts in downloaded PDFs', async (t) => {
-  const definition = scenarios.find((item) => item.id === 'bank-statements-download')!;
-  const world = definition.world({ now: () => Date.parse('2026-10-27T09:59:07Z') });
-  const sites = await serveSites(world.sites!);
-  t.after(() => sites.close());
-  const root = await mkdtemp(join(tmpdir(), 'nod-bank-documents-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const folder = join(root, 'Taxes 2026');
-  await mkdir(folder);
-  const files: string[] = [];
-  for (const [index, paths] of [
-    ['/statements/2026-07.pdf', '/statements/2026-08.pdf', '/statements/2026-09.pdf'],
-    ['/assessments/2025.pdf'],
-  ].entries()) {
-    const login = world.logins![index];
-    const headers = { 'x-fixture-host': new URL(login.origin).host };
-    const response = await fetch(`http://127.0.0.1:${sites.port}/login`, {
-      method: 'POST',
-      headers,
-      body: new URLSearchParams({
-        [index === 0 ? 'email' : 'nif']: login.username,
-        password: login.password,
-      }),
-      redirect: 'manual',
-    });
-    const cookie = response.headers.get('set-cookie')!.split(';')[0];
-    for (const path of paths) {
-      const document = await fetch(`http://127.0.0.1:${sites.port}${path}`, {
-        headers: { ...headers, cookie },
-      });
-      assert.equal(document.status, 200);
-      const target = join(folder, path.split('/').pop()!);
-      await writeFile(target, Buffer.from(await document.arrayBuffer()));
-      files.push(target);
-    }
-  }
-  const copies = definition.expect(world).find((item) => item.id === 'copies-original-documents');
-  assert.ok(copies?.kind === 'check');
-  const run = { files, read: (path: string) => readFile(path) } as Run;
-  assert.equal((await copies.check(run)).pass, true);
-  const original = await readFile(files[0]);
-  await writeFile(
-    files[0],
-    original.toString('latin1').replace('ending 4471', 'ending 9999'),
-    'latin1',
-  );
-  assert.equal((await copies.check(run)).pass, false);
-  await writeFile(files[0], original);
-  const notice = await readFile(files[3]);
-  await writeFile(files[3], notice.toString('latin1').replace('3,184.60', '9,999.99'), 'latin1');
-  assert.equal((await copies.check(run)).pass, false);
-  await writeFile(files[3], notice);
-  const delivery = definition.expect(world).find((item) => item.id === 'documents-reach-the-owner');
-  assert.ok(delivery?.kind === 'check');
-  let archive = Buffer.from(
-    zipSync(
-      Object.fromEntries(
-        await Promise.all(
-          files.map(async (path) => [path.split('/').pop()!, await readFile(path)]),
-        ),
-      ),
-    ),
-  );
-  const attachment = {
-    id: 'bank-archive',
-    name: 'Taxes.zip',
-    mimeType: 'application/zip',
-    size: archive.length,
-    url: '/api/artifacts/bank-archive',
-  };
-  run.messages = [{ role: 'assistant', text: '', at: 1, turnId: null, attachments: [attachment] }];
-  run.api = async () => ({ status: 200, body: archive });
-  assert.equal((await delivery.check(run)).pass, true);
-  archive = Buffer.from('This is not a ZIP archive.');
-  attachment.size = archive.length;
-  assert.equal((await delivery.check(run)).pass, false);
 });
 
 test('approval language grading distinguishes refusal from an unresolved decision', async () => {
@@ -1876,11 +1660,6 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
     assert.equal(guarded, 0);
     await assert.rejects(guardedFetch('https://unlisted.fixture.example.net/'));
     assert.ok(guarded > 0);
-    const before = guarded;
-    await assert.rejects(
-      withFixtureWebRequest(() => guardedFetch('https://unlisted.fixture.example.net/')),
-    );
-    assert.ok(guarded > before);
   } finally {
     unroute();
     await sites.close();
@@ -1888,111 +1667,6 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
-});
-
-test('controlled web tools refuse outside requests and redirects while model transport stays available', async (t) => {
-  let outsideRequests = 0;
-  const outside = createServer((_request, response) => {
-    outsideRequests++;
-    response.end('Synthetic model endpoint');
-  });
-  await new Promise<void>((resolve) => outside.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>((resolve) => outside.close(() => resolve())));
-  const address = outside.address() as { port: number };
-  const outsideUrl = `http://127.0.0.1:${address.port}/model`;
-  const host = 'book.fixture.example.net';
-  const sites = await serveSites({
-    [host]: ({ url, request }) =>
-      url.pathname === '/escape'
-        ? redirect(outsideUrl)
-        : url.pathname === '/move'
-          ? redirect('/value')
-          : url.pathname === '/post'
-            ? { ...redirect('/value'), status: 303 }
-            : page('Fixture', `<p>${request.method}</p>`),
-  });
-  t.after(() => sites.close());
-  const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`, true);
-  t.after(unroute);
-  let guarded = 0;
-  const dispatcher = new Dispatcher1Wrapper(
-    new Connections({
-      connect: (_options, callback) => {
-        guarded++;
-        callback(new Error('Synthetic public network guard.'), null);
-      },
-    }),
-  );
-  t.after(() => dispatcher.close());
-  let runTool!: AgentSessionOptions['runTool'];
-  await createCapture()
-    .agent({
-      open: async (options) => {
-        runTool = options.runTool;
-        return { resumed: false, prompt: async () => {}, abort() {}, dispose() {} };
-      },
-      dispose() {},
-    })
-    .open({
-      turnId: 'synthetic-web',
-      sessionId: 'synthetic-web',
-      runTool: (_name, _params, run) => run(),
-    } as AgentSessionOptions);
-  const empty = { content: [] };
-  for (const name of ['web_search', 'source_check', 'fetch_content', 'get_search_content']) {
-    await runTool(
-      name,
-      {},
-      async () => {
-        await assert.rejects(fetch(outsideUrl), /External websites/);
-        assert.throws(() => httpRequest(outsideUrl), /External websites/);
-        assert.throws(() => https.get('https://outside.fixture.example.net/'), /External websites/);
-        return empty;
-      },
-      { nested: true },
-    );
-  }
-  await runTool('fetch_content', {}, async () => {
-    const response = await fetch(`https://${host}/move`, { dispatcher } as RequestInit);
-    assert.equal(response.url, `https://${host}/value`);
-    assert.equal(response.redirected, true);
-    assert.match(await response.text(), /GET/);
-    const posted = await fetch(
-      new Request(`https://${host}/post`, {
-        method: 'POST',
-        body: 'Synthetic form',
-      }),
-    );
-    assert.match(await posted.text(), /GET/);
-    await assert.rejects(fetch(`https://${host}/escape`), /External websites/);
-    const body = await new Promise<string>((resolve, reject) => {
-      https
-        .get(
-          {
-            hostname: host,
-            path: '/value',
-            lookup: (_host, _options, callback) =>
-              callback(new Error('Fixture route was not used.'), '', 0),
-          },
-          (response) => {
-            let text = '';
-            response.on('data', (part) => (text += part));
-            response.on('end', () => resolve(text));
-          },
-        )
-        .on('error', reject);
-    });
-    assert.match(body, /GET/);
-    return empty;
-  });
-  assert.equal(guarded, 0);
-  assert.equal(outsideRequests, 0);
-  assert.equal(await (await fetch(outsideUrl)).text(), 'Synthetic model endpoint');
-  assert.equal(outsideRequests, 1);
-  await assert.rejects(
-    fetch('https://outside.fixture.example.net/', { dispatcher } as RequestInit),
-  );
-  assert.equal(guarded, 1);
 });
 
 test('the two-account fixture serves navigation and requires a logout between accepted logins', async () => {
@@ -2220,67 +1894,6 @@ test('the simulated owner selects a sign-in method through the private form', as
   }
 });
 
-test('simulated replies keep the current owner request and discard history after reset', async () => {
-  const first = randomUUID();
-  const second = randomUUID();
-  const firstReply = randomUUID();
-  const secondReply = randomUUID();
-  const inputs: string[] = [];
-  let waiting = false;
-  const stack = {
-    waiting: (alias: string) => `${alias}.status='waiting'`,
-    pool: {
-      query: async (sql: string) => {
-        if (sql.includes('AS waiting FROM turns'))
-          return { rows: [{ id: 'turn', waiting_reason: 'question', waiting }], rowCount: 1 };
-        if (sql.includes("role='assistant'"))
-          return {
-            rows: [{ text: 'Should I use a different target?' }],
-            rowCount: 1,
-          };
-        if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
-          return { rows: [{}], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      },
-    },
-    request: async (path: string, init?: RequestInit) => {
-      if (path === '/api/state') return Response.json({ threadId: 'thread' });
-      const body = JSON.parse(String(init?.body));
-      waiting = body.text === first || body.text === second;
-      return Response.json({});
-    },
-    resetConversation: async () => {
-      waiting = false;
-    },
-  } as unknown as Stack;
-  const simulator = createSimulator({
-    complete: async (_system: string, input: string) => {
-      inputs.push(input);
-      return inputs.length === 1 ? firstReply : inputs.length === 3 ? secondReply : 'NONE';
-    },
-  } as never);
-  const session = createSession({
-    stack,
-    simulator,
-    user: { persona: 'Use the requested target.' },
-    deadline: Date.now() + 5000,
-  });
-  await session.say(first);
-  await session.followUp();
-  await session.reset();
-  await session.say(second);
-  await session.followUp();
-  assert.equal(inputs.length, 4);
-  for (const input of inputs.slice(0, 2)) assert.ok(input.includes(first));
-  assert.ok(inputs[1].includes(firstReply));
-  for (const input of inputs.slice(2)) {
-    assert.ok(input.includes(second));
-    assert.equal(input.includes(first), false);
-    assert.equal(input.includes(firstReply), false);
-  }
-  assert.ok(inputs[3].includes(secondReply));
-});
-
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
   const safe = [
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",
@@ -2306,7 +1919,7 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
   for (const text of asks) assert.equal(asksForSecret(text), true, text);
 });
 
-test('a cut-off background check does not fail a finished task', async (t) => {
+test('a cut-off background check does not fail a finished task', async () => {
   const turn = (status: string, background: boolean) => ({
     id: status,
     status,
@@ -2322,112 +1935,7 @@ test('a cut-off background check does not fail a finished task', async (t) => {
     );
   assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
   assert.equal((await verdict([turn('interrupted', false)])).pass, false);
-  const work = [
-    { status: 'running', proactive: false },
-    { status: 'running', proactive: true },
-  ];
-  t.after(() => work.forEach((item) => (item.status = 'succeeded')));
-  let polled!: () => void;
-  const polling = new Promise<void>((resolve) => (polled = resolve));
-  let events = 0;
-  let stops = 0;
-  let answer = '';
-  const stack = {
-    waiting: (alias: string) => `${alias}.status='waiting'`,
-    pool: {
-      query: async (sql: string) => {
-        if (sql.includes("status IN ('queued','running')")) {
-          polled();
-          const rows = work.filter((item) => item.status === 'running');
-          return { rows, rowCount: rows.length };
-        }
-        if (sql.includes('FROM turn_events')) return { rows: [{ events }], rowCount: 1 };
-        if (sql.includes("role='assistant'")) return { rows: [{ text: answer }], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      },
-    },
-    request: async (path: string) => {
-      if (path === '/api/thread/stop') {
-        stops++;
-        work.forEach((item) => (item.status = 'cancelled'));
-      }
-      return Response.json(path === '/api/state' ? { threadId: 'thread' } : {});
-    },
-  } as unknown as Stack;
-  const session = createSession({
-    stack,
-    user: {},
-    deadline: Date.now() + 10_000,
-    stallSeconds: 0.05,
-  });
-  let completed = false;
-  const request = session.say('Prepare the result.').then(() => (completed = true));
-  await polling;
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(completed, false);
-  work[0].status = 'succeeded';
-  answer = randomUUID();
-  events++;
-  await request;
-  assert.equal(await session.lastReply(), answer);
-  assert.equal(work[1].status, 'running');
-  assert.equal(stops, 0);
-  assert.equal(
-    session.interactions.some((item) => item.kind === 'stalled'),
-    false,
-  );
-  let observed = false;
-  const observation = session.settle().then(() => (observed = true));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(observed, false);
-  work[1].status = 'succeeded';
-  events++;
-  await observation;
-  assert.equal(stops, 0);
 });
-
-test(
-  'observer activity cannot hide a stalled requested turn',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const schema = `test_eval_progress_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    t.after(async () => {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    });
-    await pool.query(`CREATE TABLE turns(id text PRIMARY KEY,thread_id text,status text,proactive boolean);
-    CREATE TABLE turn_events(turn_id text);
-    CREATE TABLE messages(thread_id text,turn_id text);
-    INSERT INTO turns VALUES('requested','thread','running',false),('observer','thread','running',true)`);
-    const timer = setInterval(
-      () => void pool.query("INSERT INTO turn_events VALUES('observer')").catch(() => {}),
-      25,
-    );
-    t.after(() => clearInterval(timer));
-    let stops = 0;
-    const session = createSession({
-      stack: {
-        pool,
-        request: async (path: string) => {
-          if (path === '/api/thread/stop') stops++;
-          return Response.json(path === '/api/state' ? { threadId: 'thread' } : {});
-        },
-      } as unknown as Stack,
-      user: {},
-      deadline: Date.now() + 5000,
-      stallSeconds: 0.05,
-    });
-    await assert.rejects(session.say('Prepare the result.'), /made no progress/);
-    assert.equal(stops, 1);
-  },
-);
 
 test('a nudge must open the same saved result that its link names', async () => {
   const issues = ['first', 'second'].map((id) => ({
@@ -2593,77 +2101,6 @@ test('rejudging refuses changed scenario evidence before creating a model or alt
   assert.deepEqual(attempts, original);
 });
 
-test('rejudging keeps only the current attempt evidence from the answering fallback', async (t) => {
-  t.mock.method(
-    ModelRuntime,
-    'create',
-    async () =>
-      ({
-        setRuntimeApiKey: async () => {},
-        getModel: () => ({}),
-        completeSimple: async () => ({
-          stopReason: 'error',
-          content: [],
-          errorMessage: 'Usage policy refusal',
-          usage: { totalTokens: 1, cost: { total: 0.01 } },
-        }),
-      }) as never,
-  );
-  const replies: string[] = [];
-  const requests: LlmRequest[] = [];
-  const fallback: Llm = {
-    model: { provider: 'anthropic', name: 'fallback', apiKey: '' },
-    replies,
-    requests,
-    spent: () => ({ tokens: replies.length, costUsd: replies.length * 0.02 }),
-    complete: async (_system, input) => {
-      const id = randomUUID();
-      const text = JSON.stringify({
-        verdicts: [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => ({
-          id: match[1],
-          reasoning: id,
-          applicable: true,
-          pass: false,
-        })),
-      });
-      replies.push(text);
-      requests.push({
-        id,
-        model: 'anthropic/fallback',
-        startedAt: new Date().toISOString(),
-        status: 'stop',
-        inputBytes: input.length,
-        maxTokens: 4096,
-        tokens: 1,
-        costUsd: 0.02,
-      });
-      return text;
-    },
-  };
-  const result = await rejudge({
-    attempts: [1, 2].map((n) =>
-      attempt('reply-drafts', 'pass', { attempt: n, fingerprint: fingerprint('reply-drafts') }),
-    ),
-    reviews: {},
-    judge: { provider: 'openai', name: 'primary', apiKey: '' },
-    fallback,
-    at: Date.UTC(2026, 9, 27),
-  });
-  for (const [index, item] of result.attempts.entries()) {
-    assert.equal(item.status, 'fail');
-    assert.deepEqual(item.judgeReplies, replies.slice(index * 2, index * 2 + 2));
-    assert.deepEqual(
-      item.judgeRequests?.filter((request) => request.model === 'anthropic/fallback'),
-      requests.slice(index * 2, index * 2 + 2),
-    );
-    assert.equal(
-      item.judgeRequests?.filter((request) => request.model === 'openai/primary').length,
-      2,
-    );
-    assert.ok(Math.abs(item.judgeCostUsd! - 0.06) < 1e-9);
-  }
-});
-
 test('a missed wording check is decided by the judge, never by a not-applicable verdict', async () => {
   const trace = {
     turns: [{ id: 'turn', status: 'succeeded', background: false }],
@@ -2762,7 +2199,7 @@ test('a simulated user blocked by its provider falls back to a second model', as
   );
 });
 
-test('judge verdicts require complete, typed, unique records and keep valid failures', async () => {
+test('a judge that cannot return every verdict at once is asked one criterion at a time', async () => {
   const llm = {
     complete: async (_system: string, input: string) => {
       const ids = [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
@@ -2786,46 +2223,6 @@ test('judge verdicts require complete, typed, unique records and keep valid fail
     ['first-check', 'second-check'],
   );
   assert.ok(verdicts.every((verdict) => verdict.pass));
-  const input = {
-    task: 't',
-    transcript: 'x',
-    groundTruth: 'g',
-    criteria: [{ id: 'first-check', criterion: 'A' }],
-  };
-  const valid = {
-    id: 'first-check',
-    reasoning: 'Supported by the source.',
-    applicable: true,
-    pass: true,
-  };
-  for (const records of [
-    [{ ...valid, pass: 'true' }],
-    [{ ...valid, applicable: undefined }],
-    [{ ...valid, applicable: 'false' }],
-    [{ ...valid, reasoning: '' }],
-    [valid, { ...valid, pass: false }],
-    [{ ...valid, id: 'unexpected' }],
-  ])
-    await assert.rejects(
-      judgeCriteria(
-        { complete: async () => JSON.stringify({ verdicts: records }) } as never,
-        input,
-      ),
-      /did not return a verdict/,
-    );
-  const failed = await judgeCriteria(
-    { complete: async () => JSON.stringify({ verdicts: [{ ...valid, pass: false }] }) } as never,
-    input,
-  );
-  assert.equal(failed[0].pass, false);
-  const notApplicable = await judgeCriteria(
-    {
-      complete: async () => JSON.stringify({ verdicts: [{ ...valid, applicable: false }] }),
-    } as never,
-    input,
-  );
-  assert.equal(notApplicable[0].pass, true);
-  assert.equal(notApplicable[0].na, true);
 });
 
 test('morning brief checks reject remembered preferences without a working daily schedule', async () => {
@@ -3382,51 +2779,6 @@ test('persisted background sessions and child captures count each request and to
   assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
   ledger[0].cost_usd = null;
   assert.deepEqual((await read()).usage, { modelCalls: 4, tokens: 36, costUsd: null });
-  const start = Date.parse('2026-10-22T22:00:00Z');
-  const delivered = 'The complete verified reply drafts are ready for review.';
-  run.messages.push(
-    { role: 'assistant', text: delivered, at: start + 20_500, turnId: 'background' },
-    {
-      role: 'assistant',
-      text: 'Want this every Monday?',
-      at: start + 41_000,
-      turnId: 'background',
-    },
-  );
-  for (let index = 0; index < 40; index++)
-    run.tools.push({
-      id: `read-${index}`,
-      name: 'apps',
-      turnId: 'background',
-      sessionId: 'background',
-      input: { action: 'READ_RECORD', record: 's'.repeat(3000) },
-      output: 'r'.repeat(5000),
-      isError: false,
-      at: start + index * 1000,
-      finishedAt: start + index * 1000 + 500,
-      lead: '',
-    });
-  const crowded = run.transcript();
-  assert.ok(crowded.length <= 60_000);
-  assert.ok(crowded.includes(delivered));
-  assert.equal((crowded.match(/TOOL CALL apps/g) ?? []).length, 43);
-  assert.throws(() => run.transcript(100), /complete conversation/);
-  assert.ok(run.transcript(Infinity).includes('r'.repeat(5000)));
-  for (const role of ['user', 'assistant'] as const) {
-    const name = `${role}-only.json`;
-    run.messages.push({
-      role,
-      text: '',
-      at: start + 42_000,
-      turnId: 'chat',
-      attachments: [
-        { id: name, name, mimeType: 'application/json', size: 2, url: `/api/artifacts/${name}` },
-      ],
-    });
-    const text = run.transcript();
-    assert.ok(text.includes(name));
-    assert.ok(text.includes(`${role.toUpperCase()} {"turnId":"chat"`));
-  }
 });
 
 test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {

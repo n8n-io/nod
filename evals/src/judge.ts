@@ -1,25 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { parseModel, type Model } from './stack.ts';
 
-export interface LlmRequest {
-  id: string;
-  purpose?: 'judge' | 'simulator';
-  model: string;
-  startedAt: string;
-  finishedAt?: string;
-  status: string;
-  inputBytes: number;
-  maxTokens: number;
-  tokens: number;
-  costUsd: number | null;
-}
-
 export interface Llm {
   model: Model;
-  replies?: string[];
-  requests?: LlmRequest[];
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
   fallbackCalls?(): number;
@@ -28,11 +12,7 @@ export interface Llm {
 const transient =
   /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONN|ETIMEDOUT|fetch failed|unavailable/i;
 
-export async function createLlm(
-  model: Model,
-  record?: (request: LlmRequest) => Promise<void>,
-  purpose: 'judge' | 'simulator' = 'judge',
-): Promise<Llm> {
+export async function createLlm(model: Model): Promise<Llm> {
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsPath: null,
@@ -46,30 +26,13 @@ export async function createLlm(
   let tokens = 0;
   let cost = 0;
   let costKnown = false;
-  const replies: string[] = [];
-  const requests: LlmRequest[] = [];
   return {
     model,
-    replies,
-    requests,
     spent: () => ({ tokens, costUsd: costKnown ? cost : null }),
     async complete(system, input, maxTokens = 4096) {
       let failure = '';
       for (const delay of [0, 30_000, 90_000]) {
         if (delay) await new Promise((done) => setTimeout(done, delay));
-        const request: LlmRequest = {
-          id: randomUUID(),
-          purpose,
-          model: `${model.provider}/${model.name}`,
-          startedAt: new Date().toISOString(),
-          status: 'started',
-          inputBytes: Buffer.byteLength(system) + Buffer.byteLength(input),
-          maxTokens,
-          tokens: 0,
-          costUsd: null,
-        };
-        requests.push(request);
-        await record?.(request);
         const reply = await runtime.completeSimple(
           resolved,
           {
@@ -78,30 +41,15 @@ export async function createLlm(
           },
           { signal: AbortSignal.timeout(180_000), maxTokens },
         );
-        request.finishedAt = new Date().toISOString();
-        request.status = reply.stopReason;
-        request.tokens = reply.usage?.totalTokens ?? 0;
-        const reported = reply.usage?.cost?.total;
-        if (
-          typeof reported === 'number' &&
-          Number.isFinite(reported) &&
-          reported >= 0 &&
-          (!['error', 'aborted'].includes(reply.stopReason) || request.tokens > 0 || reported > 0)
-        )
-          request.costUsd = reported;
         tokens += reply.usage?.totalTokens ?? 0;
         if (typeof reply.usage?.cost?.total === 'number') {
           cost += reply.usage.cost.total;
           costKnown = true;
         }
-        await record?.(request);
-        if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted') {
-          const text = reply.content
+        if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted')
+          return reply.content
             .flatMap((block) => (block.type === 'text' ? [block.text] : []))
             .join('');
-          replies.push(text);
-          return text;
-        }
         failure = String((reply as { errorMessage?: string }).errorMessage ?? reply.stopReason);
         if (!transient.test(failure)) break;
       }
@@ -122,7 +70,7 @@ export function parseJson(text: string): any {
 }
 
 export interface Simulator {
-  reply(persona: string, question: string, task?: string): Promise<string>;
+  reply(persona: string, question: string): Promise<string>;
   followUp(persona: string, task: string, message: string): Promise<string | undefined>;
 }
 
@@ -180,17 +128,17 @@ export function createSimulator(llm: Llm): Simulator {
       );
     });
   return {
-    async reply(persona, question, task = '') {
+    async reply(persona, question) {
       const text = await ask(
-        `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below and your own messages. Keep the target you asked for. Change it only when your own facts or messages support the change. Share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
-        `What you have said so far, oldest first:\n${task}\n\nThe assistant says:\n${question}\n\nYour reply:`,
+        `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below, and share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `The assistant says:\n${question}\n\nYour reply:`,
         300,
       );
       return text.trim();
     },
     async followUp(persona, task, message) {
       const text = await ask(
-        `You play a person chatting with their personal AI assistant. You asked it for things, and it has just replied. Your most recent request replaces anything earlier it contradicts. Decide whether the assistant is blocked: it cannot finish what you asked without something from you, such as an answer it needs, a choice between options, missing information, or the approval or go-ahead it said it would wait for (including offers such as "say the word and I'll send it" when sending is part of what you asked). If it has finished, or only offers optional extras, suggestions or next steps you did not ask for (doing more, a recurring version, another step), reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Never repeat, extend or re-issue your requests. Use only the facts below and your own messages. Keep the target you asked for. Change it only when your own facts or messages support the change. Share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `You play a person chatting with their personal AI assistant. You asked it for things, and it has just replied. Your most recent request replaces anything earlier it contradicts. Decide whether the assistant is blocked: it cannot finish what you asked without something from you, such as an answer it needs, a choice between options, missing information, or the approval or go-ahead it said it would wait for (including offers such as "say the word and I'll send it" when sending is part of what you asked). If it has finished, or only offers optional extras, suggestions or next steps you did not ask for (doing more, a recurring version, another step), reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Never repeat, extend or re-issue your requests. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
         `What you have said so far, oldest first:\n${task}\n\nThe assistant says:\n${message}\n\nYour reply (or NONE):`,
         300,
       );
@@ -238,19 +186,11 @@ export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeV
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    const invalid = criteria.filter((item) => {
-      const matches = verdicts.filter((verdict: any) => verdict?.id === item.id);
-      const verdict = matches[0];
-      return (
-        matches.length !== 1 ||
-        typeof verdict?.pass !== 'boolean' ||
-        typeof verdict?.applicable !== 'boolean' ||
-        typeof verdict?.reasoning !== 'string' ||
-        !verdict.reasoning.trim()
-      );
-    });
-    if (invalid.length || verdicts.length !== criteria.length) {
-      last = `invalid or missing verdicts: ${invalid.map((item) => item.id).join(', ') || 'unexpected IDs'}; the reply began ${JSON.stringify(text.trim().slice(0, 160))}`;
+    const missing = criteria.filter(
+      (item) => !verdicts.some((verdict: any) => verdict.id === item.id),
+    );
+    if (missing.length) {
+      last = `missing ${missing.map((item) => item.id).join(', ')}; the reply began ${JSON.stringify(text.trim().slice(0, 160))}`;
       return undefined;
     }
     return criteria.map((item): JudgeVerdict => {

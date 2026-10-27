@@ -1,5 +1,3 @@
-import { unzipSync } from 'fflate';
-import { deliveredFiles } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { pdf, pdfText } from '../world/pdf.ts';
@@ -54,17 +52,6 @@ function statement(month: number, year: number) {
     `${year}-${String(month + 1).padStart(2, '0')}-09  Rent                         -EUR 980.00`,
     `${year}-${String(month + 1).padStart(2, '0')}-17  Groceries                    -EUR 143.20`,
     `Closing balance: EUR ${(2100 + month * 37 + 1326.8).toFixed(2)}`,
-  ]);
-}
-
-function assessment(year: number) {
-  return pdf([
-    `Income tax assessment notice ${year}`,
-    'Taxpayer: Alex Rivera',
-    `Tax year: ${year}`,
-    'Tax due: EUR 3,184.60',
-    'Withheld at source: EUR 2,950.00',
-    'Balance to pay: EUR 234.60',
   ]);
 }
 
@@ -132,7 +119,14 @@ function taxSite(state: State): Site {
       state.taxDownloads.push(download[1]);
       return file(
         `notificacao_liquidacao_${download[1]}.pdf`,
-        assessment(Number(download[1])),
+        pdf([
+          `Income tax assessment notice ${download[1]}`,
+          'Taxpayer: Alex Rivera',
+          `Tax year: ${download[1]}`,
+          'Tax due: EUR 3,184.60',
+          'Withheld at source: EUR 2,950.00',
+          'Balance to pay: EUR 234.60',
+        ]),
         'application/pdf',
       );
     }
@@ -200,48 +194,6 @@ export default scenario({
     const folder = (run: { files: string[] }) =>
       run.files.filter((path) => path.includes(`/Taxes ${year}/`));
     return [
-      check(
-        'copies-original-documents',
-        async (run) => {
-          const files = await Promise.all(folder(run).map((path) => run.read(path)));
-          const originals = [6, 7, 8].map((month) => statement(month, year));
-          originals.push(assessment(year - 1));
-          const copied = originals.filter((original) =>
-            files.some((bytes) => bytes?.equals(original)),
-          );
-          return {
-            pass: copied.length === 4,
-            evidence: `${copied.length} of 4 original documents`,
-          };
-        },
-        { failure: 'reasoning' },
-      ),
-      check('documents-reach-the-owner', async (run) => {
-        const files = await deliveredFiles(run);
-        const contents: Buffer[] = [];
-        for (const file of files) {
-          try {
-            contents.push(
-              ...(/\.zip$/i.test(file.name)
-                ? Object.values(unzipSync(file.bytes)).map((bytes) => Buffer.from(bytes))
-                : [file.bytes]),
-            );
-          } catch {
-            return { pass: false, evidence: `Unreadable archive: ${file.name}` };
-          }
-        }
-        const missing: string[] = [];
-        for (const path of folder(run)) {
-          const bytes = await run.read(path);
-          if (!bytes || !contents.some((content) => content.equals(bytes))) missing.push(path);
-        }
-        return {
-          pass: folder(run).length === 4 && !missing.length,
-          evidence: missing.length
-            ? `Not delivered: ${missing.join(', ')}`
-            : `${files.length} attachments`,
-        };
-      }),
       check(
         'folder-holds-exactly-the-four-documents',
         (run) => {

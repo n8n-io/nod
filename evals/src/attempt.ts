@@ -1,13 +1,13 @@
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { grade } from './grade.ts';
 import {
   createLlm,
   createSimulator,
+  fallbackLlm,
   providerRefusal,
   simulatorFailure,
-  type Llm,
-  type LlmRequest,
+  withFallback,
 } from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
@@ -25,7 +25,6 @@ export interface AttemptSpec {
   outFile: string;
   model: string;
   judge: string;
-  worldTime?: string;
 }
 
 const infra =
@@ -51,7 +50,6 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     stance: definition.stance,
     fingerprint: fingerprint(definition.id),
     attempt: spec.attempt,
-    ...(spec.worldTime ? { worldTime: spec.worldTime } : {}),
     task: '',
   };
   const empty = {
@@ -73,29 +71,16 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const judgeModel = parseModel(spec.judge, environment);
   const started = Date.now();
   let taskStarted = started;
-  const worldTime = spec.worldTime === undefined ? undefined : Date.parse(spec.worldTime);
-  const world = definition.world({ now: () => worldTime ?? Date.now() });
+  const world = definition.world({ now: () => Date.now() });
   const address = await bindAddress();
   const hosted = {
     ...Object.fromEntries((world.apps?.remote ?? []).map((item) => [item.host, item.site])),
     ...world.sites,
   };
   const sites = await serveSites(hosted, address);
-  const unroute = routeFixtureHosts(
-    Object.keys(hosted),
-    `http://${address}:${sites.port}`,
-    definition.tier !== 'live',
-  );
+  const unroute = routeFixtureHosts(Object.keys(hosted), `http://${address}:${sites.port}`);
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
-  let judgeLlm: Llm | undefined;
-  let simulatorLlm: Llm | undefined;
-  const evaluationCost = () => {
-    const costs = [judgeLlm, simulatorLlm].flatMap((llm) => (llm ? [llm.spent().costUsd] : []));
-    return costs.every((cost) => cost === null)
-      ? null
-      : costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0);
-  };
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
@@ -105,17 +90,10 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   let phase = 'start';
   try {
-    const receipts = join(
-      dirname(spec.outFile),
-      '..',
-      'usage',
-      `${basename(spec.outFile, '.json')}.judge.jsonl`,
+    const judgeLlm = withFallback(
+      await createLlm(judgeModel),
+      await fallbackLlm(environment, judgeModel.provider),
     );
-    await mkdir(dirname(receipts), { recursive: true, mode: 0o700 });
-    const record = (request: LlmRequest) =>
-      appendFile(receipts, JSON.stringify(request) + '\n', { mode: 0o600 });
-    const llm = (judgeLlm = await createLlm(judgeModel, record));
-    if (definition.user.persona) simulatorLlm = await createLlm(judgeModel, record, 'simulator');
     stack = await (starting = startStack({
       model,
       observations: world.observations,
@@ -137,7 +115,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const session = createSession({
       stack,
       user: definition.user,
-      simulator: simulatorLlm ? createSimulator(simulatorLlm) : undefined,
+      simulator: definition.user.persona ? createSimulator(judgeLlm) : undefined,
       deadline: taskStarted + definition.seconds * 1000,
       world,
     });
@@ -170,7 +148,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         definition,
         world,
         trace,
-        judge: llm,
+        judge: judgeLlm,
         truth,
         skipJudges: Boolean(failure),
       });
@@ -224,13 +202,9 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       costUsd: trace.usage.costUsd,
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
-      judgeCostUsd: evaluationCost(),
-      judgeReplies: llm.replies,
-      judgeRequests: llm.requests,
-      simulatorReplies: simulatorLlm?.replies,
-      simulatorRequests: simulatorLlm?.requests,
+      judgeCostUsd: judgeLlm.spent().costUsd,
       final: trace.final,
-      transcript: trace.transcript(Infinity),
+      transcript: trace.transcript(60_000),
       groundTruth: truth,
     };
     return result;
@@ -254,11 +228,6 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       blame: blame(message),
       error: message,
       seconds: (Date.now() - started) / 1000,
-      judgeCostUsd: evaluationCost(),
-      judgeReplies: judgeLlm?.replies,
-      judgeRequests: judgeLlm?.requests,
-      simulatorReplies: simulatorLlm?.replies,
-      simulatorRequests: simulatorLlm?.requests,
     };
   } finally {
     await release();

@@ -1,5 +1,4 @@
 import type { Capability, FailureClass } from './scenario.ts';
-import type { LlmRequest } from './judge.ts';
 
 export interface CheckResult {
   id: string;
@@ -34,7 +33,6 @@ export interface AttemptResult {
   stance: 'regression' | 'gap';
   fingerprint: string;
   attempt: number;
-  worldTime?: string;
   task: string;
   status: 'pass' | 'fail' | 'incomplete';
   blame?: Blame;
@@ -48,10 +46,6 @@ export interface AttemptResult {
   toolErrors: number;
   firstReplySeconds: number | null;
   judgeCostUsd: number | null;
-  judgeReplies?: string[];
-  judgeRequests?: LlmRequest[];
-  simulatorReplies?: string[];
-  simulatorRequests?: LlmRequest[];
   final: string;
   transcript: string;
   groundTruth: string;

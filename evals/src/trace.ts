@@ -6,7 +6,6 @@ import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
-import type { Artifact } from '../../src/shared/contracts.ts';
 
 export interface ToolCall {
   id?: string;
@@ -30,7 +29,6 @@ export interface ChatMessage {
   at: number;
   turnId: string | null;
   presentation?: unknown;
-  attachments?: Artifact[];
 }
 
 export interface Run {
@@ -266,14 +264,13 @@ export async function collect(options: {
   const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
   const messages = (
     await stack.pool.query(
-      "SELECT role,text,turn_id,created_at,attachments,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
+      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
-    ...(row.attachments?.length ? { attachments: row.attachments } : {}),
     ...(row.presentation ? { presentation: row.presentation } : {}),
   }));
   const artifacts = (
@@ -419,15 +416,15 @@ export async function collect(options: {
       const build = (outputCap: number) => {
         return [
           ...messages
-            .filter((m) => m.text.trim() || m.attachments?.length || m.presentation)
+            .filter((m) => m.text.trim())
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.attachments?.length ? `\nATTACHMENTS: ${JSON.stringify(m.attachments)}` : ''}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
             })),
           ...tools.flatMap((call) => [
             {
               at: call.at,
-              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : Math.min(outputCap, 1200))}`,
+              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : 1200)}`,
             },
             ...(call.finishedAt !== undefined || call.output
               ? [
@@ -443,11 +440,11 @@ export async function collect(options: {
           .map((item) => `[${new Date(item.at).toISOString()}] ${item.text}`)
           .join('\n\n');
       };
-      for (const cap of [limit, 6000, 3000, 1500, 800, 400, 200]) {
+      for (const cap of [limit, 6000, 3000, 1500]) {
         const text = build(cap);
         if (text.length <= limit) return text;
       }
-      throw new Error('The complete conversation and tool records exceed the transcript limit.');
+      return clip(build(800), limit);
     },
     groundTruth() {
       const failedTurns = turns.filter(

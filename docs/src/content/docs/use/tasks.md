@@ -13,8 +13,6 @@ When writing a task or schedule request, press Enter to send or Shift+Enter for 
 
 Nod starts a saved task session for substantial work with several steps, even when it can finish in one sitting. Research across several sources, comparisons, reports and app workflows can become tasks. Work that waits on someone or something, runs alongside other jobs, or that you ask Nod to track also becomes a task. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat.
 
-When you supply sources, Nod tries to read them before it reports that it cannot read them or asks for replacements.
-
 For example, "Compare these options and make a report" becomes a task. So does "Ask three venues for quotes and tell me when they've all replied". "What time is this meeting?" stays in chat. The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement.
 
 Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and owner memory. Each task has its own working folder and saved session. See [Task sessions](/how-it-works/task-sessions/) for the architecture.
@@ -67,8 +65,6 @@ On the **Tasks** page, open a preview and select **Show activity**. The details 
 ## Read task results
 
 A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Nod sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
-
-An email draft request saves a draft without sending it. A request to send a reply uses the full verified text; a separate saved draft is not required first.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 

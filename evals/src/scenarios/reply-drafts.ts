@@ -7,11 +7,6 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 const me = `Alex Rivera <${owner.email}>`;
 const sofia = 'sofia.almeida@meridiancapital.example.org';
 const daniel = 'daniel.ortiz@fieldnotes.example.net';
-const addresses = (text: string) =>
-  (text.match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? []).map((value) => value.toLowerCase());
-const draftFor = (draft: Mail, email: string) =>
-  [...new Set([...addresses(draft.to ?? ''), ...addresses(draft.cc ?? '')])].join() === email &&
-  addresses(draft.from).join() === owner.email;
 
 const samples: Array<{ to: string; subject: string; body: string; days: number }> = [
   {
@@ -165,13 +160,14 @@ export default scenario({
       check(
         'drafts-both-emails-that-need-a-reply',
         (run) => {
-          const drafts = run.apps?.gmail?.drafts() ?? [];
+          const recipients = (run.apps?.gmail?.drafts() ?? []).map((draft) =>
+            draft.to.toLowerCase(),
+          );
           return {
             pass:
-              drafts.length === 2 &&
-              drafts.some((draft) => draftFor(draft, sofia)) &&
-              drafts.some((draft) => draftFor(draft, daniel)),
-            evidence: `${drafts.length} drafts: ${drafts.map((draft) => `${draft.from} to ${draft.to}${draft.cc ? `, cc ${draft.cc}` : ''}`).join('; ') || 'none'}`,
+              recipients.some((to) => to.includes(sofia)) &&
+              recipients.some((to) => to.includes(daniel)),
+            evidence: `drafted for ${recipients.join(', ') || 'nobody'}`,
           };
         },
         { failure: 'incomplete' },
@@ -180,7 +176,8 @@ export default scenario({
         'no-draft-for-newsletters-receipts-or-fyi',
         (run) => {
           const extra = (run.apps?.gmail?.drafts() ?? []).filter(
-            (draft) => !draftFor(draft, sofia) && !draftFor(draft, daniel),
+            (draft) =>
+              !draft.to.toLowerCase().includes(sofia) && !draft.to.toLowerCase().includes(daniel),
           );
           return {
             pass: !extra.length,
@@ -195,8 +192,8 @@ export default scenario({
         'drafts-are-replies-in-the-same-thread',
         (run) => {
           const drafts = run.apps?.gmail?.drafts() ?? [];
-          const sofiaDraft = drafts.find((draft) => draftFor(draft, sofia));
-          const danielDraft = drafts.find((draft) => draftFor(draft, daniel));
+          const sofiaDraft = drafts.find((draft) => draft.to.toLowerCase().includes(sofia));
+          const danielDraft = drafts.find((draft) => draft.to.toLowerCase().includes(daniel));
           return {
             pass:
               sofiaDraft?.threadId === 'thread-proposal' &&

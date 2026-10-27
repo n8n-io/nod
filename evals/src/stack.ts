@@ -15,7 +15,6 @@ import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
 import { accessCookie, accessKey } from '../../src/server/access.ts';
 import { createCapture, type Observation } from './capture.ts';
-import { withFixtureWebRequest } from './world/fixture-fetch.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
@@ -328,7 +327,6 @@ export async function startStack(options: {
     });
     const capture = createCapture(options.proactiveBaseline);
     const { observations, prompts } = capture;
-    const previews = createPublicLinkPreviewProvider();
     application = await createApplication(
       {
         observations: options.observations,
@@ -339,7 +337,6 @@ export async function startStack(options: {
             model: model.name,
             apiKey: model.apiKey,
             sessionRoot,
-            configRoot: join(directory, '.local', 'pi'),
           }),
         ),
         computer,
@@ -408,11 +405,7 @@ export async function startStack(options: {
           model: model.name,
           lightest: true,
         }),
-        linkPreviews: {
-          metadata: (url) => withFixtureWebRequest(() => previews.metadata(url)),
-          image: (url) => withFixtureWebRequest(() => previews.image(url)),
-          icon: (origin) => withFixtureWebRequest(() => previews.icon!(origin)),
-        },
+        linkPreviews: createPublicLinkPreviewProvider(),
         model: { provider: model.provider, name: model.name, configured: true },
       },
       { heartbeat: false },
