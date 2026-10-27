@@ -12,26 +12,21 @@
   overflow-wrap: anywhere;
 }
 .chat-page .message .message-row > .message-bubble:has(.message-presentation) {
-  width: min(100%, 680px);
-  max-width: 100%;
+  width: min(calc(100% - 40px), 680px);
+  max-width: calc(100% - 40px);
 }
 .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
   width: 100%;
-  padding: 10px 14px 6px;
+  padding-right: 16px;
 }
-.chat-page .message-body:has(.message-presentation) > .message-text {
-  padding-right: 22px;
+.chat-page .message-body > .message-presentation:first-child {
+  margin-top: 0;
 }
-.chat-page .message-body:has(.message-presentation) > .message-time {
-  margin: 3px 0 0;
-  min-height: 30px;
-  padding-top: 8px;
+.chat-page .message-body > .message-presentation:last-child {
+  margin-bottom: 0;
 }
-.chat-page .message-bubble:has(.message-presentation) > .message-react-trigger {
-  right: 60px;
-  top: auto;
-  bottom: 5px;
-  transform: none;
+.chat-page .message-bubble:has(.message-presentation) > .message-menu-trigger {
+  right: -36px;
 }
 .presentation-heading {
   padding: 18px 20px 16px;

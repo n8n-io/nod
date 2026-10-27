@@ -36,7 +36,6 @@ import { MessageAttachments } from './attachment-card';
 import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { money } from '../lib/money';
-import { attachmentKind } from '../lib/attachment-kind';
 import { copyContent, selectedText } from '../lib/clipboard';
 import { navigate } from '../lib/navigation';
 
@@ -207,13 +206,6 @@ export function MessageBubble({
     message.replyTo && !(message.role === 'assistant' && message.replyTo.role === 'assistant')
       ? message.replyTo
       : null;
-  const audioOnly =
-    !streaming &&
-    !visibleText &&
-    !visibleReply &&
-    !message.presentation &&
-    message.attachments.length === 1 &&
-    attachmentKind(message.attachments[0].mimeType, message.attachments[0].name) === 'audio';
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [quote, setQuote] = useState('');
@@ -490,9 +482,7 @@ export function MessageBubble({
       )}
       <div className="message-content">
         <div className="message-row">
-          <div
-            className={`message-bubble${audioOnly ? ' message-audio-only' : ''}${!streaming && shownReaction ? ' has-reaction' : ''}`}
-          >
+          <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
             <div
               className="message-body"
               onContextMenu={(event) => {
@@ -569,7 +559,9 @@ export function MessageBubble({
                   )}
                 />
               )}
-              {!streaming && (
+            </div>
+            {!streaming && (
+              <>
                 <time
                   className="message-time"
                   dateTime={message.createdAt}
@@ -577,10 +569,6 @@ export function MessageBubble({
                 >
                   {formatTime(message.createdAt, dateFormat)}
                 </time>
-              )}
-            </div>
-            {!streaming && (
-              <>
                 {message.role === 'assistant' && (
                   <button
                     type="button"
