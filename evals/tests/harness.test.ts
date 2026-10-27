@@ -2261,7 +2261,7 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
   for (const text of asks) assert.equal(asksForSecret(text), true, text);
 });
 
-test('a cut-off background check does not fail a finished task', async () => {
+test('a cut-off background check does not fail a finished task', async (t) => {
   const turn = (status: string, background: boolean) => ({
     id: status,
     status,
@@ -2277,6 +2277,68 @@ test('a cut-off background check does not fail a finished task', async () => {
     );
   assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
   assert.equal((await verdict([turn('interrupted', false)])).pass, false);
+  const work = [
+    { status: 'running', proactive: false },
+    { status: 'running', proactive: true },
+  ];
+  t.after(() => work.forEach((item) => (item.status = 'succeeded')));
+  let polled!: () => void;
+  const polling = new Promise<void>((resolve) => (polled = resolve));
+  let events = 0;
+  let stops = 0;
+  let answer = '';
+  const stack = {
+    waiting: (alias: string) => `${alias}.status='waiting'`,
+    pool: {
+      query: async (sql: string) => {
+        if (sql.includes("status IN ('queued','running')")) {
+          polled();
+          const rows = work.filter((item) => item.status === 'running');
+          return { rows, rowCount: rows.length };
+        }
+        if (sql.includes('FROM turn_events')) return { rows: [{ events }], rowCount: 1 };
+        if (sql.includes("role='assistant'")) return { rows: [{ text: answer }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    },
+    request: async (path: string) => {
+      if (path === '/api/thread/stop') {
+        stops++;
+        work.forEach((item) => (item.status = 'cancelled'));
+      }
+      return Response.json(path === '/api/state' ? { threadId: 'thread' } : {});
+    },
+  } as unknown as Stack;
+  const session = createSession({
+    stack,
+    user: {},
+    deadline: Date.now() + 10_000,
+    stallSeconds: 0.05,
+  });
+  let completed = false;
+  const request = session.say('Prepare the result.').then(() => (completed = true));
+  await polling;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(completed, false);
+  work[0].status = 'succeeded';
+  answer = randomUUID();
+  events++;
+  await request;
+  assert.equal(await session.lastReply(), answer);
+  assert.equal(work[1].status, 'running');
+  assert.equal(stops, 0);
+  assert.equal(
+    session.interactions.some((item) => item.kind === 'stalled'),
+    false,
+  );
+  let observed = false;
+  const observation = session.settle().then(() => (observed = true));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(observed, false);
+  work[1].status = 'succeeded';
+  events++;
+  await observation;
+  assert.equal(stops, 0);
 });
 
 test('a nudge must open the same saved result that its link names', async () => {

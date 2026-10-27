@@ -98,16 +98,17 @@ export function createSession(options: {
     return JSON.stringify(result.rows[0]);
   }
 
-  async function settle() {
+  async function settle(includeObserver = true) {
     const id = await thread();
     let seen = await activity();
     let changed = Date.now();
     for (;;) {
-      const busy = await pool.query(
-        "SELECT 1 FROM turns WHERE thread_id=$1 AND status IN ('queued','running') LIMIT 1",
+      const busy = await pool.query<{ proactive: boolean }>(
+        `SELECT COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive
+         FROM turns t WHERE thread_id=$1 AND status IN ('queued','running')`,
         [id],
       );
-      if (!busy.rowCount) return;
+      if (!busy.rows.some((turn) => includeObserver || !turn.proactive)) return;
       const now = Date.now();
       if (now > deadline) {
         await post('/api/thread/stop', {});
@@ -335,8 +336,8 @@ export function createSession(options: {
   }
 
   async function converse() {
-    await settle();
-    for (let round = 0; round < 12 && (await respond()); round++) await settle();
+    await settle(false);
+    for (let round = 0; round < 12 && (await respond()); round++) await settle(false);
   }
 
   const answered = new Set<string>();
