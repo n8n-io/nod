@@ -338,6 +338,11 @@
   gap: 24px;
   animation: startup-fade 180ms ease-out;
 }
+.tasks-ideas .statement-summary {
+  font-size: var(--text-control);
+  line-height: 1.6;
+  letter-spacing: normal;
+}
 [role='tabpanel'] > .tasks-ideas {
   padding-top: var(--secondary-empty-inset);
 }
