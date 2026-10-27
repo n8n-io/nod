@@ -118,6 +118,7 @@ export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
 
 export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   const choice = useNotificationChoice(ownerId);
+  const optedIn = choice.choice === 'enabled';
   if (desktopSettingsAvailable()) return null;
   return (
     <section className="account-region" aria-label="Browser notifications">
@@ -127,8 +128,10 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
           Browser notifications
         </span>
         <Switch
-          checked={choice.enabled}
-          disabled={choice.busy || !choice.available || choice.permission === 'denied'}
+          checked={optedIn}
+          disabled={
+            choice.busy || (!optedIn && (!choice.available || choice.permission === 'denied'))
+          }
           aria-label="Browser notifications"
           onCheckedChange={(enabled) => void choice.change(enabled)}
         />

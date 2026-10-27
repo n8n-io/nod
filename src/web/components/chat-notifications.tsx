@@ -16,7 +16,7 @@ function DesktopNotificationPrompt({ ownerId, messageId }: { ownerId: string; me
     return false;
   });
   const native = useDesktopSettings(!dismissed);
-  if (dismissed || !native.settings || native.settings.notifications) return null;
+  if (dismissed || native.settings?.notifications) return null;
   function dismiss() {
     try {
       localStorage.setItem(key, 'true');
@@ -33,15 +33,17 @@ function DesktopNotificationPrompt({ ownerId, messageId }: { ownerId: string; me
         <Button
           size="sm"
           variant="outline"
-          disabled={native.busy}
+          disabled={native.busy || native.loading}
           onClick={() =>
-            void native
-              .save({ notifications: true })
-              .then(dismiss)
-              .catch(() => {})
+            native.settings
+              ? void native
+                  .save({ notifications: true })
+                  .then(dismiss)
+                  .catch(() => {})
+              : void native.refresh()
           }
         >
-          Enable notifications
+          {native.loading ? 'Loading…' : native.settings ? 'Enable notifications' : 'Try again'}
         </Button>
         <Button size="sm" variant="ghost" disabled={native.busy} onClick={dismiss}>
           Not now

@@ -9,6 +9,7 @@ export function browserNotificationStatus(ownerId: string) {
   const available =
     !desktopSettingsAvailable() &&
     window.isSecureContext &&
+    typeof window.navigator.locks?.request === 'function' &&
     typeof window.Notification === 'function';
   let choice: string | null = null;
   try {
@@ -160,9 +161,18 @@ export async function deliverBrowserNotification(
     !(document.visibilityState === 'visible' && document.hasFocus());
   const deliver = () => {
     if (!eligible()) return null;
-    const marker = `${message.createdAt}:${message.id}`;
-    if ((window.localStorage.getItem(key) ?? '') >= marker) return null;
-    window.localStorage.setItem(key, marker);
+    let previous: { createdAt: string; ids: string[] } | null = null;
+    try {
+      previous = JSON.parse(window.localStorage.getItem(key) ?? 'null');
+    } catch {}
+    const ids =
+      previous?.createdAt === message.createdAt && Array.isArray(previous.ids) ? previous.ids : [];
+    if ((previous && previous.createdAt > message.createdAt) || ids.includes(message.id))
+      return null;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ createdAt: message.createdAt, ids: [...ids, message.id] }),
+    );
     const notification = new window.Notification('Nod', {
       body: 'Nod has a new reply for you.',
       icon: new URL('/nod-logo.png', window.location.origin).href,
@@ -182,11 +192,10 @@ export async function deliverBrowserNotification(
     return notification;
   };
   const locks = window.navigator.locks;
-  return locks
-    ? locks.request(key, () =>
-        locks.request(foregroundKey(ownerId), { ifAvailable: true }, (lock) =>
-          lock ? deliver() : null,
-        ),
-      )
-    : deliver();
+  if (!locks) return null;
+  return locks.request(key, () =>
+    locks.request(foregroundKey(ownerId), { ifAvailable: true }, (lock) =>
+      lock ? deliver() : null,
+    ),
+  );
 }

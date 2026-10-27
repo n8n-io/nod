@@ -1338,7 +1338,15 @@ test(
                 restored.push(input.messageId);
               },
             });
-            await until(() => restored.length === 1);
+            await until(
+              async () =>
+                restored.length === 1 &&
+                (
+                  await pool.query('SELECT live_status FROM channel_outbox WHERE message_id=$1', [
+                    messageId,
+                  ])
+                ).rows[0]?.live_status === null,
+            );
             assert.deepEqual(restored, ['provider-1']);
           }
           assert.equal(editing!.aborted, true);

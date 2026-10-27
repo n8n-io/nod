@@ -2211,6 +2211,10 @@ async function notificationPage(t: import('node:test').TestContext) {
       this.onshow?.();
     }
   }
+  Object.defineProperty(dom.window.navigator, 'locks', {
+    configurable: true,
+    value: navigator.locks,
+  });
   Object.defineProperties(dom.window, {
     Notification: { configurable: true, value: SyntheticNotification },
     isSecureContext: { configurable: true, value: true },
@@ -2645,4 +2649,110 @@ test('browser notifications close after delayed display when consent or their ow
   assert.equal(disabledReply.closed, 0);
   disabledReply.show();
   assert.equal(disabledReply.visible, false);
+});
+
+test('browser notification deduplication delivers distinct equal-time replies and rejects either replay', async (t) => {
+  const f = await notificationPage(t);
+  const { deliverBrowserNotification, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  const first = {
+    id: 'ffffffff-ffff-4fff-afff-ffffffffffff',
+    createdAt: '2035-01-01T12:00:00.000Z',
+  };
+  const second = { id: '00000000-0000-4000-a000-000000000001', createdAt: first.createdAt };
+  const deliver = (message: typeof first) =>
+    deliverBrowserNotification(f.owner(), 'notification-timestamp-tie', message, () => true);
+  assert.ok(await deliver(first));
+  assert.ok(await deliver(second));
+  assert.equal(await deliver(first), null);
+  assert.equal(await deliver(second), null);
+  assert.equal(f.notifications.length, 3);
+});
+
+test('browser notification support requires shared locking before asking for permission', async (t) => {
+  const f = await notificationPage(t);
+  const { BrowserNotificationSettings } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { browserNotificationStatus, deliverBrowserNotification, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  Object.defineProperty(f.window.navigator, 'locks', { configurable: true, value: undefined });
+  await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
+  assert.equal(browserNotificationStatus(f.owner()).available, false);
+  const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
+  assert.ok(control);
+  assert.equal(control.disabled, true);
+  await assert.rejects(setBrowserNotifications(f.owner(), true));
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(f.notifications.length, 0);
+  f.window.localStorage.setItem(`nod.browser-notifications.${f.owner()}`, 'enabled');
+  f.setPermission('granted');
+  assert.equal(
+    await deliverBrowserNotification(
+      f.owner(),
+      'notification-no-locks',
+      { id: 'message-no-locks', createdAt: '2035-01-01T12:00:00.000Z' },
+      () => true,
+    ),
+    null,
+  );
+  assert.equal(f.notifications.length, 0);
+});
+
+test('native notification introduction recovers settings-read failures before saving opt-in', async (t) => {
+  const f = await notificationPage(t);
+  const { ChatNotifications } = await import('../src/web/components/chat-notifications.tsx');
+  let reads = 0;
+  const writes: unknown[] = [];
+  f.native({
+    onPreferences: () => () => {},
+    getSettings: async () => {
+      reads++;
+      if (reads === 1) throw new Error('Synthetic settings read failed');
+      return { notifications: false };
+    },
+    saveSettings: async (value: { notifications: boolean }) => {
+      writes.push(value);
+      return value;
+    },
+  });
+  await f.render(
+    f.createElement(ChatNotifications, {
+      ownerId: f.owner(),
+      messageId: 'notification-retry-introduction',
+    }),
+  );
+  assert.ok(f.document.querySelector('[role="alert"]'));
+  assert.equal(reads, 1);
+  assert.deepEqual(writes, []);
+  await f.click(0);
+  assert.equal(reads, 2);
+  assert.deepEqual(writes, []);
+  assert.equal(f.document.querySelector('[role="alert"]'), null);
+  await f.click(0);
+  assert.deepEqual(writes, [{ notifications: true }]);
+  assert.equal(f.permissionRequests(), 0);
+});
+
+test('browser notification settings revoke a saved opt-in after browser permission is denied', async (t) => {
+  const f = await notificationPage(t);
+  const { BrowserNotificationSettings } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { browserNotificationStatus, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  f.setPermission('denied');
+  await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
+  const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
+  assert.ok(control);
+  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(control.disabled, false);
+  await f.click(0);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, true);
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(f.notifications.length, 1);
 });
