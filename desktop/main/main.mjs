@@ -347,6 +347,8 @@ function synchronizeNotifications() {
     if (clear) {
       unreadBadge?.stop();
       unreadBadge = undefined;
+      for (const notification of displayedNotifications) notification.close();
+      displayedNotifications.clear();
     }
     return;
   }

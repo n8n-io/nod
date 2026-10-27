@@ -2994,11 +2994,23 @@ test('native notification confirmation follows only successful owned enable tran
     await save({ theme: 'light' });
     assert.equal(f.notifications.length, 1);
     await save({ notifications: false });
-    first.emit('show');
     assert.equal(first.closed, true);
     assert.equal(f.notifications.length, 1);
     await save({ notifications: true });
     assert.equal(f.notifications.length, 2);
+    const delayed = f.notifications.at(-1);
+    const close = delayed.close.bind(delayed);
+    let shown = false;
+    t.mock.method(delayed, 'close', () => {
+      if (shown) close();
+    });
+    await save({ notifications: false });
+    assert.notEqual(delayed.closed, true);
+    shown = true;
+    delayed.emit('show');
+    assert.equal(delayed.closed, true);
+    await save({ notifications: true });
+    assert.equal(f.notifications.length, 3);
     const last = f.notifications.at(-1);
     await f.close();
     last.emit('show');
@@ -4849,13 +4861,16 @@ test('background update readiness respects notification permission and quiet tim
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: scenario.enabled },
     );
+    const confirmationCount = Number(scenario.enabled && scenario.supported);
+    assert.equal(f.notifications.length, confirmationCount);
     await f.checkUpdates(updater, false);
     await f.checkUpdates(updater, false);
     assert.equal(prompts.length, 0);
-    assert.equal(f.notifications.length, scenario.expected);
+    assert.equal(f.notifications.length, confirmationCount + scenario.expected);
+    const updateNotifications = f.notifications.slice(confirmationCount);
     assert.equal(updater.ready, candidate);
     assert.equal(f.updateMenu.enabled, true);
-    if (scenario.expected) f.notifications[0].emit('click');
+    if (scenario.expected) updateNotifications[0].emit('click');
     await f.checkUpdates(updater);
     assert.equal(prompts.length, 1);
     assert.equal(selections, 1);
