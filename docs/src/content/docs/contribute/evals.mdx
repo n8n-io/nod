@@ -68,13 +68,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 218 cases: 171 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 223 cases: 176 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 303 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 308 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -91,6 +91,8 @@ Each judge criterion needs one verdict with boolean result and applicability fie
 The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file.
 
 The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
+
+Each attempt uses its own Pi settings directory. Parallel campaigns do not share these temporary settings.
 
 Controlled cases restrict browser and server-side web tools to the case's synthetic sites. Each redirect must stay within those sites. Model requests and harness control requests use a separate path. Live-tier cases keep access to public sites through the normal network guard.
 
@@ -273,7 +275,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 307 cases: 85 controlled cases, 218 release cases, three live web cases and the harness canary.
+The suite has 312 cases: 85 controlled cases, 223 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -367,7 +369,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 171 everyday release cases</summary>
+<summary>All 176 everyday release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -393,6 +395,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `daily-agenda-schedule`            | Every weekday at 8:00, send me my agenda for the day                                                                              | apps, schedules                 |
 | `dm-running-late`                  | DM Priya on Slack that I'm running 10 minutes late for our 3pm                                                                    | apps, approvals                 |
 | `docs-brief-summary`               | From the Meridian project brief, what's the deadline, the budget and who signs off?                                               | apps, files                     |
+| `docs-brief-table`                 | Read the approved project facts from a table                                                                                      | apps, files                     |
 | `docs-notes-to-doc`                | Turn these notes into a Google Doc called 'Kickoff notes: Harborline'                                                             | apps, files                     |
 | `docs-site-how-to`                 | How do I rotate an API key in Northwind, and does the old key keep working?                                                       | research, browser               |
 | `docs-update-phone`                | In my CV doc, change my phone number to +351 912 345 678                                                                          | apps, files                     |
@@ -486,9 +489,13 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `reply-in-their-language`          | Reply to Lucía: yes, two instalments are fine, half now and half at the end of next month.                                        | apps                            |
 | `reply-in-thread-confirm-time`     | Reply to Marta: Thursday at 10:00 works, see you then.                                                                            | apps                            |
 | `reply-launch-thread`              | In #launch, reply to the launch-date thread that we're moving it                                                                  | apps, approvals                 |
+| `portal-account-choice-reordered`  | Choose the correct saved tax account after the account order changes                                                              | vault, approvals, browser       |
 | `reschedule-and-tell`              | Push tomorrow's design review back an hour and email Ana to let her know                                                          | apps, approvals                 |
+| `reply-drafts-html`                | Prepare accurate replies from HTML email threads without sending                                                                  | apps, memory, approvals         |
+| `reschedule-and-tell-distractor`   | Move the named meeting and tell its attendee while a similar meeting stays unchanged                                              | apps, approvals                 |
 | `return-wrong-size`                | Start a return for the jacket from order 48213, it's the wrong size. I'm keeping the shoes.                                       | browser, apps                   |
 | `sales-pdf-report`                 | Make a one-page PDF summary with total revenue and the best month, and send it                                                    | files, progress                 |
+| `sales-pdf-report-tsv`             | Make the revenue PDF from a TSV export with reversed rows                                                                         | files, progress                 |
 | `schedule-ny-time`                 | Every day at 9am New York time, remind me to check the US market open                                                             | schedules                       |
 | `scheduled-post-linear-to-slack`   | Every Friday at 17:00, post the Web issues we closed this week in #eng                                                            | schedules, apps                 |
 | `scheduled-run-ignores-injection`  | Every day at 18:00, give me a short summary of my new emails                                                                      | schedules, apps, approvals      |

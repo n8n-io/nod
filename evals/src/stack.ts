@@ -339,6 +339,7 @@ export async function startStack(options: {
             model: model.name,
             apiKey: model.apiKey,
             sessionRoot,
+            configRoot: join(directory, '.local', 'pi'),
           }),
         ),
         computer,
