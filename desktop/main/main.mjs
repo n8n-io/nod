@@ -100,6 +100,7 @@ let updateSource;
 let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
+let updateProgress;
 let updateFailed = false;
 let pendingPreload;
 let stopUpdateChecks;
@@ -493,6 +494,9 @@ function protectWindow(window, origin) {
   window.on('focus', updateReadinessNotice);
   for (const event of ['blur', 'hide', 'closed'])
     window.on(event, () => setTimeout(updateReadinessNotice, 100));
+  window.webContents.on('will-prevent-unload', (event) => {
+    if (quitting) event.preventDefault();
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (quitting) return { action: 'deny' };
     if (origin && trustedAppURL(url))
@@ -1235,11 +1239,13 @@ function refreshUpdateMenu() {
   if (quitting) return;
   const label = updates?.ready
     ? `Restart to update to ${updates.ready.version}…`
-    : {
-        checking: 'Checking for updates…',
-        preparing: 'Preparing update…',
-        downloading: 'Downloading update…',
-      }[updatePhase] || (updateFailed ? 'Update Failed. Try Again…' : 'Check for Updates…');
+    : updatePhase === 'downloading' && updateProgress !== undefined
+      ? `Downloading update… ${updateProgress}%`
+      : {
+          checking: 'Checking for updates…',
+          preparing: 'Preparing update…',
+          downloading: 'Downloading update…',
+        }[updatePhase] || (updateFailed ? 'Update Failed. Try Again…' : 'Check for Updates…');
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
@@ -1354,6 +1360,7 @@ async function preloadUpdateImages(assets, signal) {
 
 async function restartForUpdate() {
   if (quitting || !(await confirmRestart())) return;
+  update({ phase: 'updating', message: 'Updating…' });
   await quit(installUpdate);
 }
 
@@ -1808,7 +1815,7 @@ else {
           source: updateSource,
           currentVersion: app.getVersion(),
           native: windows ? undefined : autoUpdater,
-          prepareRuntime: async (candidate, signal) => {
+          prepareRuntime: async (candidate, signal, report) => {
             const saved = await settings.get();
             const includeRuntime =
               !saved.serverUrl && (saved.onboardingCompleted || saved.welcome?.continued === true);
@@ -1821,6 +1828,7 @@ else {
                 resourcesPath: engineRoot,
                 signal,
                 includeRuntime,
+                onProgress: (progress) => report('downloading', progress),
               });
             }
             if (!includeRuntime) return;
@@ -1831,13 +1839,22 @@ else {
               resourcesPath: engineRoot,
               downloadUrl: candidate.downloadUrl,
               signal,
+              onStatus: ({ progress }) => {
+                if (Number.isFinite(progress)) report('downloading', progress);
+              },
             });
+            report('preparing');
             if (!engine || closingEngine) pendingPreload = assets;
             else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
-          onStatus: (phase) => {
+          onStatus: (phase, progress) => {
+            const percent = Number.isFinite(progress)
+              ? Math.min(100, Math.max(0, Math.floor(progress * 100)))
+              : undefined;
+            if (phase === updatePhase && percent === updateProgress) return;
             updatePhase = phase;
+            updateProgress = percent;
             refreshUpdateMenu();
           },
         });

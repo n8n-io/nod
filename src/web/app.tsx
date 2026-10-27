@@ -41,6 +41,7 @@ import {
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
   subscribeDesktopNavigation,
+  subscribeDesktopStatus,
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
@@ -655,6 +656,8 @@ function AccountApp({
 export function App({ sessionState }: { sessionState: ReturnType<typeof useSession> }) {
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
+  const [updating, setUpdating] = useState(false);
+  useEffect(() => subscribeDesktopStatus((status) => setUpdating(status.phase === 'updating')), []);
   useEffect(() => {
     const update = () => setPath(window.location.pathname);
     window.addEventListener('popstate', update);
@@ -671,7 +674,9 @@ export function App({ sessionState }: { sessionState: ReturnType<typeof useSessi
   return (
     <>
       {desktopSettingsAvailable() && <div className="desktop-titlebar" aria-hidden="true" />}
-      {/^\/privacy\/?$/.test(path) ? (
+      {updating ? (
+        <SetupProgress title="Updating Nod…" description="Nod reopens when it’s done." />
+      ) : /^\/privacy\/?$/.test(path) ? (
         <Privacy />
       ) : (
         <AccountApp

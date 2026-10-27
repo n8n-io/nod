@@ -298,6 +298,18 @@ function Startup() {
     }
   }
 
+  if (status.phase === 'updating')
+    return (
+      <>
+        <div className="titlebar" aria-hidden="true" />
+        <SetupProgress
+          local={!status.remote}
+          title="Updating Nod…"
+          description="Nod reopens when it’s done."
+        />
+      </>
+    );
+
   if (
     firstSetup &&
     welcome &&
