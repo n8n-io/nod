@@ -77,6 +77,7 @@ function useNotificationChoice(ownerId: string) {
     if (!isCurrent()) return;
     try {
       dismissBrowserNotifications(ownerId);
+      setError('');
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -86,7 +87,11 @@ function useNotificationChoice(ownerId: string) {
 
 export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
   const choice = useNotificationChoice(ownerId);
-  if (!choice.available || choice.choice !== null || choice.permission === 'denied') return null;
+  if (
+    !choice.available ||
+    (!choice.error && (choice.choice !== null || choice.permission === 'denied'))
+  )
+    return null;
   return (
     <aside className="notification-choice" aria-label="Notifications">
       <div className="notification-choice-copy">
@@ -97,7 +102,7 @@ export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
         <Button
           size="sm"
           variant="outline"
-          disabled={choice.busy}
+          disabled={choice.busy || choice.permission === 'denied'}
           onClick={() => void choice.change(true)}
         >
           {choice.busy ? 'Enabling…' : 'Enable notifications'}

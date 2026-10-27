@@ -113,10 +113,13 @@ export async function setBrowserNotifications(
     });
   } catch {
     if (previous === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, previous);
+    else window.localStorage.setItem(key, previous === 'enabled' ? 'disabled' : previous);
     window.dispatchEvent(new Event(changed));
     throw new Error('This browser cannot show notifications here. Use Nod’s desktop app.');
   }
+  notification.onshow = () => {
+    if (!isCurrent() || !browserNotificationStatus(ownerId).enabled) notification.close();
+  };
   window.dispatchEvent(new Event(changed));
   return notification;
 }
@@ -150,14 +153,13 @@ export async function deliverBrowserNotification(
   canDeliver: () => boolean = () => true,
 ) {
   const key = `nod.browser-notifications.last.${JSON.stringify([ownerId, threadId])}`;
+  const eligible = () =>
+    isCurrent() &&
+    canDeliver() &&
+    browserNotificationStatus(ownerId).enabled &&
+    !(document.visibilityState === 'visible' && document.hasFocus());
   const deliver = () => {
-    if (
-      !isCurrent() ||
-      !canDeliver() ||
-      !browserNotificationStatus(ownerId).enabled ||
-      (document.visibilityState === 'visible' && document.hasFocus())
-    )
-      return null;
+    if (!eligible()) return null;
     const marker = `${message.createdAt}:${message.id}`;
     if ((window.localStorage.getItem(key) ?? '') >= marker) return null;
     window.localStorage.setItem(key, marker);
@@ -166,6 +168,9 @@ export async function deliverBrowserNotification(
       icon: new URL('/nod-logo.png', window.location.origin).href,
       tag: key,
     });
+    notification.onshow = () => {
+      if (!eligible()) notification.close();
+    };
     notification.onclick = () => {
       notification.close();
       if (!isCurrent()) return;

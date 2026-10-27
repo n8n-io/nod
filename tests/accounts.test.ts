@@ -2160,6 +2160,7 @@ async function notificationPage(t: import('node:test').TestContext) {
   let permissionRequests = 0;
   let permissionResponse = async (): Promise<NotificationPermission> => permission;
   let failConstruction = false;
+  let delayedShow = false;
   let focused = false;
   let visible = true;
   let focusCalls = 0;
@@ -2187,7 +2188,10 @@ async function notificationPage(t: import('node:test').TestContext) {
     }
     onclick: (() => void) | null = null;
     onclose: (() => void) | null = null;
+    onshow: (() => void) | null = null;
     closed = 0;
+    shown = !delayedShow;
+    visible = !delayedShow;
     constructor(
       readonly title: string,
       readonly options: NotificationOptions,
@@ -2196,8 +2200,15 @@ async function notificationPage(t: import('node:test').TestContext) {
       notifications.push(this);
     }
     close() {
+      if (!this.shown) return;
       this.closed++;
+      this.visible = false;
       this.onclose?.();
+    }
+    show() {
+      this.shown = true;
+      this.visible = true;
+      this.onshow?.();
     }
   }
   Object.defineProperties(dom.window, {
@@ -2273,6 +2284,7 @@ async function notificationPage(t: import('node:test').TestContext) {
     respondPermission: (response: () => Promise<NotificationPermission>) =>
       (permissionResponse = response),
     failConstruction: (value: boolean) => (failConstruction = value),
+    delayShow: (value: boolean) => (delayedShow = value),
     focus: (value: boolean) => (focused = value),
     visible: (value: boolean) => (visible = value),
     focusCalls: () => focusCalls,
@@ -2543,4 +2555,94 @@ test('browser notification opt-in cannot replay a reply observed before consent 
   add();
   await f.render(f.createElement(Watch));
   assert.equal(f.notifications.length, 2);
+});
+
+test('browser notification re-enablement fails closed when an existing opt-in cannot construct alerts', async (t) => {
+  const f = await notificationPage(t);
+  const { browserNotificationStatus, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  f.setPermission('default');
+  f.respondPermission(async () => 'granted');
+  f.failConstruction(true);
+  await assert.rejects(setBrowserNotifications(f.owner(), true));
+  assert.equal(f.permissionRequests(), 1);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.notEqual(browserNotificationStatus(f.owner()).choice, 'enabled');
+  assert.equal(f.notifications.length, 1);
+});
+
+test('browser notifications close after delayed display when consent or their owning scope ends', async (t) => {
+  const f = await notificationPage(t);
+  const { BrowserNotificationPrompt } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { setBrowserNotifications } = await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  f.delayShow(true);
+  const prompt = () =>
+    f.render(f.createElement(BrowserNotificationPrompt, { key: f.owner(), ownerId: f.owner() }));
+  await prompt();
+  await f.click(0);
+  const disabledConfirmation = f.notifications.at(-1)!;
+  await f.act(async () => setBrowserNotifications(f.owner(), false));
+  assert.equal(disabledConfirmation.closed, 0);
+  disabledConfirmation.show();
+  assert.equal(disabledConfirmation.visible, false);
+  f.setOwner('notification-delayed-owner');
+  await prompt();
+  await f.click(0);
+  const retiredConfirmation = f.notifications.at(-1)!;
+  await f.render(null);
+  assert.equal(retiredConfirmation.closed, 0);
+  retiredConfirmation.show();
+  assert.equal(retiredConfirmation.visible, false);
+  f.setOwner('notification-active-owner');
+  await prompt();
+  await f.click(0);
+  const activeConfirmation = f.notifications.at(-1)!;
+  activeConfirmation.show();
+  assert.equal(activeConfirmation.visible, true);
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  let threadId = 'notification-delayed-thread';
+  function Watch() {
+    useBrowserNotifications(f.owner(), { threadId, messages: [...messages] } as AppState);
+    return null;
+  }
+  const render = () => f.render(f.createElement(Watch));
+  const add = () =>
+    messages.push({
+      id: `message-${messages.length}`,
+      role: 'assistant',
+      text: 'Synthetic private reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 12, 0, messages.length)).toISOString(),
+      attachments: [],
+    });
+  add();
+  await render();
+  add();
+  await render();
+  const retiredReply = f.notifications.at(-1)!;
+  assert.notEqual(retiredReply, retiredConfirmation);
+  threadId = 'notification-delayed-thread-next';
+  await render();
+  assert.equal(retiredReply.closed, 0);
+  retiredReply.show();
+  assert.equal(retiredReply.visible, false);
+  add();
+  await render();
+  const activeReply = f.notifications.at(-1)!;
+  activeReply.show();
+  assert.equal(activeReply.visible, true);
+  add();
+  await render();
+  const disabledReply = f.notifications.at(-1)!;
+  await f.act(async () => setBrowserNotifications(f.owner(), false));
+  assert.equal(disabledReply.closed, 0);
+  disabledReply.show();
+  assert.equal(disabledReply.visible, false);
 });
