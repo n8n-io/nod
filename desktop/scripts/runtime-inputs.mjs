@@ -125,6 +125,8 @@ export async function runtimeInputs(platform = runtimePlatform()) {
   for (const input of [...inputs, ...(windows ? windowsInputs : []), ...browser.sources])
     await collect(input);
   entries.push(...(await lockedPackages(browser.packages)));
+  const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
+  entries.push(['pnpm:packageManager', manifest.packageManager]);
   if (!windows) {
     const configuration = JSON.parse(
       await readFile(join(repository, 'desktop/package.json'), 'utf8'),

@@ -592,6 +592,7 @@ async function releaseFixture(
       ...[...input.inputs, ...windows.inputs].filter(
         (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
       ),
+      'package.json',
       'pnpm-lock.yaml',
       'desktop/package.json',
       'desktop/pnpm-lock.yaml',
@@ -3002,6 +3003,7 @@ test('runtime fingerprints cover the locked packages and every source the images
   );
   for (const path of new Set([
     ...sourcePaths,
+    'package.json',
     'pnpm-lock.yaml',
     'desktop/package.json',
     'desktop/pnpm-lock.yaml',
@@ -3037,6 +3039,17 @@ test('runtime fingerprints cover the locked packages and every source the images
   await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
   assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
+  const manifestPath = join(root, 'package.json');
+  const manifestSource = await readFile(manifestPath, 'utf8');
+  const manifest = JSON.parse(manifestSource);
+  await writeFile(
+    manifestPath,
+    JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, synthetic: '1.0.0' } }),
+  );
+  assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, packageManager: 'pnpm@0.0.0' }));
+  assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
+  await writeFile(manifestPath, manifestSource);
   for (const path of [
     'src/shared/public-address.ts',
     'src/providers/docker/save-video.py',
@@ -3052,7 +3065,6 @@ test('runtime fingerprints cover the locked packages and every source the images
     'src/server/index.ts',
     'src/web/pages/chat.tsx',
     '.github/workflows/desktop-release.yml',
-    'package.json',
     'patches/libsignal@6.0.0.patch',
     'desktop/scripts/runtime-inputs.mjs',
   ]) {
