@@ -25,9 +25,14 @@ const distributionName = (root) =>
 
 export function windowsEnvironment() {
   const environment = Object.fromEntries(
-    ['SYSTEMROOT', 'USERPROFILE', 'LOCALAPPDATA', 'TEMP', 'TMP'].flatMap((key) =>
-      process.env[key] ? [[key, process.env[key]]] : [],
-    ),
+    [
+      'SYSTEMROOT',
+      'USERPROFILE',
+      'LOCALAPPDATA',
+      'TEMP',
+      'TMP',
+      'PSModuleAnalysisCachePath',
+    ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
   );
   if (!environment.SYSTEMROOT) throw new Error('Nod could not find the Windows system folder.');
   environment.PATH = join(environment.SYSTEMROOT, 'System32');
