@@ -10,7 +10,7 @@ const me = `Alex Rivera <${owner.email}>`;
 const sofia = 'sofia.almeida@meridiancapital.example.org';
 const aboutSofia = /sofia|meridian|revision/i;
 const replyToSofia = (task: SuggestedTask) =>
-  task.source === 'gmail' && aboutSofia.test(task.title);
+  task.kind === 'now' && task.source === 'gmail' && aboutSofia.test(task.title);
 const aboutSignIn = /code|sign[- ]?in|log[- ]?in|verif|security|password/i;
 
 function mailbox(now: number): Mail[] {
@@ -103,7 +103,9 @@ export default scenario({
     }
     const tasks = state.suggestions?.tasks ?? [];
     state.picked =
-      tasks.find(replyToSofia) ?? tasks.find((task) => task.source === 'gmail') ?? tasks[0];
+      tasks.find(replyToSofia) ??
+      tasks.find((task) => task.kind === 'now' && task.source === 'gmail') ??
+      tasks.find((task) => task.kind === 'now');
     if (state.picked) await session.say(state.picked.title);
   },
   evidence(run, world) {

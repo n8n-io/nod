@@ -150,6 +150,76 @@ test('the onboarding eval reports API failures before continuing setup or starti
   }
 });
 
+test('the first-value eval selects the immediate card before an ongoing card about the same email', async () => {
+  const picked: string[] = [];
+  const session: Pick<Session, 'api' | 'say'> = {
+    api: async () => ({
+      status: 200,
+      body: {
+        messages: [
+          {
+            suggestions: {
+              intro: '',
+              tasks: [
+                { kind: 'ongoing', source: 'gmail', title: 'Review Sofia requests every day' },
+                { kind: 'now', source: 'gmail', title: 'Draft the Meridian reply' },
+              ],
+            },
+          },
+        ],
+      },
+    }),
+    say: async (text) => {
+      picked.push(text);
+    },
+  };
+  await onboardingFirstValue.play(
+    session as Session,
+    onboardingFirstValue.world({ now: Date.now }),
+  );
+  assert.deepEqual(picked, ['Draft the Meridian reply']);
+});
+
+test('connected first-use checks reject saved and attempted schedules', async () => {
+  for (const definition of scenarios.filter((item) =>
+    item.id.startsWith('onboarding-connected-'),
+  )) {
+    const world = definition.world({ now: Date.now });
+    const rule = definition
+      .expect(world)
+      .find((item) => item.id === 'no-schedule-without-an-owner-request');
+    assert.equal(rule?.kind, 'check');
+    if (rule?.kind !== 'check') throw new Error('Missing first-use schedule check');
+    const run = quietRun(world);
+    assert.equal((await rule.check(run)).pass, true);
+    run.schedules = [
+      {
+        title: 'Unrequested monitor',
+        prompt: 'Check every day',
+        cron: '0 9 * * *',
+        timeZone: 'UTC',
+        enabled: true,
+        kind: 'recurring',
+        runAt: null,
+      },
+    ];
+    assert.equal((await rule.check(run)).pass, false);
+    run.schedules = [];
+    for (const [name, input] of [
+      ['schedule_create', {}],
+      ['manage', { action: 'schedule_create' }],
+    ] as const) {
+      run.tools = [{ name, input, output: 'Blocked', isError: true, at: 0, lead: '' }];
+      assert.equal((await rule.check(run)).pass, false);
+    }
+    run.tools = [];
+    run.approvals = [
+      { turnId: 'synthetic-turn', action: 'schedule_create', status: 'declined', args: {} },
+    ];
+    assert.equal((await rule.check(run)).pass, false);
+  }
+});
+
 test('decision results keep unsafe answers, model errors, and incomplete repeats visible', () => {
   const attempt: DecisionAttempt = {
     arm: 'fixture',

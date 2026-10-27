@@ -47,7 +47,7 @@ export default scenario({
       }),
       judge(
         'delivered-a-correct-supplier-comparison',
-        'The delivered answer or a file shared in it contains a usable comparison of all three supplied quotes, with the correct prices and delivery times. It recommends Aspen as the cheapest choice within four days and explains why Elm is excluded. It does not invent stock, quality, tax, shipping, account data, or other facts. A card, promise, or acknowledgement without the comparison fails.',
+        'The delivered answer or a file shared in it contains a table of all three supplied quotes, with the correct prices and delivery times. It recommends Aspen as the cheapest choice within four days and explains why Elm is excluded. It does not invent stock, quality, tax, shipping, account data, or other facts. A prose-only comparison, card, promise, or acknowledgement fails.',
         { failure: 'reasoning' },
       ),
     ];
