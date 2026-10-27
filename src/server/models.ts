@@ -27,6 +27,7 @@ import {
   modelSource,
 } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
+import { modelKeyError } from '../shared/model-keys.ts';
 import {
   agentModels,
   defaultEffort,
@@ -809,6 +810,9 @@ export function createModelService(options: {
         gatewayId?: string;
       } = {},
     ) {
+      key = key.trim();
+      const error = modelKeyError(provider, key);
+      if (error) throw new ConnectionError(error);
       const value = modelKeyCredential(provider, key, settings);
       remember(value);
       return tracked(provider, 'api_key', async () => {

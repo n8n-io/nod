@@ -27,7 +27,7 @@ import { createSettingsStore, serverOrigin } from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
-import { createReadinessNotice, isQuietTime } from '../main/notifications.mjs';
+import { createReadinessNotice, createUnreadBadge, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
@@ -523,6 +523,7 @@ async function runningDesktop(
     createChatReadCursorStore,
     saveArtifactDownload,
     createReadinessNotice,
+    createUnreadBadge,
     isQuietTime,
     watchAssistantMessages: () => () => {},
     createDesktopLifecycle: (options) =>

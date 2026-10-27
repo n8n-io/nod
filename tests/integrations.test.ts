@@ -2848,6 +2848,206 @@ test(
 );
 
 test(
+  'native app sign-ins survive browser key metadata and preserve owned callback completion',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await appsFixture(t);
+    const root = await mkdtemp(join(tmpdir(), 'nod-native-sign-in-'));
+    const browser = createIntegrationBrowser();
+    t.after(async () => {
+      await browser.close();
+      await rm(root, { recursive: true, force: true });
+    });
+    const starts = new Map<string, { challenge: string; toolkit: string }>();
+    let completions = 0;
+    const proxy = createComposioProxy({
+      dataRoot: root,
+      ownerId: 'local-development',
+      keyStore: installationKeyStore,
+      checkpoint: createIntegrationIdentityCheckpoint(f.pool, 'local-development'),
+      browser,
+      url: 'https://proxy.example.test',
+      request: async (input, init) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        const body = await request.json();
+        if (path === '/v2/access/enroll')
+          return Response.json({ state: 'enabled', userId: proxy.userId });
+        if (path === '/v2/connect/start') {
+          assert.deepEqual(Object.keys(body.browserKey).sort(), ['crv', 'kty', 'x', 'y']);
+          assert.equal(body.browserKey.kty, 'EC');
+          assert.equal(body.browserKey.crv, 'P-256');
+          starts.set(body.transactionId, body);
+          return Response.json({
+            redirectUrl: `https://proxy.example.test/v2/connect/pair?ticket=${body.transactionId}`,
+            transactionId: body.transactionId,
+          });
+        }
+        if (path === '/v2/connect/status')
+          return Response.json({ pairingConfirmed: starts.has(body.ticket) });
+        assert.equal(path, '/v2/connect/complete');
+        const started = starts.get(body.transactionId)!;
+        assert.ok(started);
+        assert.equal(body.challenge, started.challenge);
+        assert.equal(body.completionToken, 'synthetic-completion');
+        const accountId = `synthetic_${body.transactionId}`;
+        f.accounts.set(accountId, started.toolkit);
+        completions++;
+        return Response.json({
+          connectedAccountId: accountId,
+          toolkit: started.toolkit,
+          status: 'ACTIVE',
+        });
+      },
+    });
+    await proxy.initialize();
+    const managed = createComposioProvider({ proxy });
+    f.provider.supportedServices = [...integrationServiceIds, 'github'];
+    f.provider.configurationId = managed.configurationId;
+    f.provider.ownsConnectionUrl = managed.ownsConnectionUrl;
+    f.provider.connectionStatus = managed.connectionStatus;
+    f.provider.parseCallback = managed.parseCallback;
+    f.provider.authorize = async (owner, service, callback) => {
+      f.callbacks.push(callback);
+      return managed.authorize!(owner, service, callback);
+    };
+    const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
+      format: 'jwk',
+    });
+    const begin = async (service: IntegrationService) => {
+      const response = await f.app.inject({ method: 'POST', url: `/api/apps/${service}/connect` });
+      assert.equal(response.statusCode, 200, response.body);
+      const url = response.json().url as string;
+      const callback = new URL(f.callbacks.at(-1)!);
+      callback.searchParams.set('completion_token', 'synthetic-completion');
+      return {
+        url,
+        hash: createHash('sha256').update(url).digest('hex'),
+        callback: `${callback.pathname}${callback.search}`,
+      };
+    };
+    const status = async (attempt: Awaited<ReturnType<typeof begin>>) => {
+      const response = await f.app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        payload: { hashes: [attempt.hash], pairingUrl: attempt.url },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json();
+    };
+    const start = async (
+      attempt: Awaited<ReturnType<typeof begin>>,
+      browserKey: Record<string, unknown>,
+    ) => {
+      assert.equal((await status(attempt)).apps[0].available, true);
+      const html = await (await fetch(attempt.url)).text();
+      const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+      const response = await fetch(`${new URL(attempt.url).origin}/start`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: new URL(attempt.url).origin,
+          'x-nod-bridge': bridgeKey,
+        },
+        body: JSON.stringify({ browserKey }),
+      });
+      await response.text();
+      const setup = await status(attempt);
+      const returned = await f.app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-return',
+        payload: { hash: attempt.hash, returnTo: 'desktop' },
+      });
+      return {
+        startStatus: response.status,
+        available: setup.apps[0]?.available,
+        returnStatus: returned.statusCode,
+      };
+    };
+    const outcome = async (attempt: Awaited<ReturnType<typeof begin>>) =>
+      new URL((await f.app.inject({ url: attempt.callback })).headers.location!).searchParams.get(
+        'connection',
+      );
+    const complete = async (attempt: Awaited<ReturnType<typeof begin>>) => {
+      const before = completions;
+      assert.equal(await outcome(attempt), 'connected');
+      assert.equal(completions, before + 1);
+      assert.deepEqual(await status(attempt), { completed: [attempt.hash], apps: [] });
+      assert.equal(await outcome(attempt), 'expired');
+      assert.equal(completions, before + 1);
+    };
+    for (const [service, metadata] of [
+      ['github', { alg: 'ES256', ext: true, key_ops: ['verify'] }],
+      ['gmail', { use: 'sig', kid: 'synthetic-public-key' }],
+      ['github', {}],
+    ] as const) {
+      await t.test(
+        `${service} with ${Object.keys(metadata).join(',') || 'core key fields'}`,
+        async () => {
+          const attempt = await begin(service);
+          assert.deepEqual(await start(attempt, { ...key, ...metadata }), {
+            startStatus: 200,
+            available: true,
+            returnStatus: 200,
+          });
+          await complete(attempt);
+        },
+      );
+    }
+    await t.test(
+      'polling while account verification finishes preserves the claimed callback',
+      async () => {
+        const attempt = await begin('github');
+        assert.equal((await start(attempt, key)).startStatus, 200);
+        let inspecting = () => {};
+        let release = () => {};
+        const inspected = new Promise<void>((resolve) => {
+          inspecting = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const inspect = f.provider.inspectAccount;
+        f.provider.inspectAccount = async (...args) => {
+          inspecting();
+          await gate;
+          return inspect(...args);
+        };
+        const finishing = outcome(attempt);
+        try {
+          await inspected;
+          assert.equal(browser.owns(attempt.url), false);
+          assert.equal((await status(attempt)).apps[0].available, true);
+          release();
+          assert.equal(await finishing, 'connected');
+        } finally {
+          release();
+          f.provider.inspectAccount = inspect;
+          await finishing;
+        }
+        assert.deepEqual(await status(attempt), { completed: [attempt.hash], apps: [] });
+      },
+    );
+    await t.test('invalid keys expire their attempt and a fresh retry succeeds', async () => {
+      for (const invalid of [{ kty: 'RSA' }, { crv: 'P-384' }]) {
+        const attempt = await begin('github');
+        const before = completions;
+        assert.deepEqual(await start(attempt, { ...key, ...invalid }), {
+          startStatus: 400,
+          available: false,
+          returnStatus: 409,
+        });
+        assert.equal(await outcome(attempt), 'expired');
+        assert.equal(completions, before);
+      }
+      const retry = await begin('github');
+      assert.equal((await start(retry, { ...key, alg: 'ES256' })).startStatus, 200);
+      await complete(retry);
+    });
+  },
+);
+
+test(
   'discovered desktop OAuth reports durable completion and retries without replacing pending attempts',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

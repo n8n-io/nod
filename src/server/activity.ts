@@ -4,15 +4,17 @@ import { events, type ServerEvent } from './events.ts';
 import { logFailure } from './failure-log.ts';
 import { ownerStarted } from './thread.ts';
 
-export type LiveWork = Activity & { channel: string };
+export type LiveWork = Activity & { channel: string; messageId?: string };
 
 const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,COALESCE(u.started_at,u.created_at) AS since,
     t.id AS task_id,t.title,w.site,
+    COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
+      AND m.role='assistant' ORDER BY m.created_at,m.id LIMIT 1)) AS message_id,
     COALESCE((SELECT e.summary FROM turn_events e WHERE e.turn_id=u.id AND e.type='step'
        AND e.created_at>COALESCE(w.spoke,'-infinity') ORDER BY e.created_at DESC,e.id DESC LIMIT 1),t.now_text) AS step
   FROM turns u
   JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
-  LEFT JOIN LATERAL (SELECT id,title,now_text FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
+  LEFT JOIN LATERAL (SELECT id,title,now_text,message_id FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
     ORDER BY created_at DESC LIMIT 1) t ON true
   CROSS JOIN LATERAL (SELECT
     (SELECT site FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete','tool_failed')
@@ -41,6 +43,7 @@ export function createActivity({ pool, ownerId }: { pool: Pool; ownerId: string 
         site: row.site,
         since: row.since.toISOString(),
         channel: row.channel,
+        ...(row.message_id ? { messageId: row.message_id } : {}),
       }))
       .sort((a, b) => a.since.localeCompare(b.since));
   }

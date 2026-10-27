@@ -1093,6 +1093,190 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(owner.view().selection, selected);
   });
 
+  test('API key validation refuses provider mismatches before transport or persistence without changing existing connections', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const savedKey = 'fixture-existing-openai-key';
+    const requests: string[] = [];
+    const owner = await f.create(
+      'fixture-owner',
+      createPiModelBackend({
+        fetch: async (input, init) => {
+          requests.push(String(input));
+          if (
+            String(input) === 'https://api.openai.com/v1/models' &&
+            new Headers(init?.headers).get('authorization') === `Bearer ${savedKey}`
+          )
+            return Response.json({ data: [{ id: 'gpt-6.1-sol' }] });
+          return Response.json({ error: 'Synthetic credential rejection.' }, { status: 401 });
+        },
+      }),
+    );
+    await owner.addKey('openai', savedKey);
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    const initial = owner.view();
+    const stored = async () =>
+      Promise.all(
+        ['model_connections', 'model_settings', 'vault_app_grants'].map(
+          async (table) => (await f.database.query(`SELECT * FROM ${table}`)).rows,
+        ),
+      );
+    const initialRows = await stored();
+    for (const [name, provider, key] of [
+      ['Anthropic key in OpenAI', 'openai', 'sk-ant-api03-synthetic-foreign-key'],
+      ['OpenRouter key in Anthropic', 'anthropic', 'sk-or-v1-synthetic-foreign-key'],
+      ['OpenAI project key in OpenRouter', 'openrouter', 'sk-proj-synthetic-foreign-key'],
+      ['long-term Bedrock key in OpenAI', 'openai', 'ABSKsynthetic-foreign-key'],
+      ['short-term Bedrock key in Anthropic', 'anthropic', 'bedrock-api-key-synthetic-foreign-key'],
+      ['embedded whitespace', 'openai', 'fixture invalid key'],
+      ['embedded control character', 'openai', 'fixture-invalid\u0000key'],
+      ['first C1 control character', 'openai', 'fixture-invalid\u0080key'],
+      ['C1 next-line control character', 'openai', 'fixture-invalid\u0085key'],
+      ['last C1 control character', 'openai', 'fixture-invalid\u009fkey'],
+      ['bundled provider', 'baseten', 'sk-ant-api03-synthetic-bundled-key'],
+    ] as const) {
+      await t.test(name, async () => {
+        const previousRequests = requests.length;
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/models/keys',
+          payload: { provider, key },
+        });
+        assert.equal(response.statusCode, 400);
+        assert.equal(typeof response.json().error, 'string');
+        assert.ok(!response.body.includes(key));
+        assert.equal(requests.length, previousRequests);
+        assert.deepEqual(owner.view(), initial);
+        assert.deepEqual(await stored(), initialRows);
+        assert.equal(await owner.apiKey('openai'), savedKey);
+        assert.deepEqual(await (await owner.resolve()).read(), {
+          type: 'api_key',
+          key: savedKey,
+        });
+      });
+    }
+  });
+
+  test('API key validation leaves unfamiliar formats, matching providers and owner-configured model endpoints usable', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const requests: Array<{ url: string; key: string | null }> = [];
+    const bedrockKeys = ['ABSKsynthetic-bedrock-key', 'bedrock-api-key-synthetic-key'];
+    const owner = await f.create(
+      'fixture-owner',
+      createPiModelBackend({
+        fetch: async (input, init) => {
+          const url = String(input);
+          const headers = new Headers(init?.headers);
+          requests.push({ url, key: headers.get('authorization') ?? headers.get('x-api-key') });
+          if (url === 'https://api.openai.com/v1/models')
+            return Response.json({ data: [{ id: 'gpt-6.1-sol' }] });
+          if (url === 'https://api.anthropic.com/v1/models?limit=1000')
+            return Response.json({ data: [{ id: 'claude-opus-5-5' }] });
+          if (
+            url ===
+            'https://bedrock.us-east-1.amazonaws.com/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT'
+          )
+            return Response.json({ modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }] });
+          if (
+            url ===
+            'https://bedrock.us-east-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000'
+          )
+            return Response.json({ inferenceProfileSummaries: [] });
+          if (url === 'http://127.0.0.1:11434/v1/models')
+            return Response.json({ data: [{ id: 'fixture-local' }] });
+          assert.ok(
+            ['http://127.0.0.1:11434/api/version', 'http://127.0.0.1:11434/api/v1/models'].includes(
+              url,
+            ),
+          );
+          return Response.json({}, { status: 404 });
+        },
+      }),
+    );
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    for (const [provider, key] of [
+      ['openai', '  fixture-unfamiliar-openai-key  '],
+      ['anthropic', 'sk-synthetic-shared-prefix'],
+      ['baseten', 'fixture-unfamiliar-bundled-key'],
+    ] as const) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: { provider, key },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(await owner.apiKey(provider), key.trim());
+      assert.ok(!response.body.includes(key.trim()));
+    }
+    for (const key of bedrockKeys) {
+      const existing = new Set(owner.view().connections.map((row) => row.id));
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: { provider: 'amazon-bedrock', key, region: 'us-east-1' },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.ok(!response.body.includes(key));
+      const connection = owner.view().connections.find((row) => !existing.has(row.id))!;
+      const model = connection.models[0]!;
+      await owner.select({
+        connectionId: connection.id,
+        modelId: model.id,
+        effort: model.efforts[0]!,
+      });
+      assert.deepEqual(await (await owner.resolve()).read(), {
+        type: 'bedrock',
+        key,
+        region: 'us-east-1',
+      });
+    }
+    const proxyKey = 'sk-ant-api03-synthetic-proxy-key';
+    const endpoint = await app.inject({
+      method: 'POST',
+      url: '/api/models/endpoints',
+      payload: { url: 'http://127.0.0.1:11434/v1', key: proxyKey },
+    });
+    assert.equal(endpoint.statusCode, 200, endpoint.body);
+    const endpointConnection = owner
+      .view()
+      .connections.find((row) => row.provider === 'compatible')!;
+    await owner.select({
+      connectionId: endpointConnection.id,
+      modelId: 'fixture-local',
+      effort: 'off',
+    });
+    assert.deepEqual(await (await owner.resolve()).read(), {
+      type: 'endpoint',
+      url: 'http://127.0.0.1:11434/v1',
+      key: proxyKey,
+    });
+    assert.deepEqual(requests, [
+      { url: 'https://api.openai.com/v1/models', key: 'Bearer fixture-unfamiliar-openai-key' },
+      {
+        url: 'https://api.anthropic.com/v1/models?limit=1000',
+        key: 'sk-synthetic-shared-prefix',
+      },
+      ...bedrockKeys.flatMap((key) =>
+        [
+          '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT',
+          '/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        ].map((path) => ({
+          url: `https://bedrock.us-east-1.amazonaws.com${path}`,
+          key: `Bearer ${key}`,
+        })),
+      ),
+      ...['/v1/models', '/api/version', '/api/v1/models'].map((path) => ({
+        url: `http://127.0.0.1:11434${path}`,
+        key: `Bearer ${proxyKey}`,
+      })),
+    ]);
+  });
+
   test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
     const f = await fixture(t);
     const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');

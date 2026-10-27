@@ -41,6 +41,11 @@ export function combineMessagingTransports(
     async presence(input) {
       await forChannel(input.channelId)?.presence?.(input);
     },
+    async progress(input) {
+      const transport = forChannel(input.channelId);
+      if (!transport?.progress) throw new Error('Channel progress is unavailable.');
+      await transport.progress(input);
+    },
     async pairing() {
       const transport = transports.findLast((transport) => transport.pairing);
       if (!transport?.pairing) throw new Error('QR pairing is unavailable.');

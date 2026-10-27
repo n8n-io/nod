@@ -1,16 +1,19 @@
 import { logFailure } from './failure-log.ts';
 import type { Pool } from 'pg';
 import type { ModelReview } from '../ports/decisions.ts';
-import type { TurnRef } from './thread.ts';
+import { withTurnLock, type TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
 import { trustBasis, type TrustBasis, type TrustWords } from './trust-basis.ts';
+import { preservesTerms, termsInstructions } from './trust-terms.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'unrequested' | 'rule';
 
 const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, one step in the assistant's own web browser (NOD_browser), a change to the assistant's own schedules, notification settings, spending limits or memory of the user, or signing in to a website for the user (NOD_sign_in, or NOD_browser_session to open a saved signed-in browser).
 Reply with only JSON: {"run": true, "because": "..."} or {"run": false}. because is "read" when the action only reads or prepares. Otherwise it copies, word for word, the user's own words that ask for this action, from userMessages, scheduledTaskInstruction or standingInstruction. When no words do, run is false.
 Judge what the action does from its name and arguments, including any tool it names. An action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft, needs no request, because the assistant may read and prepare on its own: run is true even when there are no user words or the read has nothing to do with them, and false only when the user's own words forbid it or require confirmation before it.
-For any other action, run is true only when the user's own words ask for this kind of action on this target or for an outcome it is a step of, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. An outcome covers every step it needs on the targets the user named, up to and including the commitment they named, without naming each step: buying something from a shop covers its basket, checkout and order there, and moving a meeting and telling the people in it covers changing that event and messaging them. It does not cover another target or recipient, a subscription or another purchase, a new account, publishing, deleting something they did not name, changing the user's account, its settings or saved data, or sending the user's personal details for anything the outcome does not need. A short "yes" counts for what the assistant message it answers proposed, each step of a proposed outcome included.
+For any other action, run is true only when the user's own words ask for this kind of action on this target or for an outcome it is a step of, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. An outcome covers every step it needs on the targets the user named, up to and including the commitment they named, without naming each step: buying something from a shop covers its basket, checkout and order there, and moving a meeting and telling the people in it covers changing that event and messaging them. It does not cover another target or recipient, a subscription or another purchase, a new account, publishing, deleting something they did not name, changing the user's account, its settings or saved data, or sending the user's personal details for anything the outcome does not need.
+Authorization includes the user's explicit terms and later corrections. Preserve the meaning of their amounts, currencies, dates, times, obligations and conditions, including across translation. An action may carry out a delegated choice within its bounds, but may not change those terms or extend the authorized commitment.
+The outcome must identify the outside commitment the user wants, not merely a problem they want solved. Advice about possible next steps, supplying information or a document, and a general request for help do not choose a send, submission or other commitment. When that choice remains open, run is false for an action that commits; reading and preparation still run. A short reply counts for an action or outcome only when the assistant message it answers concretely proposed that action or outcome on that target, including its commitment. A list of possibilities or a general offer to help is not such a proposal. A reply accepting a concrete proposal covers its necessary steps.
 A change to one of the assistant's own schedules may carry currentSchedule, the schedule as it stands now. The user's words must cover that schedule, not only the identifier being changed or cancelled. Forgetting a memory note (NOD_memory_forget) carries note, its current text, and the user's words must cover that note. NOD_memory_control turns memory on or off or clears all of it.
 Work the assistant starts on its own, such as on new email or other activity in a connected app, may carry standingInstruction, the user's notification rule. It counts as the user's words only for what it explicitly asks the assistant to do on its own; asking to be told, flagged or alerted about something is answered by the assistant's own message and asks for no other action. The activity that started the work is not shown, so judge whether the action is what the instruction asks on that target, not whether its condition was met. It never covers a change to the assistant's own schedules, notification settings, spending limits or memory. A change to notification settings may carry currentNotificationRule, the rule as it stands now. The new rule becomes the user's standing instruction, so the user's words must cover everything it adds or changes, especially anything it lets the assistant do on its own.
 NOD_sign_in and NOD_browser_session are never only reads. For them, run is true only when the user's words need that website or business, such as reading their account there, downloading a document, booking or buying; the user may name the business instead of the website. A denial, a cancellation, a public search or a request to stay signed out does not ask for a sign-in.
@@ -32,6 +35,7 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
     threadId: string,
     originMessageIds: string[],
     taskId: string | null,
+    since: Date,
   ): Promise<{ ids: string[]; words: TrustWords } | undefined> {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
@@ -41,18 +45,18 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
              NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
                AND to_jsonb(u)->>'task_id' IS NOT NULL) AS chat
            FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user' AND text<>''
-             AND (created_at>now()-interval '24 hours' OR id=ANY($3::uuid[])) AND text NOT IN (
+             AND (created_at>$5 OR id=ANY($3::uuid[])) AND text NOT IN (
              SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
              WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL)),
          started AS (SELECT created_at FROM tasks WHERE id=$4::uuid AND owner_id=$1)
-         (SELECT id,text,created_at FROM said WHERE created_at>now()-interval '24 hours'
+         (SELECT id,text,created_at FROM said WHERE created_at>$5
            AND CASE WHEN $4::uuid IS NULL THEN chat ELSE mine END ORDER BY created_at DESC,id DESC LIMIT 5)
          UNION (SELECT said.id,said.text,said.created_at FROM said, started WHERE said.chat
-           AND said.created_at>now()-interval '24 hours' AND said.created_at<=started.created_at
+           AND said.created_at>$5 AND said.created_at<=started.created_at
            ORDER BY said.created_at DESC,said.id DESC LIMIT 5)
          UNION SELECT id,text,created_at FROM said WHERE id=ANY($3::uuid[])
          ORDER BY created_at DESC,id DESC`,
-        [ownerId, threadId, originMessageIds, taskId],
+        [ownerId, threadId, originMessageIds, taskId, since],
       )
     ).rows;
     const latest = users[0];
@@ -64,20 +68,20 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
                JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.id=$3 AND m.owner_id=$1),
              answered AS (SELECT a.id,a.text,a.turn_id FROM messages a, latest
                WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.text<>''
-                 AND a.created_at>now()-interval '24 hours' AND (a.created_at,a.id)<(latest.created_at,latest.id)
+                 AND a.created_at>$5 AND (a.created_at,a.id)<(latest.created_at,latest.id)
                  AND (a.id=latest.reply_to_message_id OR (latest.reply_to_message_id IS NULL
                    AND EXISTS (SELECT 1 FROM turns c WHERE c.id=a.turn_id AND c.owner_id=$1 AND c.channel=latest.channel)))
                ORDER BY a.created_at DESC,a.id DESC LIMIT 1)
              SELECT text FROM answered WHERE EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=answered.turn_id AND to_jsonb(u)->>'task_id'=$4::text)
                OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=$4::uuid AND t.owner_id=$1 AND t.message_id=answered.id)`,
-            [ownerId, threadId, latest.id, taskId],
+            [ownerId, threadId, latest.id, taskId, since],
           )
         : await pool.query<{ text: string }>(
             `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
-             AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
+             AND created_at>$5 AND (created_at,id)<($3,$4)
              AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL)
              ORDER BY created_at DESC,id DESC LIMIT 1`,
-            [ownerId, threadId, latest.created_at, latest.id],
+            [ownerId, threadId, latest.created_at, latest.id, since],
           )
     ).rows[0];
     const ordered = users.reverse();
@@ -98,43 +102,71 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
     const origin = await turnOrigin(turn.turnId);
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction?.trim();
-    const preferences = (
-      await pool.query<{ notification_rule: string; rules: string }>(
-        'SELECT notification_rule,rules FROM preferences WHERE owner_id=$1',
-        [ownerId],
-      )
-    ).rows[0];
-    const standing = origin.source === 'event' ? preferences?.notification_rule.trim() : undefined;
-    const rules = preferences?.rules.trim();
-    const said =
-      origin.source === 'user'
-        ? await conversation(turn.threadId, origin.messageIds, origin.taskId)
-        : undefined;
-    const words: TrustWords = {
-      ...said?.words,
-      ...(origin.source === 'schedule' && instruction
-        ? {
-            scheduledTaskInstruction: instruction,
-            scheduledFor: origin.scheduledFor,
-            timeZone: origin.timeZone,
-          }
-        : {}),
-      ...(standing ? { standingInstruction: standing } : {}),
-      ...(rules ? { userRules: rules } : {}),
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const context = async () => {
+      const preferences = (
+        await pool.query<{ notification_rule: string; rules: string }>(
+          'SELECT notification_rule,rules FROM preferences WHERE owner_id=$1',
+          [ownerId],
+        )
+      ).rows[0];
+      const standing =
+        origin.source === 'event' ? preferences?.notification_rule.trim() : undefined;
+      const rules = preferences?.rules.trim();
+      const said =
+        origin.source === 'user'
+          ? await conversation(turn.threadId, origin.messageIds, origin.taskId, since)
+          : undefined;
+      const words: TrustWords = {
+        ...said?.words,
+        ...(origin.source === 'schedule' && instruction
+          ? {
+              scheduledTaskInstruction: instruction,
+              scheduledFor: origin.scheduledFor,
+              timeZone: origin.timeZone,
+            }
+          : {}),
+        ...(standing ? { standingInstruction: standing } : {}),
+        ...(rules ? { userRules: rules } : {}),
+      };
+      return { words, ids: said?.ids ?? [] };
+    };
+    const captured = await context();
+    const { words, ids } = captured;
+    const rules = words.userRules;
+    const encodedArgs = JSON.stringify(args);
+    const encodedInput = JSON.stringify({ ...words, action: { name: action, arguments: args } });
+    const input = () => JSON.parse(encodedInput) as Record<string, unknown>;
+    const unchanged = () => {
+      if (JSON.stringify(args) !== encodedArgs)
+        throw new Error('The proposed action changed while it was being checked.');
     };
     const answer = await options
       .review(
         rules || 'currentRules' in args
           ? `${checkInstructions}\n${rulesInstructions}`
           : checkInstructions,
-        { ...words, action: { name: action, arguments: args } },
+        input(),
       )
       .catch((error: unknown) => {
         logFailure('trust_check_failed', error);
         return undefined;
       });
-    const basis = trustBasis(answer, words, said?.ids ?? []);
-    if (basis) return { confirm: false, basis };
+    unchanged();
+    const basis = trustBasis(answer, words, ids);
+    if (basis?.kind === 'read') return { confirm: false, basis };
+    if (basis) {
+      await withTurnLock(turn.turnId, async () => undefined);
+      const terms = await options.review(termsInstructions, input()).catch((error: unknown) => {
+        logFailure('trust_terms_failed', error);
+        return undefined;
+      });
+      const latest = await context();
+      unchanged();
+      if (JSON.stringify(latest) !== JSON.stringify(captured))
+        throw new Error('The owner instructions changed while this action was being checked.');
+      if (preservesTerms(terms, input())) return { confirm: false, basis };
+    }
     return {
       confirm: true,
       reason:

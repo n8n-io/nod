@@ -121,7 +121,161 @@ export function createReadinessNotice({ notify }) {
   return { update };
 }
 
-export function watchAssistantMessages({ request, onMessage, retryMs = 1000 }) {
+export function createUnreadBadge({ request, readCursor, writeCursor, onCount, initialCount }) {
+  let scope;
+  let controller;
+  let revision = 0;
+  let stopped = false;
+  let count = initialCount;
+
+  function publish(next) {
+    if (next === count) return;
+    count = next;
+    onCount(next);
+  }
+
+  function messages(value) {
+    if (
+      !Array.isArray(value) ||
+      value.some(
+        (message) =>
+          typeof message?.id !== 'string' ||
+          !message.id ||
+          !['user', 'assistant'].includes(message.role) ||
+          typeof message.createdAt !== 'string' ||
+          !Number.isFinite(Date.parse(message.createdAt)),
+      )
+    )
+      throw new Error('Messages are unavailable.');
+    return value;
+  }
+
+  async function refresh() {
+    controller?.abort();
+    const current = ++revision;
+    if (stopped || !scope) return;
+    const selected = scope;
+    const snapshot = selected.snapshot;
+    controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    const active = () => !signal.aborted && current === revision && selected === scope;
+    let cursor = await readCursor(selected.threadId);
+    if (!active()) return;
+    if (cursor === null) {
+      if (!selected.initializing)
+        selected.initializing = Promise.resolve()
+          .then(() => {
+            if (!stopped && selected === scope)
+              return writeCursor(selected.threadId, selected.initial);
+          })
+          .finally(() => {
+            selected.initializing = undefined;
+          });
+      await selected.initializing;
+      if (!active()) return;
+      cursor = await readCursor(selected.threadId);
+      if (!active()) return;
+    }
+    if (
+      !cursor ||
+      typeof cursor.createdAt !== 'string' ||
+      !Number.isFinite(Date.parse(cursor.createdAt)) ||
+      !Array.isArray(cursor.messageIds)
+    )
+      throw new Error('The saved read state could not be read.');
+    const read = new Set(cursor.messageIds);
+    const unread = new Set();
+    function collect(page) {
+      for (const message of page)
+        if (
+          message.role === 'assistant' &&
+          (message.createdAt > cursor.createdAt ||
+            (message.createdAt === cursor.createdAt && !read.has(message.id)))
+        )
+          unread.add(message.id);
+      if (active() && unread.size > 0) publish(Math.min(Math.max(count ?? 0, unread.size), 100));
+    }
+    let page = { messages: snapshot.messages, hasMore: snapshot.hasEarlierMessages === true };
+    collect(page.messages);
+    while (
+      unread.size < 100 &&
+      page.hasMore &&
+      page.messages.length &&
+      page.messages[0].createdAt >= cursor.createdAt
+    ) {
+      const before = page.messages[0];
+      const query = new URLSearchParams({
+        threadId: selected.threadId,
+        before: before.createdAt,
+        beforeId: before.id,
+      });
+      const response = await request(`/api/messages?${query}`, { signal, redirect: 'error' });
+      if (!active()) return;
+      if (!response.ok) throw new Error('Message history is unavailable.');
+      const next = await response.json();
+      if (!active()) return;
+      messages(next.messages);
+      const first = next.messages[0];
+      if (
+        (next.hasMore && !first) ||
+        (first &&
+          (first.createdAt > before.createdAt ||
+            (first.createdAt === before.createdAt && first.id >= before.id)))
+      )
+        throw new Error('Message history did not advance.');
+      collect(next.messages);
+      page = next;
+    }
+    if (active()) publish(Math.min(unread.size, 100));
+  }
+
+  function update(snapshot) {
+    if (stopped) return Promise.resolve();
+    if (typeof snapshot?.threadId !== 'string' || !snapshot.threadId)
+      return Promise.reject(new Error('Messages are unavailable.'));
+    try {
+      messages(snapshot.messages);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (scope?.threadId !== snapshot.threadId) {
+      const initial = { createdAt: '1970-01-01T00:00:00.000Z', messageIds: [] };
+      for (const message of snapshot.messages) {
+        if (message.createdAt < initial.createdAt) continue;
+        if (message.createdAt > initial.createdAt) {
+          initial.createdAt = message.createdAt;
+          initial.messageIds = [];
+        }
+        initial.messageIds.push(message.id);
+      }
+      if (scope) publish(0);
+      scope = { threadId: snapshot.threadId, initial };
+    }
+    scope.snapshot = snapshot;
+    return refresh();
+  }
+
+  function stop({ clear = true } = {}) {
+    if (!stopped) {
+      stopped = true;
+      scope = undefined;
+      revision++;
+      controller?.abort();
+    }
+    if (clear) publish(0);
+  }
+
+  return {
+    update,
+    refresh,
+    stop,
+    get count() {
+      return count;
+    },
+  };
+}
+
+export function watchAssistantMessages({ request, onMessage, onState, retryMs = 1000 }) {
   const controller = new AbortController();
   const seen = new Set();
   let initialized = false;
@@ -135,6 +289,11 @@ export function watchAssistantMessages({ request, onMessage, retryMs = 1000 }) {
     const body = await response.json();
     if (typeof body.threadId !== 'string' || !body.threadId || !Array.isArray(body.messages))
       throw new Error('Messages are unavailable.');
+    if (controller.signal.aborted) return;
+    if (onState)
+      void Promise.resolve()
+        .then(() => !controller.signal.aborted && onState(body))
+        .catch(() => {});
     if (threadId !== body.threadId) {
       initialized = false;
       seen.clear();

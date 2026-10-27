@@ -88,11 +88,19 @@ For large files or formats whose waveform your browser can't read, the player sh
 
 ## Keep talking while Nod works
 
-You don't have to wait. The message box stays open while Nod works. For work that takes more than a few seconds, Nod says in one line what it will do, then answers. While it works, a bubble from Nod at the bottom of the chat shows what it's doing right now, such as "Found two flights under budget, checking seats now", and the answer replaces it. Tasks you started show there too, with their title. In Telegram you see **typing…** and the same line as a live draft, and in WhatsApp **typing…**. None of this sends you a notification; see [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
+You don't have to wait. The message box stays open while Nod works. For work that takes more than a few seconds, Nod says in one line what it will do, then answers. While it works, a bubble from Nod at the bottom of the chat shows what it's doing right now, such as "Found two flights under budget, checking seats now", and the answer replaces it. Tasks you started show there too, with their title. In Telegram you see **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works), and in WhatsApp **typing…**. None of this sends you a notification; see [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 
 Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat. Substantial work with several steps gets a saved task session, even when it can finish in one sitting. Work that waits on someone or something, runs alongside other jobs, or that you ask Nod to track also gets a task. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
+
+## Notice new messages on macOS
+
+With desktop notifications enabled, Nod's Dock badge shows how many replies you haven't read, up to **99+**. It stays visible after a banner disappears, while the window is closed, and when you reopen Nod. Read the latest messages in Chat to clear it; opening another screen doesn't clear it.
+
+A new reply briefly bounces the Dock icon while Nod is in the background. Quiet hours suppress banners and bouncing, but keep the unread badge. Turning off desktop notifications clears the badge; turning them on restores unread replies.
+
+macOS controls whether badges appear. In **System Settings > Notifications > Nod**, allow notifications and enable **Badge application icon**.
 
 ## Answer Nod's questions
 
