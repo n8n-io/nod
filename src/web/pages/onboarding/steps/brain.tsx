@@ -229,7 +229,7 @@ function Waiting({ c }: { c: Connect }) {
       <Button
         variant="ghost"
         size="sm"
-        disabled={c.flow.pending}
+        disabled={c.locked}
         onClick={() => void c.flow.cancel().then((done) => done && setCallback(''))}
       >
         Cancel
@@ -259,11 +259,11 @@ function Waiting({ c }: { c: Connect }) {
               placeholder="Paste the address here"
               aria-label="Sign-in address"
               value={callback}
-              disabled={c.models.busy}
+              disabled={c.locked}
               data-analytics-private
               onChange={(event) => setCallback(event.target.value)}
             />
-            <Button type="submit" variant="outline" disabled={c.models.busy}>
+            <Button type="submit" variant="outline" disabled={c.locked}>
               Finish
             </Button>
           </form>
@@ -732,7 +732,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
                         type="button"
                         className="ob-brain-back"
                         aria-label="All providers"
-                        disabled={c.flow.pending || c.checking}
+                        disabled={c.locked}
                         onClick={back}
                       >
                         <ChevronLeft size={16} aria-hidden="true" />
@@ -758,7 +758,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         show={revealed >= 3}
         onBack={view === 'setup' ? back : (keepCurrent ?? onBack)}
         backLabel={keepCurrent ? 'Keep current' : 'Back'}
-        busy={c.flow.pending || c.checking}
+        busy={c.locked}
         onNext={onNext}
         nextDisabled={!c.ready || c.models.busy || c.checking || c.signingIn}
       />
