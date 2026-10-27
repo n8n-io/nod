@@ -88,6 +88,8 @@ The sales PDF and bank document cases check delivered attachments through the ow
 
 The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
 
+Controlled cases restrict browser and server-side web tools to the case's synthetic sites. Each redirect must stay within those sites. Model requests and harness control requests use a separate path. Live-tier cases keep access to public sites through the normal network guard.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.

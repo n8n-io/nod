@@ -1,6 +1,8 @@
 import type { Agent, ModelUsageObservation, RuntimeObservation } from '../../src/ports/agent.ts';
+import { withFixtureWebRequest } from './world/fixture-fetch.ts';
 
 export type Observation = RuntimeObservation | ModelUsageObservation;
+const webTools = new Set(['web_search', 'source_check', 'fetch_content', 'get_search_content']);
 
 function redactedInput(name: string, input: unknown) {
   const action = (input as { action?: unknown } | null)?.action;
@@ -57,6 +59,13 @@ export function createCapture(proactiveBaseline = false) {
           const { nextMessages } = options;
           const session = await base.open({
             ...options,
+            runTool: (name, params, run, metadata) =>
+              options.runTool(
+                name,
+                params,
+                () => (webTools.has(name) ? withFixtureWebRequest(run) : run()),
+                metadata,
+              ),
             ...(proactiveBaseline && options.restricted
               ? {
                   systemPrompt: proactiveBaselineInstructions,

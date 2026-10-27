@@ -4,6 +4,7 @@ import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
+import https from 'node:https';
 import { connect as tlsConnect } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
+import type { AgentSessionOptions } from '../../src/ports/agent.ts';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
@@ -48,8 +50,8 @@ import { createSession, type Session } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
-import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
-import { page, serveSites } from '../src/world/sites.ts';
+import { routeFixtureHosts, withFixtureWebRequest } from '../src/world/fixture-fetch.ts';
+import { page, redirect, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localDate, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
@@ -1189,6 +1191,11 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
     assert.equal(guarded, 0);
     await assert.rejects(guardedFetch('https://unlisted.fixture.example.net/'));
     assert.ok(guarded > 0);
+    const before = guarded;
+    await assert.rejects(
+      withFixtureWebRequest(() => guardedFetch('https://unlisted.fixture.example.net/')),
+    );
+    assert.ok(guarded > before);
   } finally {
     unroute();
     await sites.close();
@@ -1196,6 +1203,111 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
+});
+
+test('controlled web tools refuse outside requests and redirects while model transport stays available', async (t) => {
+  let outsideRequests = 0;
+  const outside = createServer((_request, response) => {
+    outsideRequests++;
+    response.end('Synthetic model endpoint');
+  });
+  await new Promise<void>((resolve) => outside.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => outside.close(() => resolve())));
+  const address = outside.address() as { port: number };
+  const outsideUrl = `http://127.0.0.1:${address.port}/model`;
+  const host = 'book.fixture.example.net';
+  const sites = await serveSites({
+    [host]: ({ url, request }) =>
+      url.pathname === '/escape'
+        ? redirect(outsideUrl)
+        : url.pathname === '/move'
+          ? redirect('/value')
+          : url.pathname === '/post'
+            ? { ...redirect('/value'), status: 303 }
+            : page('Fixture', `<p>${request.method}</p>`),
+  });
+  t.after(() => sites.close());
+  const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`, true);
+  t.after(unroute);
+  let guarded = 0;
+  const dispatcher = new Dispatcher1Wrapper(
+    new Connections({
+      connect: (_options, callback) => {
+        guarded++;
+        callback(new Error('Synthetic public network guard.'), null);
+      },
+    }),
+  );
+  t.after(() => dispatcher.close());
+  let runTool!: AgentSessionOptions['runTool'];
+  await createCapture()
+    .agent({
+      open: async (options) => {
+        runTool = options.runTool;
+        return { resumed: false, prompt: async () => {}, abort() {}, dispose() {} };
+      },
+      dispose() {},
+    })
+    .open({
+      turnId: 'synthetic-web',
+      sessionId: 'synthetic-web',
+      runTool: (_name, _params, run) => run(),
+    } as AgentSessionOptions);
+  const empty = { content: [] };
+  for (const name of ['web_search', 'source_check', 'fetch_content', 'get_search_content']) {
+    await runTool(
+      name,
+      {},
+      async () => {
+        await assert.rejects(fetch(outsideUrl), /External websites/);
+        assert.throws(() => httpRequest(outsideUrl), /External websites/);
+        assert.throws(() => https.get('https://outside.fixture.example.net/'), /External websites/);
+        return empty;
+      },
+      { nested: true },
+    );
+  }
+  await runTool('fetch_content', {}, async () => {
+    const response = await fetch(`https://${host}/move`, { dispatcher } as RequestInit);
+    assert.equal(response.url, `https://${host}/value`);
+    assert.equal(response.redirected, true);
+    assert.match(await response.text(), /GET/);
+    const posted = await fetch(
+      new Request(`https://${host}/post`, {
+        method: 'POST',
+        body: 'Synthetic form',
+      }),
+    );
+    assert.match(await posted.text(), /GET/);
+    await assert.rejects(fetch(`https://${host}/escape`), /External websites/);
+    const body = await new Promise<string>((resolve, reject) => {
+      https
+        .get(
+          {
+            hostname: host,
+            path: '/value',
+            lookup: (_host, _options, callback) =>
+              callback(new Error('Fixture route was not used.'), '', 0),
+          },
+          (response) => {
+            let text = '';
+            response.on('data', (part) => (text += part));
+            response.on('end', () => resolve(text));
+          },
+        )
+        .on('error', reject);
+    });
+    assert.match(body, /GET/);
+    return empty;
+  });
+  assert.equal(guarded, 0);
+  assert.equal(outsideRequests, 0);
+  assert.equal(await (await fetch(outsideUrl)).text(), 'Synthetic model endpoint');
+  assert.equal(outsideRequests, 1);
+  await assert.rejects(
+    fetch('https://outside.fixture.example.net/', { dispatcher } as RequestInit),
+  );
+  assert.equal(guarded, 1);
 });
 
 test('the two-account fixture serves navigation and requires a logout between accepted logins', async () => {

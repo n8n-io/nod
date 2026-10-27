@@ -77,7 +77,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     ...world.sites,
   };
   const sites = await serveSites(hosted, address);
-  const unroute = routeFixtureHosts(Object.keys(hosted), `http://${address}:${sites.port}`);
+  const unroute = routeFixtureHosts(
+    Object.keys(hosted),
+    `http://${address}:${sites.port}`,
+    definition.tier !== 'live',
+  );
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   let judgeLlm: Llm | undefined;
