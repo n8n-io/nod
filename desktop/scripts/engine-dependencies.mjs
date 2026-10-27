@@ -91,9 +91,10 @@ export async function copyEngineDependencies({
     const normalized = path.replaceAll('\\', '/');
     const name = basename(path);
     const parent = basename(dirname(path));
+    if (parent === 'node_modules' && name.startsWith('.') && name !== '.bin') return false;
     if (/\.(?:map|tsbuildinfo)$|\.d\.(?:ts|mts|cts)$/.test(name)) return false;
     if (
-      ['.pnpm', '.vite-temp', '.github', '.gitlab', '.husky', '@types'].includes(name) ||
+      ['.github', '.gitlab', '.husky', '@types'].includes(name) ||
       /^(?:tsconfig(?:\.[^.]+)*\.json|pnpm-lock\.yaml|package-lock\.json|yarn\.lock|\.npmignore)$/.test(
         name,
       )

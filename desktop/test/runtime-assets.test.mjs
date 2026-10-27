@@ -1480,6 +1480,9 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
   const dependency = join(source, 'node_modules', 'synthetic-extension');
   await mkdir(join(dependency, 'assets'), { recursive: true });
   await mkdir(join(source, 'node_modules', '.bin'));
+  await mkdir(join(source, 'node_modules', '.vite'));
+  await writeFile(join(source, 'node_modules', '.vite', 'build.mjs'), 'Synthetic build cache');
+  await writeFile(join(source, 'node_modules', '.modules.yaml'), 'Synthetic package metadata');
   await writeFile(
     join(dependency, 'package.json'),
     JSON.stringify({ name: 'synthetic-extension', type: 'module', exports: './index.mjs' }),
@@ -1570,6 +1573,8 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'synthetic-tool',
     'synthetic-helper',
     '.bin/tool',
+    '.vite',
+    '.modules.yaml',
     'onnxruntime-node/bin/napi-v3/linux',
     'onnxruntime-node/bin/napi-v3/win32',
     'onnxruntime-node/bin/napi-v3/darwin/x64',
