@@ -14,6 +14,7 @@ import {
   LoaderCircle,
 } from '../../../components/icons';
 import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../../shared/models';
+import { modelKeyError } from '../../../../shared/model-keys';
 import {
   modelProviderInfo,
   modelProviderNames,
@@ -39,7 +40,7 @@ import {
   useModels,
   type KeySettings,
 } from '../../../hooks/use-models';
-import { api, ApiError, errorMessage } from '../../../lib/api';
+import { api, errorMessage } from '../../../lib/api';
 import { pageDataCache } from '../../../lib/page-data-cache';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
@@ -66,8 +67,6 @@ const placeholders: Partial<Record<ModelProvider, string>> = {
 const depth = { list: 0, setup: 1, done: 2 } as const;
 
 type View = keyof typeof depth;
-
-const invalidKey = 'That key didn’t work. Check it and try again.';
 
 function signsIn(provider: ModelProvider): provider is SignInProvider {
   return provider === 'openai' || provider === 'openrouter';
@@ -124,16 +123,12 @@ function useConnect() {
     if (submitting.current) return false;
     const value = key.trim();
     const endpoint = provider === 'compatible';
-    const detailed =
-      endpoint ||
-      ['amazon-bedrock', 'azure', 'cloudflare-workers-ai', 'cloudflare-ai-gateway'].includes(
-        provider,
-      );
     if (endpoint && !url.trim()) return (setKeyError('Enter the server address first.'), false);
     if (!keySettingsReady(provider, settings))
       return (setKeyError('Fill in every field first.'), false);
     if (!endpoint && !value) return (setKeyError('Paste your API key first.'), false);
-    if (!endpoint && value.length < 8) return (setKeyError(invalidKey), false);
+    const formatError = modelKeyError(provider, value);
+    if (formatError) return (setKeyError(formatError), false);
     clearError();
     submitting.current = true;
     setChecking(true);
@@ -152,11 +147,7 @@ function useConnect() {
       setFresh(result.connections.at(-1)?.id);
       return true;
     } catch (cause) {
-      setKeyError(
-        cause instanceof ApiError && cause.status === 400 && !detailed
-          ? invalidKey
-          : errorMessage(cause),
-      );
+      setKeyError(errorMessage(cause));
       return false;
     } finally {
       submitting.current = false;

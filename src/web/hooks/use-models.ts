@@ -66,7 +66,10 @@ export function useModels() {
   const page = usePageData<ModelsResponse>('/api/models');
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState<{ message: string; path?: string }>({ message: '' });
+  function setError(message: string) {
+    setFailure({ message });
+  }
   async function change(path: string, method: string, body?: unknown) {
     if (pending.current) return false;
     pending.current = true;
@@ -80,7 +83,7 @@ export function useModels() {
       page.update(() => result);
       return true;
     } catch (cause) {
-      setError(errorMessage(cause));
+      setFailure({ message: errorMessage(cause), path });
       void page.refresh();
       return false;
     } finally {
@@ -88,7 +91,14 @@ export function useModels() {
       setBusy(false);
     }
   }
-  return { ...page, busy, error: error || page.error, setError, change };
+  return {
+    ...page,
+    busy,
+    error: failure.message || page.error,
+    errorPath: failure.message ? failure.path : undefined,
+    setError,
+    change,
+  };
 }
 
 export function modelReady(models: ModelsResponse | null | undefined) {
