@@ -182,6 +182,10 @@ function text(value: string, marks: JSONContent['marks'] = []): JSONContent[] {
     ]);
 }
 
+function isHtmlBreak(node: PhrasingContent | undefined) {
+  return node?.type === 'html' && ['<br>', '<br/>', '<br />'].includes(node.value);
+}
+
 function readInline(
   nodes: PhrasingContent[],
   marks: NonNullable<JSONContent['marks']> = [],
@@ -189,7 +193,7 @@ function readInline(
   const result: JSONContent[] = [];
   let underline = 0;
   let closing = nodes.filter((node) => node.type === 'html' && node.value === '</u>').length;
-  for (const node of nodes) {
+  for (const [index, node] of nodes.entries()) {
     if (node.type === 'html' && node.value === '<u>' && closing > 0) {
       underline++;
       continue;
@@ -200,12 +204,16 @@ function readInline(
       continue;
     }
     const active = underline ? [...marks, { type: 'underline' }] : marks;
-    if (
-      node.type === 'break' ||
-      (node.type === 'html' && ['<br>', '<br/>', '<br />'].includes(node.value))
-    )
-      result.push({ type: 'hardBreak' });
-    else if (node.type === 'text' || node.type === 'html') result.push(...text(node.value, active));
+    if (node.type === 'break' || isHtmlBreak(node)) result.push({ type: 'hardBreak' });
+    else if (node.type === 'text' || node.type === 'html')
+      result.push(
+        ...text(
+          node.type === 'text' && isHtmlBreak(nodes[index - 1])
+            ? node.value.replace(/^\r?\n/, '')
+            : node.value,
+          active,
+        ),
+      );
     else if (node.type === 'inlineCode')
       result.push({ type: 'text', text: node.value, marks: [...active, { type: 'code' }] });
     else if (node.type === 'link')
