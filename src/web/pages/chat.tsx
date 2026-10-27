@@ -48,6 +48,7 @@ import {
   collapseScreenshotMessages,
   mergeMessages,
   messagesAreGrouped,
+  suggestedTaskStatus,
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
@@ -401,30 +402,6 @@ export function Chat({
   const files = useMemo(() => conversationFiles(visibleMessages), [fileKey]);
   const planning =
     state.planningTasks === true && !allMessages.some((message) => message.suggestions);
-  function taskStatus(task: SuggestedTask, after: number) {
-    const sent = allMessages
-      .slice(after + 1)
-      .find((message) => message.role === 'user' && message.text === task.title);
-    if (!sent) return 'idle';
-    const tasks = (state.tasks ?? []).filter((item) =>
-      allMessages.some(
-        (message) => message.id === item.messageId && message.turnId === sent.turnId,
-      ),
-    );
-    if (tasks.length) {
-      if (tasks.every((item) => item.status === 'done')) return 'done';
-      if (tasks.some((item) => item.status === 'failed' || item.status === 'cancelled'))
-        return 'idle';
-      return tasks.some((item) => item.status === 'queued' || item.status === 'working')
-        ? 'working'
-        : 'waiting';
-    }
-    const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
-    if (!turn) return persistedIds.has(sent.id) ? 'sent' : 'working';
-    if (turn.status === 'succeeded') return 'sent';
-    if (turn.status === 'waiting') return 'waiting';
-    return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
-  }
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -1155,9 +1132,11 @@ export function Chat({
                       suggestions={message.suggestions}
                       connections={connections ?? []}
                       status={(task) =>
-                        taskStatus(
-                          task,
+                        suggestedTaskStatus(
+                          { messages: allMessages, tasks: state.tasks, turns: state.turns },
+                          task.title,
                           allMessages.findIndex((item) => item.id === message.id),
+                          persistedIds,
                         )
                       }
                       disabled={
