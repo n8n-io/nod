@@ -140,19 +140,33 @@ export function createTasks(options: {
   ): Promise<Task[]> {
     const rows = (
       await client.query<Row>(
-        `SELECT t.id,t.title,t.done_when,t.now_text,t.result,t.state,t.waiting_for,t.next_check,
+        `WITH ranked AS (
+           SELECT t.*,row_number() OVER (ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id) AS position
+           FROM tasks t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
+           WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
+             AND ($4::uuid IS NULL OR u.thread_id=$4)
+         )
+         SELECT t.id,t.title,t.done_when,t.now_text,t.result,t.state,t.waiting_for,t.next_check,
            t.message_id,t.steps,t.step_index,t.revision,t.applied_revision,
            t.created_at,t.updated_at,t.closed_at,COALESCE((SELECT r.status FROM turns r WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'),u.status) AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
              AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
            q.text AS question,q.id AS question_message_id
-         FROM tasks t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
+         FROM ranked t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT m.id,m.text FROM messages m
            WHERE u.status='waiting' AND m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1) q ON true
-         WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
-           AND ($4::uuid IS NULL OR u.thread_id=$4)
-         ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
+         WHERE t.position<=100 OR t.source_message_id IN (
+           SELECT requested.id FROM messages offer
+           CROSS JOIN LATERAL jsonb_array_elements(offer.suggestions->'tasks') idea
+           CROSS JOIN LATERAL (
+             SELECT m.id FROM messages m WHERE m.owner_id=offer.owner_id AND m.thread_id=offer.thread_id
+               AND m.role='user' AND m.text=idea->>'title' AND (m.created_at,m.id)>(offer.created_at,offer.id)
+             ORDER BY m.created_at,m.id LIMIT 1
+           ) requested
+           WHERE offer.owner_id=$1 AND offer.suggestions IS NOT NULL
+         )
+         ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id`,
         [ownerId, filter.id ?? null, filter.closed ?? false, filter.thread ?? null],
       )
     ).rows;

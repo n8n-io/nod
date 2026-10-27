@@ -283,7 +283,6 @@ function AuthenticatedApp({
   onFeedbackHandled(): void;
 }) {
   const feedbackDiscoveryKey = `nod.feedback.discovery.${session.user!.id}` as const;
-  const firstOnboarding = useRef(!session.settings!.onboardingCompleted);
   const [feedbackDiscovery, setFeedbackDiscovery] = useState(
     () => readUiPreference(feedbackDiscoveryKey) === 'pending',
   );
@@ -483,11 +482,6 @@ function AuthenticatedApp({
               await onAccountUpdate({ onboardingCompleted: true });
             if (desktopSettingsAvailable())
               await saveDesktopSettings({ onboardingCompleted: true });
-            if (firstOnboarding.current && readUiPreference(feedbackDiscoveryKey) !== 'dismissed') {
-              writeUiPreference(feedbackDiscoveryKey, 'pending');
-              setFeedbackDiscovery(true);
-            }
-            firstOnboarding.current = false;
             setFinishingOnboarding(false);
             if (replayingOnboarding(path)) navigate('/');
           }}
