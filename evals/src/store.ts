@@ -8,9 +8,9 @@ import { repository } from './stack.ts';
 export const resultsRoot = (override?: string) =>
   override ?? join(repository, '.local', 'capability-evals');
 
-export async function readAttempts(directory: string) {
+export async function readAttempts(directory: string, expected?: Pick<AttemptResult, 'worldTime'>) {
   const names = await readdir(join(directory, 'attempts')).catch(() => [] as string[]);
-  return (
+  const attempts = (
     await Promise.all(
       names
         .filter((name) => name.endsWith('.json'))
@@ -20,6 +20,9 @@ export async function readAttempts(directory: string) {
         ),
     )
   ).sort((a, b) => a.scenario.localeCompare(b.scenario) || a.attempt - b.attempt);
+  if (expected && attempts.some((attempt) => attempt.worldTime !== expected.worldTime))
+    throw new Error('Saved attempts use a different source time. Choose a new run label.');
+  return attempts;
 }
 
 export async function loadRun(root: string, label: string) {

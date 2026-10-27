@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
+import { zipSync } from 'fflate';
+import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import pg from 'pg';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import type { AgentSessionOptions } from '../../src/ports/agent.ts';
@@ -39,7 +41,14 @@ import {
   showsNumber,
   urlsGrounded,
 } from '../src/checks.ts';
-import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
+import {
+  createSimulator,
+  judgeCriteria,
+  simulatorFailure,
+  withFallback,
+  type Llm,
+  type LlmRequest,
+} from '../src/judge.ts';
 import { createCapture, proactiveBaselineInstructions } from '../src/capture.ts';
 import { summarizePopulation } from '../src/proactivity.ts';
 import { select } from '../src/run.ts';
@@ -53,6 +62,7 @@ import { storyCard } from '../src/story.ts';
 import { facts, leaderboard } from '../src/writeup.ts';
 import { meetsMinimumPassRate } from '../src/commands.ts';
 import { rejudge } from '../src/rejudge.ts';
+import { readAttempts } from '../src/store.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
@@ -925,6 +935,26 @@ test('pass@k and pass^k follow the unbiased estimators', () => {
   assert.equal(passAtK(2, 2, 3), null);
 });
 
+test('saved attempts cannot resume under a different source time', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-resume-time-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'attempts'));
+  const file = join(directory, 'attempts', 'reply-drafts.1.json');
+  const worldTime = '2026-10-27T09:59:07.000Z';
+  const saved = JSON.stringify(attempt('reply-drafts', 'pass', { worldTime }));
+  await writeFile(file, saved);
+  assert.equal((await readAttempts(directory, { worldTime })).length, 1);
+  await assert.rejects(
+    readAttempts(directory, { worldTime: '2026-10-28T09:59:07.000Z' }),
+    /source time/,
+  );
+  await assert.rejects(readAttempts(directory, {}), /source time/);
+  assert.equal(await readFile(file, 'utf8'), saved);
+  await writeFile(file, JSON.stringify(attempt('reply-drafts', 'pass')));
+  assert.equal((await readAttempts(directory, {})).length, 1);
+  await assert.rejects(readAttempts(directory, { worldTime }), /source time/);
+});
+
 const failedCheck = (group: 'task' | 'product') => ({
   id: `${group}-check`,
   kind: 'judge' as const,
@@ -1457,6 +1487,10 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   app.get('/api/artifacts/delivered', (_request, reply) =>
     reply.type('application/pdf').send(file),
   );
+  const jsonFile = Buffer.from('{ "total": 45.50, "items": [1, 2] }\n');
+  app.get('/api/artifacts/data', (_request, reply) =>
+    reply.type('application/json').send(jsonFile),
+  );
   await app.listen({ host: '127.0.0.1', port });
   const body = { onboardingCompleted: true };
   let calls = 0;
@@ -1513,6 +1547,20 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   attachment.url = '/api/artifacts/delivered';
   attachment.size++;
   assert.deepEqual(await deliveredFiles(run), []);
+  Object.assign(attachment, {
+    name: 'data.json',
+    mimeType: 'application/json',
+    url: '/api/artifacts/data',
+    size: jsonFile.length,
+  });
+  assert.deepEqual(
+    (await deliveredFiles(run)).map((item) => item.bytes),
+    [jsonFile],
+  );
+  assert.deepEqual((await session.api('GET', attachment.url)).body, {
+    total: 45.5,
+    items: [1, 2],
+  });
 });
 
 test('bank document grading rejects changed account data and amounts in downloaded PDFs', async (t) => {
@@ -1566,6 +1614,31 @@ test('bank document grading rejects changed account data and amounts in download
   const notice = await readFile(files[3]);
   await writeFile(files[3], notice.toString('latin1').replace('3,184.60', '9,999.99'), 'latin1');
   assert.equal((await copies.check(run)).pass, false);
+  await writeFile(files[3], notice);
+  const delivery = definition.expect(world).find((item) => item.id === 'documents-reach-the-owner');
+  assert.ok(delivery?.kind === 'check');
+  let archive = Buffer.from(
+    zipSync(
+      Object.fromEntries(
+        await Promise.all(
+          files.map(async (path) => [path.split('/').pop()!, await readFile(path)]),
+        ),
+      ),
+    ),
+  );
+  const attachment = {
+    id: 'bank-archive',
+    name: 'Taxes.zip',
+    mimeType: 'application/zip',
+    size: archive.length,
+    url: '/api/artifacts/bank-archive',
+  };
+  run.messages = [{ role: 'assistant', text: '', at: 1, turnId: null, attachments: [attachment] }];
+  run.api = async () => ({ status: 200, body: archive });
+  assert.equal((await delivery.check(run)).pass, true);
+  archive = Buffer.from('This is not a ZIP archive.');
+  attachment.size = archive.length;
+  assert.equal((await delivery.check(run)).pass, false);
 });
 
 test('approval language grading distinguishes refusal from an unresolved decision', async () => {
@@ -2313,6 +2386,49 @@ test('a cut-off background check does not fail a finished task', async (t) => {
   assert.equal(stops, 0);
 });
 
+test(
+  'observer activity cannot hide a stalled requested turn',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_eval_progress_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await pool.query(`CREATE TABLE turns(id text PRIMARY KEY,thread_id text,status text,proactive boolean);
+    CREATE TABLE turn_events(turn_id text);
+    CREATE TABLE messages(thread_id text,turn_id text);
+    INSERT INTO turns VALUES('requested','thread','running',false),('observer','thread','running',true)`);
+    const timer = setInterval(
+      () => void pool.query("INSERT INTO turn_events VALUES('observer')").catch(() => {}),
+      25,
+    );
+    t.after(() => clearInterval(timer));
+    let stops = 0;
+    const session = createSession({
+      stack: {
+        pool,
+        request: async (path: string) => {
+          if (path === '/api/thread/stop') stops++;
+          return Response.json(path === '/api/state' ? { threadId: 'thread' } : {});
+        },
+      } as unknown as Stack,
+      user: {},
+      deadline: Date.now() + 5000,
+      stallSeconds: 0.05,
+    });
+    await assert.rejects(session.say('Prepare the result.'), /made no progress/);
+    assert.equal(stops, 1);
+  },
+);
+
 test('a nudge must open the same saved result that its link names', async () => {
   const issues = ['first', 'second'].map((id) => ({
     id,
@@ -2475,6 +2591,77 @@ test('rejudging refuses changed scenario evidence before creating a model or alt
     /Scenario trust-repair-vague-delegation changed its judge evidence/,
   );
   assert.deepEqual(attempts, original);
+});
+
+test('rejudging keeps only the current attempt evidence from the answering fallback', async (t) => {
+  t.mock.method(
+    ModelRuntime,
+    'create',
+    async () =>
+      ({
+        setRuntimeApiKey: async () => {},
+        getModel: () => ({}),
+        completeSimple: async () => ({
+          stopReason: 'error',
+          content: [],
+          errorMessage: 'Usage policy refusal',
+          usage: { totalTokens: 1, cost: { total: 0.01 } },
+        }),
+      }) as never,
+  );
+  const replies: string[] = [];
+  const requests: LlmRequest[] = [];
+  const fallback: Llm = {
+    model: { provider: 'anthropic', name: 'fallback', apiKey: '' },
+    replies,
+    requests,
+    spent: () => ({ tokens: replies.length, costUsd: replies.length * 0.02 }),
+    complete: async (_system, input) => {
+      const id = randomUUID();
+      const text = JSON.stringify({
+        verdicts: [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => ({
+          id: match[1],
+          reasoning: id,
+          applicable: true,
+          pass: false,
+        })),
+      });
+      replies.push(text);
+      requests.push({
+        id,
+        model: 'anthropic/fallback',
+        startedAt: new Date().toISOString(),
+        status: 'stop',
+        inputBytes: input.length,
+        maxTokens: 4096,
+        tokens: 1,
+        costUsd: 0.02,
+      });
+      return text;
+    },
+  };
+  const result = await rejudge({
+    attempts: [1, 2].map((n) =>
+      attempt('reply-drafts', 'pass', { attempt: n, fingerprint: fingerprint('reply-drafts') }),
+    ),
+    reviews: {},
+    judge: { provider: 'openai', name: 'primary', apiKey: '' },
+    fallback,
+    at: Date.UTC(2026, 9, 27),
+  });
+  for (const [index, item] of result.attempts.entries()) {
+    assert.equal(item.status, 'fail');
+    assert.deepEqual(item.judgeReplies, replies.slice(index * 2, index * 2 + 2));
+    assert.deepEqual(
+      item.judgeRequests?.filter((request) => request.model === 'anthropic/fallback'),
+      requests.slice(index * 2, index * 2 + 2),
+    );
+    assert.equal(
+      item.judgeRequests?.filter((request) => request.model === 'openai/primary').length,
+      2,
+    );
+    assert.ok(Math.abs(item.judgeCostUsd! - 0.06) < 1e-9);
+  }
 });
 
 test('a missed wording check is decided by the judge, never by a not-applicable verdict', async () => {
@@ -3225,6 +3412,21 @@ test('persisted background sessions and child captures count each request and to
   assert.equal((crowded.match(/TOOL CALL apps/g) ?? []).length, 43);
   assert.throws(() => run.transcript(100), /complete conversation/);
   assert.ok(run.transcript(Infinity).includes('r'.repeat(5000)));
+  for (const role of ['user', 'assistant'] as const) {
+    const name = `${role}-only.json`;
+    run.messages.push({
+      role,
+      text: '',
+      at: start + 42_000,
+      turnId: 'chat',
+      attachments: [
+        { id: name, name, mimeType: 'application/json', size: 2, url: `/api/artifacts/${name}` },
+      ],
+    });
+    const text = run.transcript();
+    assert.ok(text.includes(name));
+    assert.ok(text.includes(`${role.toUpperCase()} {"turnId":"chat"`));
+  }
 });
 
 test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {

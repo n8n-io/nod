@@ -218,11 +218,18 @@ export default scenario({
       ),
       check('documents-reach-the-owner', async (run) => {
         const files = await deliveredFiles(run);
-        const contents = files.flatMap((file) =>
-          /\.zip$/i.test(file.name)
-            ? Object.values(unzipSync(file.bytes)).map((bytes) => Buffer.from(bytes))
-            : [file.bytes],
-        );
+        const contents: Buffer[] = [];
+        for (const file of files) {
+          try {
+            contents.push(
+              ...(/\.zip$/i.test(file.name)
+                ? Object.values(unzipSync(file.bytes)).map((bytes) => Buffer.from(bytes))
+                : [file.bytes]),
+            );
+          } catch {
+            return { pass: false, evidence: `Unreadable archive: ${file.name}` };
+          }
+        }
         const missing: string[] = [];
         for (const path of folder(run)) {
           const bytes = await run.read(path);

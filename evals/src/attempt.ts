@@ -7,6 +7,7 @@ import {
   providerRefusal,
   simulatorFailure,
   type Llm,
+  type LlmRequest,
 } from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
@@ -88,6 +89,13 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   let judgeLlm: Llm | undefined;
+  let simulatorLlm: Llm | undefined;
+  const evaluationCost = () => {
+    const costs = [judgeLlm, simulatorLlm].flatMap((llm) => (llm ? [llm.spent().costUsd] : []));
+    return costs.every((cost) => cost === null)
+      ? null
+      : costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0);
+  };
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
@@ -104,9 +112,10 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       `${basename(spec.outFile, '.json')}.judge.jsonl`,
     );
     await mkdir(dirname(receipts), { recursive: true, mode: 0o700 });
-    const llm = (judgeLlm = await createLlm(judgeModel, (request) =>
-      appendFile(receipts, JSON.stringify(request) + '\n', { mode: 0o600 }),
-    ));
+    const record = (request: LlmRequest) =>
+      appendFile(receipts, JSON.stringify(request) + '\n', { mode: 0o600 });
+    const llm = (judgeLlm = await createLlm(judgeModel, record));
+    if (definition.user.persona) simulatorLlm = await createLlm(judgeModel, record, 'simulator');
     stack = await (starting = startStack({
       model,
       observations: world.observations,
@@ -128,7 +137,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const session = createSession({
       stack,
       user: definition.user,
-      simulator: definition.user.persona ? createSimulator(llm) : undefined,
+      simulator: simulatorLlm ? createSimulator(simulatorLlm) : undefined,
       deadline: taskStarted + definition.seconds * 1000,
       world,
     });
@@ -215,9 +224,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       costUsd: trace.usage.costUsd,
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
-      judgeCostUsd: llm.spent().costUsd,
+      judgeCostUsd: evaluationCost(),
       judgeReplies: llm.replies,
       judgeRequests: llm.requests,
+      simulatorReplies: simulatorLlm?.replies,
+      simulatorRequests: simulatorLlm?.requests,
       final: trace.final,
       transcript: trace.transcript(Infinity),
       groundTruth: truth,
@@ -243,9 +254,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       blame: blame(message),
       error: message,
       seconds: (Date.now() - started) / 1000,
-      judgeCostUsd: judgeLlm?.spent().costUsd ?? null,
+      judgeCostUsd: evaluationCost(),
       judgeReplies: judgeLlm?.replies,
       judgeRequests: judgeLlm?.requests,
+      simulatorReplies: simulatorLlm?.replies,
+      simulatorRequests: simulatorLlm?.requests,
     };
   } finally {
     await release();

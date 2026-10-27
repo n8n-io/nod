@@ -124,9 +124,13 @@ export function routeFixtureHosts(hosts: string[], origin: string, hermetic = fa
       Object.defineProperty(response, 'redirected', { value: redirects > 0 });
       if (![301, 302, 303, 307, 308].includes(response.status) || current.redirect === 'manual')
         return response;
-      if (current.redirect === 'error') throw new Error('The fixture returned a redirect.');
+      if (current.redirect === 'error') {
+        await response.body?.cancel();
+        throw new Error('The fixture returned a redirect.');
+      }
       const location = response.headers.get('location');
       if (!location) return response;
+      await response.body?.cancel();
       if (redirects >= 20) throw new Error('The fixture returned too many redirects.');
       const next = new URL(location, address);
       allow(next);
@@ -148,7 +152,6 @@ export function routeFixtureHosts(hosts: string[], origin: string, hermetic = fa
       if (next.origin !== address.origin)
         for (const name of ['authorization', 'cookie', 'proxy-authorization'])
           following.headers.delete(name);
-      await response.body?.cancel();
       current = following;
     }
   }) as typeof fetch;

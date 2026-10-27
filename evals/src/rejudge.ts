@@ -60,8 +60,15 @@ export async function rejudge(options: {
     }
     const checks: CheckResult[] = attempt.checks.filter((check) => check.kind === 'check');
     const spentBefore = llm.spent().costUsd;
-    const repliesBefore = primary.replies?.length ?? 0;
-    const requestsBefore = primary.requests?.length ?? 0;
+    const sources = [primary, ...(options.fallback ? [options.fallback] : [])];
+    const before = sources.map((source) => ({
+      replies: source.replies?.length ?? 0,
+      requests: source.requests?.length ?? 0,
+    }));
+    const repliesSince = () =>
+      sources.flatMap((source, index) => source.replies?.slice(before[index].replies) ?? []);
+    const requestsSince = () =>
+      sources.flatMap((source, index) => source.requests?.slice(before[index].requests) ?? []);
     const spentSince = () => {
       const now = llm.spent().costUsd;
       return now === null ? null : now - (spentBefore ?? 0);
@@ -120,8 +127,8 @@ export async function rejudge(options: {
         blame: 'infra',
         error: `Re-judging failed: ${message}`,
         judgeCostUsd: spentSince(),
-        judgeReplies: primary.replies?.slice(repliesBefore),
-        judgeRequests: primary.requests?.slice(requestsBefore),
+        judgeReplies: repliesSince(),
+        judgeRequests: requestsSince(),
       });
       continue;
     }
@@ -140,8 +147,8 @@ export async function rejudge(options: {
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
       judgeCostUsd: spentSince(),
-      judgeReplies: primary.replies?.slice(repliesBefore),
-      judgeRequests: primary.requests?.slice(requestsBefore),
+      judgeReplies: repliesSince(),
+      judgeRequests: requestsSince(),
     });
   }
   const pct = (value: number, total: number) =>

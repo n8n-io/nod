@@ -78,13 +78,13 @@ pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
-Use `--out <directory>` to save results outside the repository. Each run keeps its canary attempts and logs in its `canaries` folder. The run budget counts completed task attempts. Keep a separate total for canaries, retries, diagnosis, and incomplete attempts.
+Use `--out <directory>` to save results outside the repository. Each run keeps its canary attempts and logs in its `canaries` folder. The budget includes recorded costs for final results, including incomplete results. It excludes canaries and costs from whole-attempt retries that are replaced. Keep a separate total for canaries, retries, diagnosis and requests without a final cost record.
 
 For a comparison, set `--model` and `--judge` to different models. Capability attempts use the selected judge without a fallback model. A failed judge request leaves the attempt incomplete. Each attempt JSON file keeps the judge's replies for review.
 
-Judge request records include retries, status, input size, token limit, and available cost. They contain no prompts. If an attempt fails before grading finishes, it keeps the available judge cost and request records.
+Judge request records include retries, purpose, status, input size, token limit, and available cost. They contain no prompts. Simulator replies and requests have separate fields from judge evidence. The `judgeCostUsd` total includes both. If an attempt fails before grading finishes, it keeps their available cost and request records.
 
-The `usage` folder keeps judge request receipts as JSON Lines. A receipt is written before a request starts and after its reply. An interrupted attempt can still have cost evidence. Request IDs stay unique across whole-attempt retries.
+The `usage` folder keeps judge and simulator request receipts as JSON Lines, with a purpose on each request. A receipt is written before a request starts and after its reply. An interrupted attempt can still have cost evidence. Request IDs stay unique across whole-attempt retries.
 
 Both simulator reply paths receive the current owner request and earlier chat replies. A conversation reset starts a new request history and permits a new reply to the same question. Both paths keep the requested target unless the owner's facts support a correction. A proposed target from the assistant is not an owner fact.
 
@@ -92,11 +92,11 @@ The tax account-choice case uses a private tax adviser client portal. Its reques
 
 Each judge criterion needs one verdict with boolean result and applicability fields and a reason. Missing, duplicate, or invalid fields use the existing retry path. A reply that stays invalid is a measurement error. A valid failure stays a failure, regardless of its reason's wording.
 
-Judge transcripts keep every user and assistant message. Large tool inputs and outputs can be shortened, with each call and result kept in time order. If those records cannot fit, grading is incomplete. The attempt file keeps the full transcript for review.
+Judge transcripts keep every user and assistant message, including attachment metadata when a message has no text. Large tool inputs and outputs can be shortened, with each call and result kept in time order. If those records cannot fit, grading is incomplete. The attempt file keeps the full transcript for review.
 
-Normal conversations wait for foreground work and saved tasks. They can answer a pending owner question while the independent private observer runs. The observer does not hold a finished request open. Explicit `session.settle()` and schedule waits still wait for all running turns. Observer and schedule scenarios must use those waits when their result depends on background work.
+Normal conversations wait for foreground work and saved tasks. They can answer a pending owner question while the independent private observer runs. The observer does not hold a finished request open or reset its progress timer. Explicit `session.settle()` and schedule waits still wait for all running turns. Observer and schedule scenarios must use those waits when their result depends on background work.
 
-The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file. Each saved statement and assessment must also match the original source bytes.
+The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. File checks keep the original bytes, including JSON files. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file. An unreadable ZIP fails the delivery check. Each saved statement and assessment must also match the original source bytes.
 
 The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
 
@@ -104,7 +104,7 @@ Each attempt uses its own Pi settings directory. Parallel campaigns do not share
 
 Controlled cases restrict browser and server-side web tools to the case's synthetic sites. Each redirect must stay within those sites. Model requests and harness control requests use a separate path. Live-tier cases keep access to public sites through the normal network guard.
 
-Use `--world-time 2026-10-27T09:00:00Z` to build both sides' synthetic sources from one fixed time. The manifest and each attempt record it. This sets only the source clock; Nod's current time, deadlines, private forms, and spending controls keep the real clock. Use a source time on the run's date when the request uses words such as “today” or “tomorrow”. Without the option, sources use the current time.
+Use `--world-time 2026-10-27T09:00:00Z` to build both sides' synthetic sources from one fixed time. The manifest and each attempt record it. A resumed run refuses saved attempts with a different source time. This sets only the source clock; Nod's current time, deadlines, private forms, and spending controls keep the real clock. Use a source time on the run's date when the request uses words such as “today” or “tomorrow”. Without the option, sources use the current time.
 
 ### Commands
 

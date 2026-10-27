@@ -5,6 +5,7 @@ import { parseModel, type Model } from './stack.ts';
 
 export interface LlmRequest {
   id: string;
+  purpose?: 'judge' | 'simulator';
   model: string;
   startedAt: string;
   finishedAt?: string;
@@ -30,6 +31,7 @@ const transient =
 export async function createLlm(
   model: Model,
   record?: (request: LlmRequest) => Promise<void>,
+  purpose: 'judge' | 'simulator' = 'judge',
 ): Promise<Llm> {
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -57,6 +59,7 @@ export async function createLlm(
         if (delay) await new Promise((done) => setTimeout(done, delay));
         const request: LlmRequest = {
           id: randomUUID(),
+          purpose,
           model: `${model.provider}/${model.name}`,
           startedAt: new Date().toISOString(),
           status: 'started',

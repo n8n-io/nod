@@ -250,6 +250,7 @@ export async function runSuite(options: RunOptions) {
   const existing = await readdir(join(directory, 'attempts')).catch(() => [] as string[]);
   if (existing.length && !options.resume)
     throw new Error(`Run ${label} already exists. Choose another --label or pass --resume.`);
+  if (existing.length && options.resume) await readAttempts(directory, { worldTime });
 
   let source = repository;
   let refCommit: string | undefined;

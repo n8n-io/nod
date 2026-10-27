@@ -11,7 +11,7 @@ export async function deliveredFiles(run: Run) {
   );
   const files: Array<Artifact & { bytes: Buffer }> = [];
   for (const file of shared.values()) {
-    const response = await run.api('GET', file.url);
+    const response = await run.api('GET', file.url, undefined, true);
     if (
       response.status === 200 &&
       Buffer.isBuffer(response.body) &&

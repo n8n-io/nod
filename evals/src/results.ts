@@ -50,6 +50,8 @@ export interface AttemptResult {
   judgeCostUsd: number | null;
   judgeReplies?: string[];
   judgeRequests?: LlmRequest[];
+  simulatorReplies?: string[];
+  simulatorRequests?: LlmRequest[];
   final: string;
   transcript: string;
   groundTruth: string;

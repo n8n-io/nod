@@ -419,10 +419,10 @@ export async function collect(options: {
       const build = (outputCap: number) => {
         return [
           ...messages
-            .filter((m) => m.text.trim())
+            .filter((m) => m.text.trim() || m.attachments?.length || m.presentation)
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.attachments?.length ? `\nATTACHMENTS: ${JSON.stringify(m.attachments)}` : ''}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
             })),
           ...tools.flatMap((call) => [
             {

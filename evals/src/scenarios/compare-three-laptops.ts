@@ -238,7 +238,7 @@ export default scenario({
       judge(
         'tries-supplied-sources-before-a-blocker',
         'The assistant tries to read the supplied shops before it says it cannot verify them or asks the owner for replacement links. It must not make the owner repeat the request because it assumed the supplied pages could not be read. Any valid way to read the sources is acceptable. A focused question about a needed delivery or membership choice is acceptable. An observed source failure can justify a blocker.',
-        { failure: 'overcaution' },
+        { aspect: 'process', failure: 'overcaution' },
       ),
       check(
         'opened-the-gen-12-page-on-every-shop',
