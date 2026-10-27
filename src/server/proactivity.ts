@@ -1041,7 +1041,7 @@ export function createProactivity(options: {
     scope: string,
     signal: AbortSignal,
   ) {
-    type Seen = { sourceId: string; id: string; version: string };
+    type Seen = { sourceId: string; id: string; version: string; error?: string };
     let quiet = true;
     try {
       const [catalog, sources, evidence, saved] = await Promise.all([
@@ -1081,7 +1081,7 @@ export function createProactivity(options: {
           quiet =
             !result.nextCursor &&
             !(tools && fresh.length) &&
-            !fresh.some((record) => matters.has(`${record.sourceId} ${record.id}`));
+            !fresh.some((record) => record.error || matters.has(`${record.sourceId} ${record.id}`));
           changed.push(...fresh);
         }
       }

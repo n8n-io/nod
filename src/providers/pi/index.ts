@@ -879,6 +879,7 @@ export function createPiAgent(options: {
     },
     async dispose() {
       disposed = true;
+      await Promise.allSettled([...warming.values()].map((release) => release()));
       const results = await Promise.allSettled(
         [...active].map(async ([session, dispose]) => {
           try {

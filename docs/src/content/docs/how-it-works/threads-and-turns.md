@@ -65,7 +65,7 @@ stateDiagram-v2
 
 ## One background observer
 
-App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps the Pi history only while the model's cache is warm. A turn runs alone in that session. New signals received during work wait for its next turn.
+App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm; the transcript stays saved. A turn runs alone in that session. New signals received during work wait for its next turn.
 
 ```mermaid
 flowchart TD

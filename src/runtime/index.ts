@@ -230,6 +230,7 @@ export function createAgentRuntime(dependencies: {
     signal.addEventListener('abort', abort, { once: true });
 
     let taskResult = '';
+    let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const deliverReply = async (
       text: string,
@@ -452,7 +453,7 @@ export function createAgentRuntime(dependencies: {
           signal,
         )
       ) {
-        completed = true;
+        completed = screened = true;
         return { status };
       }
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
@@ -995,13 +996,14 @@ export function createAgentRuntime(dependencies: {
       } finally {
         await Promise.allSettled([...activeToolCalls]);
         activeTurns.delete(context.turnId);
-        await context
-          .emit(
-            waitingForUser ? 'agent_waiting' : !completed ? 'agent_failed' : 'agent_complete',
-            'Main agent',
-            { execution },
-          )
-          .catch(() => {});
+        if (!screened)
+          await context
+            .emit(
+              waitingForUser ? 'agent_waiting' : !completed ? 'agent_failed' : 'agent_complete',
+              'Main agent',
+              { execution },
+            )
+            .catch(() => {});
         if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.clear(browserId).catch(() => {});
         finished();

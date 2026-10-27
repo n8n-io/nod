@@ -49,7 +49,7 @@ export interface Run {
     waiting_reason?: string | null;
     waiting?: boolean;
     proactive?: boolean;
-    model?: boolean;
+    screened?: boolean;
     startedAt?: number;
     finishedAt?: number;
   }>;
@@ -98,7 +98,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
       turn.background &&
       turn.status === 'succeeded' &&
       turn.startedAt !== undefined &&
-      turn.model !== false &&
+      !turn.screened &&
       !captured.has(turn.id),
   );
   if (missing.length)
@@ -278,10 +278,11 @@ export async function collect(options: {
   const artifacts = (
     await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
   ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
-  const requested = new Set(
+  const screened = new Set(
     (
       await stack.pool.query(
-        "SELECT DISTINCT turn_id FROM model_usage WHERE details->>'operation'='request'",
+        `SELECT turn_id FROM model_usage WHERE turn_id IS NOT NULL GROUP BY turn_id
+        HAVING bool_or(details->>'operation'='attention') AND NOT bool_or(details->>'operation'='request')`,
       )
     ).rows.map((row: { turn_id?: string }) => row.turn_id),
   );
@@ -292,7 +293,7 @@ export async function collect(options: {
     )
   ).rows.map(({ started_at, finished_at, ...turn }) => ({
     ...turn,
-    model: requested.has(turn.id),
+    screened: screened.has(turn.id),
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));

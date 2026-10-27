@@ -67,7 +67,7 @@ export default scenario({
       check(
         'current-thread-was-read',
         (run) =>
-          run.turns.some((turn) => turn.id === world.state.turnId && turn.model === false) ||
+          run.turns.some((turn) => turn.id === world.state.turnId && turn.screened) ||
           run.tools.some(
             (tool) =>
               tool.turnId === world.state.turnId &&
