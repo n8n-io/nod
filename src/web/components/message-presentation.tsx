@@ -215,7 +215,7 @@ function Places({ visual }: { visual: Visual<'map'> }) {
               {item.url && (
                 <SourceLink href={item.url}>
                   <span>
-                    Website<span className="sr-only"> for {item.name}</span>
+                    Source<span className="sr-only"> for {item.name}</span>
                   </span>
                 </SourceLink>
               )}

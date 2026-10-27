@@ -64,7 +64,7 @@ When a visual makes an answer easier to understand, nod can include images, maps
 
 Each visual stays beside its explanation. Open **Sources** to check its references and information date. nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it at full size.
 
-Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Website** link opens its supplied reference separately.
+Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Source** link opens its supplied reference separately.
 
 Flight comparisons give each option its own numbered card, price and expandable journey. Connection airports, technical stops and supplied stop durations stay visible before you expand it. The details keep each leg of an outbound, return or multi-city journey, with supplied local dates and time zones. Airport changes and self-transfers stay visible. Missing transfer information remains unknown.
 
