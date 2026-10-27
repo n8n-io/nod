@@ -117,7 +117,7 @@ function TaskCards({
   id: string;
   suggestions: TaskSuggestions;
   connections: Connection[];
-  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
+  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'sent' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask, position: number): void;
 }) {
@@ -199,7 +199,11 @@ function TaskCards({
                       <span className="task-check" aria-hidden="true">
                         <Check size={14} strokeWidth={3} />
                       </span>
-                      {task.kind === 'ongoing' ? 'Set up' : 'Done'}
+                      {state === 'done'
+                        ? task.kind === 'ongoing'
+                          ? 'Set up'
+                          : 'Done'
+                        : 'Request sent'}
                     </span>
                   )}
                 </div>
@@ -402,9 +406,22 @@ export function Chat({
       .slice(after + 1)
       .find((message) => message.role === 'user' && message.text === task.title);
     if (!sent) return 'idle';
+    const tasks = (state.tasks ?? []).filter((item) =>
+      allMessages.some(
+        (message) => message.id === item.messageId && message.turnId === sent.turnId,
+      ),
+    );
+    if (tasks.length) {
+      if (tasks.every((item) => item.status === 'done')) return 'done';
+      if (tasks.some((item) => item.status === 'failed' || item.status === 'cancelled'))
+        return 'idle';
+      return tasks.some((item) => item.status === 'queued' || item.status === 'working')
+        ? 'working'
+        : 'waiting';
+    }
     const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
-    if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
-    if (turn.status === 'succeeded') return 'done';
+    if (!turn) return persistedIds.has(sent.id) ? 'sent' : 'working';
+    if (turn.status === 'succeeded') return 'sent';
     if (turn.status === 'waiting') return 'waiting';
     return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
   }

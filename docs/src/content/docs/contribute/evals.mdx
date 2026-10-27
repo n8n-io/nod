@@ -545,6 +545,12 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 </details>
 
+## Check first use
+
+The `onboarding-first-value` case completes setup without a required interview, selects an immediate email task, and checks the delivered draft against the source thread. The `onboarding-no-apps` case uses quotes supplied in the first request. The `onboarding-connected-*` cases check discovery and then require a useful delivered result. They keep discovery reads separate from actions after task selection.
+
+These capability cases use the account API. They do not prove that the setup controls work. Check the React app from a fresh profile as well. Keep native installation, synthetic UI checks, and live-model results separate. A greeting, saved key, or set of cards does not prove first value.
+
 ## Write a scenario
 
 Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The suite loads every file in that folder. [`invoices-overdue.ts`](https://github.com/n8n-io/nod/blob/main/evals/src/scenarios/invoices-overdue.ts) is a good example.
