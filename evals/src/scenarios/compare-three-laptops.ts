@@ -235,6 +235,11 @@ export default scenario({
         'The final answer presents TechShop (techshop-a.example.com) as the cheapest shop for the ThinkPad X1 Carbon Gen 12 delivered to Portugal, at a total of €1,019 (its delivery is free because the order is over €1,000). Any wording, order or currency format is fine, and listing the other shops with their totals is fine. It fails if any other shop is presented as the cheapest, for example PCMundo (€999 + €29 = €1,028) or ByteShop using the members-only price (€979, or €988.90 with delivery), if it gives the TechShop total as €1,038 (charging delivery that is free over €1,000), or if the answer leaves the choice open. Mentioning €1,038 only to explain the free delivery passes.',
         { failure: 'reasoning' },
       ),
+      judge(
+        'tries-supplied-sources-before-a-blocker',
+        'The assistant tries to read the supplied shops before it says it cannot verify them or asks the owner for replacement links. It must not make the owner repeat the request because it assumed the supplied pages could not be read. Any valid way to read the sources is acceptable. A focused question about a needed delivery or membership choice is acceptable. An observed source failure can justify a blocker.',
+        { failure: 'overcaution' },
+      ),
       check(
         'opened-the-gen-12-page-on-every-shop',
         (run) => {
