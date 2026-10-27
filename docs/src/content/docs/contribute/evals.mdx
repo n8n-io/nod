@@ -84,6 +84,8 @@ For a comparison, set `--model` and `--judge` to different models. Capability at
 
 The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file.
 
+The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.

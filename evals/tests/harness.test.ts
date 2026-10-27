@@ -660,6 +660,67 @@ test('draft and send are separate effects in the fake mailbox', () => {
   assert.equal(box.drafts().length, 1);
 });
 
+test('email result checks reject extra recipients, duplicate drafts and unsent copies', async () => {
+  const replies = scenarios.find((item) => item.id === 'reply-drafts')!;
+  const world = replies.world({ now: Date.now });
+  const box = world.apps!.gmail!;
+  const create = box.tools.find((tool) => tool.slug === 'GMAIL_CREATE_EMAIL_DRAFT')!;
+  const update = box.tools.find((tool) => tool.slug === 'GMAIL_UPDATE_DRAFT')!;
+  const first = {
+    recipient_email: 'Sofia Almeida <sofia.almeida@meridiancapital.example.org>',
+    thread_id: 'thread-proposal',
+    subject: 'Re: Proposal',
+    body: 'Prepared reply.',
+  };
+  const saved = create.run(first) as { id: string };
+  create.run({
+    recipient_email: 'daniel.ortiz@fieldnotes.example.net',
+    thread_id: 'thread-daniel',
+    subject: 'Re: Meeting',
+    body: 'Prepared reply.',
+  });
+  const run = quietRun(world);
+  const checks = replies.expect(world).filter((item) => item.kind === 'check' && item.required);
+  const passes = async () => {
+    for (const item of checks)
+      if (item.kind === 'check' && !(await item.check(run)).pass) return false;
+    return true;
+  };
+  assert.equal(await passes(), true);
+  update.run({ draft_id: saved.id, cc: ['other@example.test'] });
+  assert.equal(await passes(), false);
+  update.run({ draft_id: saved.id, cc: [] });
+  assert.equal(await passes(), true);
+  create.run(first);
+  assert.equal(await passes(), false);
+
+  const meeting = scenarios.find((item) => item.id === 'reschedule-and-tell')!;
+  const meetingWorld = meeting.world({ now: Date.now });
+  const meetingBox = meetingWorld.apps!.gmail!;
+  const remaining = meeting.expect(meetingWorld).find((item) => item.id === 'no-new-unsent-drafts');
+  if (remaining?.kind !== 'check') throw new Error('Missing unsent-draft check');
+  const meetingRun = quietRun(meetingWorld);
+  assert.equal((await remaining.check(meetingRun)).pass, true);
+  const draft = meetingBox.tools
+    .find((tool) => tool.slug === 'GMAIL_CREATE_EMAIL_DRAFT')!
+    .run({
+      recipient_email: 'ana.costa@meridian.example.org',
+      thread_id: 'thread-ana-review',
+      subject: 'Re: Review',
+      body: 'The review starts at 15:00.',
+    }) as { id: string };
+  meetingBox.tools
+    .find((tool) => tool.slug === 'GMAIL_REPLY_TO_THREAD')!
+    .run({
+      recipient_email: 'ana.costa@meridian.example.org',
+      thread_id: 'thread-ana-review',
+      message_body: 'The review starts at 15:00.',
+    });
+  assert.equal((await remaining.check(meetingRun)).pass, false);
+  meetingBox.tools.find((tool) => tool.slug === 'GMAIL_DELETE_DRAFT')!.run({ draft_id: draft.id });
+  assert.equal((await remaining.check(meetingRun)).pass, true);
+});
+
 test('local times are anchored in the user time zone across a daylight saving change', () => {
   const clock = (value: number) =>
     new Intl.DateTimeFormat('en-GB', {
