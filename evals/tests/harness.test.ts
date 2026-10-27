@@ -1588,6 +1588,55 @@ test('the simulated owner selects a sign-in method through the private form', as
   }
 });
 
+test('simulated question replies keep the current owner request and discard history after reset', async () => {
+  const first = randomUUID();
+  const second = randomUUID();
+  const inputs: string[] = [];
+  let waiting = false;
+  const stack = {
+    waiting: (alias: string) => `${alias}.status='waiting'`,
+    pool: {
+      query: async (sql: string) => {
+        if (sql.includes('AS waiting FROM turns'))
+          return { rows: [{ id: 'turn', waiting_reason: 'question', waiting }], rowCount: 1 };
+        if (sql.includes("role='assistant'"))
+          return { rows: [{ text: 'Should I use a different target?' }], rowCount: 1 };
+        if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
+          return { rows: [{}], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    },
+    request: async (path: string, init?: RequestInit) => {
+      if (path === '/api/state') return Response.json({ threadId: 'thread' });
+      const body = JSON.parse(String(init?.body));
+      waiting = body.text === first || body.text === second;
+      return Response.json({});
+    },
+    resetConversation: async () => {
+      waiting = false;
+    },
+  } as unknown as Stack;
+  const simulator = createSimulator({
+    complete: async (_system: string, input: string) => {
+      inputs.push(input);
+      return 'Keep the requested target.';
+    },
+  } as never);
+  const session = createSession({
+    stack,
+    simulator,
+    user: { persona: 'Use the requested target.' },
+    deadline: Date.now() + 5000,
+  });
+  await session.say(first);
+  await session.reset();
+  await session.say(second);
+  assert.equal(inputs.length, 2);
+  assert.ok(inputs[0].includes(first));
+  assert.ok(inputs[1].includes(second));
+  assert.equal(inputs[1].includes(first), false);
+});
+
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
   const safe = [
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",

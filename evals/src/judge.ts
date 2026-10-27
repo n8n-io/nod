@@ -119,7 +119,7 @@ export function parseJson(text: string): any {
 }
 
 export interface Simulator {
-  reply(persona: string, question: string): Promise<string>;
+  reply(persona: string, question: string, task?: string): Promise<string>;
   followUp(persona: string, task: string, message: string): Promise<string | undefined>;
 }
 
@@ -177,10 +177,10 @@ export function createSimulator(llm: Llm): Simulator {
       );
     });
   return {
-    async reply(persona, question) {
+    async reply(persona, question, task = '') {
       const text = await ask(
-        `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below, and share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
-        `The assistant says:\n${question}\n\nYour reply:`,
+        `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below and your own messages. Keep the target you asked for. Change it only when your own facts or messages support the change. Share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. You can only reply in this chat: you never open links, use a browser or website, or do anything outside the chat, so if the assistant asks you to, say you can't do that right now. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `What you have said so far, oldest first:\n${task}\n\nThe assistant says:\n${question}\n\nYour reply:`,
         300,
       );
       return text.trim();

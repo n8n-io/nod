@@ -312,7 +312,14 @@ export function createSession(options: {
     const reply =
       scripted?.say ??
       (user.persona && options.simulator
-        ? await options.simulator.reply(user.persona, pending.text)
+        ? await options.simulator.reply(
+            user.persona,
+            pending.text,
+            userMessages
+              .slice(taskFrom)
+              .map((message) => message.text)
+              .join('\n'),
+          )
         : undefined);
     if (!reply) {
       interactions.push({ kind: 'unanswered', text: pending.text, at });
