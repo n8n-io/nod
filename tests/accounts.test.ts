@@ -16,11 +16,135 @@ import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
+import { createDecisionModel } from '../src/providers/decisions.ts';
+import { createMailCheck } from '../src/server/mail-check.ts';
+import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { loadLinkPreview } from '../src/web/lib/link-previews.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
+
+test('unavailable decisions avoid ledger reads and retain dynamic availability and spending limits', async () => {
+  let configured = false;
+  let availabilityReads = 0;
+  let curatorRequests = 0;
+  let spent = 0;
+  let reads = 0;
+  let writes = 0;
+  let resolutions = 0;
+  let requests = 0;
+  const ledger = createLedger({
+    pool: {
+      async query(sql: string) {
+        if (sql.startsWith('SELECT monthly_usd')) {
+          reads++;
+          return { rows: [{ monthly_usd: 1, task_usd: null, spent }] };
+        }
+        assert.match(sql, /INSERT INTO model_usage/);
+        writes++;
+        return { rows: [] };
+      },
+    } as never,
+    ownerId: 'synthetic-decision-owner',
+  });
+  const model = createDecisionModel({
+    configured: () => {
+      availabilityReads++;
+      return configured;
+    },
+    resolve: async () => {
+      resolutions++;
+      return { provider: 'openai', key: 'synthetic-decision-key' };
+    },
+    fetch: async () => {
+      requests++;
+      return Response.json({
+        answers: [{ type: 'choice', name: 'access', choice: false }],
+        usage: { input_tokens: 5, output_tokens: 1 },
+      });
+    },
+  });
+  const decision = ledger.decisions(model);
+  const checkMail = createMailCheck({
+    decisions: decision,
+    curator: {
+      id: 'synthetic-curator',
+      configured: true,
+      async curate({ input }) {
+        curatorRequests++;
+        const { emails } = input as { emails: Array<{ id: number }> };
+        return { results: emails.map(({ id }) => ({ id, access: false })) };
+      },
+    },
+  });
+  const request = {
+    instructions: 'Check this synthetic email.',
+    input: { email: { from: 'shop@example.test', subject: 'Receipt', text: 'Order dispatched.' } },
+    question: {
+      name: 'access',
+      choices: [
+        { value: false, description: 'Ordinary mail' },
+        { value: true, description: 'Account access' },
+      ],
+    } satisfies DecisionQuestion,
+  };
+  assert.equal(decision.configured, false);
+  assert.deepEqual(
+    await Promise.all(Array.from({ length: 100 }, () => decision.check(request))),
+    Array.from({ length: 100 }),
+  );
+  assert.deepEqual(
+    { reads, writes, resolutions, requests },
+    { reads: 0, writes: 0, resolutions: 0, requests: 0 },
+  );
+  await assert.rejects(decision.check(request, AbortSignal.abort()));
+  assert.equal(reads, 0);
+  const beforeAvailability = availabilityReads;
+  const emails = Array.from({ length: 100 }, () => request.input.email);
+  assert.deepEqual(await checkMail(emails), Array<boolean>(100).fill(false));
+  assert.equal(availabilityReads - beforeAvailability, 1);
+  assert.equal(curatorRequests, 10);
+  assert.deepEqual(
+    { reads, writes, resolutions, requests },
+    { reads: 0, writes: 0, resolutions: 0, requests: 0 },
+  );
+  assert.deepEqual(await checkMail(emails, AbortSignal.abort()), Array.from({ length: 100 }));
+  assert.equal(availabilityReads - beforeAvailability, 1);
+  assert.equal(curatorRequests, 10);
+
+  configured = true;
+  assert.equal(decision.configured, true);
+  assert.deepEqual(await checkMail([request.input.email]), [false]);
+  assert.deepEqual(
+    { reads, writes, resolutions, requests },
+    { reads: 1, writes: 1, resolutions: 1, requests: 1 },
+  );
+  spent = 1;
+  assert.deepEqual(await checkMail([request.input.email]), [undefined]);
+  assert.equal(curatorRequests, 10);
+  assert.deepEqual(
+    { reads, writes, resolutions, requests },
+    { reads: 2, writes: 1, resolutions: 1, requests: 1 },
+  );
+
+  configured = false;
+  assert.equal(await decision.check(request), undefined);
+  assert.equal(reads, 2);
+  spent = 0;
+  const unknown = ledger.decisions(
+    createDecisionModel({
+      resolve: async () => {
+        resolutions++;
+        throw new Error('Synthetic connection is unreadable.');
+      },
+    }),
+  );
+  await assert.rejects(unknown.check(request), /connection is unreadable/);
+  assert.equal(reads, 3);
+  assert.equal(resolutions, 2);
+  assert.equal(requests, 1);
+});
 
 test('queued and cached link previews cannot cross an owner change', async (t) => {
   const calls: Array<{ url: string; account: string | null; respond(): void }> = [];

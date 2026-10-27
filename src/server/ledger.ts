@@ -265,7 +265,12 @@ export function createLedger({
 
   function decisions(base: DecisionModel): DecisionModel {
     return {
+      get configured() {
+        return base.configured;
+      },
       async check(request, signal, report) {
+        signal?.throwIfAborted();
+        if (base.configured === false) return undefined;
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
           return await base.check(request, signal, (usage) => {

@@ -90,8 +90,9 @@ export async function privateEmailResult(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const emails: Mail[] = [];
+  const emailIndices = new Map<string, number>();
   type Render = (checks: Array<boolean | undefined>) => unknown;
-  function prepare(value: unknown): Render {
+  function prepare(value: unknown, envelopeIndex?: number): Render {
     if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
       let parsed: unknown;
       try {
@@ -103,7 +104,7 @@ export async function privateEmailResult(
       return (checks) => JSON.stringify(render(checks));
     }
     if (Array.isArray(value)) {
-      const children = value.map(prepare);
+      const children = value.map((entry) => prepare(entry));
       return (checks) => children.map((render) => render(checks));
     }
     if (!value || typeof value !== 'object') return () => value;
@@ -132,17 +133,35 @@ export async function privateEmailResult(
           ['from', 'to'].includes(entry.name.toLowerCase()) &&
           /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(entry.value),
       );
-    const index = isMail ? emails.length : undefined;
-    if (isMail)
-      emails.push({
+    let index: number | undefined;
+    if (isMail) {
+      const email = {
         from: (fieldValue(record, ['sender', 'from']) || headerValue(headers, 'from')).slice(
           0,
           300,
         ),
         subject: (fieldValue(record, ['subject']) || headerValue(headers, 'subject')).slice(0, 300),
         text: mailCheckText(emailText(record)),
-      });
-    const children = Object.entries(record).map(([key, entry]) => [key, prepare(entry)] as const);
+      };
+      const envelope = envelopeIndex === undefined ? undefined : emails[envelopeIndex];
+      const key = JSON.stringify(email);
+      index =
+        envelope &&
+        email.text &&
+        envelope.from === email.from &&
+        envelope.subject === email.subject &&
+        envelope.text.includes(email.text)
+          ? envelopeIndex
+          : emailIndices.get(key);
+      if (index === undefined) {
+        index = emails.length;
+        emails.push(email);
+        emailIndices.set(key, index);
+      }
+    }
+    const children = Object.entries(record).map(
+      ([key, entry]) => [key, prepare(entry, key === 'payload' ? index : undefined)] as const,
+    );
     return (checks) => {
       if (index !== undefined && checks[index] !== false) {
         const safe = Object.fromEntries(

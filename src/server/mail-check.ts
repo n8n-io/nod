@@ -75,32 +75,35 @@ export function createMailCheck({
       : { emails: batch };
   return async (emails, signal) => {
     const checked: Array<boolean | undefined> = Array.from({ length: emails.length });
+    if (!emails.length || signal?.aborted) return checked;
+    const availableDecisions = decisions?.configured === false ? undefined : decisions;
     const fallback = new Set<number>();
-    await Promise.all(
-      emails.map(async (email, id) => {
-        try {
-          const result = decisions
-            ? await request(
-                (stop) =>
-                  decisions.check(
-                    {
-                      instructions: accessInstructions,
-                      input: { email },
-                      question: accessQuestion,
-                    },
-                    stop,
-                  ),
-                signal,
-              )
-            : undefined;
-          if (result === undefined) fallback.add(id);
-          else if (result && typeof result === 'object') {
-            const access = (result as { access?: unknown }).access;
-            if (typeof access === 'boolean') checked[id] = access;
-          }
-        } catch {}
-      }),
-    );
+    if (!availableDecisions) {
+      for (let id = 0; id < emails.length; id++) fallback.add(id);
+    } else
+      await Promise.all(
+        emails.map(async (email, id) => {
+          try {
+            const result = await request(
+              (stop) =>
+                availableDecisions.check(
+                  {
+                    instructions: accessInstructions,
+                    input: { email },
+                    question: accessQuestion,
+                  },
+                  stop,
+                ),
+              signal,
+            );
+            if (result === undefined) fallback.add(id);
+            else if (result && typeof result === 'object') {
+              const access = (result as { access?: unknown }).access;
+              if (typeof access === 'boolean') checked[id] = access;
+            }
+          } catch {}
+        }),
+      );
     if (!curator.configured || signal?.aborted) return checked;
     const batches: Entry[][] = [];
     let batch: Entry[] = [];

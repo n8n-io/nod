@@ -371,6 +371,17 @@ export function createDefaultAdapters(
     traces,
   });
   const decisions = createDecisionModel({
+    configured: () => {
+      if (env.TYPESAFE_API_KEY?.trim()) return true;
+      if (!models.configured) return false;
+      const { connections, selection } = models.view();
+      const connection = connections.find((entry) => entry.id === selection?.connectionId);
+      return (
+        !connection ||
+        (connection.method !== 'subscription' &&
+          (connection.provider === 'openai' || connection.provider === 'openrouter'))
+      );
+    },
     resolve: async () => {
       if (env.TYPESAFE_API_KEY?.trim())
         return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim() };

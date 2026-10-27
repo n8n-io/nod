@@ -30,13 +30,18 @@ const choiceSchema = z.object({
 });
 
 export function createDecisionModel(options: {
+  configured?: () => boolean;
   resolve(): Promise<DecisionConnection | undefined>;
   fetch?: typeof fetch;
 }): DecisionModel {
   const request = options.fetch ?? fetch;
   return {
+    get configured() {
+      return options.configured?.() ?? true;
+    },
     async check({ instructions, input, question }, signal, report) {
       signal?.throwIfAborted();
+      if (options.configured?.() === false) return undefined;
       const connection = await options.resolve();
       if (!connection) return undefined;
       if (question.instructions) instructions = `${question.instructions}\n${instructions}`;

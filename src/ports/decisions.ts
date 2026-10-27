@@ -14,6 +14,7 @@ export type ModelReview = (
 ) => Promise<unknown>;
 
 export interface DecisionModel {
+  configured?: boolean;
   check(
     request: { instructions: string; input: object; question: DecisionQuestion },
     signal?: AbortSignal,

@@ -226,6 +226,7 @@ test('mail that grants account access stays out of app tool results and workspac
   const mails = [
     {
       messageId: 'spanish-code',
+      snippet: 'Accede a tu cuenta con este código.',
       payload: {
         mimeType: 'multipart/alternative',
         headers: [
@@ -307,7 +308,7 @@ test('mail that grants account access stays out of app tool results and workspac
     'preview' in messages.find((mail: { messageId?: string }) => mail.messageId === 'unchecked'),
     false,
   );
-  assert.equal(checked.length, (mails.length + 1) * 2);
+  assert.equal(checked.length, mails.length * 2);
   for (const email of checked)
     assert.equal(new Set(JSON.stringify(email).match(/\[r\d\]/g)).size, 1);
   assert.ok(checked.some((email) => email.text.includes(secrets[0])));
@@ -316,6 +317,95 @@ test('mail that grants account access stays out of app tool results and workspac
       `${'Fixture newsletter text. '.repeat(1000)}Your recovery code is 553912.`,
     ).includes('553912'),
   );
+});
+
+test('duplicate mail checks preserve distinct nested mail and never reuse earlier call decisions', async () => {
+  const secret = '861493';
+  const receipt = {
+    messageId: 'receipt',
+    snippet: 'Your shipment is on its way.',
+    payload: {
+      mimeType: 'multipart/mixed',
+      headers: [
+        { name: 'From', value: 'receipts@example.test' },
+        { name: 'Subject', value: 'Shipping receipt' },
+      ],
+      parts: [
+        {
+          mimeType: 'text/plain',
+          body: { data: Buffer.from('Order shipped.').toString('base64url') },
+        },
+        {
+          mimeType: 'message/rfc822',
+          headers: [
+            { name: 'From', value: 'login@example.test' },
+            { name: 'Subject', value: 'Your sign-in code' },
+          ],
+          body: { data: Buffer.from(`Your sign-in code is ${secret}.`).toString('base64url') },
+        },
+      ],
+    },
+  };
+  const input = [receipt, structuredClone(receipt)];
+  const requests: Parameters<MailCheck>[0][] = [];
+  const result = (await privateEmailResult(input, async (emails) => {
+    requests.push(emails);
+    return emails.map((email) => email.from === 'login@example.test');
+  })) as typeof input;
+  assert.equal(requests[0].length, 2);
+  assert.deepEqual(
+    requests[0].map(({ from }) => from),
+    ['receipts@example.test', 'login@example.test'],
+  );
+  assert.ok(requests[0][0].text.includes(receipt.snippet));
+  for (const mail of result) {
+    assert.equal(mail.snippet, receipt.snippet);
+    assert.deepEqual(mail.payload.parts[0], receipt.payload.parts[0]);
+    assert.ok('message' in mail.payload.parts[1]);
+    assert.equal('body' in mail.payload.parts[1], false);
+  }
+  const unchecked = (await privateEmailResult(input, async (emails) => {
+    requests.push(emails);
+    return [];
+  })) as typeof input;
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.ok(unchecked.every((mail) => !('payload' in mail)));
+});
+
+test('payload mail remains private when outer check text is truncated or its identity differs', async (t) => {
+  const secret = '537291';
+  const payload = {
+    mimeType: 'text/plain',
+    headers: [
+      { name: 'From', value: 'login@example.test' },
+      { name: 'Subject', value: 'Your account' },
+    ],
+    body: {
+      data: Buffer.from(`Your sign-in code is ${secret}. ${'Footer text. '.repeat(1000)}`).toString(
+        'base64url',
+      ),
+    },
+  };
+  for (const [name, mail] of [
+    ['truncated', { snippet: 'Preview text. '.repeat(1000), payload }],
+    ['different identity', { from: 'receipts@example.test', subject: 'Receipt', payload }],
+  ] as const) {
+    await t.test(name, async () => {
+      const requests: Parameters<MailCheck>[0][] = [];
+      const result = (await privateEmailResult(mail, async (emails) => {
+        requests.push(emails);
+        return emails.map(
+          (email) => email.from === 'login@example.test' && email.text.includes(secret),
+        );
+      })) as { payload: unknown };
+      assert.equal(requests[0].length, 2);
+      if (name === 'truncated') assert.equal(requests[0][0].text.includes(secret), false);
+      assert.ok(requests[0][1].text.includes(secret));
+      assert.equal('body' in (result.payload as object), false);
+      assert.ok('message' in (result.payload as object));
+    });
+  }
 });
 
 test('mail access checks classify 100 emails in ten bounded requests and preserve result identities', async () => {
