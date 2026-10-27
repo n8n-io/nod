@@ -1408,10 +1408,3 @@
     transition: none;
   }
 }
-
-.message-question-state {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}

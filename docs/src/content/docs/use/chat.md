@@ -30,7 +30,7 @@ Select a passage in a message, then **Reply to selection** to quote it. The quot
 
 Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
 
-An action confirmation shows the question without an extra waiting label. After your answer, it shows the action's state. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. Nod does not repeat it automatically.
+Action confirmations show the question without extra status labels. [Usage](/use/spending/) shows the recorded action results.
 
 ## Send an audio message
 
@@ -92,7 +92,9 @@ The message box stays open while Nod works. You can send another message at any 
 
 One short status line beside the typing dots shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer.
 
-Telegram shows **typing…** and the same status as a live draft. WhatsApp shows **typing…** without extra progress messages. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
+Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
+
+Telegram shows **typing…** and the same status as a live draft. WhatsApp shows **typing…** without extra progress messages. For Business Cloud connections, typing stops when the 24-hour reply window closes. QR connections have no such limit. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 

@@ -667,20 +667,6 @@ export function MessageBubble({
             </button>,
             document.body,
           )}
-        {message.questionState && message.questionState !== 'pending' && (
-          <span className="message-question-state" role="status">
-            {
-              {
-                confirmed: 'Approved',
-                executing: 'Working',
-                completed: 'Done',
-                uncertain: 'Outcome unclear',
-                declined: 'Declined',
-                expired: 'No longer pending',
-              }[message.questionState]
-            }
-          </span>
-        )}
         {message.receipt && !streaming && (
           <a
             className="message-receipt"

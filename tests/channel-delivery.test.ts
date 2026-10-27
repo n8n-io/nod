@@ -2417,7 +2417,7 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const { createActivity } = await import('../src/server/activity.ts');
-    const { pool, threadId, receive, turnOf, create } = await outboxFixture(t);
+    const { pool, threadId, receive, turnOf, reply, create } = await outboxFixture(t);
     await pool.query(`ALTER TABLE turns ADD COLUMN started_at timestamptz;
       ALTER TABLE turns ADD COLUMN session_id uuid GENERATED ALWAYS AS (thread_id) STORED;
       CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,created_at timestamptz);
@@ -2450,6 +2450,8 @@ test(
         [{ turnId, step: 'Finding flights back from Copenhagen' }],
       );
       await emit(turnId, 'step', 'Comparing flight prices');
+      assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
+      await reply(turnId, 'Two direct flights meet your budget.', randomUUID(), 0);
       assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
       await emit(turnId, 'tool_start', 'fetch content');
       assert.equal((await activity.read())[0]?.step, 'Comparing flight prices');
