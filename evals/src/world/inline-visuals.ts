@@ -133,7 +133,7 @@ export function inlineVisualScenario(definition: Case) {
                     } `;
                   const found = presentations(run)
                     .filter((value) => value.type === 'map')
-                    .flatMap((value) =>
+                    .map((value) =>
                       Array.isArray(value.places)
                         ? value.places.map((place) => ({
                             name: place?.name,
@@ -142,20 +142,27 @@ export function inlineVisualScenario(definition: Case) {
                           }))
                         : [],
                     );
-                  const matched = found.map((place) =>
-                    expected.flatMap((source, index) =>
-                      name(place.name).includes(name(source.name)) &&
-                      place.latitude === source.latitude &&
-                      place.longitude === source.longitude
-                        ? [index]
-                        : [],
+                  const matched = found.map((places) =>
+                    places.map((place) =>
+                      expected.flatMap((source, index) =>
+                        name(place.name).includes(name(source.name)) &&
+                        place.latitude === source.latitude &&
+                        place.longitude === source.longitude
+                          ? [index]
+                          : [],
+                      ),
                     ),
                   );
                   return {
                     pass:
                       found.length > 0 &&
-                      matched.every((matches) => matches.length === 1) &&
-                      new Set(matched.flat()).size === expected.length,
+                      matched.every(
+                        (places) =>
+                          places.length > 0 &&
+                          places.every((matches) => matches.length === 1) &&
+                          new Set(places.flat()).size === places.length,
+                      ) &&
+                      new Set(matched.flat(2)).size === expected.length,
                     evidence: JSON.stringify({ expected, found }),
                   };
                 },

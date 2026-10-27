@@ -56,7 +56,7 @@ import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 
-test('map evidence accepts annotated labels and split maps but rejects wrong or missing locations', async () => {
+test('map evidence accepts split and detail maps but rejects duplicate, wrong or missing locations', async () => {
   const definition = scenarios.find((item) => item.id === 'inline-visual-map')!;
   const locations = definition
     .expect(definition.world({ now: Date.now }))
@@ -81,12 +81,17 @@ test('map evidence accepts annotated labels and split maps but rejects wrong or 
   assert.equal(await score([places]), true);
   assert.equal(await score([places.slice(0, 2), places.slice(2)]), true);
   assert.equal(
-    await score([[{ ...places[1]!, name: '1. CAFE LUME — recommended' }, ...places]]),
+    await score([places, [{ ...places[1]!, name: '1. CAFE LUME — recommended' }]]),
     true,
   );
   for (const [reason, groups] of [
     ['wrong coordinate', [[{ ...places[0]!, latitude: 38.715 }, ...places.slice(1)]]],
     ['missing place', [places.slice(1)]],
+    ['duplicate added to complete map', [[...places, places[1]!]]],
+    [
+      'duplicate with a different annotation',
+      [[...places, { ...places[1]!, name: '1. CAFE LUME — recommended' }]],
+    ],
     ['duplicate replacing missing place', [[places[1]!, ...places.slice(1)]]],
     ['unsupported extra place', [[...places, { ...places[1]!, name: 'Unknown café' }]]],
     ['partial name match', [[{ ...places[0]!, name: 'Studio Auroral' }, ...places.slice(1)]]],
