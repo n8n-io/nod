@@ -3778,6 +3778,7 @@ test('startup reads preserve older settings for rollback until an owner preferen
   const expected = await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   saved.secrets.composioApiKey = 'unreadable-retired-ciphertext';
+  saved.notificationRequest = 'requested';
   saved.secrets.integrationConfiguration = 'unreadable-retired-config';
   saved.keyMetadata = {
     composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -3806,6 +3807,8 @@ test('startup reads preserve older settings for rollback until an owner preferen
   await store.save({ theme: 'light' });
   const current = JSON.parse(await readFile(f.path, 'utf8'));
   assert.equal(current.theme, 'light');
+  assert.equal(current.notifications, true);
+  assert.equal(Object.hasOwn(current, 'notificationRequest'), false);
   assert.deepEqual(current.secrets, { vaultKey: saved.secrets.vaultKey });
   assert.equal(Object.hasOwn(current, 'keyMetadata'), false);
   assert.deepEqual(await f.reopen().environment(), expected);
@@ -5276,6 +5279,7 @@ test('desktop preference choices resume durably without requiring notifications 
   await f.store.save({ notifications: false });
   const legacy = JSON.parse(await readFile(f.path, 'utf8'));
   legacy.onboardingPreferenceStep = 'notifications';
+  legacy.notificationRequest = 'requested';
   await writeFile(f.path, JSON.stringify(legacy));
   const reopened = f.reopen();
   assert.equal((await reopened.get()).notifications, false);
@@ -5342,6 +5346,13 @@ test('desktop preference steps and completion require the owned normal app and d
         );
         await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
         await assert.rejects(save(event, { onboardingCompleted: true }));
+        await assert.rejects(save({ ...event, sender: {} }, { notifications: true }));
+        await assert.rejects(
+          save({ ...event, senderFrame: { url: window.url } }, { notifications: true }),
+        );
+        assert.equal((await f.storage.reopen().get()).notifications, false);
+        await save(event, { notifications: true });
+        assert.equal((await f.storage.reopen().get()).notifications, true);
         await save(event, { notifications: false });
         assert.equal((await f.storage.reopen().get()).notifications, false);
         await assert.rejects(
@@ -5428,110 +5439,6 @@ test('native readiness notification waits for full runtime readiness and reaches
         resources.resolve();
         await f.close();
       }
-    });
-  }
-});
-
-test('the first notification request is durable and preserves explicit or legacy choices', async (t) => {
-  const f = await fixture(t);
-  await f.store.save({ launchAtLogin: true, onboardingCompleted: true });
-  assert.equal((await f.store.get()).notifications, false);
-  assert.equal('notificationRequest' in (await f.store.get()), false);
-  const claims = await Promise.all(
-    Array.from({ length: 4 }, () => f.store.claimNotificationRequest()),
-  );
-  assert.equal(claims.filter(Boolean).length, 1);
-  assert.equal(JSON.parse(await readFile(f.path, 'utf8')).notificationRequest, 'requested');
-  assert.equal(await f.reopen().claimNotificationRequest(), false);
-  await f.store.save({ notifications: false });
-  assert.equal((await f.store.finishNotificationRequest('requested')).notifications, false);
-  assert.equal(await f.reopen().claimNotificationRequest(), false);
-  await assert.rejects(f.store.save({ notificationRequest: 'pending' }));
-  const legacy = JSON.parse(await readFile(f.path, 'utf8'));
-  delete legacy.notificationRequest;
-  await writeFile(f.path, JSON.stringify(legacy));
-  const previous = f.reopen();
-  assert.equal(await previous.claimNotificationRequest(), false);
-  assert.equal((await previous.get()).notifications, false);
-  for (const status of ['unsupported', 'failed']) {
-    const next = await fixture(t);
-    assert.equal(await next.store.claimNotificationRequest(), true);
-    assert.equal((await next.store.finishNotificationRequest(status)).notifications, false);
-    assert.equal(await next.reopen().claimNotificationRequest(), false);
-  }
-});
-
-test('the first introduction requests native notifications only from its owned renderer once per profile', async (t) => {
-  for (const outcome of ['requested', 'unsupported', 'failed']) {
-    await t.test(outcome, async (t) => {
-      const stored = await fixture(t);
-      await stored.store.save({ launchAtLogin: true, onboardingCompleted: true });
-      const messageId = randomUUID();
-      let probes = 0;
-      const calls = [];
-      const f = await runningDesktop(
-        t,
-        async (url, options) => {
-          calls.push({ path: new URL(url).pathname, method: options?.method ?? 'GET' });
-          return Response.json({ messageId, settings: { onboardingCompleted: true } });
-        },
-        {
-          storedProfile: stored,
-          notificationsSupported: () => {
-            probes++;
-            assert.equal(
-              JSON.parse(readFileSync(stored.path, 'utf8')).notificationRequest,
-              'requested',
-            );
-            if (outcome === 'failed') throw new Error('Synthetic notification API unavailable');
-            return outcome === 'requested';
-          },
-        },
-      );
-      f.showEngine();
-      const window = f.windows.at(-1);
-      const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-      const request = f.handlers.get('nod:notifications:request');
-      assert.equal(probes, 0);
-      await assert.rejects(request({ ...event, sender: {} }, messageId));
-      await assert.rejects(request({ ...event, senderFrame: { ...event.senderFrame } }, messageId));
-      await assert.rejects(request(event, 'invalid'));
-      await assert.rejects(request(event, randomUUID()));
-      assert.equal(probes, 0);
-      assert.equal((await f.storage.store.get()).notifications, false);
-      const responses = await Promise.all([request(event, messageId), request(event, messageId)]);
-      assert.deepEqual(responses.map((value) => value.status).sort(), [outcome, 'skipped'].sort());
-      assert.ok(probes >= 1);
-      const attempted = probes;
-      assert.equal((await f.storage.reopen().get()).notifications, outcome === 'requested');
-      assert.equal((await request(event, messageId)).status, 'skipped');
-      assert.equal(probes, attempted);
-      assert.equal(f.notifications.length, 0);
-      assert.ok(calls.every((call) => call.method === 'GET'));
-      assert.ok(calls.every((call) => call.path === '/api/onboarding/introduction'));
-      f.crash();
-      await f.close();
-      const restarted = await runningDesktop(t, async () => Response.json({ messageId }), {
-        storedProfile: f.storage,
-        notificationsSupported: () =>
-          assert.fail('A replay must not request native permission again'),
-      });
-      restarted.showEngine();
-      const reopenedWindow = restarted.windows.at(-1);
-      assert.equal(
-        (
-          await restarted.handlers.get('nod:notifications:request')(
-            {
-              sender: reopenedWindow.webContents,
-              senderFrame: reopenedWindow.webContents.mainFrame,
-            },
-            messageId,
-          )
-        ).status,
-        'skipped',
-      );
-      restarted.crash();
-      await restarted.close();
     });
   }
 });

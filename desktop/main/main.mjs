@@ -2037,29 +2037,6 @@ else {
         setupWindow.destroy();
         showEngine();
       });
-      ipcMain.handle('nod:notifications:request', async (event, messageId) => {
-        if (
-          !isEngine(event) ||
-          quitting ||
-          !onboardingCompleted ||
-          typeof messageId !== 'string' ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-            messageId,
-          )
-        )
-          throw new Error('This action is unavailable.');
-        const response = await engineRequest('/api/onboarding/introduction');
-        if (!response.ok || (await response.json()).messageId !== messageId || !isEngine(event))
-          throw new Error('This introduction is unavailable.');
-        if (!(await settings.claimNotificationRequest())) return { status: 'skipped' };
-        let result = 'failed';
-        try {
-          if (!quitting && isEngine(event))
-            result = Notification.isSupported() ? 'requested' : 'unsupported';
-        } catch {}
-        applyPreferences(await settings.finishNotificationRequest(result));
-        return { status: result };
-      });
       ipcMain.handle('nod:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return feedbackContext();

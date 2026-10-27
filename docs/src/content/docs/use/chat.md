@@ -100,9 +100,15 @@ Reply to a task's message to continue that task. A message without a reply targe
 
 Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat. Substantial work with several steps gets a saved task session, even when it can finish in one sitting. Work that waits on someone or something, runs alongside other jobs, or that you ask Nod to track also gets a task. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
-## Notice new messages on macOS
+## Notifications
 
-Desktop notification banners use Nod's name and icon. Select a reply notification to open its message in Chat.
+Choose **Enable notifications** after the first introduction, or turn them on in **Settings → General**. **Not now** dismisses the offer. Nod only asks your browser for permission after you choose to enable notifications. If you block the request, allow notifications in the browser’s site settings before trying again.
+
+Notifications use Nod's name and icon. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
+
+The web choice applies to this account in this browser. Turning it off does not revoke the browser’s site permission. Quiet hours apply to web and desktop notifications.
+
+### Notice new messages on macOS
 
 With desktop notifications enabled, Nod's Dock badge shows how many replies you haven't read, up to **99+**. It stays visible after a banner disappears, while the window is closed, and when you reopen Nod. Read the latest messages in Chat to clear it; opening another screen doesn't clear it.
 

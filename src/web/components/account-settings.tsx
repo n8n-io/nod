@@ -37,6 +37,7 @@ import {
   removeDesktopData,
 } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
+import { BrowserNotificationSettings } from './browser-notifications';
 import { Memory } from '../pages/memory';
 import { ConnectionMenu } from './connection-menu';
 
@@ -624,6 +625,7 @@ export function AccountSettings({
                     onChange={native.save}
                   />
                 )}
+                {!desktop && <BrowserNotificationSettings ownerId={account.user.id} />}
                 {open && <VoiceSettings onBusyChange={setVoiceBusy} />}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>

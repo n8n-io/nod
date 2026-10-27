@@ -2147,3 +2147,400 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     assert.deepEqual(feedbackActivitySnapshot(), []);
   }
 });
+
+async function notificationPage(t: import('node:test').TestContext) {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/',
+    pretendToBeVisual: true,
+  });
+  let owner = 'notification-owner-one';
+  let permission: NotificationPermission = 'default';
+  let permissionRequests = 0;
+  let permissionResponse = async (): Promise<NotificationPermission> => permission;
+  let failConstruction = false;
+  let focused = false;
+  let visible = true;
+  let focusCalls = 0;
+  const notifications: SyntheticNotification[] = [];
+  const preferences = {
+    notificationRule: '',
+    rules: '',
+    timeZone: 'UTC',
+    locale: 'en-GB',
+    hourCycle: 'h23',
+    quietHoursEnabled: false,
+    quietStart: '00:00',
+    quietEnd: '23:59',
+    proactivePaused: false,
+  };
+  let preferencesResponse = async () => Response.json(preferences);
+  class SyntheticNotification {
+    static get permission() {
+      return permission;
+    }
+    static async requestPermission() {
+      permissionRequests++;
+      permission = await permissionResponse();
+      return permission;
+    }
+    onclick: (() => void) | null = null;
+    onclose: (() => void) | null = null;
+    closed = 0;
+    constructor(
+      readonly title: string,
+      readonly options: NotificationOptions,
+    ) {
+      if (failConstruction) throw new TypeError('Synthetic browser cannot construct notifications');
+      notifications.push(this);
+    }
+    close() {
+      this.closed++;
+      this.onclose?.();
+    }
+  }
+  Object.defineProperties(dom.window, {
+    Notification: { configurable: true, value: SyntheticNotification },
+    isSecureContext: { configurable: true, value: true },
+    focus: { configurable: true, value: () => focusCalls++ },
+    matchMedia: {
+      configurable: true,
+      value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    },
+  });
+  Object.defineProperties(dom.window.document, {
+    visibilityState: { configurable: true, get: () => (visible ? 'visible' : 'hidden') },
+    hasFocus: { configurable: true, value: () => focused },
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    localStorage: dom.window.localStorage,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { sessionStore } = await import('../src/web/lib/session.ts');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  t.mock.method(sessionStore, 'getSnapshot', () => ({
+    session: {
+      user: { id: owner, name: 'Synthetic owner', email: null, avatarUrl: null },
+      settings: { theme: 'system', onboardingCompleted: true, usageData: false, traces: false },
+      capabilities: { developer: false, traces: false },
+    },
+    loading: false,
+    mutating: false,
+    locked: false,
+    error: '',
+    epoch: 0,
+  }));
+  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL) => {
+    assert.equal(String(path), '/api/preferences');
+    return preferencesResponse();
+  });
+  pageDataCache.clear();
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  return {
+    act,
+    createElement,
+    window: dom.window,
+    document: dom.window.document,
+    notifications,
+    preferences,
+    respondPreferences: (response: () => Promise<Response>) => (preferencesResponse = response),
+    owner: () => owner,
+    setOwner: (value: string) => (owner = value),
+    setPermission: (value: NotificationPermission) => (permission = value),
+    permissionRequests: () => permissionRequests,
+    respondPermission: (response: () => Promise<NotificationPermission>) =>
+      (permissionResponse = response),
+    failConstruction: (value: boolean) => (failConstruction = value),
+    focus: (value: boolean) => (focused = value),
+    visible: (value: boolean) => (visible = value),
+    focusCalls: () => focusCalls,
+    native: (bridge: unknown) => Reflect.set(dom.window, 'nodDesktop', bridge),
+    async render(element: import('react').ReactNode) {
+      await act(async () => root.render(element));
+    },
+    async click(index: number) {
+      const button = dom.window.document.querySelectorAll('button')[index];
+      assert.ok(button);
+      await act(async () => button.click());
+    },
+    async refreshPreferences() {
+      await act(async () => pageDataCache.refresh('/api/preferences', true));
+    },
+  };
+}
+
+test('browser notification permission requires an explicit owned choice and rejects denial, unsupported construction and stale consent', async (t) => {
+  const f = await notificationPage(t);
+  const { BrowserNotificationPrompt } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { browserNotificationStatus } = await import('../src/web/lib/browser-notifications.ts');
+  const render = () =>
+    f.render(f.createElement(BrowserNotificationPrompt, { key: f.owner(), ownerId: f.owner() }));
+  await render();
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(f.notifications.length, 0);
+  await f.click(1);
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'dismissed');
+  await f.render(null);
+  await render();
+  assert.equal(f.document.querySelectorAll('button').length, 0);
+  f.setOwner('notification-owner-two');
+  await render();
+  assert.equal(f.document.querySelectorAll('button').length, 2);
+  f.respondPermission(async () => 'default');
+  await f.click(0);
+  assert.equal(f.permissionRequests(), 1);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 0);
+  f.respondPermission(async () => 'denied');
+  await f.click(0);
+  assert.equal(f.permissionRequests(), 2);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 0);
+  f.setOwner('notification-owner-three');
+  f.setPermission('default');
+  let answer: (permission: NotificationPermission) => void = () => {};
+  f.respondPermission(() => new Promise((resolve) => (answer = resolve)));
+  await render();
+  await f.click(0);
+  f.setOwner('notification-owner-four');
+  await render();
+  await f.act(async () => answer('granted'));
+  assert.equal(browserNotificationStatus('notification-owner-three').enabled, false);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 0);
+  f.failConstruction(true);
+  await f.click(0);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 0);
+  assert.ok(f.document.querySelector('[role="alert"]'));
+  f.failConstruction(false);
+  await f.click(0);
+  assert.equal(f.permissionRequests(), 3);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(browserNotificationStatus('notification-owner-one').choice, 'dismissed');
+});
+
+test('browser notification delivery preserves owner consent, hides reply content and fences duplicate and stale alerts', async (t) => {
+  const f = await notificationPage(t);
+  const { browserNotificationStatus, deliverBrowserNotification, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  f.setPermission('granted');
+  const message = {
+    id: 'synthetic-message',
+    createdAt: '2035-01-01T12:00:00.000Z',
+    text: 'Synthetic private email content that must never appear in a browser notification',
+  };
+  let current = true;
+  const send = () =>
+    deliverBrowserNotification(f.owner(), 'synthetic-thread', message, () => current);
+  assert.equal(await send(), null);
+  assert.equal(f.notifications.length, 0);
+  await setBrowserNotifications(f.owner(), true);
+  assert.equal(f.notifications.length, 1);
+  f.focus(true);
+  assert.equal(await send(), null);
+  f.focus(false);
+  const [first, duplicate] = await Promise.all([send(), send()]);
+  assert.ok(first);
+  assert.equal(duplicate, null);
+  assert.equal(f.notifications.length, 2);
+  assert.equal(JSON.stringify(f.notifications.at(-1)).includes(message.text), false);
+  assert.equal(new URL(f.notifications.at(-1)!.options.icon!).origin, f.window.location.origin);
+  const targets: unknown[] = [];
+  f.window.addEventListener('nod:focus-message', (event) =>
+    targets.push((event as CustomEvent).detail),
+  );
+  f.notifications.at(-1)!.onclick?.();
+  assert.equal(f.focusCalls(), 1);
+  assert.deepEqual(targets, [{ messageId: message.id }]);
+  current = false;
+  f.notifications.at(-1)!.onclick?.();
+  assert.equal(f.focusCalls(), 1);
+  assert.equal(targets.length, 1);
+  f.setOwner('notification-owner-next');
+  current = true;
+  assert.equal(await send(), null);
+  await setBrowserNotifications(f.owner(), true);
+  assert.ok(await send());
+  await setBrowserNotifications(f.owner(), false);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(await send(), null);
+  f.native({ getSettings: async () => ({ notifications: true }) });
+  const beforeNative = f.notifications.length;
+  await setBrowserNotifications(f.owner(), true);
+  assert.equal(await send(), null);
+  assert.equal(f.notifications.length, beforeNative);
+});
+
+test('browser reply alerts skip initial history, replay, user messages, quiet time and retired thread scopes', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2035, 0, 1, 12) });
+  const f = await notificationPage(t);
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { setBrowserNotifications } = await import('../src/web/lib/browser-notifications.ts');
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  let threadId = 'notification-thread-one';
+  function Watch() {
+    useBrowserNotifications(f.owner(), { threadId, messages: [...messages] } as AppState);
+    return null;
+  }
+  const render = () => f.render(f.createElement(Watch));
+  const add = (role: 'assistant' | 'user' = 'assistant') => {
+    const index = messages.length;
+    messages.push({
+      id: `message-${String(index).padStart(3, '0')}`,
+      role,
+      text: 'Synthetic private reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 0, 0, index)).toISOString(),
+      attachments: [],
+    });
+  };
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  let finishPreferences: (response: Response) => void = () => {};
+  f.respondPreferences(() => new Promise((resolve) => (finishPreferences = resolve)));
+  add();
+  await render();
+  assert.equal(f.notifications.length, 1);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => finishPreferences(Response.json(f.preferences)));
+  f.respondPreferences(async () => Response.json(f.preferences));
+  assert.equal(f.notifications.length, 2);
+  await render();
+  add('user');
+  await render();
+  assert.equal(f.notifications.length, 2);
+  f.preferences.quietHoursEnabled = true;
+  await f.refreshPreferences();
+  add();
+  await render();
+  assert.equal(f.notifications.length, 2);
+  f.preferences.quietHoursEnabled = false;
+  await f.refreshPreferences();
+  f.focus(true);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 2);
+  f.focus(false);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 3);
+  threadId = 'notification-thread-next';
+  add();
+  await render();
+  assert.equal(f.notifications.length, 3);
+  assert.ok(f.notifications.slice(1).every((notification) => notification.closed > 0));
+  add();
+  await render();
+  assert.equal(f.notifications.length, 4);
+  await f.act(async () => setBrowserNotifications(f.owner(), false));
+  assert.ok(f.notifications.at(-1)!.closed > 0);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 4);
+});
+
+test('native notification introduction waits for the owner choice and keeps dismissal scoped', async (t) => {
+  const f = await notificationPage(t);
+  const { ChatNotifications } = await import('../src/web/components/chat-notifications.tsx');
+  let enabled = false;
+  const writes: unknown[] = [];
+  f.native({
+    onPreferences: () => () => {},
+    getSettings: async () => ({ notifications: enabled }),
+    saveSettings: async (value: { notifications: boolean }) => {
+      writes.push(value);
+      enabled = value.notifications;
+      return { notifications: enabled };
+    },
+  });
+  const render = () =>
+    f.render(
+      f.createElement(ChatNotifications, {
+        ownerId: f.owner(),
+        messageId: '123e4567-e89b-42d3-a456-426614174000',
+      }),
+    );
+  await render();
+  assert.deepEqual(writes, []);
+  assert.equal(f.permissionRequests(), 0);
+  await f.click(1);
+  await f.render(null);
+  await render();
+  assert.equal(f.document.querySelectorAll('button').length, 0);
+  assert.deepEqual(writes, []);
+  f.setOwner('notification-native-owner-next');
+  await render();
+  assert.equal(f.document.querySelectorAll('button').length, 2);
+  await f.click(0);
+  assert.deepEqual(writes, [{ notifications: true }]);
+  assert.equal(f.document.querySelectorAll('button').length, 0);
+  assert.equal(f.permissionRequests(), 0);
+});
+
+test('browser notification opt-in cannot replay a reply observed before consent while preferences load', async (t) => {
+  const f = await notificationPage(t);
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { setBrowserNotifications } = await import('../src/web/lib/browser-notifications.ts');
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  function Watch() {
+    useBrowserNotifications(f.owner(), {
+      threadId: 'notification-consent-delay',
+      messages: [...messages],
+    } as AppState);
+    return null;
+  }
+  const add = () =>
+    messages.push({
+      id: `message-${messages.length}`,
+      role: 'assistant',
+      text: 'Synthetic reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 12, 0, messages.length)).toISOString(),
+      attachments: [],
+    });
+  let finishPreferences: (response: Response) => void = () => {};
+  f.respondPreferences(() => new Promise((resolve) => (finishPreferences = resolve)));
+  add();
+  await f.render(f.createElement(Watch));
+  add();
+  await f.render(f.createElement(Watch));
+  assert.equal(f.notifications.length, 0);
+  f.setPermission('granted');
+  await f.act(async () => setBrowserNotifications(f.owner(), true));
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => finishPreferences(Response.json(f.preferences)));
+  assert.equal(f.notifications.length, 1);
+  add();
+  await f.render(f.createElement(Watch));
+  assert.equal(f.notifications.length, 2);
+});

@@ -10,6 +10,7 @@ import { Tasks } from './pages/tasks';
 import { PreparedWork } from './pages/prepared';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
+import { useBrowserNotifications } from './hooks/use-browser-notifications';
 import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Notice } from './components/ui';
 import { ChatSkeleton } from './components/startup';
@@ -103,6 +104,7 @@ function Workspace({
     session.user!.id,
   );
   const unread = useChatUnread(session.user!.id, state);
+  useBrowserNotifications(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
   const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');

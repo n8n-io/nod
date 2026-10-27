@@ -2,6 +2,34 @@
   position: relative;
   text-align: left;
 }
+.notification-choice {
+  display: grid;
+  gap: 12px;
+  max-width: 480px;
+  margin: 12px 0 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+}
+.notification-choice-copy strong {
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.notification-choice-copy p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.notification-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notification-choice > .notice {
+  margin: 0;
+}
 .chat-page .message-user .message-row {
   align-items: flex-end;
 }

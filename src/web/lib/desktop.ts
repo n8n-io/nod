@@ -52,9 +52,6 @@ type DesktopWindow = Window & {
     onStatus?(listener: (status: DesktopStatus) => void): () => void;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
-    requestNotifications?(messageId: string): Promise<{
-      status: 'requested' | 'skipped' | 'unsupported' | 'failed';
-    }>;
     removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     onNavigate?(listener: (path: string) => void): () => void;
@@ -123,10 +120,6 @@ export function getDesktopSettings() {
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   return settingsBridge().saveSettings(change);
-}
-
-export function requestDesktopNotifications(messageId: string) {
-  return (window as DesktopWindow).nodDesktop?.requestNotifications?.(messageId);
 }
 
 export function removeDesktopData() {

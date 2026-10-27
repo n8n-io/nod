@@ -5,7 +5,6 @@ import { dirname } from 'node:path';
 
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
-const notificationRequests = ['pending', 'requested', 'chosen', 'unsupported', 'failed', 'legacy'];
 
 export const desktopContentPolicy =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' https: data: blob:; frame-src 'self' blob: data: https://www.openstreetmap.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -116,7 +115,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         'theme',
         ...preferenceFields,
         'onboardingPreferenceStep',
-        'notificationRequest',
         'welcome',
         'serverUrl',
         'secrets',
@@ -135,8 +133,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
         (value.serverUrl !== undefined &&
           (serverOrigin(value.serverUrl) !== value.serverUrl || !value.secrets.serverToken)) ||
-        (value.notificationRequest !== undefined &&
-          !notificationRequests.includes(value.notificationRequest)) ||
         (value.welcome !== undefined &&
           (!record(value.welcome) ||
             Object.keys(value.welcome).some(
@@ -149,7 +145,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         Object.values(value.secrets).some((secret) => typeof secret !== 'string' || !secret)
       )
         throw new Error();
-      value.notificationRequest ??= 'legacy';
     } catch (error) {
       if (error.code !== 'ENOENT') throw new Error('Nod could not open its saved settings.');
     }
@@ -158,7 +153,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       theme: 'system',
       launchAtLogin: false,
       notifications: false,
-      notificationRequest: 'pending',
       onboardingCompleted: false,
       secrets: {},
     };
@@ -321,7 +315,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];
         }
-        if (input.notifications !== undefined) value.notificationRequest = 'chosen';
         if (input.onboardingPreferenceStep !== undefined) {
           const step = redacted(previous).onboardingPreferenceStep;
           const repeated =
@@ -343,29 +336,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         if (value.onboardingCompleted) delete value.welcome;
         await write(value);
         return redacted(value);
-      });
-    },
-    claimNotificationRequest() {
-      return exclusive(async () => {
-        const value = await read();
-        if (value.notificationRequest !== 'pending' || value.notifications) return false;
-        await write({ ...value, notificationRequest: 'requested' });
-        return true;
-      });
-    },
-    finishNotificationRequest(status) {
-      return exclusive(async () => {
-        if (!['requested', 'unsupported', 'failed'].includes(status))
-          throw new Error('This notification request is invalid.');
-        const value = await read();
-        if (value.notificationRequest !== 'requested') return redacted(value);
-        const next = {
-          ...value,
-          notificationRequest: status,
-          notifications: status === 'requested',
-        };
-        await write(next);
-        return redacted(next);
       });
     },
     acknowledgeWelcome(expected) {

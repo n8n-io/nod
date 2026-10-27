@@ -1201,7 +1201,7 @@ export function Chat({
                     />
                   )}
                   {message.id === introduction.data?.messageId && (
-                    <ChatNotifications messageId={message.id} />
+                    <ChatNotifications ownerId={ownerId} messageId={message.id} />
                   )}
                 </Fragment>
               ))}
