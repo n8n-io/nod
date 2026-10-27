@@ -319,6 +319,56 @@ test('mail that grants account access stays out of app tool results and workspac
   );
 });
 
+test('mail privacy checks retain HTML link destinations without changing ordinary email content', async () => {
+  const links = [
+    {
+      html: '<a href="https://login.example.test/recover?token=fixture-recovery&amp;mode=continue">Continue</a>',
+      url: 'https://login.example.test/recover?token=fixture-recovery&mode=continue',
+    },
+    {
+      html: '<A HREF=https://login.example.test/magic?token=fixture-magic&#38;flow=login>Continue</A>',
+      url: 'https://login.example.test/magic?token=fixture-magic&flow=login',
+    },
+    {
+      html: "<a HrEf='https://login.example.test/reset?token=fixture-reset&amp;action=continue'>Open</a>",
+      url: 'https://login.example.test/reset?token=fixture-reset&action=continue',
+    },
+  ];
+  const privateMail = links.map(({ html }, index) => ({
+    id: `html-link-${index}`,
+    from: { emailAddress: { address: 'notification@example.test' } },
+    subject: 'Your account',
+    body: { contentType: 'html', content: html },
+  }));
+  const newsletter = {
+    from: 'news@example.test',
+    subject: 'Weekly security news',
+    body: '<p>Read this week’s news.</p><a href="https://news.example.test/article?edition=4&amp;topic=security">Open</a>',
+  };
+  let checked: Parameters<MailCheck>[0] = [];
+  const result = (await privateEmailResult([...privateMail, newsletter], async (emails) => {
+    checked = emails;
+    return emails.map((email) => links.some(({ url }) => email.text.includes(url)));
+  })) as Array<Record<string, unknown>>;
+  for (const [index, { url }] of links.entries()) assert.ok(checked[index].text.includes(url));
+  assert.ok(checked[3].text.includes('https://news.example.test/article?edition=4&topic=security'));
+  assert.ok(result.slice(0, 3).every((mail) => !('body' in mail)));
+  assert.deepEqual(result[3], newsletter);
+  assert.equal(
+    mailCheckText(
+      '<style>style-secret</style><script>script-secret</script><p>3 &lt; 5 &amp; 8 &gt; 2</p>',
+    ),
+    '3 < 5 & 8 > 2',
+  );
+  assert.equal(mailCheckText('3 < 5 and 8 > 2'), '3 < 5 and 8 > 2');
+  const bounded = mailCheckText(
+    `<a href="${links[0].url}">Continue</a>${'Ordinary newsletter text. '.repeat(1000)}<a href="${links[1].url}">Continue</a>`,
+  );
+  assert.ok(bounded.length <= 8003);
+  assert.ok(bounded.includes(links[0].url));
+  assert.ok(bounded.includes(links[1].url));
+});
+
 test('duplicate mail checks preserve distinct nested mail and never reuse earlier call decisions', async () => {
   const secret = '861493';
   const receipt = {
@@ -341,7 +391,11 @@ test('duplicate mail checks preserve distinct nested mail and never reuse earlie
             { name: 'From', value: 'login@example.test' },
             { name: 'Subject', value: 'Your sign-in code' },
           ],
-          body: { data: Buffer.from(`Your sign-in code is ${secret}.`).toString('base64url') },
+          body: {
+            data: Buffer.from(
+              `<a href="https://login.example.test/recover?token=${secret}">Continue</a>`,
+            ).toString('base64url'),
+          },
         },
       ],
     },
@@ -358,6 +412,7 @@ test('duplicate mail checks preserve distinct nested mail and never reuse earlie
     ['receipts@example.test', 'login@example.test'],
   );
   assert.ok(requests[0][0].text.includes(receipt.snippet));
+  assert.ok(requests[0][1].text.includes(`https://login.example.test/recover?token=${secret}`));
   for (const mail of result) {
     assert.equal(mail.snippet, receipt.snippet);
     assert.deepEqual(mail.payload.parts[0], receipt.payload.parts[0]);

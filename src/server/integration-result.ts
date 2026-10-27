@@ -1,3 +1,5 @@
+import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
+
 export const appResultInlineChars = 40_000;
 
 const emailContentFields = new Set([
@@ -61,11 +63,20 @@ export type MailCheck = (
 export const mailCheckChars = 8000;
 
 export function mailCheckText(text: string) {
-  const clean = text
-    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const parts: string[] = [];
+  const nodes: DefaultTreeAdapterTypes.Node[] = [parseFragment(text, { scriptingEnabled: false })];
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if (node.nodeName === 'style' || node.nodeName === 'script') continue;
+    if ('value' in node) parts.push(node.value);
+    if ('attrs' in node)
+      for (const attribute of node.attrs)
+        if (attribute.name === 'href') parts.push(attribute.value);
+    const children =
+      'content' in node ? node.content.childNodes : 'childNodes' in node ? node.childNodes : [];
+    for (let index = children.length - 1; index >= 0; index--) nodes.push(children[index]!);
+  }
+  const clean = parts.join(' ').replace(/\s+/g, ' ').trim();
   if (clean.length <= mailCheckChars) return clean;
   const tail = mailCheckChars / 4;
   return `${clean.slice(0, mailCheckChars - tail)} … ${clean.slice(-tail)}`;
