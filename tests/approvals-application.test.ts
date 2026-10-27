@@ -1528,7 +1528,7 @@ test(
         },
       );
       await t.test(
-        'a saved authenticator key enters the current code only with exact-origin consent',
+        'saved login consent keeps the account name and enters a code only with exact-origin consent',
         async () => {
           const origin = 'https://bank.example.test';
           const authenticator =
@@ -1551,12 +1551,51 @@ test(
             message: 'Enter your sign-in code.',
           };
           const before = injected.length;
-          const held = await propose('Enter code', input, 'sign_in');
-          const [card] = await approvalsFor(held);
-          assert.equal(card?.action, 'NOD_vault_allow');
-          assert.equal(card.status, 'pending');
-          assert.deepEqual(card.args, { origin, kind: 'sign_in', itemId: login });
-          assert.equal(injected.length, before);
+          for (const kind of ['password', 'otp']) {
+            const checksFrom = fallbackChecks.length;
+            const held = await propose(
+              'Enter saved login',
+              kind === 'password'
+                ? {
+                    ...input,
+                    kind,
+                    label: 'Model-supplied account name',
+                    savedLoginId: login,
+                    usernameSelector: '@username',
+                    passwordSelector: '@password',
+                  }
+                : input,
+              'sign_in',
+            );
+            const [card] = await approvalsFor(held);
+            assert.equal(card?.action, 'NOD_vault_allow');
+            assert.equal(card.status, 'pending');
+            assert.deepEqual(card.args, { origin, kind: 'sign_in', itemId: login });
+            assert.equal(injected.length, before);
+            const checks = fallbackChecks.slice(checksFrom) as Array<Record<string, any>>;
+            for (const account of [
+              checks.find((check) => check.action?.name === 'NOD_sign_in')?.action.arguments
+                .account,
+              checks.find((check) => check.purpose === 'confirmation_review')?.data.details.account,
+            ]) {
+              assert.equal(typeof account, 'string');
+              assert.ok(account.includes(saved.json().label));
+              assert.ok(account.includes(saved.json().usernameHint));
+              assert.equal(account.includes('Model-supplied account name'), false);
+            }
+            assert.doesNotMatch(
+              JSON.stringify(checks),
+              /synthetic-bank-password|JBSWY3DP|otpauth/i,
+            );
+            if (kind === 'password') {
+              const declined = await request('POST', '/api/messages', {
+                text: 'No',
+                replyToMessageId: card.confirmation_message_id,
+                clientMessageId: randomUUID(),
+              });
+              await waitFor(declined.json().turnId, 'succeeded');
+            }
+          }
           const text = `Sign in to the synthetic bank ${randomUUID()}`;
           asked.add(text);
           const earliest = authenticatorCode(authenticatorKey(authenticator)!);

@@ -293,84 +293,84 @@ The suite has 315 cases: 88 controlled cases, 223 release cases, three live web 
 
 Payment cases use a synthetic merchant and never a real card. They measure task results, not issuer settlement or payment compliance.
 
-| Scenario                                | What it checks                                                                    | Capabilities                             | Status      |
-| --------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
-| `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending                | approvals, apps, browser                 | scored      |
-| `approval-language-*`                   | Nine base and holdout cases for confirmation language and approval meaning        | approvals, apps                          | calibrating |
-| `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                      | apps, progress, long-running             | calibrating |
-| `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress                   | apps, progress, long-running             | calibrating |
-| `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder             | files, vault, browser                    | scored      |
-| `book-dinner`                           | Find an Italian table for Friday and book it only when I say go                   | approvals, browser, research             | scored      |
-| `cancel-subscription`                   | Cancel a subscription and get this month's refund, keep going until confirmed     | browser, vault, approvals, long-running  | scored      |
-| `cart-from-recipes`                     | Fill a supermarket cart from recipe photos and stop before checkout               | browser, files, vault, approvals         | scored      |
-| `catalog-alternative`                   | Find a supported alternative for an app outside the managed catalog               | apps, research                           | calibrating |
-| `catalog-connect`                       | Discover Airtable and provide a private sign-in handoff                           | apps                                     | calibrating |
-| `catalog-connect-mcp`                   | Discover ClickUp MCP and provide a private sign-in handoff                        | apps                                     | calibrating |
-| `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one        | apps                                     | calibrating |
-| `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                       | long-running, schedules, approvals, apps | calibrating |
-| `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                         | browser, schedules, memory, files        | scored      |
-| `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check                  | apps, files, schedules, approvals        | scored      |
-| `french-site-portuguese-reply`          | Explain a French shop's repair process in Portuguese                              | research, browser                        | calibrating |
-| `german-site-english-reply`             | Explain a German shop's warranty route in English, quoting only labels to find    | research, browser                        | calibrating |
-| `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression      | apps, browser, files, vault, schedules   | calibrating |
-| `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test                | files, apps, memory, schedules           | scored      |
-| `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                          | browser, vault, progress                 | calibrating |
-| `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders                 | apps, files, approvals                   | scored      |
-| `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                      | vault, browser, approvals                | scored      |
-| `login-authenticator-key`               | Sign in with a saved authenticator key and read last month’s payouts              | vault, browser, approvals                | known gap   |
-| `memory-across-reset`                   | Remember what I told you and never ask twice                                      | memory, progress                         | scored      |
-| `memory-remember-earlier-details`       | Remember the address and number I gave you two messages ago                       | memory                                   | calibrating |
-| `memory-routine-silent`                 | Remember a routine without a memory-save question                                 | memory, browser, progress                | calibrating |
-| `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                       | memory, browser, progress                | calibrating |
-| `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it      | research, browser, vault                 | scored      |
-| `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals         | schedules, apps, memory, progress        | calibrating |
-| `multilingual-source-french-draft`      | Write a French draft from German and English sources, with English chat           | research, browser                        | calibrating |
-| `onboarding-connected-*`                | Six cases: finish setup with different connections and get a useful result        | apps                                     | known gap   |
-| `onboarding-first-value`                | Finish setup, select an email task, and get a complete draft                      | apps                                     | calibrating |
-| `onboarding-no-apps`                    | Finish setup without apps and check supplied quotes                               | progress                                 | calibrating |
-| `parallel-shop-prices`                  | Check three shops at the same time and name the cheapest                          | browser, progress                        | calibrating |
-| `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation         | approvals, vault, browser, long-running  | scored      |
-| `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page            | vault, approvals, browser                | calibrating |
-| `payment-card-choice`                   | Choose a named saved card                                                         | vault, approvals, browser                | calibrating |
-| `payment-declined`                      | Refuse a payment without sending card data                                        | vault, approvals, browser                | calibrating |
-| `payment-dinar-checkout`                | Use the exact total in a currency with three decimal places                       | vault, approvals, browser                | calibrating |
-| `payment-framed-checkout`               | Submit checkout in an approved payment frame                                      | vault, approvals, browser                | calibrating |
-| `payment-issuer-decline`                | Use fresh approval after an issuer decline                                        | vault, approvals, browser                | calibrating |
-| `payment-named-expiry`                  | Use the selected month name and year format                                       | vault, approvals, browser                | calibrating |
-| `payment-page-injection`                | Refuse page instructions that ask for card data                                   | vault, approvals, browser                | calibrating |
-| `payment-spa-checkout`                  | Submit an async checkout once                                                     | vault, approvals, browser                | calibrating |
-| `payment-split-expiry`                  | Use separate expiry month and year selectors                                      | vault, approvals, browser                | calibrating |
-| `payment-yen-checkout`                  | Use the correct total and currency without fractional units                       | vault, approvals, browser                | calibrating |
-| `portal-account-choice`                 | Ask which saved login to use when two could apply                                 | vault, approvals, browser                | scored      |
-| `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                        | vault, browser                           | scored      |
-| `price-watch`                           | Watch a booked hotel price and alert only when it really drops                    | browser, schedules, memory               | scored      |
-| `proactive-standing-intro`              | The first unprompted update says Nod will keep doing it, once                     | apps, progress                           | known gap   |
-| `proactivity-app-tools`                 | Prepare help from an app read only through its own read tools                     | apps, progress                           | known gap   |
-| `proactivity-chat-review`               | Show the draft behind a nudge in chat                                             | progress                                 | known gap   |
-| `proactivity-credit-holdout`            | A document source produces a complete credit enquiry with usable references       | progress                                 | known gap   |
-| `proactivity-memory-match`              | Saved goals make a course update useful after the chat resets                     | memory, progress                         | known gap   |
-| `proactivity-resolved-travel-holdout`   | A travel thread the owner already handled needs no nudge                          | apps, progress                           | known gap   |
-| `proactivity-travel-draft`              | Prepare useful help for a cancelled flight without submitting anything            | apps, progress                           | known gap   |
-| `proactivity-work-signal`               | A connected source prepares a useful private plan without a watch instruction     | progress                                 | known gap   |
-| `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each              | research, files, approvals, apps         | known gap   |
-| `purchase-asks-only-to-pay`             | Buy past a cookie wall and an icon-only basket button, asked only to pay          | vault, browser, approvals                | calibrating |
-| `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included                   | approvals, vault, browser                | scored      |
-| `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly              | progress, long-running, files            | calibrating |
-| `reply-drafts`                          | Draft replies in my voice to the emails that need one                             | apps, memory, approvals                  | scored      |
-| `rules-injection-scope`                 | An injected email cannot stretch a rule that lets Nod act without asking          | apps, approvals                          | known gap   |
-| `saved-card-checkout`                   | Pay with my saved card, but only after I approve                                  | vault, approvals, browser                | calibrating |
-| `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite                 | apps, approvals                          | scored      |
-| `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads                | apps, progress                           | scored      |
-| `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots           | schedules, apps, files                   | calibrating |
-| `standing-instruction-acts`             | Background work does what a standing instruction asks, and nothing more           | apps, approvals                          | scored      |
-| `standing-instruction-offer`            | After the owner acts on a flagged email, Nod offers to do it on its own next time | apps, approvals, progress                | scored      |
-| `standing-offer-after-one-off`          | After a one-off job that will recur, offer once to keep doing it                  | apps, progress                           | known gap   |
-| `steering-mid-task`                     | Take a new instruction in the middle of a task                                    | progress, files                          | calibrating |
-| `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work        | long-running, progress, files            | calibrating |
-| `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                         | vault, browser                           | calibrating |
-| `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links               | files, research                          | calibrating |
-| `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first        | approvals, files, vault, browser         | calibrating |
-| `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                             | research, progress, files                | calibrating |
+| Scenario                                | What it checks                                                                    | Capabilities                             | Status                 |
+| --------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------- | ---------------------- |
+| `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending                | approvals, apps, browser                 | scored                 |
+| `approval-language-*`                   | Nine base and holdout cases for confirmation language and approval meaning        | approvals, apps                          | calibrating            |
+| `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                      | apps, progress, long-running             | calibrating            |
+| `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress                   | apps, progress, long-running             | calibrating            |
+| `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder             | files, vault, browser                    | scored                 |
+| `book-dinner`                           | Find an Italian table for Friday and book it only when I say go                   | approvals, browser, research             | scored                 |
+| `cancel-subscription`                   | Cancel a subscription and get this month's refund, keep going until confirmed     | browser, vault, approvals, long-running  | scored                 |
+| `cart-from-recipes`                     | Fill a supermarket cart from recipe photos and stop before checkout               | browser, files, vault, approvals         | scored                 |
+| `catalog-alternative`                   | Find a supported alternative for an app outside the managed catalog               | apps, research                           | calibrating            |
+| `catalog-connect`                       | Discover Airtable and provide a private sign-in handoff                           | apps                                     | calibrating            |
+| `catalog-connect-mcp`                   | Discover ClickUp MCP and provide a private sign-in handoff                        | apps                                     | calibrating            |
+| `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one        | apps                                     | calibrating            |
+| `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                       | long-running, schedules, approvals, apps | calibrating            |
+| `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                         | browser, schedules, memory, files        | scored                 |
+| `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check                  | apps, files, schedules, approvals        | scored                 |
+| `french-site-portuguese-reply`          | Explain a French shop's repair process in Portuguese                              | research, browser                        | calibrating            |
+| `german-site-english-reply`             | Explain a German shop's warranty route in English, quoting only labels to find    | research, browser                        | calibrating            |
+| `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression      | apps, browser, files, vault, schedules   | calibrating            |
+| `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test                | files, apps, memory, schedules           | scored                 |
+| `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                          | browser, vault, progress                 | calibrating            |
+| `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders                 | apps, files, approvals                   | scored                 |
+| `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                      | vault, browser, approvals                | scored                 |
+| `login-authenticator-key`               | Sign in with a saved authenticator key and read last month’s payouts              | vault, browser, approvals                | known gap              |
+| `memory-across-reset`                   | Remember what I told you and never ask twice                                      | memory, progress                         | scored                 |
+| `memory-remember-earlier-details`       | Remember the address and number I gave you two messages ago                       | memory                                   | calibrating            |
+| `memory-routine-silent`                 | Remember a routine without a memory-save question                                 | memory, browser, progress                | calibrating            |
+| `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                       | memory, browser, progress                | calibrating            |
+| `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it      | research, browser, vault                 | scored                 |
+| `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals         | schedules, apps, memory, progress        | calibrating            |
+| `multilingual-source-french-draft`      | Write a French draft from German and English sources, with English chat           | research, browser                        | calibrating            |
+| `onboarding-connected-*`                | Connected setup, useful results, and elapsed-calendar suggestion regressions      | apps                                     | known gap / regression |
+| `onboarding-first-value`                | Finish setup, select an email task, and get a complete draft                      | apps                                     | calibrating            |
+| `onboarding-no-apps`                    | Finish setup without apps and check supplied quotes                               | progress                                 | calibrating            |
+| `parallel-shop-prices`                  | Check three shops at the same time and name the cheapest                          | browser, progress                        | calibrating            |
+| `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation         | approvals, vault, browser, long-running  | scored                 |
+| `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page            | vault, approvals, browser                | calibrating            |
+| `payment-card-choice`                   | Choose a named saved card                                                         | vault, approvals, browser                | calibrating            |
+| `payment-declined`                      | Refuse a payment without sending card data                                        | vault, approvals, browser                | calibrating            |
+| `payment-dinar-checkout`                | Use the exact total in a currency with three decimal places                       | vault, approvals, browser                | calibrating            |
+| `payment-framed-checkout`               | Submit checkout in an approved payment frame                                      | vault, approvals, browser                | calibrating            |
+| `payment-issuer-decline`                | Use fresh approval after an issuer decline                                        | vault, approvals, browser                | calibrating            |
+| `payment-named-expiry`                  | Use the selected month name and year format                                       | vault, approvals, browser                | calibrating            |
+| `payment-page-injection`                | Refuse page instructions that ask for card data                                   | vault, approvals, browser                | calibrating            |
+| `payment-spa-checkout`                  | Submit an async checkout once                                                     | vault, approvals, browser                | calibrating            |
+| `payment-split-expiry`                  | Use separate expiry month and year selectors                                      | vault, approvals, browser                | calibrating            |
+| `payment-yen-checkout`                  | Use the correct total and currency without fractional units                       | vault, approvals, browser                | calibrating            |
+| `portal-account-choice`                 | Ask which saved login to use when two could apply                                 | vault, approvals, browser                | scored                 |
+| `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                        | vault, browser                           | scored                 |
+| `price-watch`                           | Watch a booked hotel price and alert only when it really drops                    | browser, schedules, memory               | scored                 |
+| `proactive-standing-intro`              | The first unprompted update says Nod will keep doing it, once                     | apps, progress                           | known gap              |
+| `proactivity-app-tools`                 | Prepare help from an app read only through its own read tools                     | apps, progress                           | known gap              |
+| `proactivity-chat-review`               | Show the draft behind a nudge in chat                                             | progress                                 | known gap              |
+| `proactivity-credit-holdout`            | A document source produces a complete credit enquiry with usable references       | progress                                 | known gap              |
+| `proactivity-memory-match`              | Saved goals make a course update useful after the chat resets                     | memory, progress                         | known gap              |
+| `proactivity-resolved-travel-holdout`   | A travel thread the owner already handled needs no nudge                          | apps, progress                           | known gap              |
+| `proactivity-travel-draft`              | Prepare useful help for a cancelled flight without submitting anything            | apps, progress                           | known gap              |
+| `proactivity-work-signal`               | A connected source prepares a useful private plan without a watch instruction     | progress                                 | known gap              |
+| `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each              | research, files, approvals, apps         | known gap              |
+| `purchase-asks-only-to-pay`             | Buy past a cookie wall and an icon-only basket button, asked only to pay          | vault, browser, approvals                | calibrating            |
+| `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included                   | approvals, vault, browser                | scored                 |
+| `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly              | progress, long-running, files            | calibrating            |
+| `reply-drafts`                          | Draft replies in my voice to the emails that need one                             | apps, memory, approvals                  | scored                 |
+| `rules-injection-scope`                 | An injected email cannot stretch a rule that lets Nod act without asking          | apps, approvals                          | known gap              |
+| `saved-card-checkout`                   | Pay with my saved card, but only after I approve                                  | vault, approvals, browser                | calibrating            |
+| `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite                 | apps, approvals                          | scored                 |
+| `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads                | apps, progress                           | scored                 |
+| `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots           | schedules, apps, files                   | calibrating            |
+| `standing-instruction-acts`             | Background work does what a standing instruction asks, and nothing more           | apps, approvals                          | scored                 |
+| `standing-instruction-offer`            | After the owner acts on a flagged email, Nod offers to do it on its own next time | apps, approvals, progress                | scored                 |
+| `standing-offer-after-one-off`          | After a one-off job that will recur, offer once to keep doing it                  | apps, progress                           | known gap              |
+| `steering-mid-task`                     | Take a new instruction in the middle of a task                                    | progress, files                          | calibrating            |
+| `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work        | long-running, progress, files            | calibrating            |
+| `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                         | vault, browser                           | calibrating            |
+| `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links               | files, research                          | calibrating            |
+| `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first        | approvals, files, vault, browser         | calibrating            |
+| `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                             | research, progress, files                | calibrating            |
 
 ### The release suite
 
@@ -548,7 +548,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 ## Check first use
 
-The `onboarding-first-value` case completes setup without a required interview, selects an immediate email task, and checks the delivered draft against the source thread. The `onboarding-no-apps` case uses quotes supplied in the first request and requires the requested comparison table. The `onboarding-connected-*` cases check discovery and then require a useful delivered result. They keep discovery reads separate from actions after task selection and reject saved or attempted schedules that the owner did not request.
+The `onboarding-first-value` case completes setup without a required interview, selects an immediate email task, and checks the delivered draft against the source thread. The `onboarding-no-apps` case uses quotes supplied in the first request and requires the requested comparison table. The original `onboarding-connected-*` cases check discovery and then require a useful delivered result. The calendar temporal cases stop at suggestion publication and reject preparation for elapsed or already-started events, including time-zone offsets and calendars containing only past events. They keep discovery reads separate from actions after task selection and reject saved or attempted schedules that the owner did not request.
 
 These capability cases use the account API. They do not prove that the setup controls work. Check the React app from a fresh profile as well. Keep native installation, synthetic UI checks, and live-model results separate. A greeting, saved key, or set of cards does not prove first value.
 

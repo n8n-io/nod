@@ -2887,7 +2887,8 @@ test(
           assert.deepEqual(planInputs[0], {
             owner: ownerId,
             input: {
-              today: '2026-10-24',
+              now: '2026-10-24T12:00:00+00:00',
+              timeZone: 'UTC',
               answers: [`Working on: a synthetic newsletter for ${ownerId}`],
               apps: [{ slug: 'gmail', name: 'Gmail' }],
               sources: ['gmail', 'web'],
@@ -2969,7 +2970,6 @@ test(
             'legacy_cache',
           ]) {
             t.mock.timers.setTime(instant.getTime());
-            const expectedToday = mode === 'mixed' ? '2026-10-23' : '2026-10-24';
             const owner = `synthetic-discovery-${mode}`;
             t.after(async () => {
               await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
@@ -2989,6 +2989,7 @@ test(
               [];
             const briefs: unknown[] = [];
             const plannerBriefs: Array<{ source: string; summary: string }> = [];
+            const times: Array<{ stage: string; now: unknown; timeZone: unknown }> = [];
             const pathId = randomUUID();
             const schema = {
               type: 'object',
@@ -3010,7 +3011,19 @@ test(
                 id: 'fixture',
                 configured: true,
                 curate: async ({ task, input }) => {
-                  assert.equal((input as { today: string }).today, expectedToday);
+                  const { now, timeZone } = input as { now: unknown; timeZone: unknown };
+                  times.push({
+                    stage:
+                      'tools' in input
+                        ? 'discovery'
+                        : task === 'brief'
+                          ? 'brief'
+                          : 'previous' in input
+                            ? 'repair'
+                            : 'cards',
+                    now,
+                    timeZone,
+                  });
                   if (mode === 'mixed') t.mock.timers.setTime(Date.parse('2026-10-25T00:15:00Z'));
                   if ('tools' in input) {
                     const tools = input.tools as Array<{ name: string }>;
@@ -3053,7 +3066,10 @@ test(
                   if (mode === 'revoked_plan') active.clear();
                   if (mode === 'cancelled_plan') plans.cancel();
                   if (mode === 'cancelled_repair') {
-                    if (!('previous' in input)) return {};
+                    if (!('previous' in input)) {
+                      t.mock.timers.setTime(Date.parse('2026-10-24T00:17:00Z'));
+                      return {};
+                    }
                     plans.cancel();
                   }
                   if (mode === 'shutdown') closing.abort();
@@ -3164,6 +3180,27 @@ test(
             }
             await plans.complete();
             await plans.delivered();
+            assert.ok(times.length > 0);
+            assert.deepEqual(
+              times.map(({ now, timeZone }) => ({ now, timeZone })),
+              times.map(({ stage }, index) => ({
+                now:
+                  mode === 'mixed'
+                    ? index === 0
+                      ? '2026-10-23T17:15:00-07:00'
+                      : '2026-10-24T17:15:00-07:00'
+                    : mode === 'cancelled_repair' && stage === 'repair'
+                      ? '2026-10-24T14:17:00+14:00'
+                      : '2026-10-24T14:15:00+14:00',
+                timeZone: mode === 'mixed' ? 'America/Los_Angeles' : 'Pacific/Kiritimati',
+              })),
+            );
+            if (mode === 'mixed')
+              assert.deepEqual(
+                new Set(times.map(({ stage }) => stage)),
+                new Set(['discovery', 'brief', 'cards']),
+              );
+            if (mode === 'cancelled_repair') assert.equal(times.at(-1)?.stage, 'repair');
             const posted = (
               await db.pool.query(
                 'SELECT suggestions FROM messages WHERE owner_id=$1 AND suggestions IS NOT NULL',
