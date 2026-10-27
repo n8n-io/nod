@@ -313,8 +313,13 @@ function synchronizeNotifications() {
     status.phase !== 'ready' ||
     quitting
   ) {
-    stopNotifications?.();
+    const clear = !preferences.notifications || quitting;
+    stopNotifications?.({ clear });
     stopNotifications = undefined;
+    if (clear) {
+      unreadBadge?.stop();
+      unreadBadge = undefined;
+    }
     return;
   }
   if (!stopNotifications) {
@@ -337,10 +342,10 @@ function synchronizeNotifications() {
       onMessage: (message, threadId) =>
         void notifyAssistantMessage(message, threadId).catch(() => {}),
     });
-    stopNotifications = () => {
+    stopNotifications = (options) => {
       stop();
-      badge.stop();
-      if (unreadBadge === badge) unreadBadge = undefined;
+      badge.stop(options);
+      if (options?.clear !== false && unreadBadge === badge) unreadBadge = undefined;
     };
   }
 }
@@ -1141,6 +1146,8 @@ async function stopEngine() {
   engineRuntimeReady = false;
   stopNotifications?.();
   stopNotifications = undefined;
+  unreadBadge?.stop();
+  unreadBadge = undefined;
   if (!engine) return;
   closingEngine = true;
   const child = engine;
@@ -1473,6 +1480,8 @@ async function quit(complete, failure = 'Nod could not finish shutting down.') {
   const stoppingUpdates = updates?.dispose();
   updateReadinessNotice();
   stopNotifications?.();
+  unreadBadge?.stop();
+  unreadBadge = undefined;
   for (const notification of displayedNotifications) notification.close();
   await stoppingUpdates;
   await chatReadCursors.flush().catch(() => {});
@@ -1643,7 +1652,7 @@ async function startEngine({ runtime, signal, pending = false }) {
         (status.runtime.phase === 'error' && status.runtime.message) ||
         failure ||
         `Nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
-    stopNotifications?.();
+    stopNotifications?.({ clear: closingEngine || quitting });
     stopNotifications = undefined;
     if (!closingEngine) void writeDiagnostic(`Engine exited with code ${code}.`).catch(() => {});
     engine = undefined;

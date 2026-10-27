@@ -310,20 +310,22 @@ test('unread badges ignore first-run history and count committed assistant messa
   assert.equal(f.writes.length, 1);
 });
 
-test('unread badges restore their count from a reopened durable read cursor', async (t) => {
+test('unread badges preserve their count through a runtime restart using a reopened durable cursor', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-unread-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const owner = message(500).id;
   const thread = message(501).id;
   const counts = [];
-  function open() {
+  function open(
+    request = async () => {
+      throw new Error('Unexpected history request');
+    },
+  ) {
     const cursors = createChatReadCursorStore(join(directory, 'read.json'), {
       owner: async () => owner,
     });
     const badge = createUnreadBadge({
-      request: async () => {
-        throw new Error('Unexpected history request');
-      },
+      request,
       readCursor: (threadId) => cursors.get(owner, threadId),
       writeCursor: (threadId, cursor) => cursors.set(owner, threadId, cursor),
       onCount: (count) => counts.push(count),
@@ -334,11 +336,25 @@ test('unread badges restore their count from a reopened durable read cursor', as
   const first = open();
   await first.badge.update(snapshot([message(1)], false, thread));
   await first.badge.update(snapshot([message(1), message(2)], false, thread));
-  first.badge.stop();
-  const restarted = open();
-  await restarted.badge.update(snapshot([message(1), message(2)], false, thread));
-  assert.deepEqual(counts, [0, 1, 0, 0, 1]);
-  await restarted.cursors.set(owner, thread, position(message(2)));
+  first.badge.stop({ clear: false });
+  assert.deepEqual(counts, [0, 1]);
+  let resume;
+  let requested = false;
+  const history = new Promise((resolve) => {
+    resume = resolve;
+  });
+  const restarted = open(async () => {
+    requested = true;
+    await history;
+    return Response.json({ messages: [message(1), message(2)], hasMore: false });
+  });
+  const pending = restarted.badge.update(snapshot([message(3, 'user')], true, thread));
+  await eventually(() => requested);
+  assert.deepEqual(counts, [0, 1]);
+  resume();
+  await pending;
+  assert.deepEqual(counts, [0, 1, 1]);
+  await restarted.cursors.set(owner, thread, position(message(3, 'user')));
   await restarted.badge.refresh();
   assert.equal(counts.at(-1), 0);
 });
@@ -364,7 +380,7 @@ test('unread badge initialization keeps the first snapshot while persistence is 
   release();
   await Promise.all([first, next]);
   assert.deepEqual(writes, [{ threadId: 'synthetic-thread-1', cursor: position(message(1)) }]);
-  assert.deepEqual(f.counts, [0, 1]);
+  assert.deepEqual(f.counts, [1]);
 });
 
 test('unread badge initialization honors a read saved while its baseline is being written', async (t) => {
@@ -435,11 +451,11 @@ test('unread badges publish known unread messages while older history is pending
   });
   const pending = f.badge.update(snapshot([message(2), message(3)], true));
   await eventually(() => reject);
-  assert.deepEqual(f.counts, [0, 2]);
+  assert.deepEqual(f.counts, [2]);
   const failed = assert.rejects(pending, /Offline/);
   reject(new Error('Offline'));
   await failed;
-  assert.deepEqual(f.counts, [0, 2]);
+  assert.deepEqual(f.counts, [2]);
 });
 
 test('unread badges retain the last count on failed history and reject pagination that does not advance', async (t) => {
@@ -477,7 +493,7 @@ test('unread badges do not replace an unreadable saved cursor with a new baselin
     f.badge.update(snapshot([message(2), message(3)])),
     /Read state unavailable/,
   );
-  assert.deepEqual(f.counts, [0, 1]);
+  assert.deepEqual(f.counts, [1]);
   assert.deepEqual(f.writes, []);
 });
 
@@ -542,11 +558,53 @@ test('thread reset clears its badge and fences delayed history from the previous
   await eventually(() => release);
   await f.badge.update(snapshot([message(4)], false, 'synthetic-thread-2'));
   assert.equal(signal.aborted, true);
-  assert.deepEqual(f.counts, [0, 1, 0]);
+  assert.deepEqual(f.counts, [1, 0]);
   release();
   await pending;
-  assert.deepEqual(f.counts, [0, 1, 0]);
+  assert.deepEqual(f.counts, [1, 0]);
   assert.deepEqual(f.writes, [{ threadId: 'synthetic-thread-2', cursor: position(message(4)) }]);
+});
+
+test('runtime interruption retains unread messages and fences delayed cursor reads and history', async (t) => {
+  for (const phase of ['read', 'history']) {
+    let release;
+    let signal;
+    let pauseRead = false;
+    const f = unreadFixture(t, {
+      readCursor: async () => {
+        if (pauseRead)
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+        return position(message(1));
+      },
+      request: async (path, options) => {
+        signal = options.signal;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+        return Response.json({ messages: [message(2)], hasMore: false });
+      },
+    });
+    await f.badge.update(snapshot([message(3)]));
+    assert.deepEqual(f.counts, [1]);
+    pauseRead = phase === 'read';
+    const pending = f.badge.update(
+      snapshot(phase === 'read' ? [message(3), message(4)] : [message(3)], phase === 'history'),
+    );
+    await eventually(() => release);
+    f.badge.stop({ clear: false });
+    if (signal) assert.equal(signal.aborted, true);
+    assert.deepEqual(f.counts, [1]);
+    release();
+    await pending;
+    await f.badge.update(snapshot([message(3), message(4)]));
+    await f.badge.refresh();
+    assert.deepEqual(f.counts, [1]);
+    f.badge.stop();
+    f.badge.stop();
+    assert.deepEqual(f.counts, [1, 0]);
+  }
 });
 
 test('stopping unread badges fences delayed cursor reads, baseline writes, and history', async (t) => {

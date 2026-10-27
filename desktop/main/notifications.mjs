@@ -193,7 +193,7 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount })
             (message.createdAt === cursor.createdAt && !read.has(message.id)))
         )
           unread.add(message.id);
-      if (active()) publish(Math.min(Math.max(count ?? 0, unread.size), 100));
+      if (active() && unread.size > 0) publish(Math.min(Math.max(count ?? 0, unread.size), 100));
     }
     let page = { messages: snapshot.messages, hasMore: snapshot.hasEarlierMessages === true };
     collect(page.messages);
@@ -248,21 +248,21 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount })
         }
         initial.messageIds.push(message.id);
       }
+      if (scope) publish(0);
       scope = { threadId: snapshot.threadId, initial };
-      publish(0);
     }
     scope.snapshot = snapshot;
     return refresh();
   }
 
-  function stop() {
-    if (stopped) return;
-    stopped = true;
-    scope = undefined;
-    revision++;
-    controller?.abort();
-    count = 0;
-    onCount(0);
+  function stop({ clear = true } = {}) {
+    if (!stopped) {
+      stopped = true;
+      scope = undefined;
+      revision++;
+      controller?.abort();
+    }
+    if (clear) publish(0);
   }
 
   return { update, refresh, stop };
