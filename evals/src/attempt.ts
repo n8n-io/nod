@@ -1,5 +1,5 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { grade } from './grade.ts';
 import {
   createLlm,
@@ -24,6 +24,7 @@ export interface AttemptSpec {
   outFile: string;
   model: string;
   judge: string;
+  worldTime?: string;
 }
 
 const infra =
@@ -49,6 +50,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     stance: definition.stance,
     fingerprint: fingerprint(definition.id),
     attempt: spec.attempt,
+    ...(spec.worldTime ? { worldTime: spec.worldTime } : {}),
     task: '',
   };
   const empty = {
@@ -70,7 +72,8 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const judgeModel = parseModel(spec.judge, environment);
   const started = Date.now();
   let taskStarted = started;
-  const world = definition.world({ now: () => Date.now() });
+  const worldTime = spec.worldTime === undefined ? undefined : Date.parse(spec.worldTime);
+  const world = definition.world({ now: () => worldTime ?? Date.now() });
   const address = await bindAddress();
   const hosted = {
     ...Object.fromEntries((world.apps?.remote ?? []).map((item) => [item.host, item.site])),
@@ -94,7 +97,16 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   let phase = 'start';
   try {
-    const llm = (judgeLlm = await createLlm(judgeModel));
+    const receipts = join(
+      dirname(spec.outFile),
+      '..',
+      'usage',
+      `${basename(spec.outFile, '.json')}.judge.jsonl`,
+    );
+    await mkdir(dirname(receipts), { recursive: true, mode: 0o700 });
+    const llm = (judgeLlm = await createLlm(judgeModel, (request) =>
+      appendFile(receipts, JSON.stringify(request) + '\n', { mode: 0o600 }),
+    ));
     stack = await (starting = startStack({
       model,
       observations: world.observations,

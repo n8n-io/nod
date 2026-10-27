@@ -20,6 +20,7 @@ export interface RunOptions {
   root: string;
   model?: string;
   judge?: string;
+  worldTime?: string;
   repeat: number;
   k?: number;
   concurrency: number;
@@ -117,14 +118,22 @@ async function attemptOnce(options: {
   directory: string;
   model: string;
   judge: string;
+  worldTime?: string;
   task: { item: (typeof scenarios)[number]; attempt: number };
 }) {
-  const { directory, model, judge, task } = options;
+  const { directory, model, judge, worldTime, task } = options;
   const file = join(directory, 'attempts', `${task.item.id}.${task.attempt}.json`);
   const specPath = join(tmpdir(), `nod-eval-${randomUUID()}.json`);
   await writeFile(
     specPath,
-    JSON.stringify({ scenario: task.item.id, attempt: task.attempt, outFile: file, model, judge }),
+    JSON.stringify({
+      scenario: task.item.id,
+      attempt: task.attempt,
+      outFile: file,
+      model,
+      judge,
+      worldTime,
+    }),
   );
   const child = spawn(
     process.execPath,
@@ -180,7 +189,12 @@ async function attemptOnce(options: {
     });
 }
 
-async function checkHarness(model: string, judge: string, runDirectory: string) {
+async function checkHarness(
+  model: string,
+  judge: string,
+  runDirectory: string,
+  worldTime?: string,
+) {
   const item = scenarios.find((entry) => entry.id === 'harness-canary')!;
   const directory = join(runDirectory, 'canaries', randomUUID());
   await mkdir(join(directory, 'attempts'), { recursive: true });
@@ -189,7 +203,13 @@ async function checkHarness(model: string, judge: string, runDirectory: string) 
   let failures = 0;
   let faults = 0;
   for (let attempt = 1; failures < 2; attempt++) {
-    const result = await attemptOnce({ directory, model, judge, task: { item, attempt } });
+    const result = await attemptOnce({
+      directory,
+      model,
+      judge,
+      worldTime,
+      task: { item, attempt },
+    });
     if (result.status === 'incomplete' && result.blame === 'infra' && faults < 2) {
       await sleep(Math.min(30_000 * 3 ** faults++, 90_000));
       continue;
@@ -210,6 +230,10 @@ async function checkHarness(model: string, judge: string, runDirectory: string) 
 }
 
 export async function runSuite(options: RunOptions) {
+  if (options.worldTime !== undefined && !Number.isFinite(Date.parse(options.worldTime)))
+    throw new Error('--world-time must be a valid date and time.');
+  const worldTime =
+    options.worldTime === undefined ? undefined : new Date(options.worldTime).toISOString();
   const environment = await prepare(options.root);
   const model = options.model ?? defaultModel(environment);
   const judge = options.judge ?? (environment.ANTHROPIC_API_KEY ? defaultJudge : model);
@@ -239,7 +263,7 @@ export async function runSuite(options: RunOptions) {
   } else delete process.env.NOD_EVAL_SOURCE;
   try {
     if (options.canary !== false && selected.some((item) => item.tier !== 'canary'))
-      await checkHarness(model, judge, directory);
+      await checkHarness(model, judge, directory, worldTime);
     const digest = async (image: string) =>
       (await runProcess('docker', ['image', 'inspect', image, '--format', '{{.Id}}'])).stdout
         .trim()
@@ -263,6 +287,7 @@ export async function runSuite(options: RunOptions) {
         browserImage: await digest(environment.NOD_EVAL_BROWSER_IMAGE!),
         pi: pkg.dependencies['@earendil-works/pi-coding-agent'] ?? '',
         node: process.version,
+        worldTime: worldTime ?? 'wall clock',
       },
     };
     await mkdir(join(directory, 'attempts'), { recursive: true });
@@ -295,7 +320,7 @@ export async function runSuite(options: RunOptions) {
         let result =
           options.resume && previous && previous.status !== 'incomplete' ? previous : undefined;
         for (let tries = 0; !result && tries <= options.retries; tries++) {
-          result = await attemptOnce({ directory, model, judge, task });
+          result = await attemptOnce({ directory, model, judge, worldTime, task });
           if (
             result.status === 'incomplete' &&
             result.blame !== 'agent' &&

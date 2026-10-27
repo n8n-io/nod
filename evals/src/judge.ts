@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { parseModel, type Model } from './stack.ts';
 
 export interface LlmRequest {
+  id: string;
   model: string;
   startedAt: string;
   finishedAt?: string;
@@ -25,7 +27,10 @@ export interface Llm {
 const transient =
   /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONN|ETIMEDOUT|fetch failed|unavailable/i;
 
-export async function createLlm(model: Model): Promise<Llm> {
+export async function createLlm(
+  model: Model,
+  record?: (request: LlmRequest) => Promise<void>,
+): Promise<Llm> {
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsPath: null,
@@ -51,6 +56,7 @@ export async function createLlm(model: Model): Promise<Llm> {
       for (const delay of [0, 30_000, 90_000]) {
         if (delay) await new Promise((done) => setTimeout(done, delay));
         const request: LlmRequest = {
+          id: randomUUID(),
           model: `${model.provider}/${model.name}`,
           startedAt: new Date().toISOString(),
           status: 'started',
@@ -60,6 +66,7 @@ export async function createLlm(model: Model): Promise<Llm> {
           costUsd: null,
         };
         requests.push(request);
+        await record?.(request);
         const reply = await runtime.completeSimple(
           resolved,
           {
@@ -84,6 +91,7 @@ export async function createLlm(model: Model): Promise<Llm> {
           cost += reply.usage.cost.total;
           costKnown = true;
         }
+        await record?.(request);
         if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted') {
           const text = reply.content
             .flatMap((block) => (block.type === 'text' ? [block.text] : []))

@@ -34,6 +34,7 @@ export interface AttemptResult {
   stance: 'regression' | 'gap';
   fingerprint: string;
   attempt: number;
+  worldTime?: string;
   task: string;
   status: 'pass' | 'fail' | 'incomplete';
   blame?: Blame;

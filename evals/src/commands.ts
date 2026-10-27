@@ -79,6 +79,7 @@ export const help = `Nod capability evals
     --concurrency 2            attempts at once           --budget 20            stop after about this many dollars
     --parallel 2               (models) run this many models at the same time
     --ref <git ref>            test another revision of the app code with these scenarios
+    --world-time <ISO date>    fix the synthetic source time; runtime clocks stay unchanged
     --open                     open the HTML report or chart when it is ready
     --label <name>             name the run               --resume               redo only incomplete attempts
     --no-diagnose              skip the failure analysis  --retries 2            retries for provider or infrastructure faults
@@ -98,6 +99,7 @@ function runOptions(args: Args): RunOptions {
     root: resultsRoot(text(args, 'out')),
     model: text(args, 'model'),
     judge: text(args, 'judge'),
+    worldTime: text(args, 'world-time'),
     repeat,
     k: whole(args, 'k', repeat),
     concurrency: whole(args, 'concurrency', 2),

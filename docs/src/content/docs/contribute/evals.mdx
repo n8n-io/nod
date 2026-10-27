@@ -84,6 +84,8 @@ For a comparison, set `--model` and `--judge` to different models. Capability at
 
 Judge request records include retries, status, input size, token limit, and available cost. They contain no prompts. If an attempt fails before grading finishes, it keeps the available judge cost and request records.
 
+The `usage` folder keeps judge request receipts as JSON Lines. A receipt is written before a request starts and after its reply. An interrupted attempt can still have cost evidence. Request IDs stay unique across whole-attempt retries.
+
 Each judge criterion needs one verdict with boolean result and applicability fields and a reason. Missing, duplicate, or invalid fields use the existing retry path. A reply that stays invalid is a measurement error. A valid failure stays a failure, regardless of its reason's wording.
 
 The sales PDF and bank document cases check delivered attachments through the owner's file endpoint. They compare the returned bytes with the checked files. A private workspace file or a successful sharing call alone does not prove delivery. The sales PDF must have one page and contain the requested figures. The bank documents can arrive as separate files or in a ZIP file.
@@ -91,6 +93,8 @@ The sales PDF and bank document cases check delivered attachments through the ow
 The `reply-drafts` case requires exactly the two requested drafts, with each draft in the correct account and thread and no extra recipients. The `reschedule-and-tell` case requires no new unsent drafts after the requested email is sent.
 
 Controlled cases restrict browser and server-side web tools to the case's synthetic sites. Each redirect must stay within those sites. Model requests and harness control requests use a separate path. Live-tier cases keep access to public sites through the normal network guard.
+
+Use `--world-time 2026-10-27T09:00:00Z` to build both sides' synthetic sources from one fixed time. The manifest and each attempt record it. This sets only the source clock; Nod's current time, deadlines, private forms, and spending controls keep the real clock. Use a source time on the run's date when the request uses words such as “today” or “tomorrow”. Without the option, sources use the current time.
 
 ### Commands
 
