@@ -801,8 +801,9 @@ export function stressScenario(
           run.tools
             .filter(
               (t) =>
-                world.state.turnIds.includes(t.turnId ?? '') ||
-                run.turns.some((turn) => turn.proactive && turn.id === t.turnId),
+                !t.isError &&
+                (world.state.turnIds.includes(t.turnId ?? '') ||
+                  run.turns.some((turn) => turn.proactive && turn.id === t.turnId)),
             )
             .every(
               (t) =>
