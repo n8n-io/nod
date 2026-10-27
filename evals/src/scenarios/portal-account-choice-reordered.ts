@@ -3,7 +3,7 @@ import base from './portal-account-choice.ts';
 export default {
   ...base,
   id: 'portal-account-choice-reordered',
-  title: 'Choose the correct saved tax account when the other account is listed first',
+  title: 'Choose the correct saved tax account after the account order changes',
   tier: 'release' as const,
   calibration: 'pending' as const,
   world(clock: { now(): number }) {
