@@ -953,7 +953,9 @@ test(
 
     await t.test(
       'bounded sweeps advance beyond failures and keep directory progress until close',
-      async () => {
+      async (t) => {
+        const now = Date.now();
+        t.mock.method(Date, 'now', () => now);
         const owner = 'bounded-owner';
         const service = create(owner);
         const failed = await service.storeUpload(Buffer.from('blocked'), 'blocked', 'text/plain');
