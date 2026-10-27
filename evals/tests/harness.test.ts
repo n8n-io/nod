@@ -1595,7 +1595,6 @@ test('simulated replies keep the current owner request and discard history after
   const secondReply = randomUUID();
   const inputs: string[] = [];
   let waiting = false;
-  let conversation = 0;
   const stack = {
     waiting: (alias: string) => `${alias}.status='waiting'`,
     pool: {
@@ -1604,7 +1603,7 @@ test('simulated replies keep the current owner request and discard history after
           return { rows: [{ id: 'turn', waiting_reason: 'question', waiting }], rowCount: 1 };
         if (sql.includes("role='assistant'"))
           return {
-            rows: [{ text: `Should I use a different target? (${conversation})` }],
+            rows: [{ text: 'Should I use a different target?' }],
             rowCount: 1,
           };
         if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
@@ -1620,7 +1619,6 @@ test('simulated replies keep the current owner request and discard history after
     },
     resetConversation: async () => {
       waiting = false;
-      conversation++;
     },
   } as unknown as Stack;
   const simulator = createSimulator({

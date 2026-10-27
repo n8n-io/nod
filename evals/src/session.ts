@@ -483,6 +483,7 @@ export function createSession(options: {
       taskFrom = userMessages.length;
       await stack.resetConversation();
       threadId = undefined;
+      answered.clear();
     },
     lastReply: lastAssistantText,
     async assistantCount() {
