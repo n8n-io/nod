@@ -2,9 +2,21 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { parseModel, type Model } from './stack.ts';
 
+export interface LlmRequest {
+  model: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  inputBytes: number;
+  maxTokens: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
 export interface Llm {
   model: Model;
   replies?: string[];
+  requests?: LlmRequest[];
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
   fallbackCalls?(): number;
@@ -28,14 +40,26 @@ export async function createLlm(model: Model): Promise<Llm> {
   let cost = 0;
   let costKnown = false;
   const replies: string[] = [];
+  const requests: LlmRequest[] = [];
   return {
     model,
     replies,
+    requests,
     spent: () => ({ tokens, costUsd: costKnown ? cost : null }),
     async complete(system, input, maxTokens = 4096) {
       let failure = '';
       for (const delay of [0, 30_000, 90_000]) {
         if (delay) await new Promise((done) => setTimeout(done, delay));
+        const request: LlmRequest = {
+          model: `${model.provider}/${model.name}`,
+          startedAt: new Date().toISOString(),
+          status: 'started',
+          inputBytes: Buffer.byteLength(system) + Buffer.byteLength(input),
+          maxTokens,
+          tokens: 0,
+          costUsd: null,
+        };
+        requests.push(request);
         const reply = await runtime.completeSimple(
           resolved,
           {
@@ -44,6 +68,17 @@ export async function createLlm(model: Model): Promise<Llm> {
           },
           { signal: AbortSignal.timeout(180_000), maxTokens },
         );
+        request.finishedAt = new Date().toISOString();
+        request.status = reply.stopReason;
+        request.tokens = reply.usage?.totalTokens ?? 0;
+        const reported = reply.usage?.cost?.total;
+        if (
+          typeof reported === 'number' &&
+          Number.isFinite(reported) &&
+          reported >= 0 &&
+          (!['error', 'aborted'].includes(reply.stopReason) || request.tokens > 0 || reported > 0)
+        )
+          request.costUsd = reported;
         tokens += reply.usage?.totalTokens ?? 0;
         if (typeof reply.usage?.cost?.total === 'number') {
           cost += reply.usage.cost.total;

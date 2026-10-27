@@ -1,7 +1,13 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
-import { createLlm, createSimulator, providerRefusal, simulatorFailure } from './judge.ts';
+import {
+  createLlm,
+  createSimulator,
+  providerRefusal,
+  simulatorFailure,
+  type Llm,
+} from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { createSession } from './session.ts';
@@ -74,6 +80,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const unroute = routeFixtureHosts(Object.keys(hosted), `http://${address}:${sites.port}`);
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
+  let judgeLlm: Llm | undefined;
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
@@ -83,7 +90,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   let phase = 'start';
   try {
-    const judgeLlm = await createLlm(judgeModel);
+    const llm = (judgeLlm = await createLlm(judgeModel));
     stack = await (starting = startStack({
       model,
       observations: world.observations,
@@ -105,7 +112,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const session = createSession({
       stack,
       user: definition.user,
-      simulator: definition.user.persona ? createSimulator(judgeLlm) : undefined,
+      simulator: definition.user.persona ? createSimulator(llm) : undefined,
       deadline: taskStarted + definition.seconds * 1000,
       world,
     });
@@ -138,7 +145,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         definition,
         world,
         trace,
-        judge: judgeLlm,
+        judge: llm,
         truth,
         skipJudges: Boolean(failure),
       });
@@ -192,8 +199,9 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       costUsd: trace.usage.costUsd,
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
-      judgeCostUsd: judgeLlm.spent().costUsd,
-      judgeReplies: judgeLlm.replies,
+      judgeCostUsd: llm.spent().costUsd,
+      judgeReplies: llm.replies,
+      judgeRequests: llm.requests,
       final: trace.final,
       transcript: trace.transcript(60_000),
       groundTruth: truth,
@@ -219,6 +227,9 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       blame: blame(message),
       error: message,
       seconds: (Date.now() - started) / 1000,
+      judgeCostUsd: judgeLlm?.spent().costUsd ?? null,
+      judgeReplies: judgeLlm?.replies,
+      judgeRequests: judgeLlm?.requests,
     };
   } finally {
     await release();

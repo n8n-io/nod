@@ -1,4 +1,5 @@
 import type { Capability, FailureClass } from './scenario.ts';
+import type { LlmRequest } from './judge.ts';
 
 export interface CheckResult {
   id: string;
@@ -47,6 +48,7 @@ export interface AttemptResult {
   firstReplySeconds: number | null;
   judgeCostUsd: number | null;
   judgeReplies?: string[];
+  judgeRequests?: LlmRequest[];
   final: string;
   transcript: string;
   groundTruth: string;
