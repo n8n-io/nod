@@ -4,10 +4,11 @@ import type {
   ModelProvider,
   ModelSelection,
   ModelsResponse,
+  ModelWorkspace,
 } from '../../shared/models';
 import { usePageData } from './use-page-data';
 import { defaultEffort, defaultModel } from '../../shared/model-defaults';
-import { api, errorMessage, post } from '../lib/api';
+import { ApiError, api, errorMessage, post } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
@@ -72,6 +73,7 @@ export function useModels() {
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ message: string; path?: string }>({ message: '' });
+  const [workspaces, setWorkspaces] = useState<ModelWorkspace[]>([]);
   function setError(message: string) {
     setFailure({ message });
   }
@@ -86,9 +88,12 @@ export function useModels() {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
       page.update(() => result);
+      if (path === '/api/models/keys') setWorkspaces([]);
       return true;
     } catch (cause) {
       setFailure({ message: errorMessage(cause), path });
+      if (path === '/api/models/keys' && cause instanceof ApiError && cause.workspaces)
+        setWorkspaces(cause.workspaces);
       void page.refresh();
       return false;
     } finally {
@@ -101,6 +106,8 @@ export function useModels() {
     busy,
     error: failure.message || page.error,
     errorPath: failure.message ? failure.path : undefined,
+    workspaces,
+    setWorkspaces,
     setError,
     change,
   };

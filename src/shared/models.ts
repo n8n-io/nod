@@ -82,6 +82,11 @@ export interface ModelsResponse {
   selection: ModelSelection | null;
 }
 
+export interface ModelWorkspace {
+  id: string;
+  name: string;
+}
+
 export const modelProviderNames = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',

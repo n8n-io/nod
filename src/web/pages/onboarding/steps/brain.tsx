@@ -40,7 +40,7 @@ import {
   useModels,
   type KeySettings,
 } from '../../../hooks/use-models';
-import { api, errorMessage } from '../../../lib/api';
+import { ApiError, api, errorMessage } from '../../../lib/api';
 import { pageDataCache } from '../../../lib/page-data-cache';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
@@ -143,11 +143,13 @@ function useConnect() {
         },
       );
       models.update(() => result);
+      models.setWorkspaces([]);
       setAnother(false);
       setFresh(result.connections.at(-1)?.id);
       return true;
     } catch (cause) {
       setKeyError(errorMessage(cause));
+      if (cause instanceof ApiError && cause.workspaces) models.setWorkspaces(cause.workspaces);
       return false;
     } finally {
       submitting.current = false;
@@ -211,9 +213,17 @@ function Spinner() {
   );
 }
 
-function ConnectButton({ checking, saved = false }: { checking: boolean; saved?: boolean }) {
+function ConnectButton({
+  checking,
+  saved = false,
+  disabled = false,
+}: {
+  checking: boolean;
+  saved?: boolean;
+  disabled?: boolean;
+}) {
   return (
-    <Button type="submit" variant="outline" disabled={checking}>
+    <Button type="submit" variant="outline" disabled={checking || disabled}>
       {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
       {checking ? (saved ? 'Saving' : 'Checking') : saved ? 'Save key' : 'Connect'}
     </Button>
@@ -285,6 +295,12 @@ function KeyForm({
 }) {
   const [key, setKey] = useState('');
   const [settings, setSettings] = useState<KeySettings>(noKeySettings);
+  const { setWorkspaces } = c.models;
+  useEffect(() => {
+    setKey('');
+    setSettings(noKeySettings);
+    setWorkspaces([]);
+  }, [provider, setWorkspaces]);
   const id = `ob-brain-key-${provider}`;
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -298,6 +314,7 @@ function KeyForm({
       <CloudKeyFields
         provider={provider}
         value={settings}
+        workspaces={c.models.workspaces}
         onChange={(next) => {
           setSettings(next);
           c.clearError();
@@ -327,12 +344,15 @@ function KeyForm({
           data-analytics-private
           onChange={(event) => {
             setKey(event.target.value);
+            setSettings((current) => ({ ...current, workspaceId: '' }));
+            setWorkspaces([]);
             c.clearError();
           }}
         />
         <ConnectButton
           checking={c.checking}
           saved={modelProviderInfo[provider].catalog === 'bundled'}
+          disabled={c.models.workspaces.length > 0 && !settings.workspaceId.trim()}
         />
       </div>
       <Problem>{c.keyError}</Problem>

@@ -14,7 +14,7 @@ import {
   UserRound,
   X,
 } from './icons';
-import type { ModelConnection, ModelProvider } from '../../shared/models';
+import type { ModelConnection, ModelProvider, ModelWorkspace } from '../../shared/models';
 import { modelKeyError } from '../../shared/model-keys';
 import {
   modelProviderInfo,
@@ -235,25 +235,58 @@ export function CloudKeyFields({
   value,
   onChange,
   disabled,
+  workspaces = [],
 }: {
   provider: ModelProvider;
   value: KeySettings;
   onChange(value: KeySettings): void;
   disabled?: boolean;
+  workspaces?: ModelWorkspace[];
 }) {
   if (provider === 'anthropic')
     return (
-      <Field label="Workspace ID (optional)" hint="For keys that aren't limited to one workspace.">
-        <Input
-          value={value.workspaceId}
-          maxLength={100}
-          placeholder="wrkspc_…"
-          autoComplete="off"
-          spellCheck={false}
-          disabled={disabled}
-          onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
-        />
-      </Field>
+      <>
+        {workspaces.length > 0 && (
+          <Field label="Workspace" hint="Choose the workspace Nod should use.">
+            <select
+              className="input"
+              value={
+                workspaces.some((item) => item.id === value.workspaceId) ? value.workspaceId : ''
+              }
+              disabled={disabled}
+              data-analytics-private
+              onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
+            >
+              <option value="" disabled>
+                Choose a workspace
+              </option>
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <details className="model-details">
+          <summary>Enter workspace ID manually</summary>
+          <Field
+            label="Workspace ID (optional)"
+            hint="Leave empty to find the workspace automatically."
+          >
+            <Input
+              value={value.workspaceId}
+              maxLength={100}
+              placeholder="wrkspc_…"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled}
+              data-analytics-private
+              onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
+            />
+          </Field>
+        </details>
+      </>
     );
   if (provider === 'amazon-bedrock')
     return (
@@ -430,6 +463,7 @@ export function ModelSettings({
     .toSorted((a, b) => Number(b === keyProvider) - Number(a === keyProvider));
   function addKey(provider: ModelProvider) {
     models.setError('');
+    models.setWorkspaces([]);
     setKey('');
     setUrl(localServerAddress);
     setSettings(noKeySettings);
@@ -534,6 +568,7 @@ export function ModelSettings({
                     onClick={() => {
                       if (keyProvider === provider) {
                         models.setError('');
+                        models.setWorkspaces([]);
                         setKey('');
                         setUrl('');
                         setSettings(noKeySettings);
@@ -589,6 +624,7 @@ export function ModelSettings({
                   <CloudKeyFields
                     provider={provider}
                     value={settings}
+                    workspaces={models.workspaces}
                     onChange={(next) => {
                       setSettings(next);
                       models.setError('');
@@ -624,6 +660,8 @@ export function ModelSettings({
                       aria-describedby={keyError ? keyErrorId : undefined}
                       onChange={(event) => {
                         setKey(event.target.value);
+                        setSettings((current) => ({ ...current, workspaceId: '' }));
+                        models.setWorkspaces([]);
                         models.setError('');
                       }}
                     />
@@ -647,6 +685,7 @@ export function ModelSettings({
                       disabled={
                         busy ||
                         !!keyFormatError ||
+                        (models.workspaces.length > 0 && !settings.workspaceId.trim()) ||
                         !(provider === 'compatible'
                           ? url.trim()
                           : key.trim() && keySettingsReady(provider, settings))
@@ -665,6 +704,7 @@ export function ModelSettings({
                       disabled={busy}
                       onClick={() => {
                         models.setError('');
+                        models.setWorkspaces([]);
                         setKey('');
                         setUrl('');
                         setSettings(noKeySettings);

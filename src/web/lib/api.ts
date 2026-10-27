@@ -1,3 +1,4 @@
+import type { ModelWorkspace } from '../../shared/models';
 import { feedbackActivity } from './feedback-activity';
 import { setFeedbackErrorOwner } from './feedback-errors';
 
@@ -6,6 +7,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly step?: string,
+    readonly workspaces?: ModelWorkspace[],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -137,12 +139,27 @@ async function requireOk(response: Response, signal?: AbortSignal) {
   const body = (await response.json().catch(() => null)) as {
     error?: unknown;
     step?: unknown;
+    workspaces?: unknown;
   } | null;
   signal?.throwIfAborted();
+  const workspaces =
+    Array.isArray(body?.workspaces) &&
+    body.workspaces.every(
+      (workspace: unknown): workspace is ModelWorkspace =>
+        typeof workspace === 'object' &&
+        workspace !== null &&
+        'id' in workspace &&
+        typeof workspace.id === 'string' &&
+        'name' in workspace &&
+        typeof workspace.name === 'string',
+    )
+      ? body.workspaces.map(({ id, name }) => ({ id, name }))
+      : undefined;
   throw new ApiError(
     typeof body?.error === 'string' ? body.error : 'The request could not be completed. Try again.',
     response.status,
     typeof body?.step === 'string' ? body.step : undefined,
+    workspaces,
   );
 }
 

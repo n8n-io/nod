@@ -1,4 +1,10 @@
-import type { ModelChoice, ModelProvider, ModelMethod, ModelEffort } from '../shared/models.ts';
+import type {
+  ModelChoice,
+  ModelProvider,
+  ModelMethod,
+  ModelEffort,
+  ModelWorkspace,
+} from '../shared/models.ts';
 
 export type ModelCredential =
   | { type: 'api_key'; key: string; workspaceId?: string }
@@ -27,6 +33,12 @@ export class ModelAuthError extends Error {
   }
 }
 
+export class ModelWorkspaceSelectionError extends ModelAuthError {
+  constructor(readonly workspaces: ModelWorkspace[]) {
+    super('Choose an Anthropic workspace to connect.');
+  }
+}
+
 export interface ModelDefinition {
   choice: ModelChoice;
   spec: Record<string, unknown>;
@@ -43,6 +55,10 @@ export interface ModelAccess {
 }
 
 export interface ModelBackend {
+  connectKey?(
+    provider: ModelProvider,
+    credential: ModelCredential,
+  ): Promise<{ credential: ModelCredential; models: ModelDefinition[] }>;
   signIn(input: { signal: AbortSignal; hostId: string; previous?: ModelCredential }): Promise<{
     url: string;
     state: string;

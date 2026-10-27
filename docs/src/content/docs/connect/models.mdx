@@ -84,12 +84,13 @@ ChatGPT sign-in listens on port `1455` where Nod's server runs. If another progr
 
 1. Next to **Anthropic**, select **Add API key**.
 2. Paste your key into **Anthropic API key**.
-3. If your organization key can access multiple workspaces, enter the workspace to use in **Workspace ID (optional)**.
-4. Select **Save connection**.
+3. Select **Save connection**.
 
 </Steps>
 
-Find the workspace ID in [Anthropic's workspace settings](https://platform.claude.com/settings/workspaces). Leave it empty for keys limited to one workspace.
+Nod uses keys limited to one workspace directly. For other keys, Nod connects automatically when it finds exactly one workspace that accepts the key. If it finds several, choose a named **Workspace** and save again.
+
+If discovery isn't available, expand **Enter workspace ID manually**. Enter the **Workspace ID (optional)** from [Anthropic's workspace settings](https://platform.claude.com/settings/workspaces), then save again. Your API key stays in the form while you choose. No environment variable is needed when connecting in Nod.
 
 </TabItem>
 <TabItem label="OpenRouter">

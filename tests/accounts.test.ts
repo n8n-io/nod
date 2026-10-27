@@ -1287,6 +1287,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const sharedKey = 'fixture-anthropic-unscoped-key';
     const scopedKey = 'fixture-anthropic-scoped-key';
+    const discoveredKey = 'fixture-anthropic-discovered-key';
+    const deniedKey = 'fixture-anthropic-discovered-denied-key';
     const workspaces = ['wrkspc_First123', 'wrkspc_Second-456'];
     const requests: Array<{ key: string | null; workspaceId: string | null }> = [];
     const backend = createPiModelBackend({
@@ -1295,6 +1297,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         const workspaceId = headers.get('anthropic-workspace-id');
         const key = headers.get('x-api-key') ?? headers.get('authorization');
         requests.push({ key, workspaceId });
+        if (
+          String(input) ===
+          'https://api.anthropic.com/v1/organizations/workspaces?include_default=true&limit=1000'
+        ) {
+          assert.equal(workspaceId, null);
+          return Response.json({
+            data: (key === sharedKey ? workspaces : [workspaces[0]]).map((id) => ({
+              id,
+              name: id === workspaces[0] ? 'Development' : 'Production',
+              archived_at: null,
+            })),
+            has_more: false,
+          });
+        }
         if (String(input) === 'https://api.openai.com/v1/models') {
           assert.equal(workspaceId, null);
           return Response.json({ data: [{ id: 'gpt-6.1-sol' }] });
@@ -1306,9 +1322,9 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
             ? [401, 'authentication_error', 'Synthetic expired API key.']
             : key === 'fixture-forbidden-key'
               ? [403, 'permission_error', 'Synthetic resource access denied.']
-              : workspaceId && !workspaces.includes(workspaceId)
+              : workspaceId && (!workspaces.includes(workspaceId) || key === deniedKey)
                 ? [404, 'not_found_error', 'Synthetic workspace not found.']
-                : key === sharedKey && !workspaceId
+                : key !== scopedKey && !workspaceId
                   ? [400, 'invalid_request_error', 'Include the anthropic-workspace-id header.']
                   : undefined;
         if (failure)
@@ -1316,7 +1332,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
             { type: 'error', error: { type: failure[1], message: failure[2] } },
             { status: failure[0] },
           );
-        assert.ok(key === sharedKey || key === scopedKey);
+        assert.ok(key === sharedKey || key === scopedKey || key === discoveredKey);
         return Response.json({ data: [{ id: 'claude-opus-5-5' }] });
       },
     });
@@ -1342,6 +1358,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const initialRows = await stored();
     for (const [key, workspaceId] of [
       [sharedKey, undefined],
+      [deniedKey, undefined],
       [sharedKey, 'wrkspc_Inaccessible'],
       [sharedKey, 'org_wrong'],
       ['fixture-revoked-key', workspaces[0]],
@@ -1350,6 +1367,15 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       const response = await connect(key, workspaceId);
       assert.equal(response.statusCode, 400);
       assert.ok(!response.body.includes(key));
+      assert.deepEqual(
+        response.json().workspaces,
+        key === sharedKey && !workspaceId
+          ? workspaces.map((id, index) => ({
+              id,
+              name: index === 0 ? 'Development' : 'Production',
+            }))
+          : undefined,
+      );
       assert.deepEqual(owner.view(), initial);
       assert.deepEqual(await stored(), initialRows);
     }
@@ -1390,6 +1416,17 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await reloaded.refreshCatalog(connection.id);
       assert.deepEqual(requests.at(-1), { key: sharedKey, workspaceId });
     }
+    const discovered = await f.create('fixture-workspace-discovery-owner', backend);
+    const discoveredId = await discovered.addKey('anthropic', discoveredKey);
+    assert.equal(discovered.view().connections[0].label, workspaces[0]);
+    const discoveredReload = await f.create('fixture-workspace-discovery-owner', backend);
+    assert.deepEqual(await (await discoveredReload.resolve()).read(), {
+      type: 'api_key',
+      key: discoveredKey,
+      workspaceId: workspaces[0],
+    });
+    await discoveredReload.refreshCatalog(discoveredId);
+    assert.deepEqual(requests.at(-1), { key: discoveredKey, workspaceId: workspaces[0] });
     assert.equal(
       (await connect('fixture-openai-holdout', workspaces[0], 'openai')).statusCode,
       200,
@@ -1402,7 +1439,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     });
     assert.doesNotMatch(
       JSON.stringify(await stored()),
-      /fixture-anthropic-(unscoped|scoped)-key|fixture-openai-holdout/,
+      /fixture-anthropic-(unscoped|scoped|discovered)-key|fixture-openai-holdout/,
     );
     assert.doesNotMatch(
       JSON.stringify((await f.database.query('SELECT * FROM vault_app_grants')).rows),
