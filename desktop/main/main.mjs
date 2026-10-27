@@ -28,6 +28,7 @@ import { createDesktopAnalytics } from './analytics.mjs';
 import {
   assistantNotificationPreview,
   createReadinessNotice,
+  createUnreadBadge,
   isQuietTime,
   watchAssistantMessages,
 } from './notifications.mjs';
@@ -114,6 +115,7 @@ let connectionSettingsOpen = false;
 let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
+let unreadBadge;
 let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
 const displayedNotifications = new Set();
 let status = {
@@ -315,12 +317,32 @@ function synchronizeNotifications() {
     stopNotifications = undefined;
     return;
   }
-  if (!stopNotifications && Notification.isSupported())
-    stopNotifications = watchAssistantMessages({
+  if (!stopNotifications) {
+    const cursors = chatReadCursors;
+    const owner = remoteConnection?.cursorOwner;
+    const badge = createUnreadBadge({
       request: (path, options) => engineRequest(path, options),
+      readCursor: async (threadId) => cursors.get(owner ?? (await profileOwner()), threadId),
+      writeCursor: async (threadId, cursor) =>
+        cursors.set(owner ?? (await profileOwner()), threadId, cursor),
+      onCount: (count) => {
+        if (unreadBadge === badge)
+          app.dock?.setBadge(count ? (count >= 100 ? '99+' : String(count)) : '');
+      },
+    });
+    unreadBadge = badge;
+    const stop = watchAssistantMessages({
+      request: (path, options) => engineRequest(path, options),
+      onState: (state) => badge.update(state),
       onMessage: (message, threadId) =>
         void notifyAssistantMessage(message, threadId).catch(() => {}),
     });
+    stopNotifications = () => {
+      stop();
+      badge.stop();
+      if (unreadBadge === badge) unreadBadge = undefined;
+    };
+  }
 }
 
 async function notifyAssistantMessage(message, threadId) {
@@ -359,6 +381,7 @@ async function notifyAssistantMessage(message, threadId) {
   });
   notification.on('close', () => displayedNotifications.delete(notification));
   notification.on('failed', () => displayedNotifications.delete(notification));
+  app.dock?.bounce('informational');
   notification.show();
 }
 
@@ -2106,12 +2129,13 @@ else {
           throw new Error('This chat does not belong to your server.');
         return chatReadCursors.get(remoteConnection?.cursorOwner || ownerId, threadId);
       });
-      ipcMain.handle('nod:chat-read:set', (event, ownerId, threadId, cursor) => {
+      ipcMain.handle('nod:chat-read:set', async (event, ownerId, threadId, cursor) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (quitting) throw new Error('Nod is closing.');
         if (remoteConnection && ownerId !== remoteConnection.owner)
           throw new Error('This chat does not belong to your server.');
-        return chatReadCursors.set(remoteConnection?.cursorOwner || ownerId, threadId, cursor);
+        await chatReadCursors.set(remoteConnection?.cursorOwner || ownerId, threadId, cursor);
+        void unreadBadge?.refresh().catch(() => {});
       });
       ipcMain.handle('nod:external', (event, url) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

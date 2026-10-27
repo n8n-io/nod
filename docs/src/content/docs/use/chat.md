@@ -94,6 +94,14 @@ Reply to a task's message to continue that task. A message without a reply targe
 
 Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat. Substantial work with several steps gets a saved task session, even when it can finish in one sitting. Work that waits on someone or something, runs alongside other jobs, or that you ask Nod to track also gets a task. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
+## Notice new messages on macOS
+
+With desktop notifications enabled, Nod's Dock badge shows how many replies you haven't read, up to **99+**. It stays visible after a banner disappears, while the window is closed, and when you reopen Nod. Read the latest messages in Chat to clear it; opening another screen doesn't clear it.
+
+A new reply briefly bounces the Dock icon while Nod is in the background. Quiet hours suppress banners and bouncing, but keep the unread badge. Turning off desktop notifications clears the badge; turning them on restores unread replies.
+
+macOS controls whether badges appear. In **System Settings > Notifications > Nod**, allow notifications and enable **Badge application icon**.
+
 ## Answer Nod's questions
 
 When a task needs a decision, an approval or your help in its browser, it asks and waits. Reply to its question to continue the session that asked. Other tasks can keep working. For actions that need a yes or no, see [Approvals](/trust/approvals/).
