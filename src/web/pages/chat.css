@@ -290,6 +290,9 @@
 .composer-editor p {
   margin-bottom: 8px;
 }
+.composer-editor :is(p, h1, h2, h3) {
+  text-wrap-style: stable;
+}
 .composer-editor p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--muted-foreground);
