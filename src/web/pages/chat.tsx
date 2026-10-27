@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, Globe2, LoaderCircle, Trash2, User } from '../components/icons';
+import { ArrowDown, Check, LoaderCircle, Trash2, User } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -76,7 +76,7 @@ function Welcome() {
   );
 }
 function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: string }) {
-  const detail = item?.step || item?.site;
+  const detail = item?.step;
   const text = item?.title || detail;
   return (
     <div className="thinking" role="status" aria-label={text ? undefined : label}>
@@ -94,16 +94,9 @@ function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: 
             {item.title && <strong>{item.title}</strong>}
             {detail && (
               <span key={detail}>
-                {item.step ? (
-                  <Markdown allowedElements={[]} unwrapDisallowed>
-                    {item.step}
-                  </Markdown>
-                ) : (
-                  <>
-                    <Globe2 size={14} aria-hidden="true" />
-                    {item.site}
-                  </>
-                )}
+                <Markdown allowedElements={[]} unwrapDisallowed>
+                  {detail}
+                </Markdown>
               </span>
             )}
           </span>
@@ -1185,17 +1178,6 @@ export function Chat({
                     <MessageBubble
                       message={message}
                       handoffPaused={spendingPaused}
-                      delivery={
-                        message.role === 'user'
-                          ? !persistedIds.has(message.id) && !message.turnId
-                            ? 'sending'
-                            : state.turns.some(
-                                  (turn) => turn.id === message.turnId && turn.status === 'queued',
-                                )
-                              ? 'queued'
-                              : undefined
-                          : undefined
-                      }
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}
                       grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}

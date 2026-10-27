@@ -140,6 +140,9 @@ body {
   color: var(--muted-foreground);
 }
 .desktop-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
 }
 .desktop-toolbar :is(button, .connection-menu-options) {

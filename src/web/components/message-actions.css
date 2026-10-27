@@ -17,6 +17,14 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  opacity: 0;
+}
+
+.chat-page .message:hover .message-time,
+.chat-page .message:focus-within .message-time,
+.chat-page .message-selected .message-time,
+.chat-page .message-panel-open .message-time {
+  opacity: 1;
 }
 
 .chat-page .message-trigger {

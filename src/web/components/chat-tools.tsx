@@ -7,7 +7,7 @@ import { useArtifactDrawer } from './artifact-context';
 import type { ImagePreview } from './attachment-images';
 import { reuseFile } from './file-actions';
 import { Button, Dialog, DialogContent, DialogTitle, Input, Notice } from './ui';
-import { Search, List } from './icons';
+import { Search } from './icons';
 
 export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?: Task[] }) {
   const drawer = useArtifactDrawer();
@@ -128,15 +128,6 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           onClick={() => open('find')}
         >
           <Search size={16} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Commands"
-          title="Commands (⌘/Ctrl K)"
-          onClick={() => open('commands')}
-        >
-          <List size={16} />
         </Button>
       </span>
       <Dialog

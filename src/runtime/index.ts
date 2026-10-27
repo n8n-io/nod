@@ -677,6 +677,19 @@ export function createAgentRuntime(dependencies: {
           execution,
           delegate,
           ...(speaks ? { followUp } : {}),
+          ...(speaks
+            ? {
+                setStatus: async (text: string) => {
+                  const summary = (dependencies.redactError ?? String)(text.trim()).replace(
+                    /\s+/g,
+                    ' ',
+                  );
+                  if (!summary) throw new Error('Write a short activity description.');
+                  await context.emit('step', summary, { execution });
+                  return 'Status updated.';
+                },
+              }
+            : {}),
         },
         async () => {
           if (!browsed) await computer.hold(browserId, false).catch(() => {});

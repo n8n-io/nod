@@ -189,7 +189,6 @@ export function MessageBubble({
   connectedAppIds,
   grouped = false,
   streaming = false,
-  delivery,
   onReply,
   handoff,
   handoffPaused,
@@ -198,7 +197,6 @@ export function MessageBubble({
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
   streaming?: boolean;
-  delivery?: 'sending' | 'received' | 'queued';
   onReply?(quote?: string): void;
   handoff?: boolean;
   handoffPaused?: boolean;
@@ -214,7 +212,6 @@ export function MessageBubble({
     !visibleText &&
     !visibleReply &&
     !message.presentation &&
-    !delivery &&
     message.attachments.length === 1 &&
     attachmentKind(message.attachments[0].mimeType, message.attachments[0].name) === 'audio';
   const [error, setError] = useState('');
@@ -573,24 +570,13 @@ export function MessageBubble({
                 />
               )}
               {!streaming && (
-                <>
-                  {delivery && (
-                    <span className="message-delivery" role="status">
-                      {delivery === 'sending'
-                        ? 'Sending…'
-                        : delivery === 'queued'
-                          ? 'Received · queued'
-                          : 'Received'}
-                    </span>
-                  )}
-                  <time
-                    className="message-time"
-                    dateTime={message.createdAt}
-                    title={formatFullDateTime(message.createdAt, dateFormat)}
-                  >
-                    {formatTime(message.createdAt, dateFormat)}
-                  </time>
-                </>
+                <time
+                  className="message-time"
+                  dateTime={message.createdAt}
+                  title={formatFullDateTime(message.createdAt, dateFormat)}
+                >
+                  {formatTime(message.createdAt, dateFormat)}
+                </time>
               )}
             </div>
             {!streaming && (
@@ -681,12 +667,11 @@ export function MessageBubble({
             </button>,
             document.body,
           )}
-        {message.questionState && (
+        {message.questionState && message.questionState !== 'pending' && (
           <span className="message-question-state" role="status">
             {
               {
-                pending: 'Waiting for your reply',
-                confirmed: 'Approved · queued',
+                confirmed: 'Approved',
                 executing: 'Working',
                 completed: 'Done',
                 uncertain: 'Outcome unclear',
