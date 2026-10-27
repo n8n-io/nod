@@ -280,6 +280,7 @@
   min-height: 40px;
   max-height: 240px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 0 4px 8px;
   outline: none;
   color: var(--foreground);
