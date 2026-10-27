@@ -3286,6 +3286,20 @@ test('the remote desktop starts without a local runtime and fences tokens to its
       requestHeaders: { authorization: 'forged', 'X-Nod-Desktop-Token': 'forged' },
     };
     assert.equal((await f.headers(request)).requestHeaders.Authorization, `Bearer ${token}`);
+    const prepared = `/prepared/${randomUUID()}`;
+    f.openLink(`nod://open${prepared}`);
+    assert.deepEqual(window.sent.at(-1), ['nod:navigate', prepared]);
+    frame.url = `${url}${prepared}`;
+    const preparedRequest = { ...request, url: `${url}/api${prepared}` };
+    assert.equal(
+      (await f.headers(preparedRequest)).requestHeaders.Authorization,
+      `Bearer ${token}`,
+    );
+    for (const path of ['/prepared/not-an-id', `${prepared}/extra`, '/api/artifacts/synthetic']) {
+      frame.url = `${url}${path}`;
+      assert.equal(Object.keys((await f.headers(preparedRequest)).requestHeaders).length, 0);
+    }
+    frame.url = url;
     for (const change of [
       { url: 'https://other.example.test/api/session' },
       { url: 'http://assistant.example.test/api/session' },

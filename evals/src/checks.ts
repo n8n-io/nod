@@ -8,6 +8,21 @@ export function nudges(run: Run) {
   );
 }
 
+export const inspectableNudges = check('notifications-open-the-saved-results', async (run) => {
+  const { issues } = await run.proactivity.view();
+  for (const message of nudges(run)) {
+    const linked = issues.filter((issue) => message.text.includes(`](${issue.url})`));
+    if (!linked.length) return false;
+    for (const issue of linked) {
+      if (issue.url !== `/prepared/${issue.id}`) return false;
+      const result = await run.api('GET', `/api/prepared/${issue.id}`);
+      if (result.status !== 200 || result.body.id !== issue.id || result.body.draft !== issue.draft)
+        return false;
+    }
+  }
+  return true;
+});
+
 export const finished = check(
   'finished',
   (run) => {

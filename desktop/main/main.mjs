@@ -441,7 +441,7 @@ function trustedAppURL(value) {
     const url = new URL(value);
     return (
       url.origin === engineOrigin &&
-      (Object.hasOwn(appPages, url.pathname) ||
+      (appOpenPath(`nod://open${url.pathname}`, appPages) !== null ||
         ['/onboarding', '/you', '/memory', '/trust', '/browser', '/privacy', '/privacy/'].includes(
           url.pathname,
         ) ||

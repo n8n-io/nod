@@ -66,7 +66,7 @@ A nudge doesn't replace the work. The worker saves a complete draft, plan, compa
 
 The nudge states the concrete finding and why it needs your attention now. It asks a next-step question only when that helps you decide, and follows your requested format. An internal draft update alone does not justify a notification. When useful, Nod explains once what it will keep flagging and how to stop it.
 
-Every nudge includes a link to the saved result. Open it to read the full draft, facts that still need checking, and source links. The page shows the latest saved work. It needs your Nod access and cannot show another owner's work. If its source account is removed or replaced, the old result becomes unavailable. Nod adds this link from the saved record; the model does not invent it.
+Every nudge includes a link to the saved result. Open it to read the full draft, facts that still need checking, and source references with links where available. The page shows the latest saved work. It needs your Nod access and cannot show another owner's work. If its source account is removed or replaced, the old result becomes unavailable. Nod adds this link from the saved record; the model does not invent it.
 
 ## Deliver at the right time
 

@@ -26,6 +26,7 @@ import {
   amounts,
   asksForSecret,
   finished,
+  inspectableNudges,
   mentions,
   showsNumber,
   urlsGrounded,
@@ -1321,6 +1322,40 @@ test('a cut-off background check does not fail a finished task', async () => {
     );
   assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
   assert.equal((await verdict([turn('interrupted', false)])).pass, false);
+});
+
+test('a nudge must open the same saved result that its link names', async () => {
+  const issues = ['first', 'second'].map((id) => ({
+    id,
+    url: `/prepared/${id}`,
+    draft: `${id} draft`,
+  }));
+  const message = { role: 'assistant', turnId: 'observer', text: '[Result](/prepared/second)' };
+  let result = { status: 404, body: {} };
+  const paths: string[] = [];
+  const run = {
+    turns: [{ id: 'observer', proactive: true }],
+    messages: [message],
+    proactivity: { view: async () => ({ issues }) },
+    api: async (_method: string, path: string) => {
+      paths.push(path);
+      return result;
+    },
+  } as unknown as Run;
+  const verdict = async () => {
+    assert.equal(inspectableNudges.kind, 'check');
+    return inspectableNudges.kind === 'check' && (await inspectableNudges.check(run)).pass;
+  };
+  assert.equal(await verdict(), false);
+  assert.deepEqual(paths, ['/api/prepared/second']);
+  result = { status: 200, body: issues[0] };
+  assert.equal(await verdict(), false);
+  result = { status: 200, body: issues[1] };
+  assert.equal(await verdict(), true);
+  message.text = 'The private plan is ready.';
+  assert.equal(await verdict(), false);
+  run.messages = [];
+  assert.equal(await verdict(), true);
 });
 
 test('a task-specific completion gate preserves secret checks and default completion', async () => {
