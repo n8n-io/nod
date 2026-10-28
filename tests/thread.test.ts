@@ -3933,7 +3933,7 @@ test(
             await quoted.query('ROLLBACK');
             quoted.release();
           }
-          const fullReplyText = `**${'Launch scope '.repeat(120)}**`;
+          const fullReplyText = `**${'Launch scope '.repeat(10_000).trim()}**`;
           await db.pool.query('UPDATE messages SET text=$1 WHERE id=$2', [
             fullReplyText,
             matches[0].id,
@@ -3954,7 +3954,52 @@ test(
             assert.equal(reply.id, matches[0].id);
             assert.equal(reply.isQuote, replyQuote !== null);
             if (replyQuote) assert.equal(reply.text, replyQuote);
-            else assert.equal(reply.text, fullReplyText);
+            else {
+              assert.ok(reply.text.startsWith('**Launch scope '));
+              assert.ok(reply.text.trimEnd().endsWith('**'));
+              assert.ok(reply.text.length <= 4000);
+            }
+          }
+          const original = await request('GET', `/api/messages/around/${matches[0].id}`);
+          assert.equal(
+            original
+              .json<Array<{ id: string; text: string }>>()
+              .find(({ id }) => id === matches[0].id)!.text,
+            fullReplyText,
+          );
+          const repeated = await db.pool.query<{ id: string }>(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,reply_to_message_id) SELECT gen_random_uuid(),$1,'user','Repeated reply',$2,$3 FROM generate_series(1,150) RETURNING id",
+            [ownerId, freshThread, matches[0].id],
+          );
+          const repeatedIds = repeated.rows.map(({ id }) => id);
+          try {
+            const response = await request('GET', '/api/state');
+            assert.equal(response.statusCode, 200);
+            const replies = response
+              .json<{ messages: Array<{ id: string; replyTo: { text: string } }> }>()
+              .messages.filter(({ id }) => repeatedIds.includes(id));
+            assert.equal(replies.length, 150);
+            assert.ok(replies.every(({ replyTo }) => replyTo.text.length <= 4000));
+            assert.ok(response.rawPayload.length < 700_000);
+          } finally {
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [repeatedIds]);
+          }
+          for (const nested of [
+            `${'<div>'.repeat(6000)}Nested content${'</div>'.repeat(6000)}`,
+            `${'> '.repeat(1800)}Nested content`,
+          ]) {
+            await db.pool.query('UPDATE messages SET text=$1 WHERE id=$2', [nested, matches[0].id]);
+            const response = await request('GET', '/api/state');
+            assert.equal(response.statusCode, 200);
+            const reply = response
+              .json<{
+                messages: Array<{ replyTo?: { id: string; text: string; isQuote: boolean } }>;
+              }>()
+              .messages.find(
+                ({ replyTo }) => replyTo?.id === matches[0].id && !replyTo.isQuote,
+              )!.replyTo!;
+            assert.match(reply.text, /Nested content/);
+            assert.ok(reply.text.length <= 4000);
           }
           const message = [...seen][0];
           const react = (id: string, reaction: string) =>

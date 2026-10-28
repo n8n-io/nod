@@ -624,6 +624,7 @@ export function Chat({
           attachments.map((item) => item.id),
           reply?.id ?? null,
           reply?.text ?? null,
+          reply?.isQuote === true,
           recordingKey ? recordingIds.current.get(recordingKey) : null,
         ]);
     if (privateVerification) retry.current = null;

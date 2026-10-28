@@ -85,6 +85,10 @@ const messageSchema = {
   tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
 };
 
+function QuoteBlock({ children }: { children?: React.ReactNode }) {
+  return <span>{children} </span>;
+}
+
 export function MessageQuote({
   message,
   composing = false,
@@ -107,17 +111,47 @@ export function MessageQuote({
         {composing ? 'Replying to ' : ''}
         {message.role === 'assistant' ? 'Nod' : composing ? 'yourself' : 'You'}
       </strong>
-      <span className="message-excerpt">
+      <span
+        className="message-excerpt"
+        style={{ whiteSpace: message.isQuote ? 'pre-wrap' : 'normal' }}
+      >
         {message.isQuote ? (
           message.text
         ) : (
           <Markdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeRaw, rehypeMessageBreaks, [rehypeSanitize, messageSchema]]}
-            allowedElements={['p', 'strong', 'em', 'del', 'code', 'u', 'br', 'img']}
+            allowedElements={[
+              'p',
+              'li',
+              'td',
+              'th',
+              'h1',
+              'h2',
+              'h3',
+              'h4',
+              'h5',
+              'h6',
+              'strong',
+              'em',
+              'del',
+              'code',
+              'u',
+              'br',
+              'img',
+            ]}
             unwrapDisallowed
             components={{
-              p: ({ children }) => <span>{children} </span>,
+              p: QuoteBlock,
+              li: QuoteBlock,
+              td: QuoteBlock,
+              th: QuoteBlock,
+              h1: QuoteBlock,
+              h2: QuoteBlock,
+              h3: QuoteBlock,
+              h4: QuoteBlock,
+              h5: QuoteBlock,
+              h6: QuoteBlock,
               img: ({ alt }) => <span>{alt || 'Image'}</span>,
             }}
           >

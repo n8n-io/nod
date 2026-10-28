@@ -48,9 +48,10 @@ import type {
 import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
+import { messagePreview } from './message-preview.ts';
 
 const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
- CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,target.audio_caption,target.text),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
+ CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
   receipt?: MessageReceipt,
@@ -101,14 +102,37 @@ export async function createApp(dependencies: AppDependencies = {}) {
   async function messageViews(
     rows: Array<Message & { assistantReaction?: MessageReaction | null }>,
   ) {
-    const [receipts, questions] = await Promise.all([
+    const replyIds = [
+      ...new Set(
+        rows.flatMap((row) => (row.replyTo && !row.replyTo.isQuote ? [row.replyTo.id] : [])),
+      ),
+    ];
+    const [receipts, questions, targets] = await Promise.all([
       dependencies
         .receipts?.(rows.map((message) => message.turnId).filter((id): id is string => !!id))
         .catch(() => undefined),
       dependencies.questionStates?.(rows.map((message) => message.id)).catch(() => undefined),
+      replyIds.length
+        ? pool.query<{ id: string; text: string }>(
+            'SELECT id,COALESCE(audio_caption,text) AS text FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+            [ownerId, replyIds],
+          )
+        : { rows: [] },
     ]);
+    const previews = new Map(
+      targets.rows.map((target) => [target.id, messagePreview(target.text)]),
+    );
     return rows.map((message) =>
-      messageView(message, receipts?.[message.id], questions?.[message.id]),
+      messageView(
+        message.replyTo && !message.replyTo.isQuote
+          ? {
+              ...message,
+              replyTo: { ...message.replyTo, text: previews.get(message.replyTo.id) ?? '' },
+            }
+          : message,
+        receipts?.[message.id],
+        questions?.[message.id],
+      ),
     );
   }
   const app = Fastify({
@@ -230,7 +254,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
       `SELECT ${messageFields},ts_headline('english',m.text,websearch_to_tsquery('english',$3),'StartSel="", StopSel="", MaxWords=35, MinWords=15, ShortWord=0') AS snippet FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND (to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0) ORDER BY m.created_at DESC,m.id DESC LIMIT 50`,
       [ownerId, thread.id, q],
     );
-    return rows.map((row) => ({ ...messageView(row), snippet: row.snippet as string }));
+    const messages = await messageViews(rows);
+    return messages.map((message, index) => ({
+      ...message,
+      snippet: rows[index].snippet as string,
+    }));
   });
   app.get('/api/messages/around/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
