@@ -390,7 +390,15 @@ export function credentialOrigin(value: string) {
 
 function savedCredentialOrigin(value: string) {
   const trimmed = value.trim();
-  return credentialOrigin(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    url.pathname = '/';
+    url.search = '';
+    url.hash = '';
+    return credentialOrigin(url.href);
+  } catch {
+    throw new VaultError('Enter a valid website address.');
+  }
 }
 
 function requireFullHost(raw: unknown) {
