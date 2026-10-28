@@ -20,6 +20,7 @@ import { windowsInstallCommand } from '../main/windows-update.mjs';
 import {
   protectWindowsProfile,
   stageWindowsUpdate,
+  windowsEnvironment,
   windowsPublisher,
 } from '../runtime/windows.mjs';
 import { run } from './release-tools.mjs';
@@ -254,7 +255,7 @@ app.whenReady().then(async () => {
   certificates = (
     await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', fixtureSigning], {
       env: {
-        ...environment,
+        ...windowsEnvironment(),
         NOD_SIGNATURES: signatures,
         NOD_PUBLISHER_PROFILE: windowsPublisher.profile,
       },
@@ -392,7 +393,7 @@ app.whenReady().then(async () => {
           '-Command',
           'foreach ($thumbprint in $env:NOD_CERTIFICATES.Split(\',\')) { Remove-Item -LiteralPath "Cert:\\LocalMachine\\Root\\$thumbprint", "Cert:\\CurrentUser\\My\\$thumbprint" }',
         ],
-        { env: { ...environment, NOD_CERTIFICATES: certificates.join(',') } },
+        { env: { ...windowsEnvironment(), NOD_CERTIFICATES: certificates.join(',') } },
       );
     if (installed)
       await run(join(installation, 'Uninstall.exe'), ['/S', `_?=${installation}`], {
