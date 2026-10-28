@@ -7,7 +7,7 @@ import type {
   VaultCardNumber,
   VaultListEntry,
 } from '../../shared/contracts';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { originLabel, suggestLoginName } from '../lib/vault-name';
 import {
   clearVaultSecret,
@@ -282,12 +282,14 @@ export function VaultDetails({
       setEditing(false);
       setNotice(isCard ? 'Card updated.' : 'Login updated.');
       onSaved(updated.kind === 'card' ? updated : { ...updated, username });
-    } catch {
+    } catch (error) {
       if (current())
         setError(
-          isCard
-            ? 'This card could not be updated. Try again.'
-            : 'This login could not be updated. Check the authenticator key and try again.',
+          error instanceof ApiError && error.status === 400
+            ? error.message
+            : isCard
+              ? 'This card could not be updated. Try again.'
+              : 'This login could not be updated. Try again.',
         );
     } finally {
       body = '';

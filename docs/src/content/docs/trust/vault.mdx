@@ -23,6 +23,10 @@ While Vault is empty, it lists the ways to fill it: import passwords, add a logi
 
 </Steps>
 
+**Website domain** accepts a domain or a full HTTPS URL, such as `https://www.example.com/uk/`. Nod saves only the protocol, host, and port. It removes the path, query, and fragment. Loopback addresses, such as `http://localhost:4310`, can use HTTP.
+
+If the website address or authenticator key is not valid, the error explains what to change.
+
 **Import from a password manager.** Select **Add → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Nod imports the website logins and skips archived items. Authenticator keys come along when the export has them, as 1Password and Bitwarden exports do, and a login you already saved gets its missing key. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
 
 **Add one during a task.** When a task needs a login you haven't saved, Nod opens a private **Sign in** form. Its fields use the website's own names, such as **Username** or **Email address**; an account the site took on an earlier page gets a generic label. Enter the account and password, then select **Save and continue**. Nod saves both under the website's name, even when the site took the account on an earlier page, and types only the fields that page asks for. The values never pass through chat or the model.

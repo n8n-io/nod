@@ -367,37 +367,49 @@ function storedSelectors({ emailRecipient: _emailRecipient, ...input }: Credenti
   return JSON.stringify(input);
 }
 
-export function credentialOrigin(value: string) {
+function credentialUrl(value: string) {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new VaultError('Enter a valid website origin.');
+    throw new VaultError(
+      'The website address is not valid. Enter a URL such as https://example.com.',
+    );
   }
-  const local = loopbackHost(url.hostname);
-  if (
-    (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    throw new VaultError('Use an HTTPS origin, such as https://example.com, without a path.');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopbackHost(url.hostname))) {
+    throw new VaultError(
+      'This website address needs HTTPS. Use an address that starts with https://, such as https://example.com.',
+    );
   }
+  if (url.username || url.password)
+    throw new VaultError(
+      'Remove the username and password from the website address. Enter them in the login fields.',
+    );
+  return url;
+}
+
+export function credentialOrigin(value: string) {
+  const url = credentialUrl(value);
+  if (url.pathname !== '/' || url.search || url.hash)
+    throw new VaultError(
+      'Use only the website origin, such as https://example.com. Remove the path, query, and fragment.',
+    );
   return url.origin;
 }
 
 function savedCredentialOrigin(value: string) {
   const trimmed = value.trim();
-  return credentialOrigin(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  return credentialUrl(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`)
+    .origin;
 }
 
 function requireFullHost(raw: unknown) {
   const { origin } = z.object({ origin: z.string().max(2048) }).parse(raw);
   const { hostname } = new URL(savedCredentialOrigin(origin));
   if (!loopbackHost(hostname) && !/[^.]\.[^.]/.test(hostname))
-    throw new VaultError('Enter a full website domain, such as example.com.');
+    throw new VaultError(
+      'The website domain is incomplete. Enter the full domain, such as example.com.',
+    );
 }
 
 function binding(entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>) {
@@ -435,7 +447,7 @@ function savedAuthenticator(value: string | undefined) {
   const key = authenticatorKey(value);
   if (!key)
     throw new VaultError(
-      'Check the authenticator key. Use the setup key or otpauth:// link the website showed.',
+      'The authenticator key is not valid. Paste the setup key or otpauth:// link from the website.',
     );
   return key;
 }
@@ -457,10 +469,11 @@ function metadata(entry: EntryRow, username?: string): VaultLoginEntry {
 }
 
 function normalizedCardNumber(value: string) {
-  if (!/^[0-9 -]+$/.test(value)) throw new VaultError('Check the card number.');
+  if (!/^[0-9 -]+$/.test(value))
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   const number = value.replace(/[ -]/g, '');
   if (!/^\d{12,19}$/.test(number) || /^(\d)\1+$/.test(number))
-    throw new VaultError('Check the card number.');
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   let sum = 0;
   let double = false;
   for (let index = number.length - 1; index >= 0; index--) {
@@ -472,18 +485,22 @@ function normalizedCardNumber(value: string) {
     sum += digit;
     double = !double;
   }
-  if (sum % 10 !== 0) throw new VaultError('Check the card number.');
+  if (sum % 10 !== 0)
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   return number;
 }
 
 function validateCardExpiry(month: number, year: number) {
   const now = new Date();
+  if (year > now.getUTCFullYear() + 30)
+    throw new VaultError(
+      'The expiry year is too far in the future. Enter the year shown on your card.',
+    );
   if (
     year < now.getUTCFullYear() ||
-    year > now.getUTCFullYear() + 30 ||
     (year === now.getUTCFullYear() && month < now.getUTCMonth() + 1)
   )
-    throw new VaultError('Check the card expiry date.');
+    throw new VaultError('This card has expired. Use a card that has not expired.');
 }
 
 function cardBrand(number: string) {
