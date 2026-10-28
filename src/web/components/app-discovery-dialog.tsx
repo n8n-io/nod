@@ -61,7 +61,7 @@ export function AppDiscoveryDialog({
 }: {
   id: string;
   onClose(): void;
-  onConnected(): void;
+  onConnected(name: string): void;
   returnFocus?(): HTMLElement | null;
 }) {
   const [discovery, setDiscovery] = useState<Discovery>();
@@ -89,7 +89,7 @@ export function AppDiscoveryDialog({
   const finish = () => {
     if (complete.current) return;
     complete.current = true;
-    connected.current();
+    connected.current(discovery?.name ?? pending.current?.name ?? 'App');
   };
 
   function show(value: DiscoverySignIn | undefined) {
