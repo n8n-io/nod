@@ -652,6 +652,8 @@ See [Proactivity evidence](/how-it-works/proactivity-evidence/) for the method a
 
 The `proactivity-stress-endurance-*` cases add an 18-page scan across bounded wakes and 12 event phases for repeated signals, dismissal or snooze. Each has a changed-context variant. Keep the single-message long-scan check: saving routine work must not consume the attention needed for a later deadline.
 
+Late-page background probes check all source pages, the required prepared work, and its notification. A ready state from an unrelated source does not establish those results. The probes keep this page and outcome evidence even if a later scan has started.
+
 ```sh title="Terminal"
 pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-engine,proactivity-stress-endurance-holdout-late-page-engine --repeat 2 --label proactive-endurance
 ```
