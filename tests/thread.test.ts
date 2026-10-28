@@ -3076,6 +3076,7 @@ test(
                           tool: mode === 'unknown' ? 'UNADVERTISED_WRITE' : tools[0]!.name,
                           args: { limit: mode === 'invalid' ? 99 : 2 },
                         },
+                        ...(mode === 'large' ? [{ tool: tools[0]!.name, args: { limit: 1 } }] : []),
                       ],
                     };
                   }
@@ -3170,7 +3171,10 @@ test(
                       body: 'Code 482913',
                     },
                     {
-                      text: `${account === accounts[0] ? 'Juniper workshop' : account === accounts[1] ? 'Maple launch' : 'Cedar contract'} decision at https://private.example.test/x; owner@example.test`,
+                      text:
+                        mode === 'large'
+                          ? `Synthetic account ${account.connectionId}: ${'bounded source data '.repeat(400)}`
+                          : `${account === accounts[0] ? 'Juniper workshop' : account === accounts[1] ? 'Maple launch' : 'Cedar contract'} decision at https://private.example.test/x; owner@example.test`,
                     },
                   ];
                 },
@@ -3228,9 +3232,16 @@ test(
               )
             ).rows;
             if (mode === 'large') {
-              assert.equal(calls.length, accounts.length);
-              assert.ok(plannerBriefs.length > 0 && plannerBriefs.length <= accounts.length);
+              assert.equal(calls.length, accounts.length * 2);
+              assert.ok(plannerBriefs.length > 0 && plannerBriefs.length < accounts.length);
               assert.ok(JSON.stringify(plannerBriefs).length <= 40_000);
+              assert.ok(
+                plannerBriefs.every(
+                  (brief) =>
+                    brief.observations.length === 2 &&
+                    brief.observations[0] === brief.observations[1],
+                ),
+              );
               assert.deepEqual(
                 new Set(plannerBriefs.map((brief) => brief.source)),
                 new Set(['slack', 'fixture-mcp']),

@@ -1,5 +1,5 @@
 import { check, scenario } from '../scenario.ts';
-import { createApps, gmail } from '../world/apps.ts';
+import { addresses, createApps, gmail } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const colleague = 'sam@studio.example';
@@ -34,17 +34,26 @@ export default scenario({
         ),
       }),
       answers: [] as string[],
+      draftsBeforeSend: [] as Array<{ threadId: string | undefined; body: string }>,
+      sentBeforeSend: 0,
     };
   },
   async play(session, world) {
-    for (const request of [
+    for (const [index, request] of [
       'What is the subject of my newest email?',
       'Who sent that email, and what opening time does it give?',
       `Save a reply draft in that thread with this exact body: ${body}`,
       `Send that reply to Sam at ${colleague}, in the same thread, with this exact body: ${body}`,
-    ]) {
+    ].entries()) {
       await session.say(request);
       world.answers.push(await session.lastReply());
+      if (index === 2) {
+        world.draftsBeforeSend = (world.apps.gmail?.drafts() ?? []).map(({ threadId, body }) => ({
+          threadId,
+          body,
+        }));
+        world.sentBeforeSend = world.apps.gmail?.sent().length ?? 0;
+      }
     }
   },
   evidence(run, world) {
@@ -65,10 +74,13 @@ export default scenario({
           /Sam/i.test(world.answers[1] ?? '') &&
           /10(?::00|\.00|\s*a\.?m)/i.test(world.answers[1] ?? ''),
       ),
-      check('saves-the-requested-reply-before-sending', (run) =>
-        run.writes.some(
-          (write) => write.kind === 'draft' && String(write.args.body).trim() === body,
-        ),
+      check(
+        'saves-the-requested-reply-before-sending',
+        () =>
+          world.sentBeforeSend === 0 &&
+          world.draftsBeforeSend.some(
+            (draft) => draft.threadId === 'schedule-thread' && draft.body.trim() === body,
+          ),
       ),
       check(
         'sends-once-with-the-requested-account-target-and-text',
@@ -77,7 +89,9 @@ export default scenario({
           return (
             sent.length === 1 &&
             sent[0].threadId === 'schedule-thread' &&
-            sent[0].to.includes(colleague) &&
+            addresses(sent[0].to ?? '').length === 1 &&
+            addresses(sent[0].to ?? '')[0] === colleague &&
+            !sent[0].cc &&
             sent[0].body.trim() === body
           );
         },

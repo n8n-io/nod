@@ -15,7 +15,7 @@ The short version: each attempt boots its own Nod with a real model. The apps, w
 They call live models. An attempt costs about $0.10 to $0.50, and the default run has 261 attempts. The unit tests never call them.
 :::
 
-The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A turn that ended in the preliminary source screen has no agent prompt. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
+The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A recorded source-screen result with no agent start or request needs no agent prompt. Missing records alone do not prove that a source screen ran. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
 
 ## How an attempt works
 
@@ -189,7 +189,7 @@ The **Evals** workflow runs the suite with a disposable PostgreSQL and images bu
 | Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing       |
 | Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                               |
 
-Use `--effort medium` or another supported level for a separate reasoning-effort comparison. This changes only the main agent, including its helpers; trust and fact checks keep their production effort. The run manifest records the chosen effort. The default is high. Keep model and effort fixed when you compare harness changes.
+In the CLI, use `--effort medium` or another supported level for a separate reasoning-effort comparison. The Actions workflow has no effort input. This changes only the main agent, including its helpers; trust and fact checks keep their production effort. The run manifest records the chosen effort. The default is high. Keep model and effort fixed when you compare harness changes.
 
 The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `anthropic/claude-sonnet-5-5`. Their keys are the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets, plus `EVALS_OPENROUTER_API_KEY` for OpenRouter models.
 

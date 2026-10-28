@@ -2879,7 +2879,21 @@ test('missing executed background captures are measurement errors, not isolation
     () => requireBackgroundPrompts([{ ...turn, agentStarted: true }], []),
     /capture is missing/,
   );
-  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, agentStarted: false }], []));
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, agentStarted: false }], []),
+    /capture is missing/,
+  );
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, screened: true }], []),
+    /capture is missing/,
+  );
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, screened: true, agentStarted: true }], []),
+    /capture is missing/,
+  );
+  assert.doesNotThrow(() =>
+    requireBackgroundPrompts([{ ...turn, screened: true, agentStarted: false }], []),
+  );
   assert.doesNotThrow(() =>
     requireBackgroundPrompts([turn], [{ turnId: 'background', instruction: 'Inspect receipt.' }]),
   );

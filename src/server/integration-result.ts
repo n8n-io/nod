@@ -62,13 +62,13 @@ export type MailCheck = (
 ) => Promise<Array<boolean | undefined>>;
 
 export function cacheMailChecks(check: MailCheck): MailCheck {
-  const cache = new Map<string, { until: number; result: Promise<boolean | undefined> }>();
+  const cache = new Map<string, { until: number; result: boolean }>();
   return async (emails, signal) => {
     signal?.throwIfAborted();
     const keys = emails.map((email) =>
       createHash('sha256').update(JSON.stringify(email)).digest('hex'),
     );
-    const results = new Map<string, Promise<boolean | undefined>>();
+    const results = new Map<string, boolean | undefined>();
     const missing = new Map<string, Mail>();
     for (const [index, key] of keys.entries()) {
       const entry = cache.get(key);
@@ -76,27 +76,18 @@ export function cacheMailChecks(check: MailCheck): MailCheck {
       else missing.set(key, emails[index]!);
     }
     if (missing.size) {
-      const request = check([...missing.values()], signal);
+      const checked = await check([...missing.values()], signal);
+      signal?.throwIfAborted();
       for (const [index, key] of [...missing.keys()].entries()) {
-        const result: Promise<boolean | undefined> = request
-          .then((values) => {
-            signal?.throwIfAborted();
-            const value = values[index];
-            if (typeof value !== 'boolean' && cache.get(key)?.result === result) cache.delete(key);
-            return value;
-          })
-          .catch((error) => {
-            if (cache.get(key)?.result === result) cache.delete(key);
-            throw error;
-          });
+        const result = checked[index];
         results.set(key, result);
-        cache.set(key, { until: Date.now() + 300_000, result });
-        if (cache.size > 256) cache.delete(cache.keys().next().value!);
+        if (typeof result === 'boolean') {
+          cache.set(key, { until: Date.now() + 300_000, result });
+          if (cache.size > 256) cache.delete(cache.keys().next().value!);
+        }
       }
     }
-    const checked = await Promise.all(keys.map((key) => results.get(key)!));
-    signal?.throwIfAborted();
-    return checked;
+    return keys.map((key) => results.get(key));
   };
 }
 

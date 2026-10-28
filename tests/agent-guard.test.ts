@@ -287,6 +287,68 @@ test('mail cache keeps batch positions, retries unknown checks and refuses stopp
   );
 });
 
+test('stopping one email check does not cancel another caller for the same mail', async () => {
+  const first = new AbortController();
+  const second = new AbortController();
+  const finish: Array<(values: Array<boolean | undefined>) => void> = [];
+  const cached = cacheMailChecks(
+    async (_emails, signal) =>
+      new Promise((resolve, reject) => {
+        finish.push(resolve);
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+  );
+  const mail = { from: 'fixture@example.test', subject: 'Notice', text: 'Ordinary update' };
+  const a = cached([mail], first.signal);
+  const rejected = assert.rejects(a);
+  const b = cached([mail], second.signal);
+  first.abort();
+  await rejected;
+  assert.equal(finish.length, 2);
+  finish[1]!([false]);
+  assert.deepEqual(await b, [false]);
+  assert.deepEqual(await cached([mail]), [false]);
+  assert.equal(finish.length, 2);
+});
+
+test('compact owner context retains the memory saving switch without the note index', async () => {
+  await fixture(
+    async (_tools, emit, options) => {
+      assert.ok(options.compactInstructions?.ownerContext);
+      assert.ok(options.compactInstructions.ownerContext.includes('savingEnabled: false'));
+      assert.ok(!options.compactInstructions.ownerContext.includes('Synthetic private note'));
+      emit({ type: 'final', text: 'The synthetic answer is ready.' });
+    },
+    { memory: 'savingEnabled: false\nabout/fixture: Synthetic private note' },
+  );
+});
+
+test('a quiet source screen records its result without opening the agent', async () => {
+  const events: string[] = [];
+  const result = await fixture(
+    async () => {
+      assert.fail('A quiet screen must not start the agent.');
+    },
+    {
+      background: true,
+      emit: async (type) => {
+        events.push(type);
+      },
+      proactivity: {
+        instructions: 'Inspect synthetic records.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+        screen: async () => true,
+      },
+    },
+  );
+  assert.equal(result.result.status, 'succeeded');
+  assert.deepEqual(result.replies, []);
+  assert.deepEqual(events, ['source_screened']);
+});
+
 test('mail that grants account access stays out of app tool results and workspace files', async () => {
   const secrets = [
     '318742',

@@ -450,6 +450,7 @@ export function createAgentRuntime(dependencies: {
           signal,
         )
       ) {
+        await context.emit('source_screened', '', { execution });
         completed = screened = true;
         return { status };
       }

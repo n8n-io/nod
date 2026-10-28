@@ -60,6 +60,7 @@ export default scenario({
     return [
       check('reads-the-initial-source', () => world.state.initialReads > 0),
       check('checks-all-48-poll-deadlines', () => world.state.polls === 48),
+      check('unchanged-polls-start-no-new-turns', () => world.state.repeatedTurns === 0),
       check(
         'does-not-reread-an-unchanged-source',
         () => world.state.reads === world.state.initialReads,

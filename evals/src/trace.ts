@@ -107,7 +107,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
       turn.background &&
       turn.status === 'succeeded' &&
       turn.startedAt !== undefined &&
-      turn.agentStarted !== false &&
+      (!turn.screened || turn.agentStarted !== false) &&
       !captured.has(turn.id),
   );
   if (missing.length)
@@ -322,13 +322,13 @@ export async function collect(options: {
       COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive,
       (EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=t.id AND e.type='agent_start')
         OR EXISTS (SELECT 1 FROM model_usage m WHERE m.turn_id=t.id AND m.owner_id=t.owner_id
-          AND m.details->>'category'='agent' AND m.details->>'operation'='request')) AS agent_started
+          AND m.details->>'category'='agent' AND m.details->>'operation'='request')) AS agent_started,
+      EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=t.id AND e.type='source_screened') AS screened
       FROM turns t ORDER BY t.created_at, t.id`,
     )
   ).rows.map(({ started_at, finished_at, agent_started, ...turn }) => ({
     ...turn,
     agentStarted: agent_started,
-    screened: agent_started === false,
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));

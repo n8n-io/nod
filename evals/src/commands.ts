@@ -30,7 +30,6 @@ export const help = `Nod capability evals
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing
     run [--tier pr|full|release|live]  run the suite and print the pass rate, trust profile and what went wrong
     list                       show every scenario
-                               (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
                                (--baseline main, --repeat 3, --scenario a,b, --label name, --out directory)
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Nod, graded by the official judge

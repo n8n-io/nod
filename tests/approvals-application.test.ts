@@ -1228,6 +1228,9 @@ test(
             })) as { schemaError: string; tools: Record<string, unknown> };
             assert.match(missing.schemaError, /No tool named GMAIL_MISSING_ACTION/);
             assert.ok(Object.keys(missing.tools).includes('GMAIL_SYNTHETIC_READ_7'));
+            const turn = await propose('SEARCH_TOOLS', { query: 'GMAIL_SYNTHETIC_READ_7' }, 'apps');
+            assert.ok(results.get(turn));
+            assert.deepEqual(await approvalsFor(turn), []);
             assert.equal(fallbackChecks.length, checks);
           } finally {
             toolSearch = undefined;

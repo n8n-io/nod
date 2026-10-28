@@ -1034,16 +1034,18 @@ test(
       409,
     );
     const beforeForbidden = await store.read('onboarding/interview', 128 * 1024);
-    assert.equal(
-      (
-        await restarted.inject({
-          method: 'PUT',
-          url: path,
-          payload: { generation: current.generation, answers: ['4111 1111 1111 1111'] },
-        })
-      ).statusCode,
-      400,
-    );
+    for (const answers of [['4111 1111 1111 1111'], ['4111 1111', '1111 1111']]) {
+      assert.equal(
+        (
+          await restarted.inject({
+            method: 'PUT',
+            url: path,
+            payload: { generation: current.generation, answers },
+          })
+        ).statusCode,
+        400,
+      );
+    }
     assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), beforeForbidden);
     assert.equal(
       (

@@ -306,7 +306,13 @@ export async function runSuite(options: RunOptions) {
         let result =
           options.resume && previous && previous.status !== 'incomplete' ? previous : undefined;
         for (let tries = 0; !result && tries <= options.retries; tries++) {
-          result = await attemptOnce({ directory, model, effort: options.effort, judge, task });
+          result = await attemptOnce({
+            directory,
+            model,
+            effort: options.effort ?? 'high',
+            judge,
+            task,
+          });
           if (
             result.status === 'incomplete' &&
             result.blame !== 'agent' &&
