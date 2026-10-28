@@ -3036,8 +3036,7 @@ test(
             );
             const calls: Array<{ account: string; action: string; args: Record<string, unknown> }> =
               [];
-            const briefs: unknown[] = [];
-            const plannerBriefs: Array<{ source: string; summary: string }> = [];
+            const plannerBriefs: Array<{ source: string; observations: string[] }> = [];
             const times: Array<{ stage: string; now: unknown; timeZone: unknown }> = [];
             const pathId = randomUUID();
             const schema = {
@@ -3060,17 +3059,11 @@ test(
               curator: {
                 id: 'fixture',
                 configured: true,
-                curate: async ({ task, input }) => {
+                curate: async ({ input }) => {
                   const { now, timeZone } = input as { now: unknown; timeZone: unknown };
                   times.push({
                     stage:
-                      'tools' in input
-                        ? 'discovery'
-                        : task === 'brief'
-                          ? 'brief'
-                          : 'previous' in input
-                            ? 'repair'
-                            : 'cards',
+                      'tools' in input ? 'discovery' : 'previous' in input ? 'repair' : 'cards',
                     now,
                     timeZone,
                   });
@@ -3086,32 +3079,9 @@ test(
                       ],
                     };
                   }
-                  if (task === 'brief') {
-                    briefs.push(input);
-                    if (mode === 'large') {
-                      const line = 'Synthetic project "status" \\ next step. '.repeat(30);
-                      return {
-                        summary: line,
-                        waiting: Array.from({ length: 5 }, () => line),
-                        recurring: Array.from({ length: 5 }, () => line),
-                        upcoming: Array.from({ length: 5 }, () => line),
-                      };
-                    }
-                    return {
-                      summary: JSON.stringify(input).includes('Maple')
-                        ? 'Maple launch needs a decision.'
-                        : (input as { source: string }).source === 'fixture-mcp'
-                          ? 'Cedar contract needs a decision.'
-                          : 'Juniper workshop needs a decision.',
-                      source: 'gmail',
-                      waiting: [],
-                      recurring: [],
-                      upcoming: [],
-                    };
-                  }
                   plannerBriefs.push(
-                    ...((input as { briefs?: Array<{ source: string; summary: string }> }).briefs ??
-                      []),
+                    ...((input as { briefs?: Array<{ source: string; observations: string[] }> })
+                      .briefs ?? []),
                   );
                   if (mode === 'revoked_plan') active.clear();
                   if (mode === 'cancelled_plan') plans.cancel();
@@ -3248,7 +3218,7 @@ test(
             if (mode === 'mixed')
               assert.deepEqual(
                 new Set(times.map(({ stage }) => stage)),
-                new Set(['discovery', 'brief', 'cards']),
+                new Set(['discovery', 'cards']),
               );
             if (mode === 'cancelled_repair') assert.equal(times.at(-1)?.stage, 'repair');
             const posted = (
@@ -3259,20 +3229,13 @@ test(
             ).rows;
             if (mode === 'large') {
               assert.equal(calls.length, accounts.length);
-              assert.equal(briefs.length, accounts.length);
-              assert.ok(plannerBriefs.length > 0 && plannerBriefs.length < accounts.length);
+              assert.ok(plannerBriefs.length > 0 && plannerBriefs.length <= accounts.length);
               assert.ok(JSON.stringify(plannerBriefs).length <= 40_000);
               assert.deepEqual(
                 new Set(plannerBriefs.map((brief) => brief.source)),
                 new Set(['slack', 'fixture-mcp']),
               );
-              assert.deepEqual(Object.keys(plannerBriefs[0]!).sort(), [
-                'recurring',
-                'source',
-                'summary',
-                'upcoming',
-                'waiting',
-              ]);
+              assert.deepEqual(Object.keys(plannerBriefs[0]!).sort(), ['observations', 'source']);
               assert.equal(posted.length, 1);
             } else if (['mixed', 'unavailable', 'legacy_cache'].includes(mode)) {
               assert.deepEqual(
@@ -3292,18 +3255,22 @@ test(
                 },
               );
               assert.doesNotMatch(
-                JSON.stringify(briefs),
+                JSON.stringify(plannerBriefs),
                 /482913|owner@example|sender@example|private\.example/,
               );
-              assert.match(JSON.stringify(briefs), /Juniper|Maple/);
+              assert.match(JSON.stringify(plannerBriefs), /Juniper|Maple/);
               assert.ok(
                 plannerBriefs.some(
-                  (brief) => brief.source === 'fixture-mcp' && brief.summary.includes('Cedar'),
+                  (brief) =>
+                    brief.source === 'fixture-mcp' &&
+                    JSON.stringify(brief.observations).includes('Cedar'),
                 ),
               );
               assert.ok(
                 plannerBriefs.some(
-                  (brief) => brief.source === 'slack' && brief.summary.includes('Maple'),
+                  (brief) =>
+                    brief.source === 'slack' &&
+                    JSON.stringify(brief.observations).includes('Maple'),
                 ),
               );
               assert.ok(plannerBriefs.every((brief) => brief.source !== 'gmail'));
@@ -3312,7 +3279,7 @@ test(
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
               if (['unknown', 'invalid', 'refused', 'revoked_read', 'cancelled'].includes(mode))
-                assert.equal(briefs.length, 0);
+                assert.equal(plannerBriefs.length, 0);
               if (
                 [
                   'revoked_publish',
