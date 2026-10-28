@@ -3611,16 +3611,19 @@ process.exit(0);
 });
 
 test('LAB-757: Start chatting opens chat after returning from desktop app sign-in', async (t) => {
-  for (const returnedFromSignIn of [false, true])
-    await t.test(
-      returnedFromSignIn ? 'with an Apps return link' : 'without an Apps return link',
-      async () => {
-        const result = await runProcess(
-          process.execPath,
-          ['--import', 'tsx', '--input-type=module'],
-          {
-            timeoutMs: 30_000,
-            input: String.raw`
+  for (const scenario of [
+    { name: 'without an Apps return link', returnedFromSignIn: false },
+    { name: 'with an Apps return link', returnedFromSignIn: true },
+    { name: 'replay with a Tasks link', returnedFromSignIn: true, destination: '/tasks' },
+    { name: 'replay with a Settings link', returnedFromSignIn: true, destination: '/settings' },
+  ])
+    await t.test(scenario.name, async () => {
+      const result = await runProcess(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module'],
+        {
+          timeoutMs: 30_000,
+          input: String.raw`
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
@@ -3628,7 +3631,9 @@ import {registerHooks} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {JSDOM} from 'jsdom';
 registerHooks({load(url,context,next){return url.endsWith('.css')?{format:'module',source:'export {};',shortCircuit:true}:next(url,context)}});
-const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding?preferences=required',pretendToBeVisual:true});
+const destination=${JSON.stringify(scenario.destination ?? '/')};
+const replay=destination!=='/';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding?'+(replay?'replay=1':'preferences=required'),pretendToBeVisual:true});
 for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','PopStateEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
 globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
@@ -3637,9 +3642,9 @@ globalThis.location=window.location;
 globalThis.ResizeObserver=class{observe(){}disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-const session={user:{id:'synthetic-chat-navigation-owner',name:'',email:null,avatarUrl:null},settings:{theme:'system',usageData:false,traces:false,onboardingCompleted:false},capabilities:{developer:false,traces:false}};
+const session={user:{id:'synthetic-chat-navigation-owner',name:'',email:null,avatarUrl:null},settings:{theme:'system',usageData:false,traces:false,onboardingCompleted:replay},capabilities:{developer:false,traces:false}};
 globalThis.EventSource=class{close(){}};
-const returnedFromSignIn=${returnedFromSignIn};
+const returnedFromSignIn=${scenario.returnedFromSignIn};
 let settings={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:true,onboardingPreferenceStep:'launchAtLogin'};
 let accountCompletions=0;
 let desktopCompletions=0;
@@ -3676,6 +3681,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
  if(path==='/api/account/prepare')return Response.json({ok:true});
  if(path==='/api/models')return Response.json({connections:[{id:'synthetic',provider:'anthropic',method:'api_key',label:'Synthetic model',managed:false,status:'connected',models:[{id:'synthetic-model',name:'Synthetic model',efforts:['medium'],images:false,contextWindow:1000}]}],selection:{connectionId:'synthetic',modelId:'synthetic-model',effort:'medium'}});
  if(path==='/api/preferences')return Response.json({timeZone:'UTC'});
+ if(path==='/api/configuration')return Response.json({integrationsReady:true});
  if(path==='/api/state')return Response.json({threadId:'00000000-0000-4000-8000-000000000757',messages:[],turns:[],activity:[],configuration:{provider:'anthropic',model:'synthetic-model',llmReady:true,modelReconnect:false,integrationsReady:true,conversationResetEnabled:false}});
  if(['/api/apps','/api/apps/catalog','/api/vault','/api/vault/activity','/api/tasks','/api/schedules','/api/memory'].includes(path))return Response.json([]);
  if(path==='/api/trust')return Response.json({});
@@ -3689,29 +3695,40 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const root=createRoot(document.getElementById('root'));
 function TestApp(){return createElement(App,{sessionState:useSession()})}
 const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
-const start=()=>[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Start chatting');
+const button=text=>[...document.querySelectorAll('button')].find(button=>button.textContent.trim()===text);
+const start=()=>button('Start chatting');
 try{
  await act(async()=>root.render(createElement(TestApp)));
+ if(replay){
+  await waitFor(()=>document.querySelector('.ob')?.dataset.step==='welcome');
+  await act(async()=>ipc.emit('nod:navigate',{},destination));
+  assert.equal(window.location.pathname,'/onboarding','Desktop links must wait until replay finishes');
+  for(const [step,label] of [['welcome','Get started'],['intro','Let’s go'],['email','Skip for now'],['calendar','Skip for now'],['brain','Continue'],['apps','Continue']]){
+   await waitFor(()=>document.querySelector('.ob')?.dataset.step===step&&button(label)&&!button(label).disabled);
+   await act(async()=>button(label).click());
+  }
+ }
  await waitFor(()=>start()&&!start().disabled);
  assert.equal(document.querySelector('.ob')?.dataset.step,'launchAtLogin');
  assert.equal(accountCompletions,0);
  await act(async()=>start().click());
  await waitFor(()=>Boolean(document.querySelector('#workspace .chat-route [contenteditable="true"]')));
- assert.equal(accountCompletions,1);
+ assert.equal(accountCompletions,replay?0:1);
  assert.equal(desktopCompletions,1);
  assert.equal(settings.onboardingPreferenceStep,'complete');
- assert.equal(window.location.pathname,'/','Start chatting must open Chat, not the Apps return link from sign-in');
- assert.equal(document.querySelector('#workspace .chat-route')?.hidden,false);
+ assert.equal(window.location.pathname,destination,'Only the Apps return link from sign-in should be discarded');
+ assert.equal(document.querySelector('#workspace .chat-route')?.hidden,replay);
+ await act(async()=>ipc.emit('nod:navigate',{},'/apps'));
+ assert.equal(window.location.pathname,'/apps','Desktop navigation must work after onboarding');
 }finally{
  await act(async()=>root.unmount());
  dom.window.close();
 }
 `,
-          },
-        );
-        assert.equal(result.exitCode, 0, result.stderr);
-      },
-    );
+        },
+      );
+      assert.equal(result.exitCode, 0, result.stderr);
+    });
 });
 
 test(
