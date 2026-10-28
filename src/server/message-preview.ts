@@ -73,12 +73,13 @@ function htmlText(node: DefaultTreeAdapterMap['node']): string {
   const separate = () => {
     if (text && !/\s$/.test(text)) append(' ');
   };
-  while (pending.length && remaining > 0 && visited++ < 20000) {
+  while (pending.length && remaining > 0 && visited < 20000) {
     const current = pending.pop();
     if (!current) {
       separate();
       continue;
     }
+    visited++;
     if ('tagName' in current && ['script', 'style', 'template'].includes(current.tagName)) continue;
     if ('tagName' in current && htmlBlocks.has(current.tagName)) {
       separate();

@@ -3987,6 +3987,7 @@ test(
           for (const [source, expected] of [
             [`${'<div>'.repeat(6000)}Nested content${'</div>'.repeat(6000)}`, /Nested content/],
             [`${'> '.repeat(1800)}Nested content`, /Nested content/],
+            [`<div>${'<p></p>'.repeat(10000)}Visible final text</div>`, /Visible final text/],
             [
               `<div data-padding="${'x'.repeat(1000)}">First block<br>Second block</div>`,
               /First block\s+Second block/,
