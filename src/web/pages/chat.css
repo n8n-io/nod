@@ -296,6 +296,11 @@
   flex: 1;
   min-width: 0;
 }
+.composer-work-control {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
 .voice-recorder {
   margin-bottom: 12px;
   padding: 12px;
@@ -935,6 +940,22 @@
     max-width: calc(100% - 60px);
   }
 }
+@media (max-width: 640px) {
+  .chat-page .message-assistant > .assistant-mark {
+    display: none;
+  }
+  .chat-page .message .message-bubble > .message-body {
+    padding: 10px 12px;
+  }
+  .chat-page .message-body > .message-text:first-child {
+    padding-right: 24px;
+  }
+  .chat-page
+    .message-body
+    > :is(.message-attachments, .attachment-cards, .audio-player):first-child {
+    margin-top: 26px;
+  }
+}
 .task-suggestions {
   display: flex;
   flex: 1;
@@ -1106,7 +1127,7 @@
 .file-action-tooltip {
   position: fixed;
   z-index: 400;
-  max-width: 190px;
+  max-width: min(190px, calc(100vw - 16px));
   padding: 6px 9px;
   border-radius: var(--control-radius);
   background: var(--foreground);
@@ -1114,7 +1135,6 @@
   font-size: 12px;
   line-height: 1.4;
   text-align: center;
-  transform: translate(-50%, -100%);
   pointer-events: none;
 }
 .file-action-notice {
@@ -1360,6 +1380,13 @@
 @media (max-width: 600px) {
   .artifact-drawer-header .file-actions > .button {
     width: 24px;
+  }
+}
+@media (pointer: coarse) {
+  .file-actions > :is(.button, a),
+  .artifact-drawer-header .file-actions > :is(.button, a) {
+    width: 44px;
+    height: 44px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

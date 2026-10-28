@@ -2788,6 +2788,21 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
         assert.equal(document.activeElement, provider());
         assert.deepEqual(writes.at(-1), { speechVoice: 'openai:coral' });
+        const downloadedVoices = settings.voices.filter(voice => voice.engine === 'Local');
+        settings = { ...settings, local: { state: 'not_downloaded' },
+          voices: settings.voices.filter(voice => voice.engine !== 'Local') };
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await chooseProvider('Free voices');
+        await settle(() => button('Download voices'));
+        assert.equal(settings.speechVoice, 'openai:coral');
+        await act(async () => button('Download voices').click());
+        settings = { ...settings, local: { state: 'ready' }, voices: [...settings.voices, ...downloadedVoices] };
+        await act(async () => preparations.at(-1).resolve(Response.json({ local: { state: 'ready' } })));
+        await settle(() => settings.speechVoice === 'local:pm_alex' && busy.at(-1) === false);
+        assert.deepEqual(writes.at(-1), { speechVoice: 'local:pm_alex' });
+        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Free voices');
+        await chooseProvider('OpenAI');
+        await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
         await open();
         assert.ok(picker().querySelector('[aria-label="Choose Coral, Warm and friendly, OpenAI"]'));
         assert.equal(picker().querySelector('[aria-label="Choose Dora, Brazilian Portuguese, Free voices"]'), null);
@@ -2982,7 +2997,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         result = { sent: false, restoreText: true },
         currentText,
         changeActive,
-        replaceText;
+        replaceText,
+        workStops = 0;
       const setDrafts = (value) => {
         drafts = value;
       };
@@ -3003,6 +3019,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             setText,
             replyTo: null,
             clearReply() {},
+            onStop() { workStops++; },
             onSend: async (text, attachments, recording) => {
               sends.push({ text, attachments, ...(recording ? { recording } : {}) });
               return result;
@@ -3320,6 +3337,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
         assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
+        await click('Stop all work');
+        assert.equal(workStops, 1);
+        assert.equal(recorded.track.stopped, false);
         assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
         let recordingPickers = 0;
         document.querySelector('input[type="file"]').addEventListener('click', () => recordingPickers++);

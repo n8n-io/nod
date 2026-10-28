@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { createPortal } from 'react-dom';
 import { post } from '../lib/api';
 import { safeMessageLink } from '../lib/message-links';
+import { ArrowUpRight } from './icons';
 
 function opened(url: string, source: 'text' | 'tooltip') {
   void post('/api/link-preview/opened', { url, source }).catch(() => undefined);
@@ -34,13 +35,17 @@ export function MessageLinkTooltip({
   useLayoutEffect(() => {
     const tooltip = tipElement.current;
     if (!tip || !tooltip) return;
+    if (!content.current?.contains(tip.anchor) || tip.anchor.getAttribute('href') !== tip.url) {
+      setTip(null);
+      return;
+    }
     const { width, height } = tooltip.getBoundingClientRect();
     tooltip.style.left = `${Math.max(8, Math.min(tip.x, window.innerWidth - width - 8))}px`;
     const top = tip.below ? tip.y : tip.y - height;
     tooltip.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8)) + (tip.below ? 0 : height)}px`;
     tip.anchor.setAttribute('aria-describedby', tipId);
     return () => tip.anchor.removeAttribute('aria-describedby');
-  }, [tip, tipId]);
+  }, [content, text, tip, tipId]);
 
   useEffect(() => {
     const target = content.current;
@@ -51,6 +56,7 @@ export function MessageLinkTooltip({
       if (!link) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
+        if (!target.contains(link.anchor) || link.anchor.getAttribute('href') !== link.url) return;
         const rect = link.anchor.getBoundingClientRect();
         const below = rect.top < 72;
         setTip({
@@ -141,15 +147,7 @@ export function MessageLinkTooltip({
             onClick={() => opened(tip.url, 'tooltip')}
           >
             <span>{tip.url}</span>
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="M6 3h7v7M13 3 4 12"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
+            <ArrowUpRight size={14} />
           </a>,
           document.body,
         )}

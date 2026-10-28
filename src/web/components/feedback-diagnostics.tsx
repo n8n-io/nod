@@ -1,7 +1,8 @@
-import { useId, useMemo } from 'react';
-import { ChevronDown, Download, FileText } from './icons';
+import { useId, useMemo, useState } from 'react';
+import { ChevronDown, Code, Download } from './icons';
 import type { FeedbackReport } from '../../shared/feedback';
 import { parseFeedbackActivity } from '../../shared/feedback-activity';
+import { integrationMetadata } from '../../shared/integrations';
 import { Button, Checkbox } from './ui';
 
 type ReportRecord = Record<string, unknown>;
@@ -45,6 +46,34 @@ function Status({ value }: { value: unknown }) {
   );
 }
 
+function ReportEntry({
+  title,
+  description,
+  status,
+  entry,
+}: {
+  title: string;
+  description?: unknown;
+  status?: unknown;
+  entry: unknown;
+}) {
+  return (
+    <details className="feedback-diagnostics-entry">
+      <summary>
+        <span>
+          <strong>{title}</strong>
+          {typeof description === 'string' && description && <span>{description}</span>}
+        </span>
+        {status !== undefined && <Status value={status} />}
+        <ChevronDown size={14} />
+      </summary>
+      <pre>{JSON.stringify(entry, null, 2)}</pre>
+    </details>
+  );
+}
+
+const reportTabs = ['Chat', 'Activity', 'Connections'] as const;
+
 export function FeedbackDiagnostics({
   included,
   report,
@@ -67,18 +96,12 @@ export function FeedbackDiagnostics({
   onRefresh(): void;
 }) {
   const previewId = useId();
+  const [tab, setTab] = useState<(typeof reportTabs)[number]>('Chat');
   const data = useMemo(() => (report ? feedbackReportData(report.content) : null), [report]);
   const messages = rows(data?.messages);
   const turns = rows(data?.turns).reverse();
   const execution = rows(data?.execution).reverse();
-  const logs = rows(data?.logs).reverse();
-  const toolEvents = logs.filter(
-    (entry) => entry.event === 'tool_start' || entry.event === 'tool_end',
-  );
-  const failures = [
-    ...logs.filter((entry) => entry.event !== 'tool_start' && entry.event !== 'tool_end'),
-    ...rows(data?.clientErrors).reverse(),
-  ];
+  const logs = [...rows(data?.logs), ...rows(data?.clientErrors)].reverse();
   const connections: ReportRecord[] = [
     ...rows(data?.connections),
     ...rows(data?.browserConnections),
@@ -135,8 +158,8 @@ export function FeedbackDiagnostics({
         )}
       </div>
       <p className="feedback-diagnostics-disclosure">
-        Messages and app activity, with personal details masked where possible. Review before
-        sending.
+        Includes messages, tool inputs and results, and app logs. Masking may miss personal details;
+        review before sending.
       </p>
       {included && error && (
         <div className="feedback-diagnostics-error" role="alert">
@@ -165,13 +188,44 @@ export function FeedbackDiagnostics({
         <div id={previewId} className="feedback-diagnostics-preview">
           {data ? (
             <>
-              <div className="feedback-diagnostics-toolbar">
-                <span>
-                  <FileText size={16} /> Report preview
-                </span>
-                <Button type="button" variant="ghost" size="sm" onClick={download}>
-                  <Download size={16} /> Download
-                </Button>
+              <div
+                className="feedback-diagnostics-tabs"
+                role="tablist"
+                aria-label="Report sections"
+                onKeyDown={(event) => {
+                  const index = reportTabs.indexOf(tab);
+                  const next =
+                    event.key === 'ArrowRight'
+                      ? (index + 1) % reportTabs.length
+                      : event.key === 'ArrowLeft'
+                        ? (index + reportTabs.length - 1) % reportTabs.length
+                        : event.key === 'Home'
+                          ? 0
+                          : event.key === 'End'
+                            ? reportTabs.length - 1
+                            : null;
+                  if (next === null) return;
+                  event.preventDefault();
+                  setTab(reportTabs[next]);
+                  event.currentTarget
+                    .querySelectorAll<HTMLButtonElement>('[role="tab"]')
+                    [next]?.focus();
+                }}
+              >
+                {reportTabs.map((name) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`${previewId}-${name}`}
+                    aria-controls={`${previewId}-content`}
+                    aria-selected={tab === name}
+                    tabIndex={tab === name ? 0 : -1}
+                    key={name}
+                    onClick={() => setTab(name)}
+                  >
+                    {name}
+                  </button>
+                ))}
               </div>
               {(unavailable || coverage?.redaction === 'unavailable') && (
                 <p className="feedback-diagnostics-snapshot">
@@ -180,180 +234,175 @@ export function FeedbackDiagnostics({
                     : 'Some diagnostics are unavailable.'}
                 </p>
               )}
-              <details className="feedback-diagnostics-section feedback-diagnostics-raw">
-                <summary>
-                  <span>
-                    Messages <small>{messages.length}</small>
-                  </span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="feedback-diagnostics-items">
-                  {messages.map((message, index) => (
-                    <div
-                      className="feedback-diagnostics-message"
-                      key={index}
-                      data-role={message.role}
-                    >
-                      <div className="feedback-diagnostics-activity">
+              <div
+                key={tab}
+                id={`${previewId}-content`}
+                className="feedback-diagnostics-content"
+                role="tabpanel"
+                aria-labelledby={`${previewId}-${tab}`}
+                tabIndex={0}
+              >
+                {tab === 'Chat' && (
+                  <div className="feedback-diagnostics-messages">
+                    {messages.map((message, index) => (
+                      <div
+                        className="feedback-diagnostics-message"
+                        key={index}
+                        data-role={message.role}
+                      >
                         <strong>
-                          {message.role === 'assistant' ? 'Nod' : label(message.role, 'Message')}
+                          {message.role === 'assistant'
+                            ? 'Nod'
+                            : message.role === 'user'
+                              ? 'You'
+                              : label(message.role, 'Message')}
                         </strong>
+                        <p>
+                          {typeof message.text === 'string' ? message.text : '[content omitted]'}
+                        </p>
                       </div>
-                      <pre>
-                        {typeof message.text === 'string' ? message.text : '[content omitted]'}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </details>
-              {[
-                { title: 'Tool inputs and results', entries: toolEvents },
-                { title: 'Recent logs', entries: failures },
-              ].map(({ title, entries }) => (
-                <details
-                  className="feedback-diagnostics-section feedback-diagnostics-raw"
-                  key={title}
-                >
-                  <summary>
-                    <span>
-                      {title} <small>{entries.length}</small>
-                    </span>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </summary>
-                  <div className="feedback-diagnostics-items">
-                    {entries.map((entry, index) => (
-                      <details key={index}>
-                        <summary>
-                          <span>
-                            {label(
-                              record(entry.data)?.tool,
-                              label(record(entry.data)?.event, label(entry.event, 'Event')),
-                            )}
-                          </span>
-                          <Status
-                            value={
-                              entry.event === 'tool_start'
-                                ? 'input'
-                                : (record(entry.data)?.status ?? 'result')
-                            }
-                          />
-                        </summary>
-                        <pre>{JSON.stringify(entry, null, 2)}</pre>
-                      </details>
                     ))}
-                    {!entries.length && (
-                      <p className="feedback-diagnostics-empty">No recent entries.</p>
+                    {!messages.length && (
+                      <p className="feedback-diagnostics-empty">
+                        No message content in this report.
+                      </p>
                     )}
                   </div>
+                )}
+                {tab === 'Activity' && (
+                  <div className="feedback-diagnostics-groups">
+                    {!!turns.length && (
+                      <section>
+                        <h3>Requests</h3>
+                        {turns.map((turn, index) => (
+                          <ReportEntry
+                            key={index}
+                            title={label(turn.source ?? turn.channel, 'Request')}
+                            description={turn.error}
+                            status={turn.status}
+                            entry={turn}
+                          />
+                        ))}
+                      </section>
+                    )}
+                    {!!logs.length && (
+                      <section>
+                        <h3>Tools and logs</h3>
+                        {logs.map((entry, index) => {
+                          const details = record(entry.data) ?? entry;
+                          return (
+                            <ReportEntry
+                              key={index}
+                              title={label(
+                                details.tool,
+                                label(details.event, label(entry.event, 'App error')),
+                              )}
+                              description={details.message ?? record(details.error)?.message}
+                              status={
+                                entry.event === 'tool_start'
+                                  ? 'input'
+                                  : entry.event === 'failure'
+                                    ? 'failed'
+                                    : (details.status ??
+                                      (entry.event === 'tool_end' ? 'result' : undefined))
+                              }
+                              entry={entry}
+                            />
+                          );
+                        })}
+                      </section>
+                    )}
+                    {!!execution.length && (
+                      <section>
+                        <h3>Agent activity</h3>
+                        {execution.map((entry, index) => (
+                          <ReportEntry
+                            key={index}
+                            title={label(entry.tool, 'Agent')}
+                            description={label(entry.type ?? entry.event, 'Activity')}
+                            entry={entry}
+                          />
+                        ))}
+                      </section>
+                    )}
+                    {!!activity.length && (
+                      <section>
+                        <h3>App activity</h3>
+                        {activity.map((entry, index) => {
+                          const properties = entry.properties;
+                          const context = label(
+                            properties.app,
+                            label(properties.area, label(properties.provider, 'App')),
+                          );
+                          const title =
+                            entry.event === 'screen'
+                              ? `Opened ${label(String(properties.screen ?? '').slice(1), 'Chat')}`
+                              : entry.event === 'request_failed'
+                                ? `${context} request failed`
+                                : entry.event === 'nod_ui_error'
+                                  ? `${context} error`
+                                  : entry.event === 'nod_service_used'
+                                    ? `${context} action`
+                                    : `${context} connection`;
+                          return (
+                            <ReportEntry
+                              key={index}
+                              title={title}
+                              status={properties.status ?? properties.outcome}
+                              entry={entry}
+                            />
+                          );
+                        })}
+                      </section>
+                    )}
+                    {!turns.length && !logs.length && !execution.length && !activity.length && (
+                      <p className="feedback-diagnostics-empty">
+                        No recent activity in this report.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {tab === 'Connections' && (
+                  <div className="feedback-diagnostics-connections">
+                    {connections.map((connection, index) => (
+                      <ReportEntry
+                        key={index}
+                        title={
+                          typeof connection.app === 'string'
+                            ? integrationMetadata(connection.app).name
+                            : label(connection.provider, label(connection.method, 'Connection'))
+                        }
+                        status={connection.status}
+                        entry={connection}
+                      />
+                    ))}
+                    {!connections.length && (
+                      <p className="feedback-diagnostics-empty">No connections in this report.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="feedback-diagnostics-footer">
+                <details className="feedback-diagnostics-full">
+                  <summary>
+                    <Code size={16} />
+                    <span>Full report</span>
+                    <ChevronDown size={14} />
+                  </summary>
+                  <pre aria-label="Full diagnostic report">{report.content}</pre>
                 </details>
-              ))}
-              <details className="feedback-diagnostics-section">
-                <summary>
-                  <span>
-                    Chat and agent activity <small>{turns.length + execution.length}</small>
-                  </span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="feedback-diagnostics-items">
-                  {turns.map((turn, index) => (
-                    <div className="feedback-diagnostics-activity" key={`turn-${index}`}>
-                      <span>
-                        {label(turn.source, 'Request')}
-                        {typeof turn.durationMs === 'number'
-                          ? ` · ${(turn.durationMs / 1000).toFixed(1)} s`
-                          : ''}
-                      </span>
-                      <Status value={turn.status} />
-                    </div>
-                  ))}
-                  {execution.map((event, index) => (
-                    <div className="feedback-diagnostics-activity" key={`event-${index}`}>
-                      <span>{label(event.tool, 'Agent')}</span>
-                      <span>{label(event.type, 'Activity')}</span>
-                    </div>
-                  ))}
-                  {!turns.length && !execution.length && (
-                    <p className="feedback-diagnostics-empty">No recent agent activity.</p>
-                  )}
-                </div>
-              </details>
-              <details className="feedback-diagnostics-section">
-                <summary>
-                  <span>
-                    Connections <small>{connections.length}</small>
-                  </span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="feedback-diagnostics-items">
-                  {connections.map((connection, index) => (
-                    <div className="feedback-diagnostics-activity" key={index}>
-                      <span>
-                        {label(
-                          connection.app,
-                          label(connection.provider, label(connection.method, 'Connection')),
-                        )}
-                      </span>
-                      <Status value={connection.status} />
-                    </div>
-                  ))}
-                  {!connections.length && (
-                    <p className="feedback-diagnostics-empty">No connections in this report.</p>
-                  )}
-                </div>
-              </details>
-              <details className="feedback-diagnostics-section">
-                <summary>
-                  <span>
-                    App activity <small>{activity.length}</small>
-                  </span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="feedback-diagnostics-items">
-                  {activity.map((event, index) => {
-                    const properties = event.properties;
-                    const context = label(
-                      properties.app,
-                      label(properties.area, label(properties.provider, 'App')),
-                    );
-                    const title =
-                      event.event === 'screen'
-                        ? `Opened ${label(String(properties.screen ?? '').slice(1), 'Chat')}`
-                        : event.event === 'request_failed'
-                          ? `${context} request failed`
-                          : event.event === 'nod_ui_error'
-                            ? `${context} error`
-                            : event.event === 'nod_service_used'
-                              ? `${context} action`
-                              : `${context} connection`;
-                    const details = [
-                      properties.status ?? properties.outcome,
-                      properties.failure_reason ?? properties.reason,
-                      properties.action,
-                    ]
-                      .filter((value) => value !== undefined)
-                      .map((value) => label(String(value), ''))
-                      .join(' · ');
-                    return (
-                      <div className="feedback-diagnostics-activity" key={index}>
-                        <span>
-                          {title}
-                          {details ? ` · ${details}` : ''}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {!activity.length && (
-                    <p className="feedback-diagnostics-empty">No recent app activity.</p>
-                  )}
-                </div>
-              </details>
-              <details className="feedback-diagnostics-section feedback-diagnostics-raw">
-                <summary>
-                  <span>Raw JSON</span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <pre aria-label="Diagnostic report">{report.content}</pre>
-              </details>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="feedback-diagnostics-download"
+                  aria-label="Download report"
+                  title="Download report"
+                  onClick={download}
+                >
+                  <Download size={16} /> <span>Download</span>
+                </Button>
+              </div>
             </>
           ) : (
             <p className="feedback-diagnostics-snapshot" role="alert">

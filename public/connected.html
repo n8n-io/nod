@@ -156,7 +156,7 @@
         const succeeded = connection === 'connected' || connection === 'continued';
         const suppliedName = query.get('serviceName')?.trim();
         const name =
-          suppliedName && suppliedName.length <= 100 && !/[\x00-\x1f\x7f]/.test(suppliedName)
+          suppliedName && suppliedName.length <= 200 && !/[\x00-\x1f\x7f]/.test(suppliedName)
             ? suppliedName
             : service?.replaceAll('_', ' ').replaceAll('-', ' ');
         const title = succeeded
@@ -179,7 +179,7 @@
         const desktop = query.get('desktop') === '1';
         const returnLink = document.getElementById('return');
         const closeButton = document.getElementById('close');
-        returnLink.hidden = succeeded;
+        returnLink.hidden = succeeded && !desktop;
         closeButton.hidden = !succeeded;
         closeButton.addEventListener('click', () => window.close());
         returnLink.href = desktop ? 'nod://open/apps' : '/apps';

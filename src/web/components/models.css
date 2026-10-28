@@ -112,7 +112,7 @@
   gap: 12px;
   margin-top: 16px;
 }
-.model-key-form > div {
+.model-key-form > div:not(.field) {
   display: flex;
   gap: 4px;
 }
@@ -374,6 +374,16 @@
   .model-options {
     max-height: none;
     overflow: visible;
+  }
+}
+@media (pointer: coarse) {
+  .model-key-form .button,
+  .model-picker-trigger,
+  .model-picker-dialog .dialog-close {
+    min-height: 44px;
+  }
+  .model-picker-dialog .dialog-close {
+    width: 44px;
   }
 }
 @media (max-width: 640px) {

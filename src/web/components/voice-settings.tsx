@@ -117,7 +117,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       const next = await api<SpeechSettings>('/api/speech', { signal: controller.signal });
       controller.signal.throwIfAborted();
       update(() => next);
-      setProviderChoice(null);
+      if (providerChoice === 'local') await chooseProvider('local', next);
     } catch (cause) {
       if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {

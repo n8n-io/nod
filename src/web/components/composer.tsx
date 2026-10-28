@@ -790,6 +790,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <span className="sr-only" id="composer-keyboard-hint">
           Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
+        {onStop && hasRecording && (
+          <div className="composer-work-control">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Stop all work"
+              disabled={stopping}
+              onClick={onStop}
+            >
+              {stopping ? 'Stopping Nod…' : 'Stop Nod'}
+            </Button>
+          </div>
+        )}
         <div className="composer-tools">
           <div className="composer-left">
             {active && hasRecording && (

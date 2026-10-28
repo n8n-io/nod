@@ -318,6 +318,14 @@
   flex-basis: 100%;
   color: var(--muted-foreground);
 }
+@media (max-width: 640px) {
+  .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
+    padding-right: 12px;
+  }
+  .chat-page .message-body > .message-presentation:first-child {
+    margin-top: 26px;
+  }
+}
 @media (hover: hover) and (pointer: fine) {
   .presentation-sources summary:hover {
     color: var(--foreground);

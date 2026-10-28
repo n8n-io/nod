@@ -35,6 +35,7 @@ export function MessagePresentation({ value }: { value: unknown }) {
       <header className="presentation-heading">
         <h3 id={titleId}>{visual.title}</h3>
         {visual.caption && <p>{visual.caption}</p>}
+        {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
       </header>
       {visual.type === 'image' && <PresentedImage key={visual.artifactId} visual={visual} />}
       {visual.type === 'flights' && <Flights key={JSON.stringify(visual)} visual={visual} />}

@@ -149,7 +149,7 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
         </div>
       )}
       {(visual.yLabel || visual.unit) && (
-        <p className="chart-measure">{visual.yLabel || visual.unit}</p>
+        <p className="chart-measure">{[visual.yLabel, visual.unit].filter(Boolean).join(' · ')}</p>
       )}
       {(visual.chart === 'line' || visible.length > 1) && (
         <Reading visual={visual} series={visible} label={labels[selected]!} id={readingId} />

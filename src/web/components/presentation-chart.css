@@ -98,6 +98,7 @@
 }
 .chart-line-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -107,6 +108,7 @@
 }
 .chart-line-controls > span > span {
   margin-left: 8px;
+  white-space: nowrap;
 }
 .chart-line-controls > div {
   display: flex;
@@ -254,13 +256,21 @@
   pointer-events: none;
 }
 .chart-donut-centre strong {
-  font-size: 28px;
+  font-size: clamp(16px, 10cqi, 28px);
   font-weight: 550;
   letter-spacing: -0.045em;
 }
 .chart-donut-centre > span {
+  display: -webkit-box;
+  width: 52%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--muted-foreground);
   font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 .chart-slices {
   display: flex;
@@ -312,12 +322,28 @@
   flex-shrink: 0;
   font-weight: 550;
 }
+@container (max-width: 260px) {
+  .chart-slice-option {
+    display: grid;
+    grid-template-columns: 9px minmax(0, 1fr);
+    gap: 4px 8px;
+  }
+  .chart-share {
+    grid-column: 2;
+  }
+}
 @media (hover: hover) and (pointer: fine) {
   .chart-legend button:hover:not(:disabled),
   .chart-line-controls button:hover:not(:disabled),
   .chart-bar-row:hover,
   .chart-slice-option:hover {
     background: var(--control-hover);
+  }
+}
+@media (pointer: coarse) {
+  .chart-line-controls button {
+    width: 44px;
+    height: 44px;
   }
 }
 @container (max-width: 480px) {

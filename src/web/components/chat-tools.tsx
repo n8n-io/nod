@@ -26,16 +26,13 @@ function searchText(source: string) {
 }
 
 function highlighted(text: string, query: string) {
-  const index = text.toLocaleLowerCase().indexOf(query.trim().toLocaleLowerCase());
-  return index < 0 ? (
-    text
-  ) : (
-    <>
-      {text.slice(0, index)}
-      <mark>{text.slice(index, index + query.trim().length)}</mark>
-      {text.slice(index + query.trim().length)}
-    </>
-  );
+  const terms = [...new Set(query.match(/[\p{L}\p{N}]+/gu) ?? [])]
+    .filter((term) => term !== 'OR')
+    .sort((a, b) => b.length - a.length);
+  if (!terms.length) return text;
+  return text
+    .split(new RegExp(`(${terms.join('|')})`, 'giu'))
+    .map((part, index) => (index % 2 ? <mark key={index}>{part}</mark> : part));
 }
 
 export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?: Task[] }) {

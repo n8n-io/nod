@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Download, List, Plus } from './icons';
 import type { Artifact } from '../../shared/contracts';
@@ -42,7 +42,13 @@ export function FileActions({ item }: { item: ImagePreview }) {
   activeId.current = item.id;
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tooltip, setTooltip] = useState<{ label: string; x: number; y: number } | null>(null);
+  const tooltipElement = useRef<HTMLSpanElement>(null);
+  const [tooltip, setTooltip] = useState<{
+    label: string;
+    x: number;
+    y: number;
+    below: number;
+  } | null>(null);
   const tooltipTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   function hideTooltip() {
     clearTimeout(tooltipTimer.current);
@@ -57,11 +63,20 @@ export function FileActions({ item }: { item: ImagePreview }) {
       const box = control.getBoundingClientRect();
       setTooltip({
         label: control.dataset.tooltip!,
-        x: Math.max(100, Math.min(window.innerWidth - 100, box.left + box.width / 2)),
+        x: box.left + box.width / 2,
         y: box.top - 8,
+        below: box.bottom + 8,
       });
     }, delay);
   }
+  useLayoutEffect(() => {
+    const element = tooltipElement.current;
+    if (!tooltip || !element) return;
+    const { width, height } = element.getBoundingClientRect();
+    element.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, tooltip.x - width / 2))}px`;
+    const above = tooltip.y - height;
+    element.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, above >= 8 ? above : tooltip.below))}px`;
+  }, [tooltip]);
   useEffect(() => {
     const hide = () => hideTooltip();
     window.addEventListener('resize', hide);
@@ -213,6 +228,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
       {tooltip &&
         createPortal(
           <span
+            ref={tooltipElement}
             role="tooltip"
             className="file-action-tooltip"
             style={{ left: tooltip.x, top: tooltip.y }}

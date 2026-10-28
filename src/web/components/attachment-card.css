@@ -409,6 +409,9 @@
 }
 
 @container audio-player (max-width: 190px) {
+  .audio-player-info {
+    grid-column: 1 / -1;
+  }
   .audio-player-current,
   .audio-player-separator {
     display: none;

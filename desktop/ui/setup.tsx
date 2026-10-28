@@ -146,6 +146,7 @@ function ConnectionSetup() {
           <label htmlFor="server-token">Authentication token</label>
           <PasswordInput
             id="server-token"
+            revealLabel="authentication token"
             type="password"
             value={token}
             onChange={(event) => setToken(event.target.value)}

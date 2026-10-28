@@ -31,21 +31,46 @@ export function Button({
   return <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
-const FieldLabelContext = React.createContext<string | undefined>(undefined);
+interface FieldContext {
+  id: string;
+  label: string;
+  labelId: string;
+  hintId?: string;
+  setControlId(id: string): void;
+}
+const FieldLabelContext = React.createContext<FieldContext | undefined>(undefined);
+
+function fieldAttributes(props: React.AriaAttributes & { id?: string }, field?: FieldContext) {
+  return {
+    id: props.id ?? field?.id,
+    'aria-labelledby':
+      props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined
+        ? props['aria-labelledby']
+        : field?.labelId,
+    'aria-describedby':
+      [props['aria-describedby'], field?.hintId].filter(Boolean).join(' ') || undefined,
+  };
+}
 
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => {
-  const labelId = React.useContext(FieldLabelContext);
-  const labelledBy =
-    props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined
-      ? props['aria-labelledby']
-      : labelId;
+  const field = React.useContext(FieldLabelContext);
+  const attributes = fieldAttributes(props, field);
+  React.useLayoutEffect(() => {
+    if (attributes.id) field?.setControlId(attributes.id);
+  }, [attributes.id, field?.setControlId]);
   return props.type === 'password' ? (
-    <PasswordInput ref={ref} className={className} {...props} aria-labelledby={labelledBy} />
+    <PasswordInput
+      ref={ref}
+      className={className}
+      {...props}
+      {...attributes}
+      revealLabel={field?.label}
+    />
   ) : (
-    <input ref={ref} className={cn('input', className)} {...props} aria-labelledby={labelledBy} />
+    <input ref={ref} className={cn('input', className)} {...props} {...attributes} />
   );
 });
 Input.displayName = 'Input';
@@ -84,16 +109,39 @@ export function Field({
   children: React.ReactNode;
   hint?: string;
 }) {
-  const labelId = React.useId();
+  const id = React.useId();
+  const [controlId, setControlId] = React.useState(id);
+  const field = {
+    id,
+    label,
+    labelId: `${id}-label`,
+    hintId: hint ? `${id}-hint` : undefined,
+    setControlId,
+  };
+  let labelledControl = controlId;
+  const controls = React.Children.map(children, (child) => {
+    if (
+      !React.isValidElement<React.AriaAttributes & { id?: string }>(child) ||
+      !['input', 'select', 'textarea'].includes(String(child.type))
+    )
+      return child;
+    const attributes = fieldAttributes(child.props, field);
+    labelledControl = attributes.id!;
+    return React.cloneElement(child, attributes);
+  });
   return (
-    <FieldLabelContext.Provider value={labelId}>
-      <label className="field">
-        <span id={labelId} className="field-label">
+    <FieldLabelContext.Provider value={field}>
+      <div className="field">
+        <label id={field.labelId} htmlFor={labelledControl} className="field-label">
           {label}
-        </span>
-        {children}
-        {hint && <span className="field-hint">{hint}</span>}
-      </label>
+        </label>
+        {controls}
+        {hint && (
+          <span id={field.hintId} className="field-hint">
+            {hint}
+          </span>
+        )}
+      </div>
     </FieldLabelContext.Provider>
   );
 }

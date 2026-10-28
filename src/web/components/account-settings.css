@@ -646,13 +646,21 @@
   }
   .voice-reply-options button {
     flex: 1;
+    min-width: 0;
     padding-inline: 8px;
     font-size: 12px;
+    white-space: normal;
+  }
+  .voice-reply-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: var(--control-radius);
   }
 }
 @media (pointer: coarse) {
   .voice-sample,
-  .voice-reply-options button {
+  .voice-reply-options button,
+  .voice-picker-panel .dialog-close {
     min-height: 44px;
     min-width: 44px;
   }

@@ -1,3 +1,5 @@
+import { isEditingTarget } from './navigation';
+
 export function initializeFocusVisibility() {
   document.addEventListener(
     'pointerdown',
@@ -9,11 +11,12 @@ export function initializeFocusVisibility() {
   document.addEventListener(
     'keydown',
     (event) => {
-      if (event.key === 'Escape') {
-        document.documentElement.dataset.focusInput = 'pointer';
+      if (['Escape', 'Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
+      if (
+        isEditingTarget(event.target) &&
+        !['Tab', 'Enter', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(event.key)
+      )
         return;
-      }
-      if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
       document.documentElement.dataset.focusInput = 'keyboard';
     },
     true,

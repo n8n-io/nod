@@ -123,7 +123,9 @@ export function VoicePicker({
       ),
     )
     .sort((a, b) => Number(b.id === selected?.id) - Number(a.id === selected?.id));
-  const showAutomatic = words.every((word) => 'automatic conversation language'.includes(word));
+  const showAutomatic = words.every((word) =>
+    'automatic matches the conversation language'.includes(word),
+  );
   const groups = [...new Set(matches.map(language))];
   return (
     <Dialog

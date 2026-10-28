@@ -244,8 +244,13 @@ export function CloudKeyFields({
   workspaces?: ModelWorkspace[];
   showWorkspace?: boolean;
 }) {
+  const [workspaceFallback, setWorkspaceFallback] = useState(false);
+  useEffect(() => setWorkspaceFallback(false), [provider]);
+  useEffect(() => {
+    if (showWorkspace) setWorkspaceFallback(true);
+  }, [showWorkspace, provider]);
   if (provider === 'anthropic')
-    return showWorkspace || workspaces.length > 0 ? (
+    return showWorkspace || workspaceFallback || workspaces.length > 0 ? (
       <>
         {workspaces.length > 0 && (
           <Field label="Workspace" hint="Choose the workspace Nod should use.">
