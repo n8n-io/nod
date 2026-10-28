@@ -4908,8 +4908,11 @@ test(
               async () => {
                 await reset();
                 let verdict = false;
+                let tools = false;
                 const screening = createProactivity({
                   ...options,
+                  sources: async () =>
+                    (await options.sources()).map((source) => ({ ...source, tools })),
                   curator: {
                     id: 'fixture',
                     configured: true,
@@ -4936,6 +4939,15 @@ test(
                   return [quiet, dirty];
                 };
                 await transaction((client) => engine.signal(sourceId, client), db.pool);
+                assert.deepEqual(await screen(), [true, false]);
+                verdict = true;
+                assert.deepEqual(await screen(), [false, true]);
+                tools = true;
+                await db.pool.query(
+                  'UPDATE proactive_sources SET reads=$3::jsonb WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId, JSON.stringify([{ tool: 'fixture_read', args: {} }])],
+                );
+                verdict = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
                 assert.deepEqual(await screen(), [false, true]);

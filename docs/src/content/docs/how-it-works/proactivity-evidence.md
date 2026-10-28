@@ -24,7 +24,7 @@ Expected results stay outside the agent input. Code checks source references, me
 The cases include:
 
 - Useful opportunities on later pages, among many that need nothing.
-- Appropriate silence, irrelevant promotions, and obsolete goals.
+- Appropriate silence, unassigned backlog ideas, irrelevant promotions, and obsolete goals.
 - Complete drafts that combine facts from different sources.
 - Changed facts, completed work, outages, and restored access.
 - Repeated signals, dismissal, snooze, and changed owner goals.
@@ -33,7 +33,7 @@ The cases include:
 - Existing watches and standing instructions that must keep working.
 - Apps read through their own tools, where only reads may run.
 
-A source with no notification request or deadline can produce private work without a message. Deadline cases still require a timely offer.
+A source with no notification request or deadline can produce private work for a concrete open need. Backlog ideas alone must produce no plan, task or message. Deadline cases still require a timely offer.
 
 Integration tests cover the execution limits that model evals cannot establish reliably: forbidden writes, owner isolation, stale evidence, cancellation, atomic delivery, and connector failures.
 

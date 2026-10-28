@@ -5,13 +5,15 @@ sidebar:
   order: 4
 ---
 
-The proactivity engine reads your connected apps on its own, prepares useful work privately and messages you only when that work is worth an interruption. For you it's just [nudges](/use/nudges/): messages at the right time about things that matter.
+The proactivity engine reads your connected apps on its own and helps with concrete open needs. It prepares work for an unhandled request, an unresolved commitment, a problem, financial risk or recoverable payment that affects you, or work your notification rule asks for. For you it's just [nudges](/use/nudges/): messages when a concrete consequence needs your attention.
+
+Ideas, backlog entries, general opportunities and routine updates alone start no plan, assessment, draft, task or nudge, including private work. A possible improvement or missing information in a backlog is not evidence of a present problem or obligation. Saving an idea is not a commitment. Nod does not turn it into an impact review because that review might be useful.
 
 Saved work starts observation when at least one saved task exists. An empty local task list needs no model read. Task changes still use the existing change token and normal observation checks.
 
 ## From a change to a nudge
 
-App events, periodic source checks, and due matters feed one observer for your active conversation. It keeps its context only while the model's cache is warm and otherwise starts fresh, since saved matters carry its state. The server reads changed sources first and ends the batch without your selected model when nothing changed in an app's results or the connection's smaller model judges each changed record routine. A changed app result, a record of a saved matter or a failed read always goes to the full check. They update a saved source queue. A single observer turn reads the due batch. Events received during a turn stay saved for its next turn. App events that arrive together start one check, and a check also takes any source due within the next 15 minutes. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
+App events, periodic source checks, and due matters feed one observer for your active conversation. It keeps its context only while the model's cache is warm and otherwise starts fresh, since saved matters carry its state. The server reads changed sources first and ends the batch without your selected model when nothing changed or the connection's smaller model finds no concrete open need. This also applies to app results read through known tools. A record of a saved matter, an unread page or a failed read always goes to the full check. They update a saved source queue. A single observer turn reads the due batch. Events received during a turn stay saved for its next turn. App events that arrive together start one check, and a check also takes any source due within the next 15 minutes. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, checks the need, then prepares and saves the result. Server code then decides whether a message can go out now.
 
 ```mermaid
 flowchart TD
