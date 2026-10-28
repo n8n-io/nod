@@ -47,6 +47,7 @@ import { createBrowserFixture, fakeDevtools, type DevtoolsModel } from './browse
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import type { AppState } from '../src/shared/contracts.ts';
 
 // Shared helpers
 
@@ -3872,6 +3873,188 @@ test(
       await computer.dispose();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'LAB-753: state-refresh errors stay fully visible below the desktop toolbar',
+  { timeout: 60_000 },
+  async (t) => {
+    const { default: fastify } = await import('fastify');
+    const { default: staticFiles } = await import('@fastify/static');
+    const { fileURLToPath } = await import('node:url');
+    const root = fileURLToPath(new URL('../dist/web/', import.meta.url));
+    const html = await readFile(join(root, 'index.html'), 'utf8');
+    const error = 'This request could not be completed. Check the local service and try again.';
+    const state: AppState = {
+      threadId: 'synthetic-error-thread',
+      messages: [
+        {
+          id: 'synthetic-error-message',
+          role: 'assistant',
+          text: 'Synthetic loaded conversation',
+          turnId: null,
+          createdAt: '2026-10-28T12:00:00.000Z',
+          attachments: [],
+        },
+      ],
+      turns: [],
+      activity: [],
+      configuration: {
+        provider: 'synthetic',
+        model: 'synthetic',
+        llmReady: true,
+        modelReconnect: false,
+        integrationsReady: false,
+        conversationResetEnabled: false,
+      },
+    };
+    const server = fastify();
+    await server.register(staticFiles, { root });
+    let failState = false;
+    const streams = new Set<import('node:http').ServerResponse>();
+    server.get('/', async (request, reply) => {
+      const { desktop, sidebar } = request.query as { desktop?: string; sidebar?: string };
+      const bridge = desktop
+        ? `window.nodDesktop = {
+            getSettings: async () => ({}),
+            getPreferences: async () => ({ theme: 'light', resolvedTheme: 'light', notifications: false, launchAtLogin: false }),
+            onPreferences: () => () => {},
+            onOpenSettings: () => () => {},
+          };`
+        : '';
+      return reply.type('text/html').send(
+        html.replace(
+          '<head>',
+          `<head><script>${bridge}
+            localStorage.setItem('nod.sidebar', ${JSON.stringify(sidebar ?? 'collapsed')});
+          </script>`,
+        ),
+      );
+    });
+    server.get('/api/events', (request, reply) => {
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+      });
+      reply.raw.write(': connected\n\n');
+      streams.add(reply.raw);
+      request.raw.on('close', () => streams.delete(reply.raw));
+    });
+    server.get('/api/state', async (_request, reply) =>
+      failState ? reply.code(500).send({ error }) : state,
+    );
+    server.get('/api/session', async () => ({
+      user: { id: 'synthetic-error-owner', name: '', email: null, avatarUrl: null },
+      settings: { theme: 'light', onboardingCompleted: true, usageData: false, traces: false },
+      capabilities: { developer: false, traces: false },
+    }));
+    server.get('/api/preferences', async () => ({ timeZone: 'UTC' }));
+    for (const path of [
+      '/api/apps',
+      '/api/apps/catalog',
+      '/api/vault',
+      '/api/tasks',
+      '/api/schedules',
+    ])
+      server.get(path, async () => []);
+    server.get('/api/trust', async () => ({ limit: null }));
+    server.get('/api/vault/activity', async () => ({ entries: [] }));
+    server.get('/api/memory', async () => ({ entries: [] }));
+    server.get('/api/speech', async () => ({ transcription: false }));
+    server.get('/api/onboarding/introduction', async () => ({ messageId: null }));
+    const origin = await server.listen({ host: '127.0.0.1', port: 0 });
+    const directory = await mkdtemp(join(tmpdir(), 'nod-error-banner-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    const waitFor = async (selector: string) => {
+      const deadline = Date.now() + 10_000;
+      do {
+        const result = await computer.act('error-banner', {
+          action: 'evaluate',
+          script: `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
+        });
+        if (JSON.parse(result.text.slice(result.text.indexOf('\n') + 1))) return;
+        await delay(50);
+      } while (Date.now() < deadline);
+      const snapshot = await computer.act('error-banner', { action: 'snapshot' });
+      assert.fail(`The rendered app did not reach ${selector}: ${snapshot.text}`);
+    };
+    try {
+      for (const mode of ['web', 'collapsed', 'expanded']) {
+        await t.test(mode, async () => {
+          failState = false;
+          const desktop = mode !== 'web';
+          await computer.act('error-banner', {
+            action: 'open',
+            url: `${origin}/?${new URLSearchParams({
+              ...(desktop && { desktop: 'true' }),
+              sidebar: mode,
+            })}`,
+          });
+          await waitFor('.app-shell:not(.shell-entering):not(:has(.connection-notice)) .message');
+          assert.ok(streams.size > 0, 'The loaded conversation has an open event stream');
+          failState = true;
+          for (const stream of streams) stream.write('data: {"type":"refresh"}\n\n');
+          await waitFor('.connection-notice [role="alert"]');
+          const observation = await computer.act('error-banner', {
+            action: 'evaluate',
+            script: `
+              (async () => {
+                await document.fonts.ready;
+                const notice = document.querySelector('.connection-notice [role="alert"]');
+                const toolbar = document.querySelector('.desktop-toolbar');
+                const rect = notice.getBoundingClientRect();
+                const text = document.createRange();
+                text.selectNodeContents(notice);
+                return {
+                  text: notice.textContent,
+                  top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right,
+                  lines: text.getClientRects().length,
+                  toolbarBottom: toolbar?.getBoundingClientRect().bottom ?? null,
+                  width: innerWidth, heightLimit: innerHeight,
+                  collapsed: document.querySelector('.app-shell').classList.contains('sidebar-collapsed'),
+                };
+              })()
+            `,
+          });
+          const layout = JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)) as {
+            text: string;
+            top: number;
+            bottom: number;
+            left: number;
+            right: number;
+            lines: number;
+            toolbarBottom: number | null;
+            width: number;
+            heightLimit: number;
+            collapsed: boolean;
+          };
+          assert.equal(layout.text, error);
+          assert.ok(layout.lines > 1, 'The error spans multiple lines');
+          assert.ok(layout.top >= 0 && layout.bottom <= layout.heightLimit);
+          assert.ok(layout.left >= 0 && layout.right <= layout.width);
+          if (desktop) {
+            assert.equal(layout.collapsed, mode === 'collapsed');
+            assert.notEqual(layout.toolbarBottom, null);
+            assert.ok(
+              layout.top >= layout.toolbarBottom!,
+              `The ${mode} desktop error starts at y=${layout.top}, underneath the toolbar ending at y=${layout.toolbarBottom}`,
+            );
+          } else assert.equal(layout.toolbarBottom, null);
+        });
+      }
+    } finally {
+      await computer.dispose();
+      for (const stream of streams) stream.end();
+      await server.close();
       await rm(directory, { recursive: true, force: true });
     }
   },
