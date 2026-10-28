@@ -409,7 +409,6 @@ export async function startStack(options: {
                   'src/providers/decisions.ts',
                 )
               ).createDecisionModel({
-                canBatch: () => !typesafe && model.provider === 'openai',
                 resolve: async () =>
                   typesafe
                     ? { provider: 'typesafe', key: typesafe }

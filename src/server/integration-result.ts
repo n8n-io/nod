@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
 
 export const appResultInlineChars = 40_000;
@@ -61,36 +60,6 @@ export type MailCheck = (
   signal?: AbortSignal,
 ) => Promise<Array<boolean | undefined>>;
 
-export function cacheMailChecks(check: MailCheck): MailCheck {
-  const cache = new Map<string, { until: number; result: boolean }>();
-  return async (emails, signal) => {
-    signal?.throwIfAborted();
-    const keys = emails.map((email) =>
-      createHash('sha256').update(JSON.stringify(email)).digest('hex'),
-    );
-    const results = new Map<string, boolean | undefined>();
-    const missing = new Map<string, Mail>();
-    for (const [index, key] of keys.entries()) {
-      const entry = cache.get(key);
-      if (entry && entry.until > Date.now()) results.set(key, entry.result);
-      else missing.set(key, emails[index]!);
-    }
-    if (missing.size) {
-      const checked = await check([...missing.values()], signal);
-      signal?.throwIfAborted();
-      for (const [index, key] of [...missing.keys()].entries()) {
-        const result = checked[index];
-        results.set(key, result);
-        if (typeof result === 'boolean') {
-          cache.set(key, { until: Date.now() + 300_000, result });
-          if (cache.size > 256) cache.delete(cache.keys().next().value!);
-        }
-      }
-    }
-    return keys.map((key) => results.get(key));
-  };
-}
-
 export const mailCheckChars = 8000;
 
 export function mailCheckText(text: string) {
@@ -132,9 +101,8 @@ export async function privateEmailResult(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const emails: Mail[] = [];
-  const emailIndices = new Map<string, number>();
   type Render = (checks: Array<boolean | undefined>) => unknown;
-  function prepare(value: unknown, envelopeIndex?: number): Render {
+  function prepare(value: unknown): Render {
     if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
       let parsed: unknown;
       try {
@@ -185,25 +153,10 @@ export async function privateEmailResult(
         subject: (fieldValue(record, ['subject']) || headerValue(headers, 'subject')).slice(0, 300),
         text: mailCheckText(emailText(record)),
       };
-      const envelope = envelopeIndex === undefined ? undefined : emails[envelopeIndex];
-      const key = JSON.stringify(email);
-      index =
-        envelope &&
-        email.text &&
-        envelope.from === email.from &&
-        envelope.subject === email.subject &&
-        envelope.text.includes(email.text)
-          ? envelopeIndex
-          : emailIndices.get(key);
-      if (index === undefined) {
-        index = emails.length;
-        emails.push(email);
-        emailIndices.set(key, index);
-      }
+      index = emails.length;
+      emails.push(email);
     }
-    const children = Object.entries(record).map(
-      ([key, entry]) => [key, prepare(entry, key === 'payload' ? index : undefined)] as const,
-    );
+    const children = Object.entries(record).map(([key, entry]) => [key, prepare(entry)] as const);
     return (checks) => {
       if (index !== undefined && checks[index] !== false) {
         const safe = Object.fromEntries(

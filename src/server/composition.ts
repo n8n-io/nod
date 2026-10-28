@@ -37,7 +37,7 @@ import { fileBytes } from '../shared/files.ts';
 import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
-import { cacheMailChecks, privateEmailResult } from './integration-result.ts';
+import { privateEmailResult } from './integration-result.ts';
 import { createMailCheck } from './mail-check.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
@@ -379,12 +379,6 @@ export function createDefaultAdapters(
     traces,
   });
   const decisions = createDecisionModel({
-    canBatch: () => {
-      if (env.TYPESAFE_API_KEY?.trim() || !models.configured) return false;
-      const { connections, selection } = models.view();
-      const connection = connections.find((entry) => entry.id === selection?.connectionId);
-      return connection?.provider === 'openai' && connection.method === 'api_key';
-    },
     configured: () => {
       if (env.TYPESAFE_API_KEY?.trim()) return true;
       if (!models.configured) return false;
@@ -739,7 +733,7 @@ async function initializeApplication(
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
       : undefined;
   };
-  const mailCheck = cacheMailChecks(createMailCheck({ curator, decisions }));
+  const mailCheck = createMailCheck({ curator, decisions });
   const skillLibrary = createSkillLibrary(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,

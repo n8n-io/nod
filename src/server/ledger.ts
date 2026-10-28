@@ -282,17 +282,6 @@ export function createLedger({
       get configured() {
         return base.configured;
       },
-      get checkBatch(): DecisionModel['checkBatch'] {
-        const check = base.checkBatch;
-        return check
-          ? async (request, signal, report) => {
-              signal?.throwIfAborted();
-              if (base.configured === false)
-                throw new Error('The decision service changed before the batch check.');
-              return run((usage) => check.call(base, request, signal, usage), signal, report);
-            }
-          : undefined;
-      },
       async check(request, signal, report) {
         signal?.throwIfAborted();
         if (base.configured === false) return undefined;
