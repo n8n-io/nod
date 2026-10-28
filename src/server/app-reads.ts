@@ -143,18 +143,31 @@ export function createConnectionSources(options: {
     )
       throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
     if (input.query) {
-      const tools = appTools(await options.search(account, input.query, signal), connectionId);
+      const found = await options.search(account, input.query, signal);
+      const tools = appTools(found, connectionId);
+      const index = Object.entries(
+        (found as { tools?: Record<string, { description?: string; hasFullSchema?: boolean }> })
+          .tools ?? {},
+      )
+        .filter(([, tool]) => tool.hasFullSchema === false)
+        .slice(0, 40)
+        .map(([name, tool]) => ({ name, description: tool.description }));
       catalogs.set(connectionId, { binding: account.binding, tools });
       return {
         records: [
           {
             id: 'tools',
-            version: fingerprint(
-              tools.map(({ name, description, schema }) => ({ name, description, schema })),
-            ),
+            version: fingerprint([tools, index]),
             available: true,
             data: {
               tools: tools.map(({ name, description, schema }) => ({ name, description, schema })),
+              ...(index.length
+                ? {
+                    index,
+                    schemaLookup:
+                      'Search this source with an exact tool name as query to load its schema before calling it.',
+                  }
+                : {}),
             },
           },
         ],

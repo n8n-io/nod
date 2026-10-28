@@ -895,6 +895,25 @@ test(
               ).rows[0].count,
               1,
             );
+            toolSearch = {
+              ...Object.fromEntries(
+                Array.from({ length: 6 }, (_, i) => [
+                  `GMAIL_SYNTHETIC_READ_${i}`,
+                  { description: 'Read a synthetic record.', inputSchema: schema('query') },
+                ]),
+              ),
+              GMAIL_FETCH_EMAILS: { description: 'Read messages.', inputSchema: schema('query') },
+            };
+            assert.match(await read({ query: 'email' }), /GMAIL_FETCH_EMAILS/);
+            const beforeLookup = executedApps.length;
+            assert.match(
+              await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'indexed' } }),
+              /Search this source/,
+            );
+            assert.equal(executedApps.length, beforeLookup);
+            await read({ query: 'GMAIL_FETCH_EMAILS' });
+            await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'indexed' } });
+            assert.deepEqual(executedApps.slice(beforeLookup), ['GMAIL_FETCH_EMAILS']);
           } finally {
             toolSearch = undefined;
             readOnlyActions.clear();
