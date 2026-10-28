@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { CreditCard, Globe } from './icons';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { Button, Checkbox, Field, Input, Notice } from './ui';
 import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
@@ -282,12 +282,14 @@ export function VaultItemForm({
       if (entry.kind !== kind) throw new Error('Unexpected item');
       form.current?.reset();
       onSaved(entry.kind === 'login' ? { ...entry, username } : entry);
-    } catch {
+    } catch (error) {
       if (current())
         setError(
-          kind === 'card'
-            ? 'This card could not be saved. Check the details and try again.'
-            : 'This login could not be saved. Check the website and authenticator key, then try again.',
+          error instanceof ApiError && error.status === 400
+            ? error.message
+            : kind === 'card'
+              ? 'This card could not be saved. Try again.'
+              : 'This login could not be saved. Try again.',
         );
     } finally {
       body = '';

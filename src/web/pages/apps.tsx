@@ -214,6 +214,7 @@ export function Apps({
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
+  const [announcement, setAnnouncement] = useState('');
   const [busy, setBusy] = useState('');
   const [signIn, setSignIn] = useState<
     AppSignIn & {
@@ -280,6 +281,7 @@ export function Apps({
     actionRequest.current?.abort();
     actionRequest.current = null;
     setBusy('');
+    if (signIn?.outcome === 'connected') setAnnouncement(`${signIn.name} connected.`);
     setSignIn(undefined);
   }
   useEffect(() => {
@@ -464,6 +466,7 @@ export function Apps({
         : `connect:${connection.slug}`,
     );
     setError('');
+    setAnnouncement('');
     const context = {
       service: connection.slug,
       name: connection.name,
@@ -657,6 +660,9 @@ export function Apps({
   }
   return (
     <div className="content-page secondary-page apps-page" ref={page}>
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </div>
       <header className="page-heading secondary-heading">
         <PageTitle path="/apps" />
       </header>
@@ -984,7 +990,12 @@ export function Apps({
           key={discoveryId}
           id={discoveryId}
           onClose={() => window.location.assign('/apps')}
-          onConnected={() => window.location.assign('/apps')}
+          onConnected={(name) => {
+            window.history.replaceState(null, '', '/apps');
+            setAnnouncement(`${name} connected.`);
+            void refresh();
+            void refreshCatalog();
+          }}
         />
       )}
     </div>

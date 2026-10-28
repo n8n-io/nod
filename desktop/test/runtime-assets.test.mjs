@@ -1300,7 +1300,7 @@ test('all three checked bundles publish together as one regular Nod release', as
     version: f.metadata.version,
     source: f.source,
     updateSourceUrl: f.metadata.updateSourceUrl,
-    signing: { mode: 'unsigned' },
+    signing: { mode: 'artifact-signing' },
     installer: { file: 'nod-Setup-x64.exe', bytes: installer.length, sha256: f.digest(installer) },
     runtime: { file: 'nod-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
   };
@@ -1325,20 +1325,29 @@ test('all three checked bundles publish together as one regular Nod release', as
   };
   await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
   const receipt = Object.fromEntries(
-    ['installed', 'engine', 'wsl', 'application', 'browser', 'workspaceFiles', 'reopened'].map(
-      (key) => [key, true],
-    ),
-  );
-  await writeFile(
-    join(windows, 'windows-check.json'),
-    JSON.stringify({ ...receipt, reopened: false }),
+    [
+      'installed',
+      'signatures',
+      'engine',
+      'wsl',
+      'application',
+      'browser',
+      'workspaceFiles',
+      'reopened',
+    ].map((key) => [key, true]),
   );
   await writeFile(
     join(windows, 'SHA256SUMS'),
     `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
   );
-  await assert.rejects(f.invoke('draft-all'));
-  assert.equal((await f.readState()).created, 0);
+  for (const missing of ['reopened', 'signatures']) {
+    await writeFile(
+      join(windows, 'windows-check.json'),
+      JSON.stringify({ ...receipt, [missing]: false }),
+    );
+    await assert.rejects(f.invoke('draft-all'));
+    assert.equal((await f.readState()).created, 0);
+  }
   await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
   await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
   await assert.rejects(f.invoke('draft-all'));

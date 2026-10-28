@@ -25,6 +25,7 @@ import type { TurnRef } from '../src/server/thread.ts';
 import {
   checkedKeyStore,
   createVault,
+  credentialOrigin,
   sealCredential,
   type CredentialInjection,
 } from '../src/server/vault.ts';
@@ -953,6 +954,49 @@ test(
     try {
       await save('First');
       await save('Second');
+
+      await t.test(
+        'saved website URLs keep the exact origin and reject unsafe addresses',
+        async () => {
+          for (const [index, [url, origin]] of [
+            ['https://www.example.com/uk/', 'https://www.example.com'],
+            ['example.com/uk/?locale=en#login', 'https://example.com'],
+            [
+              ' https://accounts.example.test:8443/login?next=home#form ',
+              'https://accounts.example.test:8443',
+            ],
+            ['http://localhost:4310/login', 'http://localhost:4310'],
+          ].entries()) {
+            const entry = await save(`Website ${index}`, url);
+            assert.equal(entry.origin, origin);
+            assert.equal((await read(entry.id, 'details')).json().origin, origin);
+            assert.equal((await save(`Website ${index}`, origin)).id, entry.id);
+            assert.equal(credentialOrigin(origin), origin);
+            assert.throws(() => credentialOrigin(url));
+          }
+          const before = (await pool.query('SELECT count(*) FROM vault_entries')).rows[0].count;
+          for (const origin of [
+            'http://example.com/login',
+            'https://user:synthetic-password@example.com/login',
+            'https://user@example.com/login',
+            'ftp://example.com/login',
+            'https://router/login',
+            'https://',
+          ]) {
+            const response = await app.inject({
+              method: 'POST',
+              url: '/api/vault',
+              headers,
+              payload: { label: 'Refused', origin, username: 'synthetic' },
+            });
+            assert.equal(response.statusCode, 400, origin);
+          }
+          assert.equal(
+            (await pool.query('SELECT count(*) FROM vault_entries')).rows[0].count,
+            before,
+          );
+        },
+      );
 
       await t.test(
         'an import adds new logins encrypted and keeps the ones already saved',

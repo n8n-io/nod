@@ -5062,6 +5062,8 @@ test('native download attempts remain exclusive until their terminal event and r
   wrong.dispose();
 });
 
+const signed = async () => [];
+
 async function updatePreparation({
   settings,
   windows,
@@ -5092,7 +5094,7 @@ async function updatePreparation({
         url.endsWith('/windows.mjs')
           ? {
               stageWindowsUpdate: (candidate, options) =>
-                stageWindowsUpdate(candidate, { ...options, fetch: request }),
+                stageWindowsUpdate(candidate, { ...options, fetch: request, unsigned: signed }),
             }
           : { prepareRuntimeUpdate: runtime },
       preloadUpdateImages: () => assert.fail('An unopened runtime cannot preload images.'),
@@ -5171,7 +5173,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
     version: '0.2.0',
     platform: 'win32-x64',
     source: 'a'.repeat(40),
-    signing: { mode: 'unsigned' },
+    signing: { mode: 'artifact-signing' },
     installer: entry('nod-Setup-x64.exe'),
     runtime: entry('nod-Runtime-win32-x64.tar.gz'),
   };
@@ -5230,7 +5232,13 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
     source: createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request }),
     currentVersion: '0.1.0',
     prepareRuntime: (candidate, signal) =>
-      stageWindowsUpdate(candidate, { directory, resourcesPath, signal, fetch: request }),
+      stageWindowsUpdate(candidate, {
+        directory,
+        resourcesPath,
+        signal,
+        fetch: request,
+        unsigned: signed,
+      }),
     restart: async () => {},
   });
   const ready = await updater.check();
@@ -5256,6 +5264,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
     resourcesPath,
     fetch: request,
     onProgress: (value) => progress.push(value),
+    unsigned: signed,
   });
   assert.deepEqual(downloads, ['nod-Runtime-win32-x64.tar.gz', 'nod-Setup-x64.exe']);
   assert.ok(progress.length >= 2);
@@ -5319,10 +5328,29 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
     source.runtimeDownloadUrl({ ...runtime, guest: { ...runtime.guest, sha256: 'e'.repeat(64) } }),
   );
 
+  const checked = [];
+  await assert.rejects(
+    stageWindowsUpdate(candidate, {
+      directory,
+      resourcesPath,
+      fetch: request,
+      unsigned: async (files) => (checked.push(...files), files),
+    }),
+    { message: 'The Nod update is not signed by n8n GmbH.' },
+  );
+  assert.deepEqual(checked, [join(directory, '0.2.0', 'nod-Setup-x64.exe')]);
+  await assert.rejects(stat(directory), { code: 'ENOENT' });
+
   served['nod-Setup-x64.exe'] = Buffer.alloc(bytes['nod-Setup-x64.exe'].length, 'x');
   for (const includeRuntime of [true, false]) {
     await assert.rejects(
-      stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request, includeRuntime }),
+      stageWindowsUpdate(candidate, {
+        directory,
+        resourcesPath,
+        fetch: request,
+        includeRuntime,
+        unsigned: signed,
+      }),
     );
     await assert.rejects(stat(directory), { code: 'ENOENT' });
   }
