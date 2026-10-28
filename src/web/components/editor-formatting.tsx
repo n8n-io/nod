@@ -49,14 +49,26 @@ function linkHref(value: string) {
 export function EditorFormatting({
   editor,
   active = true,
+  underlineShortcut = true,
 }: {
   editor: Editor | null;
   active?: boolean;
+  underlineShortcut?: boolean;
 }) {
-  return editor ? <FormattingMenu editor={editor} active={active} /> : null;
+  return editor ? (
+    <FormattingMenu editor={editor} active={active} underlineShortcut={underlineShortcut} />
+  ) : null;
 }
 
-function FormattingMenu({ editor, active }: { editor: Editor; active: boolean }) {
+function FormattingMenu({
+  editor,
+  active,
+  underlineShortcut,
+}: {
+  editor: Editor;
+  active: boolean;
+  underlineShortcut: boolean;
+}) {
   const id = useId();
   const pluginKey = `formatting-${id}`;
   const [panel, setPanel] = useState<'styles' | 'link' | null>(null);
@@ -432,7 +444,9 @@ function FormattingMenu({ editor, active }: { editor: Editor; active: boolean })
               className="editor-format-tool"
               aria-label={label}
               aria-pressed={state[mark]}
-              title={`${label} (${modifier}${key})`}
+              title={
+                mark === 'underline' && !underlineShortcut ? label : `${label} (${modifier}${key})`
+              }
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => editor.chain().focus()[command]().run()}
             >
