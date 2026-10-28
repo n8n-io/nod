@@ -128,12 +128,12 @@ async function download(
     throw new Error('The Nod download failed its integrity check. Try again.');
 }
 
-export async function unsignedWindowsFiles(files, { timestamped = false, signal } = {}) {
+export async function unsignedWindowsFiles(files, { release = false, signal } = {}) {
   const env = {
     ...windowsEnvironment(),
     NOD_PUBLISHER: windowsPublisher.name,
     NOD_PUBLISHER_PROFILE: windowsPublisher.profile,
-    NOD_TIMESTAMPED: timestamped ? '1' : '0',
+    NOD_RELEASE: release ? '1' : '0',
   };
   const unsigned = [];
   for (let index = 0; index < files.length; index += 50) {
@@ -143,7 +143,7 @@ export async function unsignedWindowsFiles(files, { timestamped = false, signal 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "$ErrorActionPreference = 'Stop'; foreach ($file in (ConvertFrom-Json $env:NOD_SIGNED_FILES)) { $signature = Get-AuthenticodeSignature -LiteralPath $file; $certificate = $signature.SignerCertificate; if (-not ($signature.Status -eq 'Valid' -and $certificate.GetNameInfo('SimpleName', $false) -eq $env:NOD_PUBLISHER -and @($certificate.EnhancedKeyUsageList.ObjectId) -contains $env:NOD_PUBLISHER_PROFILE -and ($env:NOD_TIMESTAMPED -ne '1' -or $signature.TimeStamperCertificate))) { $file } }",
+        "$ErrorActionPreference = 'Stop'; foreach ($file in (ConvertFrom-Json $env:NOD_SIGNED_FILES)) { $signature = Get-AuthenticodeSignature -LiteralPath $file; $certificate = $signature.SignerCertificate; $valid = $signature.Status -eq 'Valid'; $ours = $valid -and $certificate.GetNameInfo('SimpleName', $false) -eq $env:NOD_PUBLISHER -and @($certificate.EnhancedKeyUsageList.ObjectId) -contains $env:NOD_PUBLISHER_PROFILE -and ($env:NOD_RELEASE -ne '1' -or $signature.TimeStamperCertificate); $windows = $valid -and $env:NOD_RELEASE -eq '1' -and $signature.SignatureType -eq 'Catalog' -and $certificate.Subject -like '*, O=Microsoft Corporation,*'; if (-not ($ours -or $windows)) { \"$file ($($signature.Status), $($signature.SignatureType), $($certificate.Subject))\" } }",
       ],
       {
         env: { ...env, NOD_SIGNED_FILES: JSON.stringify(files.slice(index, index + 50)) },

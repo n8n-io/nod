@@ -242,6 +242,7 @@ export function SetupActions({
   const [discoveryHref, setDiscoveryHref] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
+  const [announcement, setAnnouncement] = useState('');
   const request = useRef<AbortController | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const opened = useRef(new Set<string>());
@@ -251,6 +252,7 @@ export function SetupActions({
     request.current?.abort();
     request.current = null;
     window.clearTimeout(timer.current);
+    if (signIn?.outcome === 'connected') setAnnouncement(`${signIn.name} connected.`);
     setSignIn(undefined);
     setDiscoveryHref(null);
     setOpening(false);
@@ -270,6 +272,7 @@ export function SetupActions({
   }
   useEffect(() => {
     close();
+    setAnnouncement('');
     return () => {
       request.current?.abort();
       window.clearTimeout(timer.current);
@@ -281,6 +284,7 @@ export function SetupActions({
   async function connect(href: string) {
     const navigate = appLink.test(href);
     if (!navigate && request.current) return;
+    setAnnouncement('');
     captureAnalytics('nod_app_connect_clicked', { entry: 'chat', result: 'opened' });
     if (navigate) {
       setDiscoveryHref(href);
@@ -436,9 +440,12 @@ export function SetupActions({
   const pending = actions.filter(
     (action) => !completed.has(action.href) && !privateCompleted.has(action.href),
   );
-  if (!pending.length && !signIn && !discoveryHref) return null;
+  if (!pending.length && !signIn && !discoveryHref && !announcement) return null;
   return (
     <>
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </div>
       {pending.length > 0 && (
         <div className="setup-group">
           {pending.map((action) => (
@@ -459,7 +466,8 @@ export function SetupActions({
           key={discoveryHref}
           id={appLink.exec(discoveryHref)![1]}
           onClose={() => setDiscoveryHref(null)}
-          onConnected={() => {
+          onConnected={(name) => {
+            setAnnouncement(`${name} connected.`);
             complete(discoveryHref);
             setDiscoveryHref(null);
           }}

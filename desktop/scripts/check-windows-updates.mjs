@@ -20,6 +20,7 @@ import { windowsInstallCommand } from '../main/windows-update.mjs';
 import {
   protectWindowsProfile,
   stageWindowsUpdate,
+  unsignedWindowsFiles,
   windowsEnvironment,
   windowsPublisher,
 } from '../runtime/windows.mjs';
@@ -291,6 +292,9 @@ app.whenReady().then(async () => {
     if (accepted) await staged;
     else await assert.rejects(staged, { message: 'The Nod update is not signed by n8n GmbH.' });
   }
+  const system = join(process.env.SYSTEMROOT, 'System32/kernel32.dll');
+  assert.deepEqual(await unsignedWindowsFiles([system], { release: true }), []);
+  assert.equal((await unsignedWindowsFiles([system])).length, 1);
   receipt.stage = 'installing 1.0.0';
   await run(installers['1.0.0'], ['/S', `/D=${installation}`], {
     timeout: 180_000,
@@ -364,6 +368,7 @@ app.whenReady().then(async () => {
     realElectron: true,
     failedInstallPreserved: true,
     foreignInstallerRefused: true,
+    windowsCatalogInstallerRefused: true,
     encryptedProfilePreserved: true,
     encryptedIntegrationIdentityPreserved: true,
     completedOnboardingPreserved: true,

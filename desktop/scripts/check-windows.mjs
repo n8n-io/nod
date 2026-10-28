@@ -44,7 +44,7 @@ try {
     const files = [join(output, 'nod-Setup-x64.exe'), ...(await windowsCodeFiles(installation))];
     assert.ok(files.includes(application) && files.includes(join(installation, 'Uninstall.exe')));
     assert.ok(files.includes(join(engine, 'windows-runtime/bin/docker.exe')));
-    assert.deepEqual(await unsignedWindowsFiles(files, { timestamped: true }), []);
+    assert.deepEqual(await unsignedWindowsFiles(files, { release: true }), []);
     receipt.signatures = true;
   }
   const { devDependencies } = JSON.parse(

@@ -689,7 +689,8 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
           key={discoveryId}
           id={discoveryId}
           onClose={() => setDiscoveryId(undefined)}
-          onConnected={() => {
+          onConnected={(name) => {
+            setAnnouncement(`${name} connected.`);
             setDiscoveryId(undefined);
             void refresh();
           }}

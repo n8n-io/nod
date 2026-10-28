@@ -1,4 +1,4 @@
-import { useRef, type ComponentProps } from 'react';
+import { useEffect, useRef, type ComponentProps } from 'react';
 import { ExternalLink } from './icons';
 import { NodGlyph } from './motion';
 import { ServiceLogo } from './service-logo';
@@ -40,9 +40,11 @@ export function AppConnectionDialog({
   const connected = outcome === 'connected';
   const recovery = Boolean(outcome && !connected);
   const canOpen = !outcome && signIn?.url && !signIn.opened && !signIn.pairingConfirmed && !opening;
-  const heading = connected
-    ? `${signIn?.name} is connected`
-    : outcome === 'unavailable'
+  useEffect(() => {
+    if (connected) onClose();
+  }, [connected, onClose]);
+  const heading =
+    outcome === 'unavailable'
       ? 'Use a new sign-in link'
       : outcome === 'cancelled'
         ? 'Sign-in cancelled'
@@ -51,26 +53,26 @@ export function AppConnectionDialog({
           : `Connect ${signIn?.name}`;
   const description =
     error ||
-    (connected
-      ? 'You can continue in Nod.'
-      : outcome === 'unavailable'
-        ? onRetry
-          ? 'This sign-in is no longer active. Try again to open a new window.'
-          : 'This link is no longer available. Ask Nod for a new sign-in link.'
-        : outcome === 'cancelled'
-          ? 'You can try again when you’re ready to connect this account.'
-          : outcome === 'failed'
-            ? onRetry
-              ? 'Sign-in couldn’t be confirmed. Try again with a new window.'
-              : 'Ask Nod for a new sign-in link to try again.'
-            : signIn?.reopened && !onRetry
-              ? 'Sign-in is already open in your browser. If you closed it, ask Nod for a new sign-in link.'
-              : opening || !signIn?.url
-                ? 'Your browser will open when sign-in is ready.'
-                : 'Review what Nod can access in your browser.');
+    (outcome === 'unavailable'
+      ? onRetry
+        ? 'This sign-in is no longer active. Try again to open a new window.'
+        : 'This link is no longer available. Ask Nod for a new sign-in link.'
+      : outcome === 'cancelled'
+        ? 'You can try again when you’re ready to connect this account.'
+        : outcome === 'failed'
+          ? onRetry
+            ? 'Sign-in couldn’t be confirmed. Try again with a new window.'
+            : 'Ask Nod for a new sign-in link to try again.'
+          : signIn?.reopened && !onRetry
+            ? 'Sign-in is already open in your browser. If you closed it, ask Nod for a new sign-in link.'
+            : opening || !signIn?.url
+              ? 'Your browser will open when sign-in is ready.'
+              : 'Review what Nod can access in your browser.');
   return (
     <Dialog
-      open={Boolean(signIn && (!fallbackOnly || (signIn.url && !signIn.opened && !opening)))}
+      open={Boolean(
+        signIn && !connected && (!fallbackOnly || (signIn.url && !signIn.opened && !opening)),
+      )}
       onOpenChange={(open) => !open && onClose()}
     >
       <DialogContent
@@ -84,11 +86,7 @@ export function AppConnectionDialog({
       >
         {signIn && (
           <>
-            <div
-              className="app-connect-heading"
-              role={recovery ? 'alert' : undefined}
-              aria-live={connected ? 'polite' : undefined}
-            >
+            <div className="app-connect-heading" role={recovery ? 'alert' : undefined}>
               <div className="app-connect-flow" aria-hidden="true">
                 <span className="app-connect-logo">
                   <NodGlyph size={40} mode={!outcome && opening ? 'bounce' : 'still'} />
@@ -123,30 +121,22 @@ export function AppConnectionDialog({
               </p>
             )}
             <div className="app-connect-actions">
-              {connected ? (
-                <Button className="app-connect-done" onClick={onClose}>
-                  Done
+              <Button variant="ghost" onClick={onClose}>
+                {recovery ? 'Not now' : 'Close'}
+              </Button>
+              {recovery && onRetry ? (
+                <Button onClick={onRetry}>Try again</Button>
+              ) : canOpen ? (
+                <Button asChild>
+                  <a href={signIn.url} target="_blank" rel="noreferrer" onClick={onOpened}>
+                    Open sign-in window <ExternalLink size={16} aria-hidden="true" />
+                  </a>
                 </Button>
-              ) : (
-                <>
-                  <Button variant="ghost" onClick={onClose}>
-                    {recovery ? 'Not now' : 'Close'}
-                  </Button>
-                  {recovery && onRetry ? (
-                    <Button onClick={onRetry}>Try again</Button>
-                  ) : canOpen ? (
-                    <Button asChild>
-                      <a href={signIn.url} target="_blank" rel="noreferrer" onClick={onOpened}>
-                        Open sign-in window <ExternalLink size={16} aria-hidden="true" />
-                      </a>
-                    </Button>
-                  ) : !outcome && onRetry && !opening ? (
-                    <Button variant="outline" onClick={onRetry}>
-                      Start again
-                    </Button>
-                  ) : null}
-                </>
-              )}
+              ) : !outcome && onRetry && !opening ? (
+                <Button variant="outline" onClick={onRetry}>
+                  Start again
+                </Button>
+              ) : null}
             </div>
           </>
         )}
