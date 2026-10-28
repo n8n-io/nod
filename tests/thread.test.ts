@@ -4909,25 +4909,36 @@ test(
                 await reset();
                 let verdict = false;
                 let tools = false;
+                let sourceRevision: string | undefined;
+                let checks = 0;
+                let owner = {};
+                const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
                   sources: async () =>
-                    (await options.sources()).map((source) => ({ ...source, tools })),
+                    (await options.sources()).map((source) => ({
+                      ...source,
+                      ...(sourceRevision ? { revision: sourceRevision } : {}),
+                      tools,
+                    })),
                   curator: {
                     id: 'fixture',
                     configured: true,
-                    curate: async () => ({ attention: verdict }),
+                    curate: async () => {
+                      checks++;
+                      return { attention: verdict };
+                    },
                   },
                 });
-                const screen = async () => {
-                  version = randomUUID();
+                const screen = async (changeVersion = true) => {
+                  if (changeVersion) version = randomUUID();
                   screening.release(turnId);
                   await db.pool.query(
                     'UPDATE proactive_sources SET claimed_turn=$3,signal_version=signal_version+1 WHERE owner_id=$1 AND source_id=$2',
                     [ownerId, sourceId, turnId],
                   );
                   const quiet = await (await screening.context(ref))!.screen!(
-                    {},
+                    owner,
                     new AbortController().signal,
                   );
                   const { dirty } = (
@@ -4939,6 +4950,30 @@ test(
                   return [quiet, dirty];
                 };
                 await transaction((client) => engine.signal(sourceId, client), db.pool);
+                assert.deepEqual(await screen(), [true, false]);
+                const firstChecks = checks;
+                verdict = true;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, firstChecks);
+                await preferences.update({
+                  notificationRule: 'Prepare current synthetic commitments.',
+                });
+                assert.deepEqual(await screen(false), [false, true]);
+                assert.equal(checks, firstChecks + 1);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, firstChecks + 2);
+                owner = { memory: 'The owner needs a synthetic draft for each current item.' };
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                sourceRevision = 'screening-new-revision';
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                sourceRevision = undefined;
+                await preferences.update({ notificationRule });
+                verdict = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
                 assert.deepEqual(await screen(), [false, true]);

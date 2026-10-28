@@ -97,6 +97,8 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it.
 
+Nod reuses a quiet result only for the same owner context, rules, source revision and record version. A failed check or a check that needs the full observer gives no quiet result to reuse.
+
 ## Research behind the behavior
 
 The model judges usefulness. Code checks source versions, tool access, owner controls and delivery limits. These checks can't prove that a draft is useful.

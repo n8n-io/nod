@@ -281,6 +281,7 @@ export function createProactivity(options: {
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS reads jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS reads_turn uuid;
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS quiet_checks integer NOT NULL DEFAULT 0;
+    ALTER TABLE proactive_evidence ADD COLUMN IF NOT EXISTS screen_policy text;
     ALTER TABLE proactive_issues ADD COLUMN IF NOT EXISTS claimed_turn uuid;`);
     }, pool);
   }
@@ -634,7 +635,7 @@ export function createProactivity(options: {
         await client.query(
           `INSERT INTO proactive_evidence(owner_id,source_id,resource_id,version,available,url,turn_id,checked_at,source_revision,retry_after,attempts)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $5::boolean IS NULL THEN clock_timestamp()+${interval(checkInterval)} END,CASE WHEN $5::boolean IS NULL THEN 1 ELSE 0 END) ON CONFLICT(owner_id,source_id,resource_id)
-          DO UPDATE SET version=EXCLUDED.version,available=EXCLUDED.available,url=EXCLUDED.url,turn_id=EXCLUDED.turn_id,checked_at=EXCLUDED.checked_at,source_revision=EXCLUDED.source_revision,
+          DO UPDATE SET version=EXCLUDED.version,available=EXCLUDED.available,url=EXCLUDED.url,turn_id=EXCLUDED.turn_id,checked_at=EXCLUDED.checked_at,source_revision=EXCLUDED.source_revision,screen_policy=NULL,
             retry_after=CASE WHEN EXCLUDED.available IS NULL THEN ${backoff('proactive_evidence.attempts')} END,
             attempts=CASE WHEN EXCLUDED.available IS NULL THEN proactive_evidence.attempts+1 ELSE 0 END`,
           [
@@ -1039,6 +1040,7 @@ export function createProactivity(options: {
     signal: AbortSignal,
   ) {
     type Seen = { sourceId: string; id: string; version: string; error?: string };
+    const policy = fingerprint([scope, owner]);
     let quiet = true;
     try {
       const [catalog, sources, evidence, saved] = await Promise.all([
@@ -1047,21 +1049,34 @@ export function createProactivity(options: {
           'SELECT source_id,reads FROM proactive_sources WHERE owner_id=$1 AND source_id=ANY($2::text[])',
           [ownerId, sourceIds],
         ),
-        pool.query<{ key: string; version: string }>(
-          "SELECT source_id||' '||resource_id AS key,version FROM proactive_evidence WHERE owner_id=$1 AND source_id=ANY($2::text[])",
-          [ownerId, sourceIds],
+        pool.query<{
+          source_id: string;
+          resource_id: string;
+          version: string;
+          source_revision: string;
+        }>(
+          'SELECT source_id,resource_id,version,source_revision FROM proactive_evidence WHERE owner_id=$1 AND source_id=ANY($2::text[]) AND screen_policy=$3',
+          [ownerId, sourceIds, policy],
         ),
-        pool.query<{ key: string }>(
-          `SELECT s->>'sourceId'||' '||(s->>'id') AS key FROM (SELECT sources FROM proactive_issues WHERE owner_id=$1
+        pool.query<{ source_id: string; resource_id: string }>(
+          `SELECT s->>'sourceId' AS source_id,s->>'id' AS resource_id FROM (SELECT sources FROM proactive_issues WHERE owner_id=$1
           UNION ALL SELECT sources FROM proactive_closures WHERE owner_id=$1) m, jsonb_array_elements(m.sources) s`,
           [ownerId],
         ),
       ]);
-      const before = new Map(evidence.rows.map(({ key, version }) => [key, version]));
-      const matters = new Set(saved.rows.map(({ key }) => key));
+      const before = new Map(
+        evidence.rows.map(({ source_id, resource_id, ...record }) => [
+          JSON.stringify([source_id, resource_id]),
+          record,
+        ]),
+      );
+      const matters = new Set(
+        saved.rows.map(({ source_id, resource_id }) => JSON.stringify([source_id, resource_id])),
+      );
       const changed: Seen[] = [];
       for (const sourceId of sourceIds) {
-        const tools = catalog.find((source) => source.id === sourceId)?.tools;
+        const source = catalog.find((source) => source.id === sourceId);
+        const tools = source?.tools;
         const steps = tools
           ? (sources.rows.find((row) => row.source_id === sourceId)?.reads ?? [])
           : [{}];
@@ -1072,14 +1087,29 @@ export function createProactivity(options: {
             records: Seen[];
             nextCursor?: string;
           };
-          const fresh = result.records.filter(
-            (record) => before.get(`${record.sourceId} ${record.id}`) !== record.version,
-          );
+          const fresh = result.records.filter((record) => {
+            const previous = before.get(JSON.stringify([record.sourceId, record.id]));
+            return (
+              record.error ||
+              previous?.version !== record.version ||
+              previous.source_revision !== source?.revision
+            );
+          });
           quiet =
             !result.nextCursor &&
-            !fresh.some((record) => record.error || matters.has(`${record.sourceId} ${record.id}`));
+            !fresh.some(
+              (record) => record.error || matters.has(JSON.stringify([record.sourceId, record.id])),
+            );
           changed.push(...fresh);
         }
+      }
+      if (quiet) {
+        const current = await sourceCatalog(signal);
+        quiet = sourceIds.every(
+          (sourceId) =>
+            catalog.find((source) => source.id === sourceId)?.revision ===
+            current.find((source) => source.id === sourceId)?.revision,
+        );
       }
       quiet &&= !changed.length || Boolean(options.curator?.configured);
       for (let at = 0; quiet && at < changed.length; at += 6)
@@ -1106,6 +1136,11 @@ export function createProactivity(options: {
       quiet = false;
     }
     await withTurnLock({ turnId: turn.turnId, signal }, async (client) => {
+      if (quiet)
+        await client.query(
+          'UPDATE proactive_evidence SET screen_policy=$3 WHERE owner_id=$1 AND turn_id=$2 AND source_id=ANY($4::text[])',
+          [ownerId, turn.turnId, policy, sourceIds],
+        );
       await client.query(
         quiet
           ? `UPDATE proactive_sources SET next_poll=${backoff('quiet_checks', 14400)},quiet_checks=quiet_checks+1 WHERE owner_id=$1 AND source_id=ANY($2::text[])`
