@@ -3081,6 +3081,39 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
         await settle(() => document.querySelector('[contenteditable]'));
         await edit();
+        const field = document.querySelector('[contenteditable]');
+        const input = document.querySelector('input[type="file"]');
+        let pickerCount = 0;
+        input.addEventListener('click', () => pickerCount++);
+        const attachKey = async (modifiers = {}) => {
+          await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'u', code: 'KeyU', bubbles: true, cancelable: true, metaKey: true, ...modifiers,
+          })));
+        };
+        const originalDraft = currentText;
+        await act(async () => window.getSelection().selectAllChildren(field));
+        await attachKey();
+        assert.equal(pickerCount, 1);
+        assert.equal(currentText, originalDraft);
+        assert.equal(field.querySelector('u'), null);
+        assert.equal(requests.length, 0);
+        assert.equal(sends.length, 0);
+        await attachKey({ repeat: true });
+        assert.equal(pickerCount, 1);
+        for (const modifiers of [{ metaKey: false }, { shiftKey: true }, { altKey: true }, { isComposing: true }, { keyCode: 229 }])
+          await attachKey(modifiers);
+        assert.equal(pickerCount, 1);
+        await act(async () => changeActive(false));
+        await attachKey();
+        assert.equal(pickerCount, 1);
+        await act(async () => changeActive(true));
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'Win32' });
+        await act(async () => replaceText('Windows attachment shortcut'));
+        await attachKey({ metaKey: false, ctrlKey: true });
+        assert.equal(pickerCount, 2);
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+        await act(async () => replaceText(originalDraft));
+        await edit();
         for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
           await enter(modifiers);
           assert.equal(sends.length, 0);
