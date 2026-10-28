@@ -681,8 +681,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         onKeyDownCapture={(event) => {
           if (
             !active ||
-            hasRecording ||
-            !event.currentTarget.contains(event.target as Node) ||
             event.defaultPrevented ||
             event.nativeEvent.isComposing ||
             event.keyCode === 229 ||
@@ -694,7 +692,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             return;
           event.preventDefault();
           event.stopPropagation();
-          if (!event.repeat) fileInput.current?.click();
+          if (!hasRecording && !event.repeat) fileInput.current?.click();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !event.defaultPrevented && hasRecording && !sendingAudio) {
