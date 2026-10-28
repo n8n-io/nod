@@ -3984,11 +3984,16 @@ test(
           } finally {
             await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [repeatedIds]);
           }
-          for (const nested of [
-            `${'<div>'.repeat(6000)}Nested content${'</div>'.repeat(6000)}`,
-            `${'> '.repeat(1800)}Nested content`,
-          ]) {
-            await db.pool.query('UPDATE messages SET text=$1 WHERE id=$2', [nested, matches[0].id]);
+          for (const [source, expected] of [
+            [`${'<div>'.repeat(6000)}Nested content${'</div>'.repeat(6000)}`, /Nested content/],
+            [`${'> '.repeat(1800)}Nested content`, /Nested content/],
+            [
+              `<div data-padding="${'x'.repeat(1000)}">First block<br>Second block</div>`,
+              /First block\s+Second block/,
+            ],
+            [`**${'a'.repeat(999)}😀**`, /^\*\*a/],
+          ] as const) {
+            await db.pool.query('UPDATE messages SET text=$1 WHERE id=$2', [source, matches[0].id]);
             const response = await request('GET', '/api/state');
             assert.equal(response.statusCode, 200);
             const reply = response
@@ -3998,7 +4003,8 @@ test(
               .messages.find(
                 ({ replyTo }) => replyTo?.id === matches[0].id && !replyTo.isQuote,
               )!.replyTo!;
-            assert.match(reply.text, /Nested content/);
+            assert.match(reply.text, expected);
+            assert.doesNotMatch(reply.text, /\p{Surrogate}/u);
             assert.ok(reply.text.length <= 4000);
           }
           const message = [...seen][0];

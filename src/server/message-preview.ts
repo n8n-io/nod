@@ -11,25 +11,87 @@ const markdown = unified().use(remarkParse).use(remarkGfm).use(remarkStringify, 
   fences: true,
 });
 
+function previewSlice(value: string, length: number): string {
+  let end = Math.min(length, value.length);
+  if (
+    (value.charCodeAt(end - 1) & 0xfc00) === 0xd800 &&
+    (value.charCodeAt(end) & 0xfc00) === 0xdc00
+  )
+    end--;
+  return value.slice(0, end);
+}
+
+const htmlBlocks = new Set([
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'br',
+  'dd',
+  'div',
+  'dl',
+  'dt',
+  'fieldset',
+  'figcaption',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'hr',
+  'li',
+  'main',
+  'nav',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+]);
+
 function htmlText(node: DefaultTreeAdapterMap['node']): string {
-  const pending = [node];
+  const pending: Array<DefaultTreeAdapterMap['node'] | null> = [node];
   let text = '';
+  let remaining = 1000;
   let visited = 0;
-  while (pending.length && text.length < 1000 && visited++ < 20000) {
-    const current = pending.pop()!;
+  const append = (value: string) => {
+    text += previewSlice(value, remaining);
+    remaining -= Math.min(value.length, remaining);
+  };
+  const separate = () => {
+    if (text && !/\s$/.test(text)) append(' ');
+  };
+  while (pending.length && remaining > 0 && visited++ < 20000) {
+    const current = pending.pop();
+    if (!current) {
+      separate();
+      continue;
+    }
     if ('tagName' in current && ['script', 'style', 'template'].includes(current.tagName)) continue;
-    const value =
-      'value' in current
-        ? current.value
-        : 'tagName' in current && current.tagName === 'img'
-          ? current.attrs.find((attribute) => attribute.name === 'alt')?.value || 'Image'
-          : '';
-    text += value.slice(0, 1000 - text.length);
+    if ('tagName' in current && htmlBlocks.has(current.tagName)) {
+      separate();
+      pending.push(null);
+    }
+    if ('value' in current) append(current.value);
+    else if ('tagName' in current && current.tagName === 'img')
+      append(current.attrs.find((attribute) => attribute.name === 'alt')?.value || 'Image');
     if ('childNodes' in current)
       for (let index = current.childNodes.length - 1; index >= 0; index--)
         pending.push(current.childNodes[index]);
   }
-  return text;
+  return text.trimEnd();
 }
 
 export function messagePreview(text: string): string {
@@ -44,8 +106,9 @@ export function messagePreview(text: string): string {
     if (node.type === 'html' && node.value.length > remaining)
       node = { type: 'text', value: htmlText(parseFragment(node.value)) };
     if ('value' in node) {
-      node.value = node.value.slice(0, remaining);
-      remaining -= node.value.length;
+      const value = previewSlice(node.value, remaining);
+      remaining -= Math.min(node.value.length, remaining);
+      node.value = value;
       plain += node.type === 'html' ? htmlText(parseFragment(node.value)) : node.value;
       if (node.type === 'code') {
         node.lang = null;
@@ -68,7 +131,7 @@ export function messagePreview(text: string): string {
   } catch {
     plain ||= text;
   }
-  let fallback = plain.slice(0, 1000).trimEnd();
+  let fallback = previewSlice(plain, 1000).trimEnd();
   for (;;) {
     const value = markdown
       .stringify({
@@ -77,6 +140,6 @@ export function messagePreview(text: string): string {
       })
       .trimEnd();
     if (value.length <= 4000) return value;
-    fallback = fallback.slice(0, Math.floor(fallback.length / 2));
+    fallback = previewSlice(fallback, Math.floor(fallback.length / 2));
   }
 }

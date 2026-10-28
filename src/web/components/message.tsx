@@ -86,7 +86,7 @@ const messageSchema = {
 };
 
 function QuoteBlock({ children }: { children?: React.ReactNode }) {
-  return <span>{children} </span>;
+  return <span> {children} </span>;
 }
 
 export function MessageQuote({
@@ -123,6 +123,9 @@ export function MessageQuote({
             rehypePlugins={[rehypeRaw, rehypeMessageBreaks, [rehypeSanitize, messageSchema]]}
             allowedElements={[
               'p',
+              'div',
+              'blockquote',
+              'pre',
               'li',
               'td',
               'th',
@@ -143,6 +146,9 @@ export function MessageQuote({
             unwrapDisallowed
             components={{
               p: QuoteBlock,
+              div: QuoteBlock,
+              blockquote: QuoteBlock,
+              pre: QuoteBlock,
               li: QuoteBlock,
               td: QuoteBlock,
               th: QuoteBlock,
