@@ -414,7 +414,13 @@ function AuthenticatedApp({
       ),
     [],
   );
-  useEffect(() => (onboarding ? undefined : subscribeDesktopNavigation(openPage)), [onboarding]);
+  useEffect(
+    () =>
+      subscribeDesktopNavigation((path) => {
+        if (!onboarding) openPage(path);
+      }),
+    [onboarding],
+  );
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', '/settings/memory');
