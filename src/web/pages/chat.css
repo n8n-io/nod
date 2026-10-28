@@ -863,8 +863,11 @@
   }
 }
 .chat-page .messages {
-  gap: 16px;
+  gap: 12px;
   padding-block: 24px 32px;
+}
+.chat-page .message-grouped {
+  margin-top: -4px;
 }
 .chat-page .message {
   position: relative;

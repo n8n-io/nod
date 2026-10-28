@@ -27,7 +27,7 @@
 .chat-page .message .message-time {
   position: absolute;
   right: 16px;
-  bottom: -14px;
+  bottom: -4px;
   display: block;
   margin: 0;
   color: var(--muted-foreground);
@@ -38,6 +38,10 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   opacity: 0;
+}
+
+.chat-page .message-assistant .message-time {
+  right: 40px;
 }
 
 .chat-page .message .has-reaction > .message-time {
