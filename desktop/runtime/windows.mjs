@@ -143,7 +143,7 @@ export async function unsignedWindowsFiles(files, { release = false, signal } = 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "$ErrorActionPreference = 'Stop'; foreach ($file in (ConvertFrom-Json $env:NOD_SIGNED_FILES)) { $signature = Get-AuthenticodeSignature -LiteralPath $file; $certificate = $signature.SignerCertificate; $valid = $signature.Status -eq 'Valid'; $ours = $valid -and $certificate.GetNameInfo('SimpleName', $false) -eq $env:NOD_PUBLISHER -and @($certificate.EnhancedKeyUsageList.ObjectId) -contains $env:NOD_PUBLISHER_PROFILE -and ($env:NOD_RELEASE -ne '1' -or $signature.TimeStamperCertificate); $windows = $valid -and $env:NOD_RELEASE -eq '1' -and $signature.SignatureType -eq 'Catalog'; if (-not ($ours -or $windows)) { \"$file ($($signature.Status), $($signature.SignatureType), $($certificate.Subject))\" } }",
+        "$ErrorActionPreference = 'Stop'; foreach ($file in (ConvertFrom-Json $env:NOD_SIGNED_FILES)) { $signature = Get-AuthenticodeSignature -LiteralPath $file; $certificate = $signature.SignerCertificate; $valid = $signature.Status -eq 'Valid'; $ours = $valid -and $certificate.GetNameInfo('SimpleName', $false) -eq $env:NOD_PUBLISHER -and @($certificate.EnhancedKeyUsageList.ObjectId) -contains $env:NOD_PUBLISHER_PROFILE -and ($env:NOD_RELEASE -ne '1' -or $signature.TimeStamperCertificate); $windows = $valid -and $env:NOD_RELEASE -eq '1' -and $signature.SignatureType -eq 'Catalog' -and $certificate.Subject -like '*, O=Microsoft Corporation,*'; if (-not ($ours -or $windows)) { \"$file ($($signature.Status), $($signature.SignatureType), $($certificate.Subject))\" } }",
       ],
       {
         env: { ...env, NOD_SIGNED_FILES: JSON.stringify(files.slice(index, index + 50)) },
