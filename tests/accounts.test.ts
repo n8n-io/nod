@@ -3731,10 +3731,14 @@ test('browser notifications remain revoked when persisting permission reconcilia
   const key = `nod.browser-notifications.${f.owner()}`;
   const prototype = Object.getPrototypeOf(f.window.localStorage) as Storage;
   const originalSetItem = prototype.setItem;
-  const setItem = t.mock.method(prototype, 'setItem', function (this: Storage, name, value) {
-    if (name === key) throw new Error('Synthetic storage write failed');
-    return originalSetItem.call(this, name, value);
-  });
+  const setItem = t.mock.method(
+    prototype,
+    'setItem',
+    function (this: Storage, name: string, value: string) {
+      if (name === key) throw new Error('Synthetic storage write failed');
+      return originalSetItem.call(this, name, value);
+    },
+  );
   add();
   await render();
   assert.equal(f.window.localStorage.getItem(key), 'enabled');
