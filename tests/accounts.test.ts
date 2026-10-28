@@ -3384,20 +3384,23 @@ test('browser notification deduplication delivers distinct equal-time replies an
 
 test('browser notification support requires shared locking before asking for permission', async (t) => {
   const f = await notificationPage(t);
+  f.setOwner('notification-unavailable-owner');
   const { BrowserNotificationSettings } =
     await import('../src/web/components/browser-notifications.tsx');
   const { browserNotificationStatus, deliverBrowserNotification, setBrowserNotifications } =
     await import('../src/web/lib/browser-notifications.ts');
+  const locks = f.window.navigator.locks;
+  f.window.localStorage.setItem(`nod.browser-notifications.${f.owner()}`, 'enabled');
   Object.defineProperty(f.window.navigator, 'locks', { configurable: true, value: undefined });
   await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
   assert.equal(browserNotificationStatus(f.owner()).available, false);
   const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
   assert.ok(control);
+  assert.equal(control.getAttribute('aria-checked'), 'false');
   assert.equal(control.disabled, true);
   await assert.rejects(setBrowserNotifications(f.owner(), true));
   assert.equal(f.permissionRequests(), 0);
   assert.equal(f.notifications.length, 0);
-  f.window.localStorage.setItem(`nod.browser-notifications.${f.owner()}`, 'enabled');
   f.setPermission('granted');
   assert.equal(
     await deliverBrowserNotification(
@@ -3409,6 +3412,24 @@ test('browser notification support requires shared locking before asking for per
     null,
   );
   assert.equal(f.notifications.length, 0);
+  Object.defineProperty(f.window.navigator, 'locks', { configurable: true, value: locks });
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, false);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.permissionRequests(), 0);
+  await f.act(async () => control.click());
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.permissionRequests(), 0);
+  f.native({ getSettings: async () => ({ notifications: true }) });
+  await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(f.document.querySelector('[role="switch"]'), null);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'enabled');
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.permissionRequests(), 0);
 });
 
 test('native notification introduction recovers settings-read failures before saving opt-in', async (t) => {

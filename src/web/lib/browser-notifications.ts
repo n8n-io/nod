@@ -40,7 +40,11 @@ export function subscribeBrowserNotifications(
     const storage = event?.type === 'storage' ? (event as StorageEvent) : undefined;
     const owned = storage && (storage.key === preferenceKey(ownerId) || storage.key === null);
     const status = browserNotificationStatus(ownerId);
-    if (status.available && status.choice === 'enabled' && status.permission !== 'granted') {
+    if (
+      !desktopSettingsAvailable() &&
+      status.choice === 'enabled' &&
+      status.permission !== 'granted'
+    ) {
       invalidatedChoices.add(ownerId);
       try {
         saveChoice(ownerId, 'disabled');
