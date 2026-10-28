@@ -35,7 +35,6 @@ import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
-import { money } from '../lib/money';
 import { copyContent, selectedText } from '../lib/clipboard';
 import { navigate } from '../lib/navigation';
 
@@ -660,7 +659,7 @@ export function MessageBubble({
             </button>,
             document.body,
           )}
-        {message.receipt && !streaming && (
+        {message.receipt && message.receipt.actions.length > 0 && !streaming && (
           <a
             className="message-receipt"
             href={`/usage?session=${message.receipt.sessionId}`}
@@ -677,13 +676,10 @@ export function MessageBubble({
               navigate(`/usage?session=${message.receipt!.sessionId}`);
             }}
           >
-            {[
-              ...message.receipt.actions.map((action) =>
+            {message.receipt.actions
+              .map((action) =>
                 action.count > 1 ? `${action.label} ×${action.count}` : action.label,
-              ),
-              message.receipt.costUsd === null ? '' : money(message.receipt.costUsd),
-            ]
-              .filter(Boolean)
+              )
               .join(' · ')}
           </a>
         )}

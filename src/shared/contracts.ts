@@ -39,7 +39,6 @@ export interface Message {
 export interface MessageReceipt {
   sessionId: string;
   actions: Array<{ label: string; count: number }>;
-  costUsd: number | null;
 }
 export interface SubmitMessageResponse {
   threadId: string;

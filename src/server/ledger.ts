@@ -455,7 +455,6 @@ export function createLedger({
            AND u.status IN ('queued','running','waiting'))`,
       [ownerId, [...new Set(turnIds)]],
     );
-    const costs = await sessionCosts(rows.map((row) => row.sessionId));
     return Object.fromEntries(
       rows.flatMap((row) => {
         if (!row.messageId) return [];
@@ -465,15 +464,13 @@ export function createLedger({
           const title = app ? `${app}: ${label}` : label;
           counts.set(title, (counts.get(title) ?? 0) + 1);
         }
-        const costUsd = costs[row.sessionId] ?? null;
-        if (!counts.size && costUsd === null) return [];
+        if (!counts.size) return [];
         return [
           [
             row.messageId,
             {
               sessionId: row.sessionId,
               actions: [...counts].map(([label, count]) => ({ label, count })),
-              costUsd,
             },
           ],
         ];
