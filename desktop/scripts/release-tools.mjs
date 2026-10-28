@@ -435,6 +435,30 @@ export async function assess(path, type) {
   }
 }
 
+export async function verifyDiskImage(diskImage, productName) {
+  const temporary = await mkdtemp(join(tmpdir(), 'nod-disk-check-'));
+  const mount = join(temporary, 'mount');
+  let mounted = false;
+  try {
+    await run(
+      '/usr/bin/hdiutil',
+      ['attach', diskImage, '-mountpoint', mount, '-readonly', '-nobrowse', '-noautoopen'],
+      { timeout: 10 * 60_000 },
+    );
+    mounted = true;
+    const application = join(temporary, `${productName}.app`);
+    await run('/usr/bin/ditto', [join(mount, `${productName}.app`), application], {
+      timeout: 10 * 60_000,
+    });
+    await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', application]);
+    await run('/usr/bin/xcrun', ['stapler', 'validate', application]);
+    await assess(application, 'execute');
+  } finally {
+    if (mounted) await run('/usr/bin/hdiutil', ['detach', mount]);
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 export function runtimeUrl(value, archive) {
   const url = new URL(value);
   if (

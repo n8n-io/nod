@@ -88,7 +88,7 @@ async function stop() {
   throw new Error('Quit nod Setup Test before continuing. Its profile has been kept.');
 }
 
-async function build(source = '/Applications/nod.app/Contents/Resources/engine') {
+async function build(source = '/Applications/Nod.app/Contents/Resources/engine') {
   const release = await runtimeRelease(resolve(source));
   if (!release || release.platform !== `darwin-${process.arch}`)
     throw new Error('Choose an installed engine with a matching runtime-release.json.');

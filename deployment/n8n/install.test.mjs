@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 import { base } from './desktop-releases.mjs';
 import { installer, installNodes } from './install-workflow.mjs';
@@ -24,7 +24,7 @@ async function fixture(options = {}) {
   );
   const directory = await mkdtemp(join(tmpdir(), 'nod-install-fixture-'));
   const home = join(directory, 'home');
-  const target = join(directory, 'Applications/nod.app');
+  const target = join(directory, 'Applications', options.legacyInstall ? 'nod.app' : 'Nod.app');
   const bin = join(directory, 'bin');
   await mkdir(bin);
   await mkdir(dirname(target), { recursive: true });
@@ -56,6 +56,11 @@ async function fixture(options = {}) {
     CFBundleShortVersionString: options.currentVersion || '0.1.0',
   });
   await write(join(target, 'previous'), 'previous app');
+  const namedTarget = join(dirname(target), 'Nod.app');
+  const installTarget = await readFile(join(namedTarget, 'previous')).then(
+    () => namedTarget,
+    () => target,
+  );
   const launches = join(directory, 'launches.json');
   await write(launches, []);
   const profile = join(home, 'Library/Application Support/nod/synthetic-profile');
@@ -100,9 +105,9 @@ else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%d:%i'?i
 else if(command==='pgrep')process.exit(options.running?0:1);
 else if(command==='file')print('Mach-O 64-bit executable '+(options.intel&&!options.wrongArchitecture?'x86_64':'arm64'));
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
-else if(command==='curl'){const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'Applications/nod.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
+else if(command==='curl'){const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(${JSON.stringify(target)},'Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
 else if(command==='codesign'){if(options.badSignature&&args.at(-1).includes('mount/'))stop();const extract=args.find(value=>value.startsWith('--extract-certificates='));if(extract)copyFileSync(join(root,options.earlierCertificate&&args.at(-1).endsWith('/Applications/nod.app')?'earlier-certificate':'certificate'),extract.split('=')[1]+'0')}
-else if(command==='hdiutil'){if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'nod.app'),{recursive:true})}
+else if(command==='hdiutil'){if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],options.legacyDisk?'nod.app':'Nod.app'),{recursive:true})}
 else if(command==='ditto'){if(options.copyFailure){mkdirSync(args[1],{recursive:true});writeFileSync(join(args[1],'partial'),'partial copy');stop()}cpSync(args[0],args[1],{recursive:true})}
 else if(command==='open'){const installed=JSON.parse(readFileSync(join(args[0],'Contents/Resources/app/package.json'),'utf8'));const log=join(root,'launches.json');writeFileSync(log,JSON.stringify([...JSON.parse(readFileSync(log,'utf8')),{args,source:installed.nodBuild.source}]));if(options.launchFailure)stop()}
 else if(command==='mv'){if(options.swapFailure&&args[0].endsWith('/nod.app')&&args[0].includes('/.nod-install.'))stop();renameSync(args[0],args[1])}
@@ -140,7 +145,7 @@ else stop();
     await symlink(app, target);
   }
   return {
-    target,
+    target: installTarget,
     profile,
     app,
     launches: async () => JSON.parse(await readFile(launches, 'utf8')),
@@ -162,7 +167,7 @@ else stop();
 test('CLI-INSTALL: hosted script installs verified bytes and preserves the existing profile', async () => {
   const embedded = new Function(installNodes()[1].parameters.jsCode)()[0].json.body;
   assert.equal(embedded, installer);
-  for (const options of [{}, { fresh: true }]) {
+  for (const options of [{}, { fresh: true }, { legacyInstall: true }, { legacyDisk: true }]) {
     const state = await fixture(options);
     try {
       const result = state.run();
@@ -175,7 +180,7 @@ test('CLI-INSTALL: hosted script installs verified bytes and preserves the exist
       );
       assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
       assert.deepEqual(await state.launches(), [{ args: [state.target], source }]);
-      assert.deepEqual(await readdir(dirname(state.target)), ['nod.app']);
+      assert.deepEqual(await readdir(dirname(state.target)), [basename(state.target)]);
     } finally {
       await state.close();
     }
@@ -227,7 +232,7 @@ test('CLI-INSTALL: rejected metadata, downloads, signatures and interrupted stag
           'keep synthetic keys and conversations',
         );
         assert.deepEqual(await state.launches(), []);
-        assert.deepEqual(await readdir(dirname(state.target)), ['nod.app']);
+        assert.deepEqual(await readdir(dirname(state.target)), [basename(state.target)]);
       } finally {
         await state.close();
       }
@@ -242,7 +247,7 @@ test('CLI-INSTALL: launch failure keeps the verified installed Mac app and profi
     assert.match(result.stderr, /installed.*could not open/);
     assert.deepEqual(await state.launches(), [{ args: [state.target], source }]);
     assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
-    assert.deepEqual(await readdir(dirname(state.target)), ['nod.app']);
+    assert.deepEqual(await readdir(dirname(state.target)), ['Nod.app']);
   } finally {
     await state.close();
   }

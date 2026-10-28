@@ -32,6 +32,7 @@ import {
   signingMetadata,
   sourceRevision,
   staple,
+  verifyDiskImage,
   verifyIdentity,
   verifyRuntimeRelease,
   verifySignature,
@@ -189,7 +190,7 @@ const paths = await packager({
   dir: appSource,
   out: output,
   name: configuration.productName,
-  executableName: configuration.productName,
+  executableName: 'nod',
   appBundleId: 'dev.nod.desktop',
   appVersion: version,
   appCopyright: 'Copyright © 2026 n8n GmbH',
@@ -220,6 +221,24 @@ if (signing) {
   console.log(`Signing the application (${signing.mode}).`);
   nativeBinaries = await signApplication(application, electronVersion, signing);
   await exportCertificate(signing, join(output, 'signing.cer'));
+  if (signing.mode === 'developer-id') {
+    const archive = join(stage, 'application-notarization.zip');
+    try {
+      await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, archive], {
+        timeout: 10 * 60_000,
+      });
+      applicationNotarization = await notarize(
+        archive,
+        signing,
+        join(output, 'application-notarization.json'),
+      );
+      await staple(application);
+      await verifySignature(application, signing, { executable: true });
+      await assess(application, 'execute');
+    } finally {
+      await rm(archive, { force: true });
+    }
+  }
 } else {
   await run(
     '/usr/bin/codesign',
@@ -229,6 +248,7 @@ if (signing) {
   await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', application]);
 }
 await verifyApplicationRuntime(application, electronVersion);
+console.log(`Application ready: ${application}`);
 for (const entry of await readdir(output, { withFileTypes: true }))
   if (entry.isFile() && /\.(?:dmg|zip)(?:\.sha256)?$/.test(entry.name))
     await rm(join(output, entry.name));
@@ -275,6 +295,7 @@ const diskReady = (async () => {
       await staple(diskImage);
       await verifySignature(diskImage, signing);
       await assess(diskImage, 'open');
+      await verifyDiskImage(diskImage, configuration.productName);
     }
   }
   await run('/usr/bin/hdiutil', ['verify', diskImage], { timeout: 10 * 60_000 });
@@ -291,13 +312,6 @@ const diskReady = (async () => {
 })();
 const [update, { disk, diskNotarization }] = await Promise.all([
   (async () => {
-    if (signing?.mode === 'developer-id') {
-      applicationNotarization = (await diskReady).diskNotarization;
-      await staple(application);
-      await verifySignature(application, signing, { executable: true });
-      await assess(application, 'execute');
-    }
-    console.log(`Application ready: ${application}`);
     console.time('Create and verify the application ZIP');
     await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
       timeout: 10 * 60_000,
@@ -325,7 +339,7 @@ await writeFile(
   JSON.stringify(
     {
       url: `https://github.com/${repository}/releases/download/nod-v${version}/${update.file}`,
-      name: `nod ${version}`,
+      name: `Nod ${version}`,
       pub_date: configuration.nodBuild.builtAt.replace(/\.\d{3}Z$/, 'Z'),
     },
     null,

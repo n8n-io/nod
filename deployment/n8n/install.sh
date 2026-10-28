@@ -111,7 +111,7 @@ check_app() {
   file -b "$candidate/Contents/MacOS/nod" | grep -q "Mach-O 64-bit executable $machine_arch" || fail 'The Nod app architecture does not match this Mac.'
 }
 
-[ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to /Applications/nod.app.'
+[ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to /Applications/Nod.app.'
 [ "$(uname -s)" = Darwin ] || fail 'Nod requires macOS 14 or later.'
 case "$(uname -m)" in
   arm64) arch=arm64; machine_arch=arm64; manifest_name='release\.json'; installer_query='installer=true' ;;
@@ -124,11 +124,14 @@ os_major=${os_version%%.*}
 case "$os_major" in ''|*[!0-9]*) fail 'Could not read the macOS version.' ;; esac
 [ "$os_major" -ge 14 ] || fail 'Nod requires macOS 14 or later.'
 applications='/Applications'
-target="$applications/nod.app"
+target="$applications/Nod.app"
+if [ ! -e "$target" ] && [ ! -L "$target" ] && { [ -e "$applications/nod.app" ] || [ -L "$applications/nod.app" ]; }; then
+  target="$applications/nod.app"
+fi
 [ ! -L "$applications" ] && [ ! -L "$target" ] || fail 'The installation destination must not be a symbolic link.'
 [ ! -e "$target" ] || [ -d "$target" ] || fail 'The installation destination is not an app directory.'
 [ -d "$applications" ] && [ -w "$applications" ] && [ -x "$applications" ] || fail 'You need permission to install apps in /Applications. Use a macOS administrator account.'
-[ ! -d "$target" ] || { [ -w "$target" ] && [ -x "$target" ]; } || fail 'You need permission to replace /Applications/nod.app. Ask its owner or your administrator.'
+[ ! -d "$target" ] || { [ -w "$target" ] && [ -x "$target" ]; } || fail 'You need permission to replace the installed Nod app. Ask its owner or your administrator.'
 check_stopped
 mkdir "$applications/.nod-install-lock" 2>/dev/null || fail 'Another installer is running. If it was interrupted, remove /Applications/.nod-install-lock and retry.'
 locked=true
@@ -141,7 +144,7 @@ current_version=''
 current_identity=''
 current_metadata=''
 if [ -d "$target" ]; then
-  [ "$(field "$target/Contents/Info.plist" CFBundleIdentifier string)" = 'dev.nod.desktop' ] || fail 'An unrelated app already occupies /Applications/nod.app.'
+  [ "$(field "$target/Contents/Info.plist" CFBundleIdentifier string)" = 'dev.nod.desktop' ] || fail 'An unrelated app already occupies the installation path.'
   current_version=$(field "$target/Contents/Info.plist" CFBundleShortVersionString string)
   valid_version "$current_version" || fail 'The installed Nod version is invalid.'
   current_identity=$(stat -f '%d:%i' "$target")
@@ -187,8 +190,10 @@ hdiutil verify "$temporary/nod.dmg" >/dev/null 2>&1 || fail 'The Nod disk image 
 mkdir "$temporary/mount"
 hdiutil attach "$temporary/nod.dmg" -mountpoint "$temporary/mount" -readonly -nobrowse -noautoopen -quiet || fail 'The Nod disk image could not be opened.'
 mounted=true
-check_app "$temporary/mount/nod.app"
-ditto "$temporary/mount/nod.app" "$temporary/nod.app" || fail 'The Nod app could not be copied.'
+candidate="$temporary/mount/Nod.app"
+if [ ! -e "$candidate" ]; then candidate="$temporary/mount/nod.app"; fi
+check_app "$candidate"
+ditto "$candidate" "$temporary/nod.app" || fail 'The Nod app could not be copied.'
 check_app "$temporary/nod.app"
 hdiutil detach "$temporary/mount" -quiet || fail 'The Nod disk image could not be closed.'
 mounted=false
