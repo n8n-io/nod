@@ -7,6 +7,7 @@ import { assetHash } from '../runtime/assets.mjs';
 import { copyBundleSource, copyEngineDependencies } from './engine-dependencies.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
 import { hardenElectron, run } from './release-tools.mjs';
+import { signWindowsFiles, windowsCodeFiles } from './windows-signing.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Build this preview on Windows x64.');
@@ -19,6 +20,7 @@ const assets = resolve(
   process.env.NOD_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
 );
 const configuration = JSON.parse(await readFile(join(root, 'desktop/package.json'), 'utf8'));
+const signed = process.env.NOD_RELEASE_BUILD === 'true';
 const tracesToken = process.env.NOD_TRACES_TOKEN;
 if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
   throw new Error('NOD_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
@@ -67,12 +69,7 @@ console.log('Windows transport built.');
 configuration.version = process.env.NOD_DESKTOP_VERSION || configuration.version;
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(configuration.version))
   throw new Error('The Windows release version is invalid.');
-manifest.transport = {
-  file: 'bin/docker.exe',
-  sha256: await assetHash(join(runtime, 'bin/docker.exe')),
-};
 manifest.releaseTag = `nod-v${configuration.version}`;
-await writeFile(join(runtime, 'manifest.json'), JSON.stringify(manifest, null, 2));
 const electronVersion = configuration.devDependencies.electron;
 configuration.nodBuild = {
   source: await run('git', ['-C', root, 'rev-parse', 'HEAD'], { output: 'stdout' }),
@@ -102,6 +99,13 @@ const [application] = await packager({
 console.log('Windows application packaged.');
 await rename(engine, join(application, 'resources/engine'));
 await hardenElectron(join(application, 'nod.exe'));
+if (signed) await signWindowsFiles(await windowsCodeFiles(application));
+const installedRuntime = join(application, 'resources/engine/windows-runtime');
+manifest.transport = {
+  file: 'bin/docker.exe',
+  sha256: await assetHash(join(installedRuntime, 'bin/docker.exe')),
+};
+await writeFile(join(installedRuntime, 'manifest.json'), JSON.stringify(manifest, null, 2));
 await cp(join(assets, 'guest.tar.gz'), join(output, 'nod-Runtime-win32-x64.tar.gz'));
 const installer = join(output, 'nod-Setup-x64.exe');
 const nsis =
@@ -114,10 +118,17 @@ await run(
     `/DAPP_DIR=${application}`,
     `/DOUTPUT=${installer}`,
     `/DVERSION=${configuration.version}`,
+    ...(signed
+      ? [
+          `/DNODE=${process.execPath}`,
+          `/DSIGNER=${join(root, 'desktop/scripts/windows-signing.mjs')}`,
+        ]
+      : []),
     join(root, 'desktop/scripts/windows-installer.nsi'),
   ],
   { timeout: 1_200_000 },
 );
+if (signed) await signWindowsFiles([installer]);
 await writeFile(
   join(output, 'SHA256SUMS'),
   `${await assetHash(installer)}  nod-Setup-x64.exe\n${await assetHash(join(output, 'nod-Runtime-win32-x64.tar.gz'))}  nod-Runtime-win32-x64.tar.gz\n`,
@@ -133,7 +144,7 @@ await writeFile(
       source: configuration.nodBuild.source,
       platform: 'win32-x64',
       ...(updateSourceUrl ? { updateSourceUrl } : {}),
-      signing: { mode: 'unsigned' },
+      signing: { mode: signed ? 'artifact-signing' : 'unsigned' },
       installer: {
         file: 'nod-Setup-x64.exe',
         bytes: (await stat(installer)).size,

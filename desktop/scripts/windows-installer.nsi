@@ -7,6 +7,9 @@ InstallDir "$LOCALAPPDATA\Programs\nod"
 InstallDirRegKey HKCU "Software\nod" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID zlib
+!ifdef SIGNER
+  !uninstfinalize '"${NODE}" "${SIGNER}" "%1"' = 0
+!endif
 ShowInstDetails show
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\nod.exe"
