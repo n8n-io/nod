@@ -9,7 +9,7 @@ import type { DecisionQuestion } from '../../src/ports/decisions.ts';
 import type { ProviderUsageEvent } from '../../src/ports/provider-usage.ts';
 import { createDecisionModel } from '../../src/providers/decisions.ts';
 import { createPiMemoryCurator } from '../../src/providers/pi/memory-curator.ts';
-import { lightestEffort } from '../../src/shared/models.ts';
+import type { ModelEffort } from '../../src/shared/models.ts';
 import { loadEnvironment, repository, type Model } from './stack.ts';
 import { approvalLanguageCases } from './world/approval-language.ts';
 import { trustBasis, type TrustBasis, type TrustWords } from '../../src/server/trust-basis.ts';
@@ -1986,6 +1986,7 @@ interface DecisionStage {
 
 export interface DecisionAttempt {
   arm: string;
+  reviewEffort?: ModelEffort;
   case: string;
   kind: Case['kind'];
   holdout: boolean;
@@ -2181,6 +2182,25 @@ export function supportedDecisionCases(
   });
 }
 
+export async function decisionEffort(source: string, supported: ModelEffort[]) {
+  const file = ts.createSourceFile('models.ts', source, ts.ScriptTarget.Latest, true);
+  const selector = file.statements.find(
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'lightestEffort',
+  );
+  if (!selector?.body) throw new Error('Missing review effort selector in this revision.');
+  const code = ts.transpileModule(`${selector.getText(file)}\nexport default lightestEffort;`, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const module = await import(
+    `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+  );
+  const effort: ModelEffort = module.default([...supported]);
+  if (!supported.includes(effort))
+    throw new Error('The revision selected an unsupported review effort.');
+  return { effort, sourceHash: createHash('sha256').update(source).digest('hex') };
+}
+
 export async function runDecisionEval(options: {
   model: Model;
   baseline: string;
@@ -2253,26 +2273,35 @@ export async function runDecisionEval(options: {
   });
   const model = runtime.getModel(options.model.provider, options.model.name);
   if (!model) throw new Error('The selected chat model is not in the Pi catalog.');
-  const effort = lightestEffort(getSupportedThinkingLevels(model));
-  const curator = createPiMemoryCurator({
-    provider: options.model.provider,
-    resolve: async () => ({
+  const supportedEfforts = getSupportedThinkingLevels(model);
+  const effort = {
+    main: await decisionEffort(git('show', `${baseline}:src/shared/models.ts`), supportedEfforts),
+    branch: await decisionEffort(
+      await readFile(join(repository, 'src/shared/models.ts'), 'utf8'),
+      supportedEfforts,
+    ),
+  };
+  const curator = (arm: 'main' | 'branch') =>
+    createPiMemoryCurator({
       provider: options.model.provider,
-      method: 'api_key',
-      definition: {
-        choice: {
-          id: model.id,
-          name: model.name,
-          efforts: getSupportedThinkingLevels(model),
-          images: false,
-          contextWindow: model.contextWindow,
+      resolve: async () => ({
+        provider: options.model.provider,
+        method: 'api_key',
+        definition: {
+          choice: {
+            id: model.id,
+            name: model.name,
+            efforts: getSupportedThinkingLevels(model),
+            images: false,
+            contextWindow: model.contextWindow,
+          },
+          spec: JSON.parse(JSON.stringify(model)),
         },
-        spec: JSON.parse(JSON.stringify(model)),
-      },
-      effort,
-      read: async () => ({ type: 'api_key', key: options.model.apiKey }),
-    }),
-  });
+        effort: effort[arm].effort,
+        read: async () => ({ type: 'api_key', key: options.model.apiKey }),
+      }),
+    });
+  const curators = { main: curator('main'), branch: curator('branch') };
   const arms = [
     'main-llm',
     'branch-llm',
@@ -2286,11 +2315,18 @@ export async function runDecisionEval(options: {
   await mkdir(join(options.root, 'decisions'), { recursive: true });
   await mkdir(directory);
   const manifest = {
-    version: 4,
+    version: 5,
     baseline,
     candidate,
+    dirty: git('status', '--porcelain', '--', 'src', 'evals').trim().length > 0,
     model: `${options.model.provider}/${model.id}`,
-    effort,
+    supportedEfforts,
+    effort: Object.fromEntries(
+      Object.entries(effort).map(([arm, selection]) => [
+        arm,
+        { selected: selection.effort, sourceHash: selection.sourceHash },
+      ]),
+    ),
     arms,
     repeat: options.repeat,
     concurrency: 2,
@@ -2348,7 +2384,11 @@ export async function runDecisionEval(options: {
       canStart: () => (unpriced ? 'unpriced' : spent >= budgetUnits ? 'budget' : undefined),
       review: async (instructions, input, report) => {
         if (arm.endsWith('-llm'))
-          return curator.curate({ task: 'review', instructions, input }, undefined, report);
+          return curators[arm === 'main-llm' ? 'main' : 'branch'].curate(
+            { task: 'review', instructions, input },
+            undefined,
+            report,
+          );
         const provider = arm === 'gpt-decisions' ? 'openai' : 'openrouter';
         const checker = createDecisionModel({
           resolve: async () => ({
@@ -2374,6 +2414,9 @@ export async function runDecisionEval(options: {
       unpriced = true;
     const result: DecisionAttempt = {
       arm,
+      ...(arm.endsWith('-llm')
+        ? { reviewEffort: effort[arm === 'main-llm' ? 'main' : 'branch'].effort }
+        : {}),
       case: item.id,
       kind: item.kind,
       holdout: item.holdout,

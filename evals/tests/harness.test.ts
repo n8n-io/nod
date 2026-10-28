@@ -26,6 +26,7 @@ import {
 } from '../src/aggregate.ts';
 import {
   decisionAuthorization,
+  decisionEffort,
   evaluateDecision,
   validDecisionTerms,
   selectDecisionCases,
@@ -625,6 +626,27 @@ test('decision budget and unknown usage stop between stages without scoring part
     assert.deepEqual(outcome.stages?.[1]?.usage, []);
     assert.equal(outcome.usage.length, 1);
   }
+});
+
+test('decision reviews select effort from each source revision', async () => {
+  const baseline = `export function lightestEffort(efforts: string[]) {
+    return efforts.find(level => ['off', 'minimal', 'low', 'medium'].includes(level)) ?? efforts[0];
+  }`;
+  const candidate = `export function lightestEffort(efforts: string[]) {
+    return efforts.includes('low') ? 'low' : efforts[0];
+  }`;
+  const supported = ['off', 'low', 'high'] as const;
+  const main = await decisionEffort(baseline, [...supported]);
+  const branch = await decisionEffort(candidate, [...supported]);
+  assert.equal(main.effort, 'off');
+  assert.equal(branch.effort, 'low');
+  assert.notEqual(main.sourceHash, branch.sourceHash);
+  assert.equal((await decisionEffort(candidate, ['off'])).effort, 'off');
+  await assert.rejects(decisionEffort('', ['off']), /Missing review effort selector/);
+  await assert.rejects(
+    decisionEffort("function lightestEffort() { return 'max'; }", ['off']),
+    /unsupported review effort/,
+  );
 });
 
 test('decision baselines bind only the validator revisions their source invokes', async () => {
