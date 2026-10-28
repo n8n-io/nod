@@ -129,6 +129,7 @@
   display: none;
 }
 .feedback-diagnostics-entry > summary {
+  align-items: flex-start;
   padding-block: 12px;
 }
 .feedback-diagnostics-entry > summary > span:first-child {
@@ -142,6 +143,10 @@
   font-weight: 500;
 }
 .feedback-diagnostics-entry > summary > span:first-child > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.5;
@@ -241,12 +246,6 @@
   }
   .feedback-diagnostics-disclosure {
     margin-left: 0;
-  }
-  .feedback-diagnostics-heading > label {
-    align-items: flex-start;
-  }
-  .feedback-diagnostics-heading .checkbox {
-    margin-top: 2px;
   }
   .feedback-diagnostics-full > summary {
     padding-inline: 0;
