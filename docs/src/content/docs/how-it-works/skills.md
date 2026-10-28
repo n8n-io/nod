@@ -7,7 +7,7 @@ sidebar:
 
 The skill library is a set of task guides that the model loads only when a task needs them. The prompt stays small, and the model still gets detailed advice for common work. Nod also writes [learned skills](/how-it-works/memory/#learned-skills) for itself after a task; they live in memory, not in this library.
 
-The short version: the system prompt lists each guide's name and description. The model reads a full guide with the `skills` tool when a task matches it.
+The short version: the system prompt lists guide names. The model reads a full guide with the `skills` tool when it needs that procedure.
 
 ## Progressive disclosure
 
@@ -15,18 +15,18 @@ Nod follows the [Agent Skills integration guide](https://agentskills.io/client-i
 
 ```mermaid
 flowchart LR
-  start([Session starts]):::muted --> catalog[Names and<br/>descriptions in prompt]
+  start([Session starts]):::muted --> catalog[Guide names<br/>in prompt]
   catalog -- task matches --> guide[skills read<br/>SKILL.md]:::accent
   guide -- condition applies --> ref[skills read<br/>a reference]
 ```
 
 | Level     | What it holds                             | When the model gets it                         |
 | --------- | ----------------------------------------- | ---------------------------------------------- |
-| Catalog   | Name and description of each task guide   | In the system prompt, from the start           |
+| Catalog   | Names of available task guides            | In the system prompt, from the start           |
 | Guide     | The body of `SKILL.md`                    | When it calls `skills` with `action: "read"`   |
 | Reference | A file in the guide's `references` folder | Only when the guide says its condition applies |
 
-Four core guides skip this and are always in the static system prompt: connected apps, schedules and watches, artifacts (creating files) and video links.
+The connected apps, schedules and watches, artifacts, and video links guides use the same read path. Guide bodies are not part of the static prompt. A guide already in context needs no second read.
 
 ## The task guides
 

@@ -20,7 +20,6 @@ export interface Turn {
   confirm(result: unknown): Promise<unknown>;
   visited(browserId: string, url: string): void;
   delegate?(title: string, instruction: string): Promise<string>;
-  followUp?(text: string): string;
   setStatus?(text: string): Promise<string>;
   pageVisited?(url: string, subagent: boolean): void;
 }

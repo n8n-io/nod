@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from 'pg';
+import { createAgentSession } from '@earendil-works/pi-coding-agent';
+import type { ModelEffort } from '../../src/shared/models.ts';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -26,6 +28,7 @@ export interface Model {
   provider: Provider;
   name: string;
   apiKey: string;
+  effort?: ModelEffort;
 }
 
 export const keyVariables: Record<Provider, string> = {
@@ -83,6 +86,7 @@ export interface Stack {
   proactivity: {
     view(): Promise<import('../../src/shared/proactivity.ts').ProactivityView>;
     control(input: Record<string, unknown>): Promise<unknown>;
+    poll(): Promise<string | undefined>;
   };
   request(
     path: string,
@@ -337,6 +341,12 @@ export async function startStack(options: {
             model: model.name,
             apiKey: model.apiKey,
             sessionRoot,
+            ...(model.effort
+              ? {
+                  createSession: (input) =>
+                    createAgentSession({ ...input, thinkingLevel: model.effort }),
+                }
+              : {}),
           }),
         ),
         computer,
@@ -416,7 +426,14 @@ export async function startStack(options: {
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     const engine = application.proactivity;
     return {
-      proactivity: { view: () => engine.view(), control: (input) => engine.control(input) },
+      proactivity: {
+        view: () => engine.view(),
+        control: (input) => engine.control(input),
+        async poll() {
+          await pool.query('UPDATE proactive_sources SET next_poll=clock_timestamp()');
+          return engine.due();
+        },
+      },
       request: createStackRequest(baseUrl, cookie),
       waiting: (alias) => waitingTurnSql?.(alias) ?? `${alias}.status='waiting'`,
       origin: baseUrl,

@@ -1,4 +1,4 @@
-import { nodPersonality } from '../../src/runtime/personality.ts';
+import { nodPersonality } from './product-style.ts';
 import { check, judge, type Expectation } from './scenario.ts';
 import type { Run } from './trace.ts';
 

@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import type { ModelEffort } from '../../src/shared/models.ts';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
 import {
@@ -24,6 +25,7 @@ export interface AttemptSpec {
   attempt: number;
   outFile: string;
   model: string;
+  effort?: ModelEffort;
   judge: string;
 }
 
@@ -67,7 +69,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     groundTruth: '',
   };
   const environment = await loadEnvironment();
-  const model = parseModel(spec.model, environment);
+  const model = { ...parseModel(spec.model, environment), effort: spec.effort };
   const judgeModel = parseModel(spec.judge, environment);
   const started = Date.now();
   let taskStarted = started;
@@ -203,6 +205,26 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
       judgeCostUsd: judgeLlm.spent().costUsd,
+      metrics: {
+        modelUsage: trace.usage.requests ?? [],
+        compactions: trace.compactions ?? 0,
+        interactions: Object.fromEntries(
+          [...new Set(trace.interactions.map((item) => item.kind))].map((kind) => [
+            kind,
+            trace.interactions.filter((item) => item.kind === kind).length,
+          ]),
+        ),
+        browserHandoffs: trace.tools.filter(
+          (call) => call.name === 'browser' && call.input?.action === 'handoff',
+        ).length,
+        turns: trace.turns.map(({ source, status, error, startedAt, finishedAt }) => ({
+          source,
+          status,
+          error,
+          startedAt,
+          finishedAt,
+        })),
+      },
       final: trace.final,
       transcript: trace.transcript(60_000),
       groundTruth: truth,

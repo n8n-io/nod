@@ -482,7 +482,7 @@ function cost(runs: ChartRun[]): Card {
         1,
         430,
       ),
-      'completed regression attempts only; agent cost includes failed attempts, excludes judge cost',
+      'all regression attempts, including incomplete ones; unknown prices keep cost unknown; judge cost excluded',
     ),
   };
 }

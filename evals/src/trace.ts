@@ -6,6 +6,8 @@ import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
+import type { UsageDetails } from '../../src/shared/execution.ts';
+import { redactedInput } from './capture.ts';
 
 export interface ToolCall {
   id?: string;
@@ -73,7 +75,13 @@ export interface Run {
   modelErrors: string[];
   approvals: Array<{ turnId: string; action: string; status: string; args: unknown }>;
   visits: Visit[];
-  usage: { tokens: number; modelCalls: number; costUsd: number | null };
+  usage: {
+    tokens: number;
+    modelCalls: number;
+    costUsd: number | null;
+    requests?: UsageDetails[];
+  };
+  compactions?: number;
   firstReplySeconds: number | null;
   acknowledgement: { turnsWithTools: number; acknowledged: number };
   seconds: number;
@@ -130,7 +138,7 @@ function capturedTools(stack: Stack) {
   const tools: ToolCall[] = [];
   const started = new Map<string, ToolCall>();
   for (const { turnId, event } of stack.observations) {
-    if (event.type === 'model_usage' || !event.execution?.parentRunId) continue;
+    if (event.type === 'model_usage' || !event.execution) continue;
     const id = `${event.execution?.runId ?? turnId}:${event.id}`;
     if (event.type === 'tool_start') {
       if (started.has(id)) continue;
@@ -184,6 +192,7 @@ export async function collect(options: {
   const { stack, session, world } = options;
   const tools = capturedTools(stack);
   const calls = new Map<string, ToolCall>();
+  const matched = new Set<ToolCall>();
   const prompts = [...stack.prompts];
   const currentTurns = new Map<string, string | undefined>();
   let turnsWithTools = 0;
@@ -191,7 +200,9 @@ export async function collect(options: {
   let waitingForFirst = false;
   let foreground = false;
   const modelErrors: string[] = [];
+  let compactions = 0;
   for (const { sessionId, entry } of await sessionEvents(stack.sessionRoot)) {
+    if (entry.type === 'compaction') compactions++;
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {
@@ -225,13 +236,34 @@ export async function collect(options: {
         .trim();
       for (const block of message.content ?? []) {
         if (block.type !== 'toolCall') continue;
+        const name =
+          block.name === 'nod_browser'
+            ? 'browser'
+            : block.name === 'nod_tool_search'
+              ? 'tool_search'
+              : block.name;
         const id = `${sessionId}:${block.id}`;
+        const captured = tools.find(
+          (call) =>
+            !call.parentRunId &&
+            !matched.has(call) &&
+            call.sessionId === sessionId &&
+            call.name === name &&
+            JSON.stringify(call.input) === JSON.stringify(redactedInput(name, block.arguments)),
+        );
+        if (captured) {
+          captured.input = block.arguments;
+          captured.lead = lead;
+          matched.add(captured);
+          calls.set(id, captured);
+          continue;
+        }
         const call: ToolCall = {
           id: block.id,
           turnId: currentTurns.get(sessionId),
           sessionId,
           browser: browserSessionId(sessionId),
-          name: block.name,
+          name,
           input: block.arguments,
           output: '',
           isError: false,
@@ -252,7 +284,12 @@ export async function collect(options: {
       }
     }
   }
-  const usage = (await stack.pool.query('SELECT cost_usd,details FROM model_usage')).rows;
+  const usage = (
+    await stack.pool.query(`SELECT m.cost_usd,m.details,
+    CASE WHEN (to_jsonb(t)->>'proactive')::boolean THEN 'observer' WHEN t.background THEN 'background'
+      WHEN t.id IS NOT NULL THEN 'foreground' ELSE 'housekeeping' END AS role
+    FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id`)
+  ).rows;
   const tokens = usage.reduce(
     (total, row) =>
       total +
@@ -400,7 +437,17 @@ export async function collect(options: {
     modelErrors,
     approvals,
     visits: options.visits,
-    usage: { tokens, modelCalls: usage.length, costUsd: costKnown ? cost : null },
+    usage: {
+      tokens,
+      modelCalls: usage.length,
+      costUsd: costKnown ? cost : null,
+      requests: usage.map((row) => ({
+        ...row.details,
+        costUsd: row.cost_usd,
+        ...(row.role ? { role: row.role } : {}),
+      })),
+    },
+    compactions,
     firstReplySeconds,
     acknowledgement: { turnsWithTools, acknowledged },
     seconds: options.seconds,
@@ -465,6 +512,12 @@ export async function collect(options: {
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${replies.length}.`,
+        ...messages
+          .filter((message) => message.role === 'assistant' && message.text.trim())
+          .map(
+            (message) =>
+              `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}`,
+          ),
         `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'

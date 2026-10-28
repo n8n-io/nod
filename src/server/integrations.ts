@@ -1595,9 +1595,38 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             },
           });
         }
+        const catalog = Object.entries(search.tools);
+        const requested = new Set(query.toLowerCase().split(/[\s,]+/));
+        const exact = catalog.filter(([name]) => requested.has(name.toLowerCase()));
+        const exactMatch = exact.length === requested.size;
+        const selected = exactMatch ? exact : catalog;
+        const indexed = !exactMatch && selected.length > 6;
         return {
           ...search,
-          tools: workspaceFileSchemas(search.tools),
+          ...(!exactMatch && /^[A-Z][A-Z0-9_]+$/.test(query)
+            ? {
+                schemaError: `No tool named ${query} was returned. Choose a returned tool name and read its schema.`,
+              }
+            : {}),
+          tools: workspaceFileSchemas(
+            Object.fromEntries(
+              selected.map(([name, definition], index) => [
+                name,
+                !indexed || index < 3 || !definition || typeof definition !== 'object'
+                  ? definition
+                  : {
+                      description: (definition as { description?: unknown }).description,
+                      hasFullSchema: false,
+                    },
+              ]),
+            ),
+          ),
+          ...(indexed
+            ? {
+                schemaLookup:
+                  'For a tool marked hasFullSchema:false, call SEARCH_TOOLS with its exact name as query to read its full schema. Several exact names can be separated by commas.',
+              }
+            : {}),
           accounts,
           discovered: discovered?.accounts ?? [],
           ...(failed

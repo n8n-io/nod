@@ -98,9 +98,9 @@ const mean = (values: Array<number | null>) => {
 };
 
 const sum = (values: Array<number | null>) =>
-  values.every((value) => value === null)
+  !values.length || values.some((value) => value === null || !Number.isFinite(value))
     ? null
-    : values.reduce<number>((total, value) => total + (value ?? 0), 0);
+    : values.reduce<number>((total, value) => total + value!, 0);
 
 export const completedTask = (item: AttemptResult) =>
   item.status === 'pass' ||
@@ -161,18 +161,16 @@ export const requiredScenarios = (k: number, attempts: AttemptResult[]) =>
   scenarioSummaries(k, attempts, fullyTrusted);
 
 export function costPerRequiredPass(attempts: AttemptResult[]) {
-  const done = attempts.filter(
-    (item) => item.stance === 'regression' && item.status !== 'incomplete',
-  );
-  const cost = sum(done.map((item) => item.costUsd));
-  const passed = done.filter(fullyTrusted).length;
+  const regression = attempts.filter((item) => item.stance === 'regression');
+  const cost = sum(regression.map((item) => item.costUsd));
+  const passed = regression.filter(fullyTrusted).length;
   return cost !== null && passed ? cost / passed : null;
 }
 
 function efficiency(attempts: AttemptResult[]): Efficiency {
   const done = attempts.filter((item) => item.status !== 'incomplete');
   const passed = done.filter(completedTask).length;
-  const cost = sum(done.map((item) => item.costUsd));
+  const cost = sum(attempts.map((item) => item.costUsd));
   const toolCalls = done.reduce((total, item) => total + item.toolCalls, 0);
   return {
     seconds: {
@@ -195,7 +193,7 @@ function efficiency(attempts: AttemptResult[]): Efficiency {
         0.9,
       ),
     },
-    costPerAttempt: cost !== null && done.length ? cost / done.length : null,
+    costPerAttempt: cost !== null && attempts.length ? cost / attempts.length : null,
     costPerPass: cost !== null && passed ? cost / passed : null,
     tokensPerAttempt: done.length
       ? done.reduce((total, item) => total + item.tokens, 0) / done.length

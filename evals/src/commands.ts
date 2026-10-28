@@ -98,6 +98,16 @@ function runOptions(args: Args): RunOptions {
   return {
     root: resultsRoot(text(args, 'out')),
     model: text(args, 'model'),
+    ...(text(args, 'effort')
+      ? {
+          effort: choice(
+            args,
+            'effort',
+            ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const,
+            'high',
+          ),
+        }
+      : {}),
     judge: text(args, 'judge'),
     repeat,
     k: whole(args, 'k', repeat),

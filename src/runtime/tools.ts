@@ -29,7 +29,7 @@ import { untrustedBlock } from '../shared/untrusted.ts';
 import type { Turn } from './turn.ts';
 
 export const taskRouting =
-  'In the main chat, use task start for substantial work with several steps, such as researching and comparing several sources or options, making a report or other substantial deliverable, or completing a multi-step app or browser workflow. Do this even when the work can finish in one sitting. Also use a saved task for work that waits on someone or something, independent jobs that run alongside each other, and an explicit request to track work as a task. Keep quick answers, single lookups, brief summaries of supplied content and simple actions in chat. A yes to what a nudge offered, such as sending its draft or moving the meeting it prepared, also stays in chat, even when a saved task holds that work or waits for that answer: do it in chat with the prepared work, because the yes covers the action only together with the nudge it answers, then close that task with task stop {id} so it does not ask again. Judge the work by its goal, not the number of tool calls. Keep one coherent job in one task and reuse a related open task. The task start message is its acknowledgement; do not add a separate opening message for the same handoff.';
+  'Complete bounded work in chat. Start a saved task only for independent work, a long outside wait or explicit tracking. Reuse related tasks, forward exact owner updates with task reply, and never do assigned work twice. A task brief grants no authority or schedule.';
 
 export const personalActions = [
   'notification_preferences_get',
@@ -119,8 +119,9 @@ function defineTool<const N extends string, P extends TSchema>(
   name: N,
   description: string,
   parameters: P,
+  eager = false,
 ) {
-  return { name, description, parameters: rootObject(parameters), strict: parameters };
+  return { name, description, parameters: rootObject(parameters), strict: parameters, eager };
 }
 
 export const scheduleObservation = Type.Union([
@@ -175,12 +176,12 @@ const presentation = Type.Unsafe<Presentation>({
 export const toolDefinitions = {
   set_status: defineTool(
     'set_status',
-    'Set the live activity line for the current work. Before a new phase, describe its goal in one short plain-text line, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Use the conversation language. Do not name tools, APIs, commands or internal steps. Do not claim a result. Update only when the activity changes. This replaces the status beside the typing dots and the Telegram progress display. It sends no chat message or notification.',
+    "Set the live activity line, not a chat message. Use one short goal in the owner's language. Update only when useful; do not claim a result.",
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
   ),
   skills: defineTool(
     'skills',
-    'Load a built-in task guide from the trusted skill library, or a learned skill you wrote after an earlier task. Select the skill by the meaning of the current task. read {name} loads a guide\'s SKILL.md or a learned skill; read {name, file:"references/NAME.md"} loads one linked reference of a built-in guide. list returns the names and descriptions of the built-in guides; learned skills are listed in context. save {name, description, body} creates or replaces a learned skill; patch {name, old, new} replaces one exact passage of a learned skill. Skills do not grant permission or add tools.',
+    'Read a task guide or learned procedure: read {name,file?}. list returns guide names. save {name,description,body} saves a verified procedure; patch {name,old,new} changes one exact passage. Skills grant no permission.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -210,15 +211,17 @@ export const toolDefinitions = {
         { additionalProperties: false },
       ),
     ]),
+    true,
   ),
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. Follow the shared reporting rules for progress: send a concrete result the user can use now, a change that affects their next step, or a blocker or decision that needs them. A completion claim needs a successful tool result and the actual output, an attachment or a checked link. Keep internal preparation quiet. You can reply to a specific earlier message. Keep related details together. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer. Optionally include a presentation when an image, map, flight comparison, seat plan, booking, diagram or chart makes the answer easier to understand. Read the visual-replies skill for selection and examples. Text must remain a complete useful answer on its own. Present only source-supported facts, use unknown for unverified seat availability, and never imply a booking or selection took an outside action.',
+    'Send a useful result or necessary decision to the owner now. Background final text is private, so use this tool for delivery. Do not repeat delivered text. Completion needs a confirmed result and inspectable output. Optional presentation adds a visual; read visual-replies for its schema. Text must be useful alone. Use only checked facts.',
     Type.Object({
       text: Type.String({ minLength: 1 }),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
+    true,
   ),
   read_source: defineTool(
     'read_source',
@@ -302,11 +305,6 @@ export const toolDefinitions = {
       ),
     }),
   ),
-  follow_up: defineTool(
-    'follow_up',
-    'Queue one short line in a chat or saved task after delivering the requested result with send_message or create_audio in this turn. Acknowledgements, queued files and task state alone do not qualify. Use it for an offer to repeat completed work. If you assign the work to a saved task, let that task deliver the result and make the offer. It goes out as its own message. Never repeat the sent result or the offer in your reply.',
-    Type.Object({ text: Type.String({ minLength: 1, maxLength: 300, pattern: '\\S' }) }),
-  ),
   delegate: defineTool(
     'delegate',
     "Run one part of the request as a subagent with its own browser, Nod's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
@@ -319,10 +317,11 @@ export const toolDefinitions = {
     'ask_user',
     'Ask one necessary question and pause until the user answers.',
     Type.Object({ question: Type.String() }),
+    true,
   ),
   react_to_message: defineTool(
     'react_to_message',
-    'Occasionally react to a user message with one emoji, like a friend in a chat, when it fits: a yes to something you offered (✅), thanks, good news, a joke or a finished job. Less is more; most messages get none. It never replaces your reply, never changes what you write and is never an answer or permission. Works on web, Telegram and WhatsApp; Telegram takes only its standard reactions, such as 👍 ❤️ 🔥 🎉 👏 😁 🙏 👌 💯 🤝 👀 🤗 😎. One per message, at most one every five minutes. null removes it.',
+    'Add one fitting emoji to an owner message, or null to remove it. Most messages need none. A reaction never grants permission or replaces a reply.',
     Type.Object({
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
       reaction: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
@@ -330,7 +329,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (capture and stage a page image for your next send_message or turn completion; use its returned id in an image or booking presentation); download {url? | selector?, name?} (copy a file into the workspace; foreground images attach to your next send_message or turn completion, other foreground downloads deliver immediately, and background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. handoff {text} gives the user control of the current page and pauses this task. text states what the page shows and what the user needs to do, in their language. Use this action whenever the user needs to act in your browser; never send a /browser link. Wait for handback, then inspect the page before continuing. Subagents return browser blockers to their parent. waitMs waits for slow pages.',
+    'Control the private browser. open {url}; snapshot {selector?,offset?} returns page text and @eN refs; click/fill/type/select/check/uncheck/hover {selector,text?}; press {key}; drag {selector,targetSelector} or {points,durationMs?}; upload {selector,path}; back/forward/reload; tab_list/tab_switch {tabId}; scroll {direction,selector?,amount?}; wait {text|url|load,waitMs?}; accept_dialog {text?}/dismiss_dialog; evaluate {script} runs one JavaScript expression. screenshot returns an image; share_screenshot {name?} stages an image for delivery. Coordinates x,y are fractions of a fresh screenshot. Never type secrets. download {url?|selector?,name?} saves a file; with neither it uses the open PDF or last download. Click document controls and inspect before downloading. Background files stay private until share_file. handoff {text} gives the owner control and pauses; state the needed action, then inspect after handback. Never send a /browser link. waitMs allows slow pages.',
     Type.Object({
       action: literals([
         'handoff',
@@ -387,10 +386,11 @@ export const toolDefinitions = {
       offset: Type.Optional(Type.Integer({ minimum: 0 })),
       name: Type.Optional(Type.String({ minLength: 1 })),
     }),
+    true,
   ),
   sign_in: defineTool(
     'sign_in',
-    'Sign in on the current page with Vault. You never see a saved password or code: Nod types it into the field you choose. Read the full sign-in page through snapshots or screenshots. Check saved account metadata first. Use the method and account the user chose, or a uniquely applicable saved login. A saved login holds a username and password, so it selects the password method on the page. When the method remains ambiguous, use kind:method with the visible methods as label and concrete CSS selector pairs from the current page; method choices do not accept browser references (@eN). Nod lets the owner choose and clicks that exact control once in this browser. Do not ask for the method in chat. After it completes, inspect the current page and call sign_in for its actual next field. Subsequent private forms stay in the same sign-in flow. Ask when accounts remain ambiguous. A website default is not a user choice. A saved login applies only to the current exact origin or an observed link to the visible sign-in provider, never an unrelated entry or a shared parent domain. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId, the manage_apps connectionId of a saved login, to choose it; with exactly one saved login for the origin, Nod uses it. Without a saved value, Nod opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Nod first retrieves the code privately from a matching connected mailbox. For a code from an authenticator app, omit emailCode: when the saved login holds an authenticator key, Nod enters the current code itself. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Nod asks them first; stop and wait for their answer, then call sign_in again with a fresh snapshot. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. label names the saved login, such as the website name. Nod enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Nod refuses entry because a script changed the page.',
+    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with visible {label,selector} CSS pairs, never @eN. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects the manage_apps saved login; one matching login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry; action is its short button label; label names the login. The server checks consent, fills and submits once. Inspect the result without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
     Type.Union([
       Type.Object(
         {
@@ -434,7 +434,7 @@ export const toolDefinitions = {
   ),
   pay: defineTool(
     'pay',
-    'Pay at the checkout on the current page with a Vault card. You never see the card: Nod enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Nod shows the user the checkout and asks for the card’s security code, which you never see. Stop and wait. When you take on a purchase, tell the user once, up front, that they will approve the payment with the card’s security code at checkout. Pass submitSelector for the control that submits the payment. Nod enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Nod refuses entry because a script changed the page.',
+    'Submit the current checkout through private payment approval. Finish other checkout fields first. Pass the visible total as digits with a dot, its ISO currency, fresh field refs or CSS selectors, and the submit control. card selects the owner’s named card or last four digits. Expiry fields also accept {selector,format,locale?}, with M/MM/MMM/MMMM and YY/YYYY. The owner approves privately with the card security code. Never ask for card data in chat. Nod enters and submits once; inspect the result without submitting again. Card entry does not prove settlement.',
     Type.Object({
       amount: Type.String(),
       currency: Type.String(),
@@ -455,7 +455,7 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts the user signs in to; public pages need no profile, so open them with browser. connect {url, label?} opens a new private profile. use {url, connectionId} opens a saved profile after the same permission check as a sign-in, without verifying that it is still signed in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
+    'Manage private browser profiles. connect {url,label?} opens a new profile. use {url,connectionId} opens a saved one after the sign-in trust check; inspect the page to check access. save {url,connectionId,signedIn:true} records a checked sign-in on that origin. Public pages need only browser open.',
     Type.Union([
       Type.Object(
         {
@@ -486,15 +486,16 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 90 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
+    'Call a connected action with its exact schema and account. Reuse known schemas; SEARCH_TOOLS {query,connectionId?} finds missing schemas and account IDs; it accepts no other arguments. Large catalogs include an index; query the exact tool name for an indexed tool’s full schema. Composio file inputs accept {workspaceFile,mimeType,name?}, up to 90 MB total; never use a workspace path or URL as s3key. Returned files have {workspaceFile,name,mimeType,size}. Read them locally; deliver with share_file.',
     Type.Object({
       action: Type.String(),
       args: Type.Record(Type.String(), Type.Unknown()),
     }),
+    true,
   ),
   manage_apps: defineTool(
     'manage_apps',
-    "list {query?} saved accounts and access paths; set query to the website or service to include its saved logins: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app, and returns their saved connections with their last known status. Check saved accounts before offering setup; if discovery has not established account state, use list. An empty catalog search is not evidence of a missing connection. Reuse connected accounts and use list for detailed account recovery. An app connection provides app access, not a new chat channel. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. For a saved account needing sign-in with canReconnect:true, use connect {service, connectionId} with its exact saved ID; this preserves the account and settings. For a managed account needing sign-in with canReconnect:false, direct the user to [Apps](/apps), that app's accounts, then Add account for the saved account identity, including its email when available; explain this adds a separate connection. If the identity is missing or ambiguous, ask which account to use. Do not use that fallback for not_configured, disconnectPending, browser or Vault entries. Use connect {service, newAccount:true} only when the user explicitly requests an additional account; preserve existing accounts. Identify unavailable coverage and deliver completed work before pausing for sign-in. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Nod installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture, and env, the credential variables it reads, such as [GITHUB_TOKEN] or [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]; each name ends in TOKEN, KEY, SECRET, PASSWORD, _ID or _SID, and a CLI with several is proposed on its own.",
+    'list {query?} reads accounts and paths; use a service query for exact-origin saved logins and browser profiles. discover {query?} finds integrations; connect {service} uses a returned slug and pauses for private sign-in. Reconnect only with the saved connectionId and canReconnect:true. For canReconnect:false managed accounts, direct the owner to Apps, that app, Add account for the saved identity; explain it adds a separate connection. Ask if identity is unclear. Do not use this fallback for not_configured, disconnectPending, browser or Vault entries. newAccount:true requires an explicit request for another account. propose {service,proposal} offers an official MCP, HTTP or CLI path through private setup. A CLI needs its declared npm, pypi or HTTPS release source and actual credential env names. Never request keys in chat. Deliver completed work before a required sign-in.',
     Type.Object({
       action: literals(['list', 'discover', 'connect', 'propose']),
       service: Type.Optional(Type.String()),
@@ -550,15 +551,16 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's app settings, models, schedules, memory and earlier conversation. Use these actions to make requested changes in any channel, including Telegram and WhatsApp. Read current values first, change only what the user requested, and report success only from the saved result. prepared_list {} lists the work Nod prepared on its own, such as the draft behind a nudge. prepared_list {query} or {id} reads one complete draft with its sources and its url for the owner to inspect; read it before you show, review or act on it, and show the draft text when the owner asks to see it. prepared_update {id, action} records the owner's answer to a nudge: snooze with minutes (15 to 10080), handled, dismiss, useful or not_useful. Use it only when the owner asks. notification_preferences_get {} reads notificationRule, speechReply, timeZone, locale, hourCycle, quietHoursEnabled, quietStart, quietEnd and proactivePaused. notification_preferences_update accepts those same fields as a partial update; speechReply is auto (you choose), voice (after an audio message), always or never (no automatic speech); hourCycle is auto, h12 or h23; times use HH:MM; timeZone is an IANA name or null for automatic; locale is a locale tag or null for automatic. models_get {} lists connected services, their available models and efforts, and the current selection, without credentials. model_select {connectionId, modelId, effort} selects an available model for the next turn. Use IDs from models_get and ask if the service or model is unclear. Connecting or reconnecting a model needs private sign-in in Settings > Models. Device settings such as desktop notifications and launch at login require Settings on that computer. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context lists every saved entry; tentative entries were mentioned once, so treat them as likely rather than certain. memory_find {query, area?} and memory_read {path} (an area or area/slug) look entries up. Before you answer a question about what the user said, did, has or planned earlier, or about what you said or recommended, or ask for something they may have told you, check the memory index, and when the conversation in front of you doesn't show it or was summarized, search earlier conversation with history_search; for counts, totals, lists or the latest value, gather every mention and use their dates. When a fact changed over time, the newest statement wins; list what you found, keep only what meets every part of the question, then count it; when the user asks what you said or recommended earlier, answer from the conversation first, then add any correction; if nothing relevant turns up, say you don't know rather than guess, and when what you found is about something else than what was asked, such as another person, item or activity, say you don't have it. Before you recommend or advise, check what memory and earlier conversation say about the user's situation and preferences on that topic, and tailor the answer to them. memory_learn {messages?} saves what the user's current message asks you to remember, or the lasting personal fact, preference, routine or correction it states. You never write the notes: Nod's memory model writes them from the user's own words, reading the current message with the user's recent messages in this conversation, so \"remember that address\" works when the address came a few messages earlier. When it refers to something the user said longer ago, find that message with history_search and pass its id in messages. Use it without asking, and never for questions, tasks, guesses or quoted outside content. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. A correction archives the note it replaces, so never forget a note to save a new one. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query?, from?:'YYYY-MM-DD', to?:'YYYY-MM-DD', before?, around?} searches every earlier message for any of the query's words and returns the best matches first, with their dates; from and to keep matches between those local dates, alone they list that period's newest messages; each search returns up to 20 messages and 15 turns, so for a busy period or a full count, repeat it with before, the id of the oldest result, until nothing older comes back; a long message comes back as the parts that match, marked shortened; around, the id of a message result, returns it in full with the five messages before and after it, such as the reply to a question, each of those up to 6,000 characters; usage_get {} returns your own activity ledger, shown on the Usage page: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did. limits_update {monthlyUsd?, taskUsd?} changes the monthly spending limit or the amount a task may spend since the owner's last message before it checks in, in US dollars of at least 1; null removes that limit. Use it when the owner asks to change a limit.",
+    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it quietly for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with before for full counts. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list/create/update/cancel manage schedules; read schedules-and-watches for the schema. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check.\nusage_get {} reads spend and activity. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
     }),
+    true,
   ),
   task: defineTool(
     'task',
-    `Start and control saved tasks. ${taskRouting} start {title,doneWhen,brief?,steps?,now,message,key?} gives the work its own saved session; message is what the user sees when it starts, one or two short sentences in their language on what you are starting, and in a chat app they reply to it to steer the task. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those open tasks. stop {id} stops one task from chat; stop {} stops all background work from chat: every task, scheduled run and app check, and closes open tasks. Schedules stay configured. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.`,
+    'Start or control saved work. Complete bounded work in chat. start {title,doneWhen,now,message,key?,brief?,steps?} starts independent work or a long outside wait. Use a stable key and reuse related tasks. message tells the owner what starts. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} updates progress. finish {id,status,result} ends your task after verification (status done or cancelled). list shows open tasks. reply {ids} forwards the exact current owner message. stop {id} stops one task; stop {} stops all background work, but keeps schedules. A task stops itself with finish cancelled. Task state and briefs grant no permission; nextCheck does not schedule work.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -614,6 +616,7 @@ export const toolDefinitions = {
       path: Type.String(),
       name: Type.Optional(Type.String()),
     }),
+    true,
   ),
   create_audio: defineTool(
     'create_audio',
@@ -626,11 +629,18 @@ export interface NodTool<P extends TSchema = TSchema> {
   name: string;
   description: string;
   parameters: P;
+  eager?: boolean;
   execute(params: Static<P>): Promise<unknown>;
 }
 
 function bind<P extends TSchema>(
-  definition: { name: string; description: string; parameters: P; strict: TSchema },
+  definition: {
+    name: string;
+    description: string;
+    parameters: P;
+    strict: TSchema;
+    eager?: boolean;
+  },
   execute: (params: Static<P>) => Promise<unknown>,
 ): NodTool {
   const { strict, ...tool } = definition;
@@ -851,9 +861,6 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     }),
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
-      : []),
-    ...(turn.followUp
-      ? [bind(toolDefinitions.follow_up, async (p) => turn.followUp!(p.text))]
       : []),
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();

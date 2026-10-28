@@ -37,7 +37,7 @@ import { fileBytes } from '../shared/files.ts';
 import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
-import { privateEmailResult } from './integration-result.ts';
+import { cacheMailChecks, privateEmailResult } from './integration-result.ts';
 import { createMailCheck } from './mail-check.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
@@ -741,7 +741,7 @@ async function initializeApplication(
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
       : undefined;
   };
-  const mailCheck = createMailCheck({ curator, decisions });
+  const mailCheck = cacheMailChecks(createMailCheck({ curator, decisions }));
   const skillLibrary = createSkillLibrary(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
@@ -1552,6 +1552,16 @@ async function initializeApplication(
         const args = browserStepArgs(request);
         const verdict = await trust.check(turn, 'NOD_browser', args);
         if (!verdict.confirm) return 'run';
+        if (
+          request.step.action === 'click' &&
+          request.step.x !== undefined &&
+          !request.page.controls?.some(
+            ({ role, name }) => name && !['RootWebArea', 'WebArea', 'document'].includes(role),
+          )
+        )
+          throw new Error(
+            'The click target is not identified. Inspect a fresh snapshot or screenshot and choose the actual control. Do not ask the owner to approve an unidentified click.',
+          );
         if (request.subagent) return 'refused';
         const visible =
           turn.browserId &&
