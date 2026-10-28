@@ -101,11 +101,8 @@ export function createPiMemoryCurator(options: {
         const startedAt = new Date().toISOString();
         const started = performance.now();
         const reply = await runtime.completeSimple(model, context, {
-          signal: AbortSignal.any([
-            AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
-            ...(signal ? [signal] : []),
-          ]),
-          maxTokens: task === 'analytics' ? 2048 : 8192,
+          signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
+          maxTokens: 8192,
           reasoning: effort === 'off' ? undefined : effort,
         });
         const durationMs = performance.now() - started;
@@ -139,9 +136,7 @@ export function createPiMemoryCurator(options: {
       let reply = await complete();
       for (
         let attempt = 0;
-        attempt < (task === 'analytics' || task === 'vision' ? 0 : 2) &&
-        reply.stopReason === 'error' &&
-        !signal?.aborted;
+        attempt < (task === 'vision' ? 0 : 2) && reply.stopReason === 'error' && !signal?.aborted;
         attempt++
       )
         reply = await complete();

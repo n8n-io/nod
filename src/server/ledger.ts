@@ -244,9 +244,7 @@ export function createLedger({
                     ? 'review'
                     : request.task === 'plan'
                       ? 'tasks'
-                      : request.task === 'analytics'
-                        ? 'analytics'
-                        : 'memory',
+                      : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,

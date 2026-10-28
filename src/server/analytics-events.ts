@@ -13,168 +13,6 @@ const domain = z
     /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$/,
   );
 
-export const taskType = z.enum([
-  'research',
-  'communication',
-  'content_creation',
-  'data_analysis',
-  'file_management',
-  'scheduling',
-  'monitoring',
-  'app_setup',
-  'translation',
-  'software_development',
-  'transaction',
-  'advice',
-  'unknown',
-]);
-export const taskAction = z.enum([
-  'find',
-  'read',
-  'summarize',
-  'compare',
-  'analyze',
-  'draft',
-  'create',
-  'edit',
-  'send',
-  'organize',
-  'delete',
-  'schedule',
-  'monitor',
-  'connect',
-  'disconnect',
-  'translate',
-  'extract',
-  'convert',
-  'run',
-  'pay',
-  'book',
-  'submit',
-  'explain',
-  'plan',
-  'order',
-  'cancel',
-  'unknown',
-]);
-export const taskSubject = z.enum([
-  'web',
-  'email',
-  'message',
-  'document',
-  'spreadsheet',
-  'file',
-  'calendar',
-  'meeting',
-  'contact',
-  'task',
-  'automation',
-  'app',
-  'code',
-  'image',
-  'audio',
-  'video',
-  'product',
-  'post',
-  'finance',
-  'travel',
-  'place',
-  'device',
-  'knowledge',
-  'unknown',
-]);
-export const taskUseCase = z.enum([
-  'morning_briefing',
-  'news_digest',
-  'topic_monitoring',
-  'email_triage',
-  'reply_drafting',
-  'inbox_cleanup',
-  'message_sending',
-  'meeting_prep',
-  'meeting_notes',
-  'phone_calls',
-  'meeting_scheduling',
-  'calendar_management',
-  'reminders',
-  'task_planning',
-  'fact_checking',
-  'question_answering',
-  'how_to_advice',
-  'learning_and_tutoring',
-  'recommendations',
-  'product_research',
-  'price_tracking',
-  'online_shopping',
-  'food_ordering',
-  'returns_and_refunds',
-  'subscription_management',
-  'bill_payment',
-  'expense_tracking',
-  'finance_review',
-  'investment_monitoring',
-  'tax_paperwork',
-  'form_filling',
-  'trip_planning',
-  'travel_booking',
-  'reservations_and_tickets',
-  'home_search',
-  'local_search',
-  'contact_management',
-  'social_media',
-  'writing_and_editing',
-  'presentations',
-  'image_generation',
-  'video_creation',
-  'translation',
-  'document_analysis',
-  'data_analysis',
-  'file_organization',
-  'automation_setup',
-  'app_connection',
-  'coding_and_websites',
-  'device_control',
-  'sales_outreach',
-  'customer_support',
-  'recruiting',
-  'other',
-]);
-export const taskContext = z.enum(['work', 'personal', 'unclear']);
-export const taskCollaboration = z.enum([
-  'directive',
-  'iteration',
-  'learning',
-  'validation',
-  'unclear',
-]);
-export const taskActivities = z
-  .array(
-    z.string().refine((value) => {
-      const parts = value.split(':');
-      return (
-        parts.length === 2 &&
-        taskAction.safeParse(parts[0]).success &&
-        taskSubject.safeParse(parts[1]).success
-      );
-    }),
-  )
-  .min(1)
-  .max(8)
-  .refine((values) => new Set(values).size === values.length);
-export const taskOutcome = z.enum(['active', 'waiting', 'completed', 'failed', 'cancelled']);
-export const frustrationSignal = z.enum([
-  'explicit_complaint',
-  'repeated_correction',
-  'repeated_request',
-]);
-export const frictionReason = z.enum([
-  'output_quality',
-  'ignored_instruction',
-  'too_slow',
-  'connection_problem',
-  'execution_failure',
-  'unclear',
-]);
 export const serviceFailureReason = z.enum([
   'authentication',
   'permission',
@@ -224,21 +62,6 @@ const turnProperties = z.object({
   background: z.boolean(),
   model_provider: analyticsModelProvider.optional(),
   model: analyticsModel.optional(),
-});
-const taskProperties = z.object({
-  task_id: z.uuid(),
-  model_provider: analyticsModelProvider.optional(),
-  model: analyticsModel.optional(),
-  task_type: taskType,
-  task_action: taskAction,
-  task_subject: taskSubject,
-  task_activities: taskActivities,
-  use_case: taskUseCase,
-  context: taskContext,
-  collaboration: taskCollaboration,
-  source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
-  channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
-  starter: z.boolean(),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
   z
@@ -379,39 +202,6 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .strict(),
     })
     .strict(),
-  z.object({ event: z.literal('nod_task_started'), properties: taskProperties.strict() }).strict(),
-  z
-    .object({
-      event: z.literal('nod_task_linked'),
-      properties: taskProperties.strict(),
-    })
-    .strict(),
-  z
-    .object({
-      event: z.literal('nod_task_updated'),
-      properties: taskProperties
-        .extend({
-          outcome: taskOutcome,
-          completion_evidence: z.enum(['action_succeeded', 'settings_changed', 'inferred', 'none']),
-          elapsed_ms: duration,
-          turn_count: z.number().int().positive(),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      event: z.literal('nod_frustration_signal'),
-      properties: z
-        .object({
-          signal: frustrationSignal,
-          reason: frictionReason,
-          task_type: taskType,
-          channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
-        })
-        .strict(),
-    })
-    .strict(),
   z
     .object({
       event: z.literal('nod_memory_changed'),
@@ -464,20 +254,6 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           cost_usd: z.number().nonnegative().max(1_000_000).optional(),
           pricing: z.enum(['api', 'plan_estimate', 'unavailable']),
           duration_ms: duration.optional(),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      event: z.literal('nod_task_analysis'),
-      properties: z
-        .object({
-          outcome: z.enum(['analyzed', 'unavailable', 'invalid', 'failed', 'queue_full']),
-          source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
-          task_count: z.number().int().min(0).max(8).optional(),
-          unknown_label_count: z.number().int().min(0).max(200).optional(),
-          other_label_count: z.number().int().min(0).max(200).optional(),
         })
         .strict(),
     })

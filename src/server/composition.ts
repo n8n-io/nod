@@ -25,8 +25,8 @@ import {
   toolUsed,
   type CaptureAnalytics,
 } from './analytics.ts';
+import { clearConversationAnalytics } from './conversation-analytics.ts';
 import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
-import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
   type BrowserAction,
@@ -211,7 +211,6 @@ export interface ApplicationAdapters {
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
   imageCurator?: MemoryCurator;
-  analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
   messaging?: MessagingTransport;
@@ -543,7 +542,6 @@ export function createDefaultAdapters(
       resolve: () => models.resolveImage(),
       traces,
     }),
-    analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     decisions,
     messagingSetup: {
@@ -1361,14 +1359,7 @@ async function initializeApplication(
     if (enabled) void observeConnections?.();
   });
   void observeConnections();
-  const conversationAnalytics = createConversationAnalytics({
-    pool,
-    ownerId,
-    analytics,
-    curator: adapters.analyticsCurator ? ledger.curator(adapters.analyticsCurator) : curator,
-    secrets,
-  });
-  await conversationAnalytics.initialize();
+  await clearConversationAnalytics(pool, ownerId);
   const accountProfile = async () =>
     runtimeAccount({
       name: null,
@@ -1491,7 +1482,7 @@ async function initializeApplication(
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
       observeTurn: (turnId, operation) =>
-        conversationAnalytics.observe(turnId, operation).finally(() => {
+        analytics.withRun(ownerId, operation, turnId).finally(() => {
           void admission
             .run(() => proactivity.due())
             ?.catch((error) => logFailure('proactivity_wake', error));
@@ -2179,7 +2170,6 @@ async function initializeApplication(
       () => channels?.close(),
       () => activity.close(),
       () => stopThreadWorkers(),
-      () => conversationAnalytics.close(),
       finishWork,
       () => runtime.dispose(),
       () => artifacts.close(),

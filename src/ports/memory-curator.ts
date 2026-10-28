@@ -16,7 +16,6 @@ export interface MemoryCurator {
         | 'skill'
         | 'plan'
         | 'brief'
-        | 'analytics'
         | 'vision'
         | 'attention';
       instructions: string;
