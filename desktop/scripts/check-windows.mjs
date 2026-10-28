@@ -8,7 +8,8 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { run } from './release-tools.mjs';
 import { assetHash } from '../runtime/assets.mjs';
-import { windowsEnvironment } from '../runtime/windows.mjs';
+import { unsignedWindowsFiles, windowsEnvironment } from '../runtime/windows.mjs';
+import { windowsCodeFiles } from './windows-signing.mjs';
 
 assert.equal(process.platform, 'win32');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -16,7 +17,7 @@ const output = join(root, 'dist/windows');
 const installation = await mkdtemp(join(tmpdir(), 'nod-installed-preview-'));
 const foreign = await mkdtemp(join(tmpdir(), 'nod-foreign-folder-'));
 const alone = await mkdtemp(join(tmpdir(), 'nod-installer-alone-'));
-const receipt = { installed: false, engine: false, wsl: false };
+const receipt = { installed: false, signatures: false, engine: false, wsl: false };
 const environment = {
   ...windowsEnvironment(),
   ELECTRON_RUN_AS_NODE: '1',
@@ -38,6 +39,14 @@ try {
   const engine = join(installation, 'resources/engine');
   const archive = join(engine, 'windows-runtime/guest.tar.gz');
   await assert.rejects(stat(archive), { code: 'ENOENT' });
+  if (process.env.NOD_RELEASE_BUILD === 'true') {
+    console.log('Checking the n8n GmbH signatures.');
+    const files = [join(output, 'nod-Setup-x64.exe'), ...(await windowsCodeFiles(installation))];
+    assert.ok(files.includes(application) && files.includes(join(installation, 'Uninstall.exe')));
+    assert.ok(files.includes(join(engine, 'windows-runtime/bin/docker.exe')));
+    assert.deepEqual(await unsignedWindowsFiles(files, { timestamped: true }), []);
+    receipt.signatures = true;
+  }
   const { devDependencies } = JSON.parse(
     await readFile(join(root, 'desktop/package.json'), 'utf8'),
   );

@@ -537,6 +537,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
     env:
       NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
       NOD_RELEASE_BUILD: 'true'

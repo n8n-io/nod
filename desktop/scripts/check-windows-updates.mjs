@@ -17,7 +17,12 @@ import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
 import { transformWithEsbuild } from 'vite';
 import { windowsInstallCommand } from '../main/windows-update.mjs';
-import { protectWindowsProfile } from '../runtime/windows.mjs';
+import {
+  protectWindowsProfile,
+  stageWindowsUpdate,
+  windowsEnvironment,
+  windowsPublisher,
+} from '../runtime/windows.mjs';
 import { run } from './release-tools.mjs';
 
 assert.equal(process.platform, 'win32', 'Use a disposable Windows runner.');
@@ -41,7 +46,21 @@ const receipt = { source: await run('git', ['rev-parse', 'HEAD'], { cwd: reposit
 const challenge = randomBytes(32).toString('base64url');
 let child;
 let installed = false;
+let certificates = [];
 let failure;
+const fixtureSigning = [
+  "$ErrorActionPreference = 'Stop'",
+  "foreach ($name in 'foreign', 'n8n') {",
+  "  $usage = if ($name -eq 'n8n') { $env:NOD_PUBLISHER_PROFILE } else { '1.3.6.1.4.1.311.97.1.0' }",
+  "  $certificate = New-SelfSignedCertificate -Type Custom -Subject 'CN=n8n GmbH' -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 -TextExtension @(\"2.5.29.37={text}1.3.6.1.5.5.7.3.3,$usage\") -CertStoreLocation 'Cert:\\CurrentUser\\My' -NotAfter (Get-Date).AddHours(2)",
+  '  $certificate.Thumbprint',
+  '  $public = Join-Path $env:NOD_SIGNATURES "$name.cer"',
+  '  Export-Certificate -Cert $certificate -FilePath $public | Out-Null',
+  "  Import-Certificate -FilePath $public -CertStoreLocation 'Cert:\\LocalMachine\\Root' | Out-Null",
+  '  $signature = Set-AuthenticodeSignature -LiteralPath (Join-Path $env:NOD_SIGNATURES "$name.exe") -Certificate $certificate -HashAlgorithm SHA256 -IncludeChain All',
+  '  if ($signature.Status -ne \'Valid\') { throw "The $name fixture signature is $($signature.Status)." }',
+  '}',
+].join('\n');
 
 async function recorded() {
   const content = await readFile(events, 'utf8').catch(() => '');
@@ -228,6 +247,50 @@ app.whenReady().then(async () => {
       { timeout: 600_000 },
     );
   }
+  receipt.stage = 'checking update signatures';
+  const signatures = join(root, 'signatures');
+  await mkdir(signatures);
+  for (const name of ['unsigned', 'foreign', 'n8n'])
+    await copyFile(installers['1.0.1'], join(signatures, `${name}.exe`));
+  certificates = (
+    await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', fixtureSigning], {
+      env: {
+        ...windowsEnvironment(),
+        NOD_SIGNATURES: signatures,
+        NOD_PUBLISHER_PROFILE: windowsPublisher.profile,
+      },
+      output: 'stdout',
+    })
+  )
+    .split(/\r?\n/)
+    .filter(Boolean);
+  for (const [name, accepted] of [
+    ['unsigned', false],
+    ['foreign', false],
+    ['n8n', true],
+  ]) {
+    const bytes = await readFile(join(signatures, `${name}.exe`));
+    const staged = stageWindowsUpdate(
+      {
+        version: '1.0.1',
+        installer: {
+          file: 'nod-Setup-x64.exe',
+          url: 'https://updates.example.invalid/nod-Setup-x64.exe',
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        },
+        runtime: { file: 'nod-Runtime-win32-x64.tar.gz' },
+      },
+      {
+        directory: join(root, 'staged'),
+        resourcesPath: repository,
+        includeRuntime: false,
+        fetch: async () => new Response(bytes),
+      },
+    );
+    if (accepted) await staged;
+    else await assert.rejects(staged, { message: 'The Nod update is not signed by n8n GmbH.' });
+  }
   receipt.stage = 'installing 1.0.0';
   await run(installers['1.0.0'], ['/S', `/D=${installation}`], {
     timeout: 180_000,
@@ -300,6 +363,7 @@ app.whenReady().then(async () => {
     realNsis: true,
     realElectron: true,
     failedInstallPreserved: true,
+    foreignInstallerRefused: true,
     encryptedProfilePreserved: true,
     encryptedIntegrationIdentityPreserved: true,
     completedOnboardingPreserved: true,
@@ -320,6 +384,17 @@ app.whenReady().then(async () => {
   let cleanupError;
   try {
     if (child?.exitCode === null) child.kill();
+    if (certificates.length)
+      await run(
+        powershell,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'foreach ($thumbprint in $env:NOD_CERTIFICATES.Split(\',\')) { Remove-Item -LiteralPath "Cert:\\LocalMachine\\Root\\$thumbprint", "Cert:\\CurrentUser\\My\\$thumbprint" }',
+        ],
+        { env: { ...windowsEnvironment(), NOD_CERTIFICATES: certificates.join(',') } },
+      );
     if (installed)
       await run(join(installation, 'Uninstall.exe'), ['/S', `_?=${installation}`], {
         windowsVerbatimArguments: true,

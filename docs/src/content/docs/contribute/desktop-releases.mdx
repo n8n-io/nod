@@ -64,6 +64,26 @@ CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, o
 - The default mode, `self-signed`, signs with an internal certificate and skips notarization. It needs only the certificate rows and a private repository.
 - The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there and republish the **Nod Install** workflow.
 
+### Windows signing
+
+Windows builds are signed with Azure Artifact Signing, so Windows shows **n8n GmbH** as the publisher. Microsoft keeps the key, and GitHub needs no secret for it. The Windows release job signs in to Azure with GitHub's sign-in token for the `release` environment, which pull request jobs can't get.
+
+| Azure resource      | Name                                                       |
+| ------------------- | ---------------------------------------------------------- |
+| Subscription        | n8n Labs                                                   |
+| Resource group      | `nod-signing`, West Europe                                 |
+| Signing account     | `n8n-nod`, Basic plan                                      |
+| Certificate profile | `nod-windows`, Public Trust                                |
+| App registration    | `nod-release-signing`, with the profile's signer role only |
+
+The account, profile, tenant and app IDs are in `desktop/scripts/windows-signing.mjs`. None of them is secret.
+
+:::danger[Never delete the certificate profile]
+Installed apps accept an update only when its installer carries the `nod-windows` profile's own identifier, which stays the same when Microsoft renews the certificate each day. A new profile gets a new identifier, so every installed Windows app would refuse updates until it's reinstalled by hand.
+:::
+
+Microsoft verified n8n GmbH once for the profile. It emails the primary contact from 60 days before that verification expires, and signing stops if it lapses. Renew it in the signing account under **Identity validations**.
+
 ### Create or renew the certificate
 
 Developer ID certificates expire. Apps signed before then keep opening, but releases fail until you renew. Only the Apple account holder, or an admin they allow, can create one.
@@ -106,7 +126,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
 
-4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. It publishes one release only if every build and check passes. When the n8n download service is configured, it fetches each installer, runtime pack and update through that service. This check uses the app's own update code for both Macs and Windows. If any download is unavailable, the release goes back to draft.
+4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. It publishes one release only if every build and check passes. When the n8n download service is configured, it fetches each installer, runtime pack and update through that service. This check uses the app's own update code for both Macs and Windows. If any download is unavailable, the release goes back to draft.
 
 </Steps>
 
@@ -154,6 +174,7 @@ Drafts are never offered to the installer or the updater.
 - A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and its imports, the root lockfile's entries for the packages the browser image bundles or builds with (the worker's imports, agent-browser and esbuild) and their dependencies, the pnpm version, `pnpm-workspace.yaml`, the desktop lockfile, scripts the images copy, Dockerfiles, pinned downloads, and runtime build scripts. Other root dependency changes, workflow changes and edits to the fingerprint script alone do not rebuild it. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint does not cover, or when the browser bundle includes a package whose lockfile entry it does not cover.
 - A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it. A Windows install that already has that runtime then updates with only the installer.
 - The first release built in a new week (from Monday, UTC) rebuilds both runtimes and refetches the images' system packages, such as Chromium, instead of reusing Docker's cached layers. Later releases that week reuse them. A week without a release build ships no refresh.
+- A Windows app refuses a downloaded installer unless n8n GmbH signed it with the `nod-windows` profile.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept.
 
 ## Help private-alpha testers
@@ -210,11 +231,9 @@ This is an ad-hoc signed local app, not a release. It reuses the cached workspac
 
 ## Signing limits
 
-:::caution[Windows builds are unsigned]
-Mac builds are signed with n8n's Developer ID and notarized by Apple. Windows builds are unsigned and can show a publisher warning.
-:::
+Mac builds are signed with n8n's Developer ID and notarized by Apple. Windows builds are signed by n8n GmbH with Artifact Signing. SmartScreen can still warn about a new release until Windows trusts its reputation.
 
-Updates check the new build against n8n's Apple team, not one certificate, so a renewed certificate doesn't break them. macOS can still ask for Keychain approval. Nod explains that prompt before it reads saved API keys.
+Updates check the new build against n8n's Apple team, or the Windows certificate profile, not one certificate, so a renewed certificate doesn't break them. macOS can still ask for Keychain approval. Nod explains that prompt before it reads saved API keys.
 
 GitHub-hosted Mac runners can't run nested virtualization. CI checks binaries and packaging, but it can't prove Nod's private computer boots on a real Mac.
 

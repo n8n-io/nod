@@ -22,6 +22,10 @@ import { execute, finishRuntime } from './index.mjs';
 const holders = new Map();
 const distributionName = (root) =>
   `nod-${createHash('sha256').update(resolve(root).toLowerCase()).digest('hex').slice(0, 12)}`;
+export const windowsPublisher = Object.freeze({
+  name: 'n8n GmbH',
+  profile: '1.3.6.1.4.1.311.97.516399124.569093350.771684794.174905458',
+});
 
 export function windowsEnvironment() {
   const environment = Object.fromEntries(
@@ -124,9 +128,45 @@ async function download(
     throw new Error('The Nod download failed its integrity check. Try again.');
 }
 
+export async function unsignedWindowsFiles(files, { timestamped = false, signal } = {}) {
+  const env = {
+    ...windowsEnvironment(),
+    NOD_PUBLISHER: windowsPublisher.name,
+    NOD_PUBLISHER_PROFILE: windowsPublisher.profile,
+    NOD_TIMESTAMPED: timestamped ? '1' : '0',
+  };
+  const unsigned = [];
+  for (let index = 0; index < files.length; index += 50) {
+    const output = await execute(
+      join(env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "$ErrorActionPreference = 'Stop'; foreach ($file in (ConvertFrom-Json $env:NOD_SIGNED_FILES)) { $signature = Get-AuthenticodeSignature -LiteralPath $file; $certificate = $signature.SignerCertificate; if (-not ($signature.Status -eq 'Valid' -and $certificate.GetNameInfo('SimpleName', $false) -eq $env:NOD_PUBLISHER -and @($certificate.EnhancedKeyUsageList.ObjectId) -contains $env:NOD_PUBLISHER_PROFILE -and ($env:NOD_TIMESTAMPED -ne '1' -or $signature.TimeStamperCertificate))) { $file } }",
+      ],
+      {
+        env: { ...env, NOD_SIGNED_FILES: JSON.stringify(files.slice(index, index + 50)) },
+        signal,
+        timeout: 300_000,
+      },
+    );
+    unsigned.push(...output.split(/\r?\n/).filter(Boolean));
+  }
+  return unsigned;
+}
+
 export async function stageWindowsUpdate(
   candidate,
-  { directory, resourcesPath, signal, fetch, includeRuntime = true, onProgress = () => {} },
+  {
+    directory,
+    resourcesPath,
+    signal,
+    fetch,
+    includeRuntime = true,
+    onProgress = () => {},
+    unsigned = unsignedWindowsFiles,
+  },
 ) {
   if (
     !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
@@ -158,6 +198,8 @@ export async function stageWindowsUpdate(
       done += file.bytes;
       onProgress(done / total);
     }
+    if ((await unsigned([join(target, candidate.installer.file)], { signal })).length)
+      throw new Error(`The Nod update is not signed by ${windowsPublisher.name}.`);
     return target;
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
