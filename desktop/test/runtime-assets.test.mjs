@@ -732,7 +732,7 @@ async function releaseFixture(
   const updateName = 'nod-arm64.zip';
   const feed = {
     url: `https://github.com/synthetic/nod/releases/download/${appTag}/${updateName}`,
-    name: `nod ${version}`,
+    name: `Nod ${version}`,
     pub_date: '2026-10-04T12:00:00Z',
   };
   const metadata = {
