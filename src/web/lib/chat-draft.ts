@@ -4,7 +4,7 @@ import { ownedArtifactUrl } from './attachment-url';
 
 export type ChatDraft = {
   text: string;
-  reply: Pick<Message, 'id' | 'role' | 'text'> | null;
+  reply: Message['replyTo'];
   attachments: Artifact[];
   missing: string[];
 };

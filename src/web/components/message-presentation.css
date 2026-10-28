@@ -12,8 +12,8 @@
   overflow-wrap: anywhere;
 }
 .chat-page .message .message-row > .message-bubble:has(.message-presentation) {
-  width: min(calc(100% - 40px), 680px);
-  max-width: calc(100% - 40px);
+  width: min(calc(100% - 72px), 680px);
+  max-width: calc(100% - 72px);
 }
 .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
   width: 100%;

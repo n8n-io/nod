@@ -76,11 +76,10 @@ function Welcome() {
     </div>
   );
 }
-function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: string }) {
-  const detail = item?.step;
-  const text = item?.title || detail;
+function Working({ items = [], label = 'Nod is working' }: { items?: Activity[]; label?: string }) {
+  const details = items.filter((item) => item.title || item.step);
   return (
-    <div className="thinking" role="status" aria-label={text ? undefined : label}>
+    <div className="thinking" role="status" aria-label={details.length ? undefined : label}>
       <div className="assistant-mark" aria-hidden="true">
         <BrandMark small />
       </div>
@@ -90,17 +89,21 @@ function Working({ item, label = 'Nod is working' }: { item?: Activity; label?: 
           <i />
           <i />
         </span>
-        {text && (
-          <span className="working-text">
-            {item.title && <strong>{item.title}</strong>}
-            {detail && (
-              <span key={detail}>
-                <Markdown allowedElements={[]} unwrapDisallowed>
-                  {detail}
-                </Markdown>
+        {details.length > 0 && (
+          <div className="working-details">
+            {details.map((item) => (
+              <span className="working-text" key={item.turnId}>
+                {item.title && <strong>{item.title}</strong>}
+                {item.step && (
+                  <span key={item.step}>
+                    <Markdown allowedElements={[]} unwrapDisallowed>
+                      {item.step}
+                    </Markdown>
+                  </span>
+                )}
               </span>
-            )}
-          </span>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -291,7 +294,7 @@ export function Chat({
     text: string;
     kind: 'success' | 'error';
   } | null>(null);
-  const [replyTo, setReplyTo] = useState<Pick<Message, 'id' | 'role' | 'text'> | null>(null);
+  const [replyTo, setReplyTo] = useState<Message['replyTo']>(null);
   const taskReply = useRef<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
@@ -380,6 +383,7 @@ export function Chat({
   const streamEntries = Object.entries(streams).filter(
     ([id, value]) => value && !persistedStreams.has(id),
   );
+  const visibleWork = live.filter((item) => item.taskId || streamEntries.length === 0);
   const streamIds = new Set(streamEntries.map(([id]) => id));
   for (const id of streamTimes.current.keys())
     if (!streamIds.has(id)) streamTimes.current.delete(id);
@@ -581,7 +585,7 @@ export function Chat({
   async function send(
     value: string,
     attachments: Artifact[],
-    reply: Pick<Message, 'id' | 'role' | 'text'> | null = replyTo,
+    reply: Message['replyTo'] = replyTo,
     source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' = reply &&
     reply.id === taskReply.current
       ? 'task_reply'
@@ -656,7 +660,7 @@ export function Chat({
       ...(reply
         ? {
             replyToMessageId: reply.id,
-            replyTo: { id: reply.id, role: reply.role, text: reply.text },
+            replyTo: { id: reply.id, role: reply.role, text: reply.text, isQuote: reply.isQuote },
           }
         : {}),
     };
@@ -682,7 +686,6 @@ export function Chat({
         };
       }
       const replaySession = analyticsReplaySession();
-      const repliedMessage = replyId ? allMessages.find((item) => item.id === replyId) : null;
       const messageBody =
         submittedBody ??
         JSON.stringify({
@@ -693,9 +696,7 @@ export function Chat({
           ...(replyId
             ? {
                 replyToMessageId: replyId,
-                ...(reply && (repliedMessage?.audioCaption ?? repliedMessage?.text) !== reply.text
-                  ? { replyQuote: reply.text.slice(0, 4000) }
-                  : {}),
+                ...(reply?.isQuote ? { replyQuote: reply.text.slice(0, 4000) } : {}),
               }
             : {}),
           ...(seenMessageId ? { seenMessageId } : {}),
@@ -1190,6 +1191,7 @@ export function Chat({
                               taskReply.current = null;
                               setReplyTo({
                                 ...message,
+                                isQuote: Boolean(quote?.trim()),
                                 text: quote?.trim()
                                   ? quote
                                   : (message.audioCaption ?? message.text),
@@ -1213,22 +1215,15 @@ export function Chat({
                   <span className="task-bubble">Pulling together a few ideas to get started…</span>
                 </div>
               ) : (
-                <>
-                  {live
-                    .filter((item) => item.taskId || streamEntries.length === 0)
-                    .map((item) => (
-                      <Working key={item.turnId} item={item} />
-                    ))}
-                  {(sending || resetting || welcoming) &&
+                (visibleWork.length > 0 ||
+                  ((sending || resetting || welcoming) &&
                     !working &&
-                    streamEntries.length === 0 && (
-                      <Working
-                        label={
-                          resetting ? 'Starting setup' : sending ? 'Sending message' : undefined
-                        }
-                      />
-                    )}
-                </>
+                    streamEntries.length === 0)) && (
+                  <Working
+                    items={visibleWork}
+                    label={resetting ? 'Starting setup' : sending ? 'Sending message' : undefined}
+                  />
+                )
               )}
             </div>
             <div ref={bottom} />

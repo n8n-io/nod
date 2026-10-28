@@ -19,6 +19,7 @@ import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
 import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
+import { MessageQuote } from './message';
 
 interface DraftAttachment {
   id: string;
@@ -45,11 +46,11 @@ interface ComposerProps {
   active?: boolean;
   draftKey?: string;
   privateReply?: boolean;
-  restoreReply?(reply: Pick<Message, 'id' | 'role' | 'text'> | null): void;
+  restoreReply?(reply: Message['replyTo']): void;
   ready: boolean;
   text: string;
   setText(value: string): void;
-  replyTo: Pick<Message, 'id' | 'role' | 'text'> | null;
+  replyTo: Message['replyTo'];
   clearReply(): void;
   onSend(text: string, attachments: Artifact[], recording?: File): Promise<ComposerSendResult>;
   onStop?(): void;
@@ -655,10 +656,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
-          <div>
-            <strong>Replying to {replyTo.role === 'assistant' ? 'Nod' : 'yourself'}</strong>
-            <span>{replyTo.text || 'Attachment'}</span>
-          </div>
+          <MessageQuote message={replyTo} composing />
           <Button
             type="button"
             variant="ghost"

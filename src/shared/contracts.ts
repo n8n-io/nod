@@ -33,7 +33,7 @@ export interface Message {
   reaction?: MessageReaction | null;
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;
   replyToMessageId?: string | null;
-  replyTo?: { id: string; role: 'user' | 'assistant'; text: string } | null;
+  replyTo?: { id: string; role: 'user' | 'assistant'; text: string; isQuote?: boolean } | null;
   suggestions?: TaskSuggestions | null;
 }
 export interface MessageReceipt {

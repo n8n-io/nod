@@ -3933,6 +3933,29 @@ test(
             await quoted.query('ROLLBACK');
             quoted.release();
           }
+          const fullReplyText = `**${'Launch scope '.repeat(120)}**`;
+          await db.pool.query('UPDATE messages SET text=$1 WHERE id=$2', [
+            fullReplyText,
+            matches[0].id,
+          ]);
+          for (const replyQuote of [null, '<button data-x="1"> *literal*']) {
+            const id = randomUUID();
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,reply_to_message_id,reply_quote) VALUES($1,$2,'user','About this passage',$3,$4,$5)",
+              [id, ownerId, freshThread, matches[0].id, replyQuote],
+            );
+            const response = await request('GET', `/api/messages/around/${id}`);
+            assert.equal(response.statusCode, 200);
+            const reply = response
+              .json<
+                Array<{ id: string; replyTo: { id: string; text: string; isQuote: boolean } }>
+              >()
+              .find((item) => item.id === id)!.replyTo;
+            assert.equal(reply.id, matches[0].id);
+            assert.equal(reply.isQuote, replyQuote !== null);
+            if (replyQuote) assert.equal(reply.text, replyQuote);
+            else assert.equal(reply.text, fullReplyText);
+          }
           const message = [...seen][0];
           const react = (id: string, reaction: string) =>
             request('POST', `/api/messages/${id}/reaction`, { reaction });

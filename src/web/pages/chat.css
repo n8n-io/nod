@@ -250,21 +250,43 @@
 .message-reply-quote {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   margin: 0 0 8px;
-  padding: 0 0 0 8px;
-  border-left: 2px solid var(--border);
+  padding: 6px 10px;
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
   color: var(--text-secondary);
+  text-align: left;
+  font-family: inherit;
   font-size: var(--text-control);
   line-height: 1.5;
+  cursor: pointer;
 }
-.message-reply-quote span {
+.message-reply-quote:hover {
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+.message-reply-quote:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.message-reply-quote > strong {
+  font-weight: 500;
+  color: var(--foreground);
+}
+.message-excerpt {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.message-excerpt code {
+  font-size: 0.9em;
 }
 .chat-page .thinking {
   display: flex;
@@ -350,21 +372,13 @@
   padding: 8px 8px 8px;
   gap: 8px;
 }
-.composer-reply > div {
+.composer-reply > .message-reply-quote {
   flex: 1;
   min-width: 0;
+  margin: 0;
 }
-.composer-reply strong,
-.composer-reply span {
-  display: block;
-  font-size: var(--text-control);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.composer-reply strong {
-  font-weight: 500;
-  margin-bottom: 0;
+.composer-reply .message-excerpt {
+  -webkit-line-clamp: 1;
 }
 .record-button {
   color: var(--muted-foreground);
@@ -623,6 +637,11 @@
   flex-shrink: 0;
   padding: 0;
   background: none;
+}
+.chat-page .working-details {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 .chat-page .working-text {
   display: flex;

@@ -19,7 +19,7 @@ import {
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
 import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
-import { MessageText } from '../src/web/components/message.tsx';
+import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { ownerAddress } from '../src/providers/discovered/remote.ts';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
@@ -375,6 +375,34 @@ test('chat HTML cannot run scripts, submit forms, load trackers or link to local
   ])
     assert.doesNotMatch(result, expression);
   assert.match(result, /<input(?=[^>]*type="checkbox")(?=[^>]*disabled="")[^>]*>/);
+});
+
+test('reply excerpts cannot load media or expose nested actions', () => {
+  const result = renderToStaticMarkup(
+    createElement(MessageQuote, {
+      message: {
+        id: 'quoted-message',
+        role: 'assistant',
+        text: '<u onclick="alert(1)">text</u><script>alert(1)</script><iframe src="https://evil.example"></iframe><form action="/api/messages"><input name="text"></form><a href="javascript:alert(1)">unsafe</a>\n\n[Connect](/apps?connect=slack)\n\n![owned](/api/artifacts/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa)\n\n![remote](https://evil.example/pixel)',
+      },
+    }),
+  );
+  assert.equal((result.match(/<button\b/g) ?? []).length, 1);
+  assert.doesNotMatch(result, /<(?:a|img|input|form|script|iframe)\b|onclick=|onerror=/i);
+  assert.match(result, /<u>text<\/u>/);
+  assert.match(result, /owned/);
+  const selected = renderToStaticMarkup(
+    createElement(MessageQuote, {
+      message: {
+        id: 'quoted-message',
+        role: 'assistant',
+        text: '<button data-x="1"> *literal*',
+        isQuote: true,
+      },
+    }),
+  );
+  assert.match(selected, /&lt;button data-x=&quot;1&quot;&gt; \*literal\*/);
+  assert.equal((selected.match(/<button\b/g) ?? []).length, 1);
 });
 
 test('plain browser connection paths hide their token behind one fixed action', () => {

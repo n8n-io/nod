@@ -20,7 +20,7 @@ You can paste Markdown or formatted text. Chat, feedback and message display use
 Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline.
 
 - **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. Nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. To see the time below the bubble, hover over the message, focus one of its controls, or tap its text. The time does not change the bubble's size.
+- **Reply to a message.** Hover over a message and select **Reply**, or right-click inside the bubble and select **Reply**. On touch screens, the reply button stays visible. The composer and sent reply show a formatted excerpt. Select it to jump to the original message, then select **Return to where you were** to go back. Use **Message actions** to copy text. To see the time below a bubble, hover over the message, focus one of its controls, or tap its text.
 
 Your unfinished draft stays on this device for your account and conversation. After a reload, Nod restores its text, reply target, and available uploaded files. It checks saved files before you can send them. If a check fails, select **Retry** or remove the file. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.
 
@@ -127,6 +127,8 @@ When a task needs a decision, an approval or your help in its browser, it asks a
 Nod doesn't ask for passwords or card numbers in chat. It uses a saved login or a private form instead. See [Vault](/trust/vault/).
 
 ## Stop Nod
+
+While Nod works, one progress indicator shows the chat's activity and any background tasks.
 
 To stop Nod, select **Stop** next to the send button.
 

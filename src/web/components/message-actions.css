@@ -1,5 +1,5 @@
 .chat-page .message .message-row > .message-bubble {
-  max-width: min(calc(100% - 40px), 640px);
+  max-width: min(calc(100% - 72px), 640px);
 }
 
 .chat-page .message-row:not(:last-child):not(:has(.has-reaction)) {
@@ -19,7 +19,9 @@
   right: -36px;
 }
 
-.chat-page .message-bubble:has(.message-attachments) > .message-react-trigger {
+.chat-page
+  .message-bubble:is(:has(.message-attachments), :has(.message-presentation))
+  > :is(.message-react-trigger, .message-reply-trigger) {
   top: 44px;
   transform: none;
 }
@@ -75,6 +77,17 @@
   right: -36px;
   top: 50%;
   transform: translateY(-50%);
+}
+
+.chat-page .message-reply-trigger {
+  right: -68px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.chat-page .message-user .message-reply-trigger {
+  right: auto;
+  left: -68px;
 }
 
 .chat-page .message-menu-trigger {
