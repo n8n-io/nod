@@ -24,7 +24,7 @@ The desktop app checks n8n's update service for new versions, which sees your IP
 
 A self-hosted server uses persistent Docker volumes and its private environment file; see [Storage and backups](/deploy/server-operations/). Connected desktop clients keep the server address and an OS-encrypted access token, plus preferences, drafts and temporary files. They do not create a separate assistant or Composio identity. Connecting does not move an existing local assistant to the server.
 
-Unfinished setup interviews are encrypted in your installation’s private storage. Continuing saves your answers to memory and removes the draft text; **Change my answers** discards it without saving. An encrypted completion marker contains only a random interview identifier and expiry, so returning through setup does not save old answers again. Drafts and completion markers expire after 30 days and are discarded the next time Nod reads them. A completed interview can remain in the current tab while you go back through setup; that temporary copy is shown only while its completion marker is current and is cleared when onboarding finishes.
+Setup uses normal chat and has no separate interview model. Older unfinished interviews stay encrypted in your installation’s private storage. The existing private API can read, save or reset those records. Saving adds the answers to memory and replaces the draft with an encrypted completion marker. The marker prevents a second save. Drafts and markers expire after 30 days and are removed when next read. The API cannot generate another interview reply.
 
 For what Nod stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-nod-stores).
 

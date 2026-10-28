@@ -2002,7 +2002,6 @@ async function initializeApplication(
     ownerId,
     pool,
     keyStore: adapters.keyStore,
-    curator: onboardingCurator,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);

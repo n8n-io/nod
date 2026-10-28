@@ -15,8 +15,6 @@ export function connectedGmail(connection: Connection) {
 }
 export const interviewQuestions = 3;
 export const interviewAnswerChars = 1200;
-export type InterviewMessage = { from: 'nod' | 'owner'; text: string };
-export type InterviewResponse = { messages: string[]; done: boolean };
 export type OnboardingInterview = {
   generation: string;
   completed: boolean;

@@ -11,7 +11,6 @@ export interface MemoryCurator {
         | 'remember'
         | 'review'
         | 'access'
-        | 'interview'
         | 'style'
         | 'skill'
         | 'plan'
