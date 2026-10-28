@@ -1,18 +1,18 @@
 import { createHash } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import type { ObservationProvider } from '../ports/proactivity.ts';
+import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 
 export function createTaskObservations(
   pool: Pool,
   ownerId: string,
   redact: (value: unknown) => unknown,
-): ObservationProvider {
+): ObservationProvider & { sources(client?: PoolClient): Promise<ObservationSource[]> } {
   return {
     id: 'work',
-    sources: async () => {
+    sources: async (client?: PoolClient) => {
       const change = (
-        await pool.query(
+        await (client ?? pool).query(
           'SELECT jsonb_agg(jsonb_build_array(id,title,done_when,state,result,waiting_for,next_check) ORDER BY id) AS state FROM tasks WHERE owner_id=$1',
           [ownerId],
         )

@@ -121,7 +121,7 @@ export function createConnectionSources(options: {
     input: ObservationQuery,
     signal: AbortSignal,
   ): Promise<ObservationBatch>;
-  accounts(): Promise<AppAccount[]>;
+  accounts(client?: PoolClient): Promise<AppAccount[]>;
   search(account: AppAccount, query: string, signal: AbortSignal): Promise<unknown>;
   read(
     account: AppAccount,
@@ -188,7 +188,7 @@ export function createConnectionSources(options: {
     async sources(client?: PoolClient): Promise<ObservationSource[]> {
       const [recorded, accounts] = await Promise.all([
         options.recorded(client),
-        options.accounts(),
+        options.accounts(client),
       ]);
       return [
         ...recorded.map((source) => ({

@@ -664,8 +664,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   if ((await pool.query('SELECT 1 FROM vault_cards WHERE owner_id=$1 LIMIT 1', [owner])).rowCount)
     await key().catch((error: unknown) => logFailure('vault_security_code_removal', error));
 
-  async function list(ownerId = owner) {
-    const { rows } = await pool.query<EntryRow>(
+  async function list(ownerId = owner, client?: PoolClient) {
+    const { rows } = await (client ?? pool).query<EntryRow>(
       'SELECT * FROM vault_entries WHERE owner_id = $1 ORDER BY updated_at DESC',
       [ownerId],
     );

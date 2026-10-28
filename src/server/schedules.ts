@@ -566,10 +566,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return next;
   }
 
-  async function read(id: string) {
+  async function read(id: string, client?: PoolClient) {
     z.uuid().parse(id);
     const row = (
-      await pool.query<ScheduleRow>(
+      await (client ?? pool).query<ScheduleRow>(
         `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2`,
         [id, ownerId],
       )
@@ -585,10 +585,15 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       });
   }
 
-  async function validateUpdate(id: string, raw: unknown, expectedRevision?: number) {
+  async function validateUpdate(
+    id: string,
+    raw: unknown,
+    expectedRevision?: number,
+    client?: PoolClient,
+  ) {
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    const previous = await read(id);
+    const previous = await read(id, client);
     assertRevision(previous, expectedRevision);
     updateValue(previous, input);
     return input;

@@ -293,9 +293,9 @@ export async function createDiscoveredConnections(
     if (!result.rows[0]) throw error('This connected account is unavailable.', 404);
     return result.rows[0];
   }
-  async function list(): Promise<Connection[]> {
+  async function list(client?: PoolClient): Promise<Connection[]> {
     const rows = (
-      await pool.query<AccountRow>(
+      await (client ?? pool).query<AccountRow>(
         'SELECT * FROM discovered_connections WHERE owner_id=$1 ORDER BY created_at',
         [owner],
       )
@@ -1269,12 +1269,12 @@ export async function createDiscoveredConnections(
     );
     return loaded.filter((server) => server !== undefined);
   }
-  async function selected(action: string, args: Record<string, unknown>) {
+  async function selected(action: string, args: Record<string, unknown>, client?: PoolClient) {
     const connectionId = z.uuid().safeParse(args.connectionId);
     const pathId = z.uuid().safeParse(args.pathId);
     const row = connectionId.success
       ? (
-          await pool.query<AccountRow>(
+          await (client ?? pool).query<AccountRow>(
             'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
             [owner, connectionId.data],
           )
@@ -1501,8 +1501,8 @@ export async function createDiscoveredConnections(
     reconnect,
     search,
     servers,
-    validate: async (action: string, args: Record<string, unknown>) => {
-      await selected(action, args);
+    validate: async (action: string, args: Record<string, unknown>, client?: PoolClient) => {
+      await selected(action, args, client);
     },
     execute,
     disconnect,

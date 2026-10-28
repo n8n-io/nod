@@ -968,8 +968,8 @@ async function initializeApplication(
     baseUrl: publicOrigin,
     callbackReturnTo: desktopMode ? 'window' : undefined,
     discovered,
-    browserAccounts: () => vault.list(ownerId),
-    browserConnections: () => browserConnections.list(),
+    browserAccounts: (client) => vault.list(ownerId, client),
+    browserConnections: (client) => browserConnections.list(client),
     icon,
   });
   vault = await createVault(pool, {
@@ -1164,7 +1164,7 @@ async function initializeApplication(
       analytics.actionExecuted(ownerId, action);
       return result;
     },
-    async (action, args, expectedRevision) => {
+    async (action, args, expectedRevision, client) => {
       if (['NOD_browser', 'NOD_vault_allow'].includes(action)) return;
       if (action === 'NOD_limits_update') limitsInput.parse(args);
       else if (action.startsWith('NOD_')) {
@@ -1175,8 +1175,8 @@ async function initializeApplication(
           throw Object.assign(new Error('This schedule needs a fresh approval.'), {
             statusCode: 409,
           });
-        await personal.validateReview(action.slice('NOD_'.length), args, expectedRevision);
-      } else await integrations.prepare(ownerId, action, args);
+        await personal.validateReview(action.slice('NOD_'.length), args, expectedRevision, client);
+      } else await integrations.prepare(ownerId, action, args, undefined, undefined, false, client);
     },
     (reply) => trust.answer(reply),
     communication.describe,
@@ -1197,8 +1197,8 @@ async function initializeApplication(
       .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
   const appReads = {
-    accounts: async () => {
-      const connected = (await integrations.list(ownerId, { refresh: false })).filter(
+    accounts: async (client?: import('pg').PoolClient) => {
+      const connected = (await integrations.list(ownerId, { refresh: false, client })).filter(
         (account) =>
           account.status === 'connected' &&
           !account.savedLogin &&
@@ -1207,7 +1207,7 @@ async function initializeApplication(
       );
       const accounts = await Promise.all(
         connected.map(async (account) => {
-          const binding = await integrations.binding(account.connectionId!);
+          const binding = await integrations.binding(account.connectionId!, client);
           return binding
             ? {
                 connectionId: account.connectionId!,
@@ -1851,8 +1851,8 @@ async function initializeApplication(
         const verdict = await trust.check(turn, action, args);
         await options.admit?.(verdict.confirm);
         const prepared = hasWorkspaceFiles(args)
-          ? await withTurnLock(turn.turnId, () =>
-              integrations.prepare(ownerId, action, args, turn, options.signal, true),
+          ? await withTurnLock(turn.turnId, (client) =>
+              integrations.prepare(ownerId, action, args, turn, options.signal, true, client),
             )
           : await integrations.prepare(ownerId, action, args);
         const account = verdict.confirm

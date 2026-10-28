@@ -160,6 +160,7 @@ export async function createApprovals(
     action: string,
     args: Record<string, unknown>,
     expectedRevision?: number,
+    client?: PoolClient,
   ) => Promise<void>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
   describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
@@ -307,7 +308,7 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
-      await preflight?.(action, snapshot, expectedRevision);
+      await preflight?.(action, snapshot, expectedRevision, client);
       if (
         !allowed &&
         (
@@ -536,6 +537,7 @@ export async function createApprovals(
         selected.action,
         selected.args,
         selected.expected_revision ?? undefined,
+        client,
       ).then(
         () => undefined,
         (error: unknown) => ({ error }),

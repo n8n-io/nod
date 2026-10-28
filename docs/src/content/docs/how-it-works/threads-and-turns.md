@@ -63,6 +63,8 @@ stateDiagram-v2
 
 `withTurnLock(turnId, op)` fences every database write a turn makes. The write runs only if the turn is still `running` on the active thread. A stopped, finished or reset turn can't write anything late, but an outside action that already started can still finish.
 
+Account, schedule and source checks inside a transaction use its database connection. They do not wait for a second connection while they hold the first. Approval and source checks keep their normal locks and owner scope.
+
 ## One background observer
 
 App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm; the transcript stays saved. A turn runs alone in that session. New signals received during work wait for its next turn.

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { getDomain } from 'tldts';
 import { z } from 'zod';
 import type { Computer } from '../ports/computer.ts';
@@ -327,9 +327,9 @@ export async function createBrowserConnections(
     return ['queued', 'running', 'waiting'].includes(latest.rows[0]?.status ?? '');
   }
 
-  async function list(): Promise<Connection[]> {
+  async function list(client?: PoolClient): Promise<Connection[]> {
     const rows = (
-      await pool.query<Row>(
+      await (client ?? pool).query<Row>(
         'SELECT * FROM browser_connections WHERE owner_id=$1 ORDER BY created_at DESC',
         [options.ownerId],
       )

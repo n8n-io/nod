@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
 import { controlInput, forgetInput, forgetReview, type MemoryService } from './memory.ts';
@@ -74,6 +75,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     action: string,
     args: Record<string, unknown>,
     expectedRevision?: number,
+    client?: PoolClient,
   ): Promise<Record<string, unknown>> {
     function changed<T extends Record<string, unknown>>(input: T) {
       if (!Object.keys(input).length)
@@ -95,11 +97,11 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'schedule_update') {
       const { id: rawId, ...raw } = args;
       const id = z.uuid().parse(rawId);
-      return { id, ...(await schedules.validateUpdate(id, raw, expectedRevision)) };
+      return { id, ...(await schedules.validateUpdate(id, raw, expectedRevision, client)) };
     }
     if (action === 'schedule_cancel') {
       const input = z.object({ id: z.uuid() }).strict().parse(args);
-      await schedules.validateUpdate(input.id, { enabled: false }, expectedRevision);
+      await schedules.validateUpdate(input.id, { enabled: false }, expectedRevision, client);
       return input;
     }
     if (action === 'memory_forget') {

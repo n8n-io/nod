@@ -167,8 +167,8 @@ type IntegrationOptions = {
   callbackReturnTo?: 'window';
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
-  browserAccounts?: () => Promise<VaultLoginEntry[]>;
-  browserConnections?: () => Promise<Connection[]>;
+  browserAccounts?: (client?: PoolClient) => Promise<VaultLoginEntry[]>;
+  browserConnections?: (client?: PoolClient) => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
 };
@@ -612,14 +612,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function list(
     ownerId = configuredOwner,
-    listing: { refresh?: boolean } = {},
+    listing: { refresh?: boolean; client?: PoolClient } = {},
   ): Promise<Connection[]> {
     assertOwner(ownerId);
     const [rows, browserAccounts, discovered, browserConnections] = await Promise.all([
-      connectionRows(ownerId),
-      options.browserAccounts?.() ?? [],
-      options.discovered?.list() ?? [],
-      options.browserConnections?.() ?? [],
+      connectionRows(ownerId, listing.client),
+      options.browserAccounts?.(listing.client) ?? [],
+      options.discovered?.list(listing.client) ?? [],
+      options.browserConnections?.(listing.client) ?? [],
     ]);
     if (listing.refresh !== false && provider.configured && !closed && !refreshing) {
       refreshing = background(() => refreshAccounts(rows))
@@ -806,8 +806,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     slug: Slug,
     connectionId?: string,
     includeRevoked = false,
+    client?: PoolClient,
   ) {
-    const rows = (await connectionRows(ownerId)).filter(
+    const rows = (await connectionRows(ownerId, client)).filter(
       (row) =>
         row.slug === slug &&
         row.account_id &&
@@ -1394,10 +1395,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     ownerId: string,
     action: string,
     connectionId?: string,
+    client?: PoolClient,
   ): Promise<Slug> {
     if (!/^[A-Z][A-Z0-9_]*_[A-Z0-9_]+$/.test(action))
       throw new IntegrationError('This action is outside the connected apps.', 403);
-    const rows = await connectionRows(ownerId);
+    const rows = await connectionRows(ownerId, client);
     const selected = connectionId ? rows.find((row) => row.id === connectionId) : undefined;
     if (connectionId && !selected)
       throw new IntegrationError('This connected account is unavailable.', 404);
@@ -1656,13 +1658,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     turn?: TurnRef,
     signal?: AbortSignal,
     pin = false,
+    client?: PoolClient,
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) {
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
-      await options.discovered.validate(action, args);
+      await options.discovered.validate(action, args, client);
       return args;
     }
     const started = performance.now();
@@ -1670,11 +1673,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     let connection: AnalyticsConnection | undefined;
     try {
       const connectionId = z.string().uuid().optional().parse(args.connectionId);
-      const slug = await actionToolkit(ownerId, action, connectionId);
+      const slug = await actionToolkit(ownerId, action, connectionId, client);
       connection = connectionAnalytics(slug);
       connection.consentRevision = consent?.revision ?? 'disabled';
       connection.operation_phase = 'preparation';
-      const row = await selectConnection(ownerId, slug, connectionId);
+      const row = await selectConnection(ownerId, slug, connectionId, false, client);
       if (hasWorkspaceFiles(args)) {
         const read = options.readWorkspaceFile;
         if (!turn && !pin && pinnedWorkspaceFiles(args)) return { ...args, connectionId: row.id };

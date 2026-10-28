@@ -1927,6 +1927,38 @@ async function appsFixture(
   };
 }
 
+test(
+  'app preflight reads account state through the transaction with a full pool',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t, { max: 1, connectionTimeoutMillis: 1000 });
+    const account = await f.connect('gmail');
+    const client = await f.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const prepare = () =>
+        f.service.prepare(
+          'local-development',
+          'GMAIL_FETCH_EMAILS',
+          { connectionId: account.connectionId },
+          undefined,
+          undefined,
+          false,
+          client,
+        );
+      assert.equal((await prepare()).connectionId, account.connectionId);
+      await client.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
+        account.connectionId,
+      ]);
+      await assert.rejects(prepare(), /unavailable/);
+      assert.equal(f.executed.length, 0);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  },
+);
+
 test('app groups retain service metadata and account identity when catalog data is missing', () => {
   const gmail: AppConnection = {
     slug: 'gmail',

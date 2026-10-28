@@ -5345,6 +5345,19 @@ test(
                     version = current.version;
                     token = changed;
                   }
+                  const validation = await db.pool.connect();
+                  try {
+                    await validation.query('BEGIN');
+                    await validation.query(
+                      'UPDATE tasks SET result=$3 WHERE id=$1 AND owner_id=$2',
+                      [own, ownerId, 'Uncommitted result'],
+                    );
+                    assert.notEqual((await reader.sources(validation))[0].changeToken, token);
+                  } finally {
+                    await validation.query('ROLLBACK');
+                    validation.release();
+                  }
+                  assert.equal((await reader.sources())[0].changeToken, token);
                   await db.pool.query(
                     "UPDATE tasks SET updated_at=now()-interval '10 minutes' WHERE id=$1",
                     [own],
