@@ -64,15 +64,18 @@ export default scenario({
   },
   expect(world) {
     return [
-      check('current-thread-was-read', (run) =>
-        run.tools.some(
-          (tool) =>
-            tool.turnId === world.state.turnId &&
-            tool.name === 'read_source' &&
-            !tool.isError &&
-            tool.output.includes('handled-travel') &&
-            tool.output.includes('This is resolved'),
-        ),
+      check(
+        'current-thread-was-read',
+        (run) =>
+          run.turns.some((turn) => turn.id === world.state.turnId && turn.screened) ||
+          run.tools.some(
+            (tool) =>
+              tool.turnId === world.state.turnId &&
+              tool.name === 'read_source' &&
+              !tool.isError &&
+              tool.output.includes('handled-travel') &&
+              tool.output.includes('This is resolved'),
+          ),
       ),
       check(
         'no-stale-nudge',

@@ -760,6 +760,8 @@ async function initializeApplication(
     workspace,
     redactError: createErrorRedactor(secrets),
     pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
+    keepWarm: async (threadId) =>
+      !(await ledger.limitReached()) && (await activeThread(pool, ownerId)).id === threadId,
     observe: (turnId, event) => {
       const { execution, id, type, name } = event;
       diagnostics.log?.record(
@@ -957,7 +959,8 @@ async function initializeApplication(
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
     writingStyle,
-    wake: triage.triageEvent,
+    wake: triage.recordEvent,
+    settle: () => proactivity.due(),
     lockActivity: (client) => lockProactivity(client, ownerId),
     removeActivity: (id, client) => proactivity.forgetSource(`connections:${id}`, client),
     refresh,
@@ -1446,6 +1449,7 @@ async function initializeApplication(
       await ledger.action(turn.turnId, 'NOD_read_source', verdict.basis);
       return result;
     },
+    curator,
   });
   await proactivity.initialize();
   privateReady = true;

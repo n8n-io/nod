@@ -131,6 +131,7 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
+  keepWarm?(threadId: string): Promise<boolean>;
   analyzeImages?(
     images: AgentImage[],
     request: string,
@@ -229,6 +230,7 @@ export function createAgentRuntime(dependencies: {
     signal.addEventListener('abort', abort, { once: true });
 
     let taskResult = '';
+    let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const deliverReply = async (
       text: string,
@@ -440,6 +442,20 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
+      if (
+        await context.proactivity?.screen?.(
+          {
+            notificationRule: context.notificationRule ?? null,
+            rules: context.rules ?? null,
+            memory: context.memory ?? '',
+            timeZone: context.timeZone ?? null,
+          },
+          signal,
+        )
+      ) {
+        completed = screened = true;
+        return { status };
+      }
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
       const rootWorkspace = dependencies.workspace.open(context);
       let workspace = rootWorkspace;
@@ -780,7 +796,10 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
-        ...(context.proactivity ? { restricted: true } : {}),
+        ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
+        ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
+          ? { keepWarm: () => dependencies.keepWarm!(threadId) }
+          : {}),
         systemPrompt: system,
         ownerContext: ownerContext(context),
         compactInstructions,
@@ -977,13 +996,14 @@ export function createAgentRuntime(dependencies: {
       } finally {
         await Promise.allSettled([...activeToolCalls]);
         activeTurns.delete(context.turnId);
-        await context
-          .emit(
-            waitingForUser ? 'agent_waiting' : !completed ? 'agent_failed' : 'agent_complete',
-            'Main agent',
-            { execution },
-          )
-          .catch(() => {});
+        if (!screened)
+          await context
+            .emit(
+              waitingForUser ? 'agent_waiting' : !completed ? 'agent_failed' : 'agent_complete',
+              'Main agent',
+              { execution },
+            )
+            .catch(() => {});
         if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.clear(browserId).catch(() => {});
         finished();

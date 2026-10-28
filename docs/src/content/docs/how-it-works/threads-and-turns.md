@@ -7,7 +7,7 @@ sidebar:
 
 This page explains how Nod turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat has one, each saved task has one, and each schedule fire has one. App events and source checks share one persistent observer session. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat has one, each saved task has one, and each schedule fire has one. App events and source checks share one observer session. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -65,12 +65,12 @@ stateDiagram-v2
 
 ## One background observer
 
-App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. Later turns keep the same Pi history. A turn runs alone in that session. New signals received during work wait for its next turn.
+App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm; the transcript stays saved. A turn runs alone in that session. New signals received during work wait for its next turn.
 
 ```mermaid
 flowchart TD
   events[App events and source checks] --> inbox[Saved source queue]
-  inbox --> observer[One persistent observer]
+  inbox --> observer[One observer]
   observer --> saved[Prepared work and nudge receipt]
   observer --> task[Separate action or question task]
 ```

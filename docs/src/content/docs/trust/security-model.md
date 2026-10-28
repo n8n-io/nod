@@ -91,6 +91,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A login with an authenticator key keeps both sign-in steps in Vault, so anyone who can open your Vault can complete that two-step sign-in. Add a key only where you want Nod to sign in on its own.
 - 1Password's approval isn't narrower than your account: until it's idle for 10 minutes or you lock 1Password, Nod's helper could read any item. Nod's code asks it only for the logins for the website in front of you and the one you pick.
 - The checker can be wrong, and the model isn't immune to prompt injection.
+- Private preparation screens each changed record on its own with the connection's smaller model. A record it wrongly judges routine gets no preparation until it changes again.
 - Nod writes [learned skills](/how-it-works/memory/#learned-skills) from what it did and read, so a page or an email can shape one, and a skill can steer later tasks. A skill never grants permission, and the trust check never sees it.
 - A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named. Your rules apply in every kind of work, so background work started by such an email can do what a rule to go ahead covers.
 - The checker quotes your words, or says "read", to run an action. The server verifies that the words exist, not that they really ask for the action; that judgment is still the checker's.

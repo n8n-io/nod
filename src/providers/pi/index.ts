@@ -140,6 +140,8 @@ function toolSchema(schema: unknown) {
 }
 
 const imageStep = 8;
+const warmCache = 5 * 60_000;
+const warmIdle = 31 * 60_000;
 
 const webAccess = {
   toolActivation: 'eager',
@@ -260,6 +262,7 @@ export function createPiAgent(options: {
     () => Promise<void>
   >();
   let disposed = false;
+  const warming = new Map<string, () => Promise<void>>();
   return {
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
@@ -296,6 +299,7 @@ export function createPiAgent(options: {
       const sessionId = input.sessionId;
       const ephemeral = input.ephemeral === true;
       const directory = resolve(options.sessionRoot, threadIdentity(sessionId));
+      await warming.get(directory)?.();
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const traces = options.traces;
       const connection = access
@@ -401,8 +405,21 @@ export function createPiAgent(options: {
           ],
         };
       };
+      let idle = false;
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
+      const prior = manager.buildSessionContext().messages;
+      const last = prior.findLast((message) => message.role === 'assistant');
+      const restart =
+        input.restartable === true &&
+        prior.length > 0 &&
+        (!last || Date.now() - last.timestamp >= warmCache);
+      if (restart)
+        manager.appendCompaction(
+          'Earlier checks are saved outside this context. Use the current request and fresh source reads.',
+          null,
+          estimateModelTokens(prior),
+        );
       const historyTokens = budget.compact
         ? estimateModelTokens(manager.buildSessionContext().messages)
         : 0;
@@ -535,6 +552,12 @@ export function createPiAgent(options: {
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),
+          (pi: ExtensionAPI) =>
+            pi.on('cache_warming_decision', async () =>
+              idle && !(await input.keepWarm?.().catch(() => false))
+                ? { action: 'stop' as const }
+                : undefined,
+            ),
         ],
         noExtensions: true,
         noSkills: true,
@@ -649,7 +672,7 @@ export function createPiAgent(options: {
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
         : input.systemPrompt;
-      const resumed = manager.buildSessionContext().messages.length > 0;
+      const resumed = !restart && manager.buildSessionContext().messages.length > 0;
       const { session } = await (options.createSession ?? createAgentSession)({
         cwd: input.workspace.path,
         agentDir: directory,
@@ -674,6 +697,7 @@ export function createPiAgent(options: {
           },
           transport: 'sse',
           steeringMode: 'all',
+          cacheWarming: input.keepWarm ? 'idle' : 'streaming',
         }),
       });
       if (budget.compact)
@@ -802,10 +826,23 @@ export function createPiAgent(options: {
           input.onEvent({ type: 'message_end', ...(status ? { status } : {}) });
         }
       });
-      const dispose = async () => {
+      const close = async () => {
         unsubscribe();
         session.dispose();
         active.delete(session);
+      };
+      const dispose = async () => {
+        if (disposed || !input.keepWarm || session.cacheWarmingStatus?.state === 'inactive')
+          return close();
+        idle = true;
+        const release = async () => {
+          clearTimeout(timer);
+          if (warming.get(directory) === release) warming.delete(directory);
+          await close();
+        };
+        const timer = setTimeout(() => void release(), warmIdle);
+        timer.unref?.();
+        warming.set(directory, release);
       };
       active.set(session, dispose);
       return {
@@ -842,6 +879,7 @@ export function createPiAgent(options: {
     },
     async dispose() {
       disposed = true;
+      await Promise.allSettled([...warming.values()].map((release) => release()));
       const results = await Promise.allSettled(
         [...active].map(async ([session, dispose]) => {
           try {

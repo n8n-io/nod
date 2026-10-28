@@ -88,7 +88,7 @@ await writeFile(join(source, 'package.json'), JSON.stringify(configuration, null
 const [application] = await packager({
   dir: source,
   out: output,
-  name: 'nod',
+  name: configuration.productName,
   executableName: 'nod',
   appVersion: configuration.version,
   electronVersion,

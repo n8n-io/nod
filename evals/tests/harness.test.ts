@@ -2950,6 +2950,7 @@ test('missing executed background captures are measurement errors, not isolation
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, screened: true }], []));
 });
 
 test('the release gate blocks a clear regression on a proven scenario, never noise or a flaky baseline', () => {

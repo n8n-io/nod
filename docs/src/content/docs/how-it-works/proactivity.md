@@ -9,7 +9,7 @@ The proactivity engine reads your connected apps on its own, prepares useful wor
 
 ## From a change to a nudge
 
-App events, periodic source checks, and due matters feed one persistent observer for your active conversation. They update a saved source queue. A single observer turn reads the due batch. Events received during a turn stay saved for its next turn. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
+App events, periodic source checks, and due matters feed one observer for your active conversation. It keeps its context only while the model's cache is warm and otherwise starts fresh, since saved matters carry its state. The server reads changed sources first and ends the batch without your selected model when nothing changed in an app's results or the connection's smaller model judges each changed record routine. A changed app result, a record of a saved matter or a failed read always goes to the full check. They update a saved source queue. A single observer turn reads the due batch. Events received during a turn stay saved for its next turn. App events that arrive together start one check, and a check also takes any source due within the next 15 minutes. When an app reports the change, such as a meeting's old and new time, the run gets that report as data, up to the last ten per source. A restricted worker reads current facts and relevant memory, prepares the complete result and saves it. Server code then decides whether a message can go out now.
 
 ```mermaid
 flowchart TD
@@ -31,7 +31,7 @@ Every connected account is a source. No setup or opt-in is needed.
 
 | Source                                                               | How Nod reads it                                                     | When it looks                                                       |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Gmail                                                                | Conversations from the last 30 days, with exact versions per thread  | On new mail                                                         |
+| Gmail                                                                | Conversations from the last 30 days, with exact versions per thread  | On new mail, checked every 15 minutes                               |
 | Google Calendar                                                      | Events in the primary calendar from yesterday through the next month | When the calendar changes, checked every 30 minutes without a model |
 | Work Nod saved for you                                               | Task state, results and waiting conditions                           | When a task changes                                                 |
 | Every other app, including MCP and HTTP connections you added to Nod | The account's own read tools, the same ones Nod uses in chat         | Every 30 minutes, up to ten due accounts per run                    |
@@ -91,7 +91,7 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 ## Cost
 
-Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader cost one private run every 30 minutes while any is connected. "Pause preparation" stops all of it.
+Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it.
 
 ## Research behind the behavior
 

@@ -718,7 +718,7 @@ async function draftApp({ stageOnly = false } = {}) {
   const feed = JSON.parse(await readFile(join(output, 'update.json'), 'utf8'));
   if (
     feed.url !== `https://github.com/${releaseRepository}/releases/download/${tag}/${zip}` ||
-    feed.name !== `nod ${version}` ||
+    feed.name !== `Nod ${version}` ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(feed.pub_date) ||
     !Number.isFinite(Date.parse(feed.pub_date)) ||
     new Date(feed.pub_date).toISOString().replace(/\.\d{3}Z$/, 'Z') !== feed.pub_date ||

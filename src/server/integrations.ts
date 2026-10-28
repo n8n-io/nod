@@ -148,6 +148,7 @@ type IntegrationOptions = {
     current?: (client: PoolClient) => Promise<boolean>,
     connectionId?: string,
   ): Promise<unknown>;
+  settle?(): Promise<unknown>;
   provider: IntegrationProvider;
   lockActivity?(client: PoolClient): Promise<void>;
   removeActivity?(connectionId: string, client: PoolClient): Promise<void>;
@@ -1978,7 +1979,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
          AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
          AND ($4::text IS NULL OR configuration_id=$4)
          AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) ORDER BY inbox_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
-         UPDATE app_connections c SET inbox_poll_at=now()+interval '5 minutes',inbox_claim_id=$3
+         UPDATE app_connections c SET inbox_poll_at=now()+interval '15 minutes',inbox_claim_id=$3
          FROM due WHERE c.id=due.id RETURNING c.*`,
         [
           configuredOwner,
@@ -2109,6 +2110,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
            AND $3::text IS NOT NULL AND c.configuration_id IS DISTINCT FROM $3)`,
         scope,
       );
+      let delivered = false;
       for (let count = 0; count < 20; count++) {
         const { rows } = await pool.query<{
           id: string;
@@ -2151,6 +2153,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
              AND e.state='processing' AND e.claimed_at=$5::timestamptz AND EXISTS (${currentConnection})`,
             [...scope, event.id, event.claim],
           );
+          delivered = true;
         } catch {
           await pool.query(
             `UPDATE integration_events e SET state='queued' WHERE e.provider_id=$1 AND e.owner_id=$2 AND e.id=$4
@@ -2160,6 +2163,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           break;
         }
       }
+      if (delivered)
+        await options.settle?.().catch((error: unknown) => logFailure('proactive_due', error));
     } finally {
       draining = false;
     }

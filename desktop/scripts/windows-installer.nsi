@@ -77,10 +77,10 @@ Section "nod"
       SetErrorLevel 1
       Abort
   runtime_copied:
-  CreateDirectory "$SMPROGRAMS\nod"
-  CreateShortcut "$SMPROGRAMS\nod\nod.lnk" "$INSTDIR\nod.exe"
-  CreateShortcut "$SMPROGRAMS\nod\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
-  CreateShortcut "$DESKTOP\nod.lnk" "$INSTDIR\nod.exe"
+  CreateDirectory "$SMPROGRAMS\Nod"
+  CreateShortcut "$SMPROGRAMS\Nod\Nod.lnk" "$INSTDIR\nod.exe"
+  CreateShortcut "$SMPROGRAMS\Nod\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$DESKTOP\Nod.lnk" "$INSTDIR\nod.exe"
   WriteRegStr HKCU "Software\nod" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayName" "Nod"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayVersion" "${VERSION}"
@@ -92,10 +92,10 @@ SectionEnd
 
 Section "Uninstall"
   SetShellVarContext current
-  Delete "$DESKTOP\nod.lnk"
-  Delete "$SMPROGRAMS\nod\nod.lnk"
-  Delete "$SMPROGRAMS\nod\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\nod"
+  Delete "$DESKTOP\Nod.lnk"
+  Delete "$SMPROGRAMS\Nod\Nod.lnk"
+  Delete "$SMPROGRAMS\Nod\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\Nod"
   IfFileExists "$INSTDIR\.nod-installation" 0 files_removed
     RMDir /r "$INSTDIR"
   files_removed:

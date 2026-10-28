@@ -608,6 +608,80 @@ test('real Pi sessions persist a credential pause and resume without replaying c
     });
 });
 
+test('a proactive check starts fresh once its cache is cold, and a resumed check keeps its context', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
+  const prompts: string[] = [];
+  let answeredAgo = 0;
+  const factory: typeof createAgentSession = async (options) => {
+    const result = await createAgentSession(options);
+    result.session.agent.streamFunction = (model, request) => {
+      prompts.push(JSON.stringify(request.messages));
+      const output = {
+        ...fauxAssistantMessage('Checked.'),
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now() - answeredAgo,
+      };
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: 'done', reason: 'stop', message: output });
+      return stream;
+    };
+    return result;
+  };
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'openai',
+      apiKey: 'runtime-fixture-key',
+      sessionRoot: join(directory, 'sessions'),
+      createSession: factory,
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const observer = randomUUID();
+  const check = (prompt: string, resumed = false) =>
+    runtime.runTurn({
+      ...({} as RuntimeContext),
+      threadId: 'test-' + observer,
+      turnId: randomUUID(),
+      sessionId: observer,
+      background: true,
+      resumed,
+      prompt,
+      history: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      attachments: [],
+      emit: async () => {},
+      reply: async () => {},
+      delta: () => {},
+      proactivity: {
+        instructions: 'Fixture observer.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+      },
+    });
+  try {
+    answeredAgo = 6 * 60_000;
+    await check('COLD-BATCH');
+    answeredAgo = 0;
+    await check('WARM-BATCH');
+    await check('NEXT-BATCH');
+    answeredAgo = 6 * 60_000;
+    await check('WAITING-BATCH');
+    await check('Owner answered', true);
+    assert.equal(prompts[1].includes('COLD-BATCH'), false);
+    assert.equal(prompts[2].includes('WARM-BATCH'), true);
+    assert.equal(prompts[4].includes('WAITING-BATCH'), true);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-steer-'));
   const requests: string[] = [];

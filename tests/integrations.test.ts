@@ -1820,6 +1820,7 @@ async function appsFixture(
   const removed: string[] = [];
   const sessions: unknown[] = [];
   const wakes: string[] = [];
+  let settles = 0;
   const session: IntegrationSession = {
     id: 'current-session',
     authorize: async (service, callback) => {
@@ -1884,6 +1885,7 @@ async function appsFixture(
       (async (_prompt, id) => {
         wakes.push(id);
       }),
+    settle: async () => settles++,
   });
   service.registerRoutes(app);
   t.after(async () => {
@@ -1920,6 +1922,7 @@ async function appsFixture(
     removed,
     sessions,
     wakes,
+    settles: () => settles,
     callbacks,
   };
 }
@@ -4143,6 +4146,11 @@ test(
     await f.service.drain();
     assert.equal(f.wakes.length, 4);
     assert.equal(f.executed.length, 0);
+    const settled = f.settles();
+    await send('556677889900');
+    await send('667788990011');
+    await f.service.drain();
+    assert.deepEqual([f.wakes.length, f.settles()], [6, settled + 1]);
   },
 );
 

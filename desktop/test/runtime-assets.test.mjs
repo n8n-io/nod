@@ -40,7 +40,7 @@ import {
   isReleaseMerge,
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
-import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
+import { run, verifyDiskImage, verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
 
@@ -580,6 +580,43 @@ process.stdout.write(JSON.stringify(await walk(process.argv[1])));`;
   await assert.rejects(stat(stale), { code: 'ENOENT' });
 });
 
+test(
+  'disk image checks reject a valid signed app without an attached Apple ticket',
+  {
+    skip: process.platform !== 'darwin',
+  },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-disk-fixture-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const contents = join(root, 'source', 'Synthetic.app', 'Contents');
+    await mkdir(join(contents, 'MacOS'), { recursive: true });
+    await copyFile('/usr/bin/true', join(contents, 'MacOS', 'synthetic'));
+    await writeFile(
+      join(contents, 'Info.plist'),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>invalid.example.nod-disk-fixture</string>
+<key>CFBundleExecutable</key><string>synthetic</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>`,
+    );
+    await run('/usr/bin/codesign', ['--force', '--sign', '-', dirname(contents)]);
+    const image = join(root, 'synthetic.dmg');
+    await run('/usr/bin/hdiutil', [
+      'create',
+      '-srcfolder',
+      join(root, 'source'),
+      '-format',
+      'UDZO',
+      image,
+    ]);
+    await assert.rejects(verifyDiskImage(image, 'Synthetic'), (error) => {
+      assert.match(error.diagnostic, /does not have a ticket stapled/);
+      return true;
+    });
+  },
+);
+
 async function releaseFixture(
   t,
   {
@@ -695,7 +732,7 @@ async function releaseFixture(
   const updateName = 'nod-arm64.zip';
   const feed = {
     url: `https://github.com/synthetic/nod/releases/download/${appTag}/${updateName}`,
-    name: `nod ${version}`,
+    name: `Nod ${version}`,
     pub_date: '2026-10-04T12:00:00Z',
   };
   const metadata = {

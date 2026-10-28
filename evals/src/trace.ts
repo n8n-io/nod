@@ -49,6 +49,7 @@ export interface Run {
     waiting_reason?: string | null;
     waiting?: boolean;
     proactive?: boolean;
+    screened?: boolean;
     startedAt?: number;
     finishedAt?: number;
   }>;
@@ -97,6 +98,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
       turn.background &&
       turn.status === 'succeeded' &&
       turn.startedAt !== undefined &&
+      !turn.screened &&
       !captured.has(turn.id),
   );
   if (missing.length)
@@ -276,6 +278,14 @@ export async function collect(options: {
   const artifacts = (
     await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
   ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
+  const screened = new Set(
+    (
+      await stack.pool.query(
+        `SELECT turn_id FROM model_usage WHERE turn_id IS NOT NULL GROUP BY turn_id
+        HAVING bool_or(details->>'operation'='attention') AND NOT bool_or(details->>'operation'='request')`,
+      )
+    ).rows.map((row: { turn_id?: string }) => row.turn_id),
+  );
   const turns = (
     await stack.pool.query(
       `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting,
@@ -283,10 +293,12 @@ export async function collect(options: {
     )
   ).rows.map(({ started_at, finished_at, ...turn }) => ({
     ...turn,
+    screened: screened.has(turn.id),
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
   requireBackgroundPrompts(turns, stack.prompts);
+
   tools.sort((a, b) => a.at - b.at);
   const schedules = (
     await stack.pool.query(

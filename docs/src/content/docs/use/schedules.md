@@ -55,7 +55,7 @@ Nod reads every app you connect on its own, prepares useful work privately and m
 
 How Nod checks:
 
-- **Gmail.** Nod checks for new inbox mail every five minutes. Each new message starts a quiet private run that decides whether there's useful work, such as preparing a reply.
+- **Gmail.** Nod checks for new inbox mail every 15 minutes. Each new message starts a quiet private run that decides whether there's useful work, such as preparing a reply.
 - **Google Calendar.** Nod checks for changed events every 30 minutes without a model call.
 - **Other connected apps.** Every 30 minutes, one quiet private run reads them through their own read tools.
 
