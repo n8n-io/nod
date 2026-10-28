@@ -457,7 +457,7 @@ export function VoiceSetup({
         <p>
           {failed
             ? 'Audio setup did not finish. Check your connection and try again.'
-            : 'Download speech models to record audio on this computer.'}
+            : 'Download speech models to enable audio messages.'}
         </p>
       ) : null}
     </section>
