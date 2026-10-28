@@ -74,7 +74,7 @@ Nod previews Markdown files up to 4 MB. For a larger file, select **Download**.
 
 ![A task result open in the panel next to the chat, showing a Markdown document with a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
-A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). If the task took actions, its last message carries an action receipt. Select it to see that task and its cost in [Usage](/use/spending/).
+A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). Open [Usage](/use/spending/) to review the task's cost and recorded app actions.
 
 ## Use tasks on mobile
 

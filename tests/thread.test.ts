@@ -377,7 +377,6 @@ test(
       submitMessage: userMessages.submit,
       configuration: () => ({ ...configuration(), llmReady: chatReady }),
       planningTasks: onboarding.planning,
-      receipts: async () => ({}),
     });
     onboarding.registerRoutes(app);
     const tasks = createTasks({ pool: db.pool, ownerId });

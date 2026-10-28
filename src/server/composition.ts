@@ -1912,7 +1912,6 @@ async function initializeApplication(
     taskLedger: tasks.read,
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
-    receipts: ledger.receipts,
     questionStates: approvals.states,
     computer,
     configuration: () =>

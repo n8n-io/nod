@@ -42,7 +42,6 @@ import type {
   Message,
   MessageHistoryPage,
   MessageReaction,
-  MessageReceipt,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -53,7 +52,6 @@ const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.tu
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(COALESCE(target.audio_caption,target.text),1000))) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
-  receipt?: MessageReceipt,
   questionState?: Message['questionState'],
 ): Message {
   const { assistantReaction, presentation, audioCaption, ...message } = row;
@@ -63,7 +61,6 @@ function messageView(
     ...message,
     ...(typeof audioCaption === 'string' ? { audioCaption } : {}),
     ...(visual?.success ? { presentation: visual.data } : {}),
-    ...(receipt ? { receipt } : {}),
     ...(questionState ? { questionState } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
@@ -92,7 +89,6 @@ export interface AppDependencies {
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => boolean;
   questionStates?: (messageIds: string[]) => Promise<Record<string, Message['questionState']>>;
-  receipts?: (turnIds: string[]) => Promise<Record<string, MessageReceipt>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -101,15 +97,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
   async function messageViews(
     rows: Array<Message & { assistantReaction?: MessageReaction | null }>,
   ) {
-    const [receipts, questions] = await Promise.all([
-      dependencies
-        .receipts?.(rows.map((message) => message.turnId).filter((id): id is string => !!id))
-        .catch(() => undefined),
-      dependencies.questionStates?.(rows.map((message) => message.id)).catch(() => undefined),
-    ]);
-    return rows.map((message) =>
-      messageView(message, receipts?.[message.id], questions?.[message.id]),
-    );
+    const questions = await dependencies
+      .questionStates?.(rows.map((message) => message.id))
+      .catch(() => undefined);
+    return rows.map((message) => messageView(message, questions?.[message.id]));
   }
   const app = Fastify({
     logger: false,

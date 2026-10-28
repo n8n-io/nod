@@ -36,7 +36,6 @@ import { MessageAttachments } from './attachment-card';
 import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { copyContent, selectedText } from '../lib/clipboard';
-import { navigate } from '../lib/navigation';
 
 function CopyBlock({ children, table = false }: { children: React.ReactNode; table?: boolean }) {
   const content = useRef<HTMLDivElement>(null);
@@ -659,30 +658,6 @@ export function MessageBubble({
             </button>,
             document.body,
           )}
-        {message.receipt && message.receipt.actions.length > 0 && !streaming && (
-          <a
-            className="message-receipt"
-            href={`/usage?session=${message.receipt.sessionId}`}
-            onClick={(event) => {
-              if (
-                event.button !== 0 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.shiftKey ||
-                event.altKey
-              )
-                return;
-              event.preventDefault();
-              navigate(`/usage?session=${message.receipt!.sessionId}`);
-            }}
-          >
-            {message.receipt.actions
-              .map((action) =>
-                action.count > 1 ? `${action.label} ×${action.count}` : action.label,
-              )
-              .join(' · ')}
-          </a>
-        )}
         {error && <Notice>{error}</Notice>}
         {copied && (
           <span className="message-copy-status" role="status">
