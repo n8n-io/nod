@@ -91,6 +91,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   };
   terminate = release;
   let phase = 'start';
+  let result: AttemptResult | undefined;
   try {
     const judgeLlm = withFallback(
       await createLlm(judgeModel),
@@ -180,7 +181,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const hardFailure =
       failure && failure !== refusal && blame(failure) !== 'agent' ? failure : undefined;
     const incomplete = fault ?? hardFailure;
-    const result: AttemptResult = {
+    result = {
       ...base,
       task: trace.task,
       status: incomplete
@@ -243,7 +244,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       }),
     );
     const message = error instanceof Error ? error.message : String(error);
-    return {
+    result = {
       ...base,
       ...empty,
       status: 'incomplete',
@@ -251,8 +252,24 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       error: message,
       seconds: (Date.now() - started) / 1000,
     };
+    return result;
   } finally {
     await release();
+    if (result && stack) {
+      const usage = stack.finalUsage;
+      result.costUsd = usage?.costUsd ?? null;
+      if (usage) {
+        result.modelCalls = usage.modelCalls;
+        result.tokens = usage.tokens;
+        result.metrics = {
+          interactions: {},
+          browserHandoffs: 0,
+          turns: [],
+          ...result.metrics,
+          modelUsage: usage.requests ?? [],
+        };
+      }
+    }
   }
 }
 

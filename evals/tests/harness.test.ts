@@ -58,7 +58,7 @@ import { facts, leaderboard } from '../src/writeup.ts';
 import { meetsMinimumPassRate } from '../src/commands.ts';
 import { rejudge } from '../src/rejudge.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
-import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
+import { collect, collectUsage, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
@@ -2727,6 +2727,18 @@ test('persisted background sessions and child captures count each request and to
   const { requests: unpriced, ...unknown } = (await read()).usage;
   assert.deepEqual(unknown, { modelCalls: 4, tokens: 36, costUsd: null });
   assert.ok(unpriced?.some((request) => request.costUsd === null));
+  ledger[0].cost_usd = 0.1;
+  ledger.push({
+    cost_usd: 0.25,
+    details: { inputTokens: 10, outputTokens: 2 },
+  });
+  const final = await collectUsage(stack.pool);
+  assert.equal(final.modelCalls, 5);
+  assert.equal(final.tokens, 48);
+  assert.equal(final.costUsd, 1.75);
+  assert.equal(run.usage.costUsd, 1.5);
+  ledger.at(-1)!.cost_usd = null;
+  assert.equal((await collectUsage(stack.pool)).costUsd, null);
 });
 
 test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {
