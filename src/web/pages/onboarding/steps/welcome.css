@@ -31,6 +31,11 @@
   color: var(--foreground);
 }
 
+.ob-welcome-mark > circle,
+.ob-welcome-mark > .ob-glyph-orbit {
+  animation-iteration-count: 2;
+}
+
 .ob-welcome-copy {
   max-width: 520px;
   font-size: 24px;
