@@ -426,6 +426,15 @@ function Startup() {
       <div className="titlebar" aria-hidden="true" />
       <SetupProgress
         local={!status.remote}
+        footer={
+          <button
+            className="server-entry"
+            type="button"
+            onClick={() => void desktop?.openConnectionSettings()}
+          >
+            Server connection
+          </button>
+        }
         title={
           error
             ? 'Nod needs another try'
@@ -505,13 +514,6 @@ function Startup() {
           </div>
         )}
       </SetupProgress>
-      <button
-        className="server-entry"
-        type="button"
-        onClick={() => void desktop?.openConnectionSettings()}
-      >
-        Server connection
-      </button>
     </>
   );
 }

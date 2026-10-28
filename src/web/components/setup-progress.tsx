@@ -9,6 +9,7 @@ export function SetupProgress({
   details,
   progress,
   children,
+  footer,
   local = desktopRuntimeAvailable(),
 }: {
   title: string;
@@ -17,6 +18,7 @@ export function SetupProgress({
   details?: string;
   progress?: number;
   children?: ReactNode;
+  footer?: ReactNode;
   local?: boolean;
 }) {
   const panel = useRef<HTMLElement>(null);
@@ -58,10 +60,14 @@ export function SetupProgress({
         )}
         {children && <div className="setup-progress-actions">{children}</div>}
       </div>
-      <p className="setup-progress-note">
-        Your workspace, browser and data stay on {local ? 'this computer' : 'your server'}. Your
-        chosen AI providers process requests; browsing and connected apps contact external services.
-      </p>
+      <footer className="setup-progress-footer">
+        <p className="setup-progress-note">
+          Your workspace, browser and data stay on {local ? 'this computer' : 'your server'}. Your
+          chosen AI providers process requests; browsing and connected apps contact external
+          services.
+        </p>
+        {footer}
+      </footer>
     </main>
   );
 }
