@@ -32,6 +32,9 @@ export default scenario({
   world(clock) {
     const state: State = { apiAttempts: 0, filters: [] };
     const mail = gmail(owner, [], clock.now);
+    const createLabel = mail.tools.find((tool) => tool.slug === 'GMAIL_CREATE_LABEL')!;
+    createLabel.run({ label_name: 'Travel' });
+    createLabel.run({ label_name: 'Label_2' });
     mail.tools.push({
       slug: 'GMAIL_CREATE_FILTER',
       description: 'Create a Gmail filter with a search query, a label and an archive action.',
