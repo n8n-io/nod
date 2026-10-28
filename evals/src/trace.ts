@@ -51,6 +51,7 @@ export interface Run {
     waiting_reason?: string | null;
     waiting?: boolean;
     proactive?: boolean;
+    agentStarted?: boolean;
     screened?: boolean;
     startedAt?: number;
     finishedAt?: number;
@@ -106,7 +107,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
       turn.background &&
       turn.status === 'succeeded' &&
       turn.startedAt !== undefined &&
-      !turn.screened &&
+      turn.agentStarted !== false &&
       !captured.has(turn.id),
   );
   if (missing.length)
@@ -315,22 +316,19 @@ export async function collect(options: {
   const artifacts = (
     await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
   ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
-  const screened = new Set(
-    (
-      await stack.pool.query(
-        `SELECT turn_id FROM model_usage WHERE turn_id IS NOT NULL GROUP BY turn_id
-        HAVING bool_or(details->>'operation'='attention') AND NOT bool_or(details->>'operation'='request')`,
-      )
-    ).rows.map((row: { turn_id?: string }) => row.turn_id),
-  );
   const turns = (
     await stack.pool.query(
       `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting,
-      COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive FROM turns t ORDER BY t.created_at, t.id`,
+      COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive,
+      (EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=t.id AND e.type='agent_start')
+        OR EXISTS (SELECT 1 FROM model_usage m WHERE m.turn_id=t.id AND m.owner_id=t.owner_id
+          AND m.details->>'category'='agent' AND m.details->>'operation'='request')) AS agent_started
+      FROM turns t ORDER BY t.created_at, t.id`,
     )
-  ).rows.map(({ started_at, finished_at, ...turn }) => ({
+  ).rows.map(({ started_at, finished_at, agent_started, ...turn }) => ({
     ...turn,
-    screened: screened.has(turn.id),
+    agentStarted: agent_started,
+    screened: agent_started === false,
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));

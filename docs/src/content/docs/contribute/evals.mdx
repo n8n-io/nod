@@ -15,6 +15,8 @@ The short version: each attempt boots its own Nod with a real model. The apps, w
 They call live models. An attempt costs about $0.10 to $0.50, and the default run has 261 attempts. The unit tests never call them.
 :::
 
+The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A turn that ended in the preliminary source screen has no agent prompt. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
+
 ## How an attempt works
 
 Each attempt gets its own database schema, workspace and browser, with the real server, Pi and a real model. A simulated user asks for the task.

@@ -2580,7 +2580,7 @@ test('persisted background sessions and child captures count each request and to
     ],
     pool: {
       query: async (sql: string) => ({
-        rows: sql.includes('FROM model_usage')
+        rows: sql.includes('SELECT m.cost_usd,m.details')
           ? ledger
           : sql.includes('FROM turns')
             ? [
@@ -2875,13 +2875,17 @@ test('missing executed background captures are measurement errors, not isolation
     finishedAt: 2,
   };
   assert.throws(() => requireBackgroundPrompts([turn], []), /capture is missing/);
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, agentStarted: true }], []),
+    /capture is missing/,
+  );
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, agentStarted: false }], []));
   assert.doesNotThrow(() =>
     requireBackgroundPrompts([turn], [{ turnId: 'background', instruction: 'Inspect receipt.' }]),
   );
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
-  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, screened: true }], []));
 });
 
 test('the release gate blocks a clear regression on a proven scenario, never noise or a flaky baseline', () => {
