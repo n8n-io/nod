@@ -66,13 +66,21 @@ export function usageId(sessionId: string, key: string) {
 
 export function piUsageMetrics(usage?: Usage): Partial<ProviderUsageEvent> {
   if (!usage) return {};
+  const estimate = costEstimate(usage.cost, usage);
+  const costUsd =
+    estimate === 0 &&
+    ![usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.totalTokens].some(
+      (value) => tokenCount(value) && value > 0,
+    )
+      ? null
+      : estimate;
   return {
     ...(tokenCount(usage.input) ? { inputTokens: usage.input } : {}),
     ...(tokenCount(usage.output) ? { outputTokens: usage.output } : {}),
     ...(tokenCount(usage.cacheRead) ? { cacheReadTokens: usage.cacheRead } : {}),
     ...(tokenCount(usage.cacheWrite) ? { cacheWriteTokens: usage.cacheWrite } : {}),
-    costUsd: costEstimate(usage.cost, usage),
-    pricing: costEstimate(usage.cost, usage) === null ? 'unavailable' : 'sdk_estimate',
+    costUsd,
+    pricing: costUsd === null ? 'unavailable' : 'sdk_estimate',
   };
 }
 
@@ -86,26 +94,12 @@ export function createPiUsageTracker(options: {
   return (message: AssistantMessage): ModelUsageObservation | undefined => {
     if (!['stop', 'length', 'toolUse', 'error', 'aborted'].includes(message.stopReason)) return;
     const usage = message.usage;
-    if (!usage || typeof usage !== 'object') return;
     const key = messageKey(message);
     if (seen.has(key)) return;
-    const values = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
+    const values = [usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite];
     const tokens = values.map((value) => (tokenCount(value) ? value : 0));
     const sum = tokens.reduce((result, value) => result + value, 0);
-    const costUsd = costEstimate(usage.cost, usage);
-    if (
-      !values.some(tokenCount) &&
-      !tokenCount(usage.totalTokens) &&
-      !(costUsd !== null && costUsd > 0)
-    )
-      return;
-    if (
-      ['error', 'aborted'].includes(message.stopReason) &&
-      sum === 0 &&
-      !(tokenCount(usage.totalTokens) && usage.totalTokens > 0) &&
-      !(costUsd !== null && costUsd > 0)
-    )
-      return;
+    const costUsd = piUsageMetrics(usage).costUsd ?? null;
     seen.add(key);
     const timestamp =
       typeof message.timestamp === 'number' &&
@@ -127,7 +121,7 @@ export function createPiUsageTracker(options: {
       outputTokens: tokens[1],
       cacheReadTokens: tokens[2],
       cacheWriteTokens: tokens[3],
-      totalTokens: tokenCount(usage.totalTokens)
+      totalTokens: tokenCount(usage?.totalTokens)
         ? usage.totalTokens
         : Number.isSafeInteger(sum)
           ? sum

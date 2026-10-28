@@ -16,8 +16,14 @@ import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
 import type { AccountSettings } from '../../src/shared/account.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
-import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
-import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
+import {
+  costPerRequiredPass,
+  fisherLower,
+  holm,
+  passAtK,
+  passPowK,
+  summarize,
+} from '../src/aggregate.ts';
 import {
   decisionAuthorization,
   evaluateDecision,
@@ -624,7 +630,7 @@ test('decision budget and unknown usage stop between stages without scoring part
 test('decision baselines bind only the validator revisions their source invokes', async () => {
   const [basis, terms] = await Promise.all([
     readFile(new URL('../../src/server/trust-basis.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../src/server/trust-terms.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/decision-terms.ts', import.meta.url), 'utf8'),
   ]);
   const loaded = { basis, terms };
   const raw = 'review(checkInstructions, input);';
@@ -661,142 +667,6 @@ test('decision baselines bind only the validator revisions their source invokes'
       () => decisionAuthorization(source, loaded, loaded),
       /Unsupported Trust review routing/,
     );
-});
-
-const analyticsCase = (name: string) => {
-  const item = analyticsCases.find((found) => found.id === name)!;
-  return {
-    ...item,
-    expected: {
-      ...item.expected,
-      tasks: item.expected.tasks.map((task) => ({
-        use_case: 'other' as const,
-        context: 'unclear' as const,
-        collaboration: 'unclear' as const,
-        ...task,
-      })),
-    },
-  };
-};
-const analyticsAttempt = (name: string, output: unknown, attempt = 1) => ({
-  case: name,
-  equivalenceGroup: analyticsCase(name).equivalenceGroup,
-  attempt,
-  durationMs: 0,
-  status: 'scored' as const,
-  score: scoreAnalytics(analyticsCase(name), output),
-});
-
-test('analytics grading matches unordered goals without hiding outcome or continuation errors', () => {
-  for (const name of ['multiple-tasks', 'holdout-same-type-mixed-outcomes']) {
-    const item = analyticsCase(name);
-    assert.equal(
-      scoreAnalytics(item, { ...item.expected, tasks: [...item.expected.tasks].reverse() })
-        .lifecycleCorrect,
-      true,
-    );
-  }
-  const mixed = analyticsCase('holdout-same-type-mixed-outcomes');
-  const wrong = scoreAnalytics(mixed, {
-    ...mixed.expected,
-    tasks: [...mixed.expected.tasks].reverse().map((task) => ({ ...task, outcome: 'completed' })),
-  });
-  assert.equal(wrong.tasks.wrongOutcome, 1);
-  const ambiguous = scoreAnalytics(mixed, {
-    ...mixed.expected,
-    tasks: mixed.expected.tasks.map((task) => ({
-      ...task,
-      task_action: 'send',
-      task_subject: 'unknown',
-      task_activities: ['send:unknown'],
-    })),
-  });
-  assert.equal(ambiguous.ambiguousOutcomeMatching, true);
-  assert.equal(ambiguous.lifecycleCorrect, false);
-  const continuing = analyticsCase('continuation');
-  assert.equal(scoreAnalytics(continuing, continuing.expected).lifecycleCorrect, true);
-  for (const request_message_id of [
-    continuing.input.messages[0].id,
-    '00000000-0000-4000-8000-000000001000',
-  ]) {
-    const score = scoreAnalytics(continuing, {
-      ...continuing.expected,
-      tasks: [{ ...continuing.expected.tasks[0], request_message_id }],
-    });
-    assert.equal(score.valid, false);
-    assert.equal(score.tasks.wrongRequest, 1);
-  }
-  const reopened = scoreAnalytics(continuing, {
-    ...continuing.expected,
-    tasks: [{ ...continuing.expected.tasks[0], task_id: null }],
-  });
-  assert.equal(reopened.tasks.wrongContinuation, 1);
-});
-
-test('analytics grading rejects private labels and separates unknown coverage from label agreement', () => {
-  const item = analyticsCase('holdout-audio-translation');
-  const unknown = {
-    ...item.expected,
-    tasks: [
-      {
-        ...item.expected.tasks[0],
-        task_type: 'unknown',
-        task_subject: 'file',
-        task_activities: ['translate:file'],
-      },
-    ],
-  };
-  const score = scoreAnalytics(item, unknown);
-  assert.equal(score.lifecycleCorrect, true);
-  assert.equal(score.referenceLabels.matched, false);
-  assert.equal(score.unknownLabels, 1);
-  for (const output of [
-    { ...item.expected, private_text: 'Synthetic private text' },
-    { ...item.expected, tasks: [{ ...item.expected.tasks[0], task_type: 'ada_linden' }] },
-    {
-      ...item.expected,
-      tasks: [{ ...item.expected.tasks[0], task_activities: ['translate:ada_linden'] }],
-    },
-  ])
-    assert.equal(scoreAnalytics(item, output).valid, false);
-  const summary = summarizeAnalytics([
-    analyticsAttempt(item.id, unknown),
-    analyticsAttempt(item.id, item.expected, 2),
-  ]);
-  assert.equal(summary.unknownLabelRate, 0.5);
-  assert.equal(summary.referenceLabels.agreementRate, 0.5);
-});
-
-test('analytics grading counts false and missed frustration without accepting assistant evidence', () => {
-  const neutral = analyticsCase('neutral-edit');
-  const repeated = analyticsCase('repeated-request');
-  const rejected = scoreAnalytics(repeated, {
-    ...repeated.expected,
-    frustration: {
-      ...repeated.expected.frustration,
-      message_ids: [repeated.input.messages[1].id, repeated.input.messages[3].id],
-    },
-  });
-  assert.equal(rejected.valid, false);
-  assert.equal(rejected.frustration.truePositive, 0);
-  assert.equal(rejected.frustration.falseNegative, 1);
-  const summary = summarizeAnalytics([
-    analyticsAttempt(neutral.id, {
-      ...neutral.expected,
-      frustration: {
-        ...repeated.expected.frustration,
-        signal: 'explicit_complaint',
-        message_ids: [neutral.input.messages[0].id],
-      },
-    }),
-    analyticsAttempt(repeated.id, { ...repeated.expected, frustration: null }),
-    analyticsAttempt(repeated.id, repeated.expected, 2),
-    { case: repeated.id, attempt: 3, durationMs: 0, status: 'model_error' },
-  ]);
-  assert.equal(summary.frustration.precision, 0.5);
-  assert.equal(summary.frustration.recall, 0.5);
-  assert.equal(summary.responseCoverage, 0.75);
-  assert.equal(summary.modelErrors, 1);
 });
 
 const manifest: RunManifest = {
@@ -946,17 +816,32 @@ test('task success counts a run that did the job even when its honesty check fai
 });
 
 test('the headline excludes incomplete attempts and known gaps, and flags contaminated runs', () => {
-  const summary = summarize(manifest, [
+  const attempts = [
     attempt('a', 'pass'),
     attempt('a', 'fail', { checks: [failedCheck('task')] }),
     attempt('a', 'incomplete', { blame: 'infra' }),
     attempt('b', 'pass', { stance: 'gap' }),
-  ]);
+  ];
+  const summary = summarize(manifest, attempts);
   assert.equal(summary.regression.total, 2);
   assert.equal(summary.regression.passed, 1);
   assert.equal(summary.regression.incomplete, 1);
   assert.equal(summary.gap.passed, 1);
   assert.equal(summary.contaminated, false);
+  assert.equal(summary.costUsd, 0.4);
+  assert.equal(summary.efficiency.costPerAttempt, 0.1);
+  assert.equal(summary.efficiency.costPerPass, 0.2);
+  assert.ok(Math.abs(costPerRequiredPass(attempts)! - 0.3) < 1e-9);
+  for (const costUsd of [null, Number.NaN]) {
+    const unpriced = attempts.map((item) =>
+      item.status === 'incomplete' ? { ...item, costUsd } : item,
+    );
+    const unknown = summarize(manifest, unpriced);
+    assert.equal(unknown.costUsd, null);
+    assert.equal(unknown.efficiency.costPerAttempt, null);
+    assert.equal(unknown.efficiency.costPerPass, null);
+    assert.equal(costPerRequiredPass(unpriced), null);
+  }
   const bad = summarize(manifest, [
     attempt('a', 'incomplete', { blame: 'infra' }),
     attempt('a', 'incomplete', { blame: 'infra' }),
@@ -1113,7 +998,7 @@ test('reports separate known gaps and incomplete coverage from required-check pa
     storyCard([run], { total: 3, calibrating: 0, gaps: 1 }).html,
     /2\/9 completed, 1 incomplete, 6 not run/,
   );
-  assert.match(leaderboard([run]), /100%\s+n\/a\s+\$0\.10/);
+  assert.match(leaderboard([run]), /100%\s+n\/a\s+\$0\.20/);
   assert.equal(insights([run]).best, undefined);
   const unstarted = {
     summary: summarize({ ...manifest, scenarioIds: ['alpha'] }, []),
@@ -2638,6 +2523,36 @@ test('persisted background sessions and child captures count each request and to
       finishedAt: new Date(10).toISOString(),
     });
   }
+  capture.observe('chat', {
+    type: 'tool_start',
+    id: 'script-inner',
+    name: 'skills',
+    input: { action: 'save', name: 'synthetic-flow', body: 'Synthetic procedure' },
+    startedAt: new Date(3).toISOString(),
+    execution: {
+      threadId: 'chat',
+      sessionId: 'chat',
+      turnId: 'chat',
+      runId: 'chat',
+      browserId: 'chat',
+    },
+  });
+  capture.observe('chat', {
+    type: 'tool_end',
+    id: 'script-inner',
+    name: 'skills',
+    status: 'succeeded',
+    output: 'Saved synthetic flow',
+    durationMs: 1,
+    finishedAt: new Date(4).toISOString(),
+    execution: {
+      threadId: 'chat',
+      sessionId: 'chat',
+      turnId: 'chat',
+      runId: 'chat',
+      browserId: 'chat',
+    },
+  });
   observations.push({
     turnId: 'background',
     event: {
@@ -2665,7 +2580,7 @@ test('persisted background sessions and child captures count each request and to
     ],
     pool: {
       query: async (sql: string) => ({
-        rows: sql.includes('FROM model_usage')
+        rows: sql.includes('SELECT m.cost_usd,m.details')
           ? ledger
           : sql.includes('FROM turns')
             ? [
@@ -2729,12 +2644,19 @@ test('persisted background sessions and child captures count each request and to
     messages.map((line) => Date.parse(line.slice(1, line.indexOf(']')))),
     [Date.parse('2026-10-22T21:40:00Z'), Date.parse('2026-10-22T21:41:00Z')],
   );
-  assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  const { requests, ...usage } = run.usage;
+  assert.deepEqual(usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.equal(requests?.length, 4);
+  assert.equal(
+    requests?.reduce((sum, request) => sum + (request.costUsd ?? 0), 0),
+    1.5,
+  );
   assert.deepEqual(run.messages.at(-1)?.presentation, {
     type: 'booking',
     title: 'Synthetic booking',
   });
   assert.match(run.transcript(), /PRESENTATION:.*Synthetic booking/);
+  assert.match(run.groundTruth(), /Shown assistant message.*The call has ended/);
   assert.deepEqual(run.artifacts, [{ id: 'original-image', threadId: 'chat' }]);
   assert.deepEqual(run.approvals, [
     { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },
@@ -2745,15 +2667,17 @@ test('persisted background sessions and child captures count each request and to
       ['background', 'background', 'background'],
       ['background', 'child', source],
       ['chat', 'chat', 'chat'],
+      ['chat', 'save', 'Saved synthetic flow'],
       ['resumed', 'resumed', 'resumed'],
     ],
   );
   assert.deepEqual(
     run.tools.map((tool) => [tool.sessionId, tool.runId, tool.parentRunId, tool.finishedAt]),
     [
-      ['background', undefined, undefined, 0],
+      ['background', 'background', undefined, 0],
       ['background', 'child', 'background', 10],
-      ['chat', undefined, undefined, 2],
+      ['chat', 'chat', undefined, 2],
+      ['chat', 'chat', undefined, 4],
       ['background', undefined, undefined, 4],
     ],
   );
@@ -2778,7 +2702,9 @@ test('persisted background sessions and child captures count each request and to
   assert.deepEqual(run.modelErrors, ['Synthetic model failure']);
   assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
   ledger[0].cost_usd = null;
-  assert.deepEqual((await read()).usage, { modelCalls: 4, tokens: 36, costUsd: null });
+  const { requests: unpriced, ...unknown } = (await read()).usage;
+  assert.deepEqual(unknown, { modelCalls: 4, tokens: 36, costUsd: null });
+  assert.ok(unpriced?.some((request) => request.costUsd === null));
 });
 
 test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {
@@ -2893,7 +2819,12 @@ test('saved model tools expose synthetic secret regressions despite redacted cap
             role: 'assistant',
             content: [
               { type: 'text', text: item.lead },
-              { type: 'toolCall', id: 'model-call', name: item.name, arguments: item.input },
+              {
+                type: 'toolCall',
+                id: 'model-call',
+                name: item.name === 'browser' ? 'nod_browser' : item.name,
+                arguments: item.input,
+              },
             ],
           },
           { role: 'toolResult', toolCallId: 'model-call', content: item.content },
@@ -2944,13 +2875,31 @@ test('missing executed background captures are measurement errors, not isolation
     finishedAt: 2,
   };
   assert.throws(() => requireBackgroundPrompts([turn], []), /capture is missing/);
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, agentStarted: true }], []),
+    /capture is missing/,
+  );
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, agentStarted: false }], []),
+    /capture is missing/,
+  );
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, screened: true }], []),
+    /capture is missing/,
+  );
+  assert.throws(
+    () => requireBackgroundPrompts([{ ...turn, screened: true, agentStarted: true }], []),
+    /capture is missing/,
+  );
+  assert.doesNotThrow(() =>
+    requireBackgroundPrompts([{ ...turn, screened: true, agentStarted: false }], []),
+  );
   assert.doesNotThrow(() =>
     requireBackgroundPrompts([turn], [{ turnId: 'background', instruction: 'Inspect receipt.' }]),
   );
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
-  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, screened: true }], []));
 });
 
 test('the release gate blocks a clear regression on a proven scenario, never noise or a flaky baseline', () => {
@@ -3054,7 +3003,11 @@ test('only calibrated scenarios that passed every one of at least five attempts 
 function quietRun(world: ReturnType<Scenario['world']>): Run {
   return {
     api: async () => ({ status: 200, body: {} }),
-    proactivity: { view: async () => ({ issues: [], coverage: [] }), control: async () => ({}) },
+    proactivity: {
+      view: async () => ({ issues: [], coverage: [] }),
+      control: async () => ({}),
+      poll: async () => undefined,
+    },
     task: '',
     messages: [],
     replies: [],

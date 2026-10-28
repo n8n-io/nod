@@ -15,6 +15,8 @@ The short version: each attempt boots its own Nod with a real model. The apps, w
 They call live models. An attempt costs about $0.10 to $0.50, and the default run has 261 attempts. The unit tests never call them.
 :::
 
+The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A recorded source-screen result with no agent start or request needs no agent prompt. Missing records alone do not prove that a source screen ran. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
+
 ## How an attempt works
 
 Each attempt gets its own database schema, workspace and browser, with the real server, Pi and a real model. A simulated user asks for the task.
@@ -38,7 +40,7 @@ flowchart TD
 
 Web search and page fetch (`web_search` and `fetch_content`) run on the server. A fetch to a named fixture host uses the local test server. Other requests can reach the public web.
 
-Checks grade the end state: the fake world, the workspace files and the trace. Action trust checks and confirmation-fact checks use the selected chat model at its lowest reasoning effort, as in production. Decision models can classify approval replies and emails that give account access; they do not decide whether an action is allowed. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
+Checks grade the end state: the fake world, the workspace files and the trace. Ground truth includes every visible assistant message in full, so a long background trace cannot hide a delivered answer from the judge. Action trust checks and confirmation-fact checks use the selected chat model at its lowest reasoning effort, as in production. Decision models can classify approval replies and emails that give account access; they do not decide whether an action is allowed. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
 
 :::caution[The fakes are the main fidelity risk]
 The fake apps are hand-written approximations of Composio's responses, not recordings. Check a result against a real account before you trust it for a connector.
@@ -98,26 +100,6 @@ Run each command as `pnpm run eval:capability <command>`. `help` lists every opt
 | Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
 | Compare with a release | `gate --baseline nod-v0.1.19`: side by side, with a verdict                           |
 | Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
-
-## Evaluate the analytics classifier
-
-The separate `analytics` command tests synthetic conversations against the production classifier prompt and output schema. It calls the chosen live model through the production curator with the lightest available reasoning effort, without starting Docker, a database, connected apps or PostHog.
-
-```sh title="Terminal"
-pnpm run eval:capability analytics --model openai/gpt-6-luna --repeat 3 --label analytics-baseline
-```
-
-Set the matching provider key as for capability evals. Choose the model you intend to assess. The command uses and records `lightest`, matching production: the first model effort listed among `off`, `minimal`, `low` and `medium`, or the model's first level if none matches. Add `--scenario <case-id>` to run a subset. Repeat is capped at 10 per selected case; each uses the production analytics timeout and output limit.
-
-Results go to `.local/capability-evals/analytics/<label>/results.json`. The file contains only the synthetic fixtures, reference labels, model output, per-case measurements, cost when available, and a fingerprint of the prompt, schema and fixtures. Existing labels are never overwritten.
-
-The classifier combines bounded, generic actions and subjects into activities. Several activities can belong to one goal. It chooses a broad task type and uses `unknown` when the available words cannot describe a dimension. The schema rejects invented labels, including private details written in an otherwise valid label format.
-
-The report separates task lifecycle checks from semantic agreement. Lifecycle checks cover missing or extra tasks and activity counts, outcomes, request/continuation links and frustration evidence. Disagreement with a fixture's reference labels is reported separately and needs review; it is not automatically a semantic error. Multiple tasks are matched independently of output order; ambiguous outcome matching is reported rather than scored as correct.
-
-Repeated runs and equivalent paraphrased requests report label agreement and distinct-label counts, including audio translation and a Portuguese email summary. These measurements expose inconsistency; consistent labels can still be wrong. Schema validity, usable response coverage, unknown labels and model failures remain visible. Injection cases test whether the model follows requests to put private topics or names in analytics labels. Case and message IDs identify fixtures and lifecycle references; categories have no separate IDs.
-
-These are initial, reviewed synthetic cases, not a calibrated release gate. Run and review them manually before making claims about classifier quality. The ordinary eval unit tests only test the grader offline; they do not measure model quality.
 
 ## Compare decision checks
 
@@ -207,6 +189,8 @@ The **Evals** workflow runs the suite with a disposable PostgreSQL and images bu
 | Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing       |
 | Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                               |
 
+In the CLI, use `--effort medium` or another supported level for a separate reasoning-effort comparison. The Actions workflow has no effort input. This changes only the main agent, including its helpers; trust and fact checks keep their production effort. The run manifest records the chosen effort. The default is high. Keep model and effort fixed when you compare harness changes.
+
 The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `anthropic/claude-sonnet-5-5`. Their keys are the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets, plus `EVALS_OPENROUTER_API_KEY` for OpenRouter models.
 
 :::danger[Run only a branch you trust]
@@ -214,6 +198,8 @@ The branch's code runs with the eval keys.
 :::
 
 With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails only when nothing could be scored.
+
+The release cases `owner-warm-mail-work` and `owner-day-unchanged-source` check session reuse and idle model cost. `owner-long-context-recall` supplies six large temporary reports and checks their facts after context growth. Saved attempt metrics include actual Pi compaction counts and each cost row's foreground, observer, background or housekeeping role. Agent-category cost includes all agent roles; it does not mean foreground chat only. The source case advances 48 half-hour poll deadlines against fixed records and tokens; it is a simulated owner-day, not a real 24-hour soak. `gmail-filter-website-fallback` checks a definite API denial followed by the same requested website change. `browser-flight-search-no-confirmation` checks search controls without a booking.
 
 ## Read the scores
 
@@ -233,7 +219,7 @@ By default, `k` equals the repeat count. With three completed attempts per scena
 
 Incomplete attempts don't count as passes or failures. Reports show incomplete attempts and planned attempts that weren't run. Known gaps appear in scenario rows but stay outside headline scores and rankings.
 
-Charts calculate cost per success from completed regression attempts, divided by attempts that passed every required check. This includes failed attempts' agent costs. Reports label the separate cost per completed task explicitly.
+Charts calculate cost per success from all regression attempts, divided by attempts that passed every required check. Failed and incomplete attempts still cost money. An unknown or invalid price leaves the total and cost ratios unknown. Reports label the separate cost per completed task explicitly.
 
 Human review stays separate from the automatic result. Rebuilding a report doesn't change saved attempts, checks, or the gate's decision rules.
 
@@ -545,6 +531,8 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `zip-and-share`                    | Zip these into project-assets.zip and send it back                                                                                | files                           |
 
 </details>
+
+Each saved attempt includes model usage by request, counts of owner interactions, browser handoffs, and turn status, errors, start and finish times. Tool traces include calls made inside scripts. Runtime observations and saved Pi calls are matched so each call appears once; the saved model arguments stay available for secret-leak checks. These measurements use the existing cost ledger. Judge and simulated-owner costs stay separate from Nod usage.
 
 ## Check first use
 

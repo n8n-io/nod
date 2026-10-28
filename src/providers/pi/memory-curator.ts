@@ -1,6 +1,7 @@
 import {
   InMemoryCredentialStore,
   getSupportedThinkingLevels,
+  type AssistantMessage,
   type Context,
 } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
@@ -100,15 +101,32 @@ export function createPiMemoryCurator(options: {
         };
         const startedAt = new Date().toISOString();
         const started = performance.now();
-        const reply = await runtime.completeSimple(model, context, {
-          signal: AbortSignal.any([
-            AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
-            ...(signal ? [signal] : []),
-          ]),
-          maxTokens: task === 'analytics' ? 2048 : 8192,
-          reasoning: effort === 'off' ? undefined : effort,
-        });
-        const durationMs = performance.now() - started;
+        let reply: AssistantMessage | undefined;
+        try {
+          reply = await runtime.completeSimple(model, context, {
+            signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
+            maxTokens: 8192,
+            reasoning: effort === 'off' ? undefined : effort,
+          });
+        } finally {
+          const metrics = piUsageMetrics(reply?.usage);
+          report?.({
+            id: crypto.randomUUID(),
+            provider: reply?.provider ?? model.provider,
+            model: reply?.model ?? model.id,
+            durationMs: performance.now() - started,
+            ...metrics,
+            status:
+              reply?.stopReason === 'aborted' || (!reply && signal?.aborted)
+                ? 'cancelled'
+                : !reply || reply.stopReason === 'error'
+                  ? 'failed'
+                  : 'succeeded',
+            costUsd: subscription ? null : (metrics.costUsd ?? null),
+            ...(subscription ? { estimateUsd: metrics.costUsd ?? null } : {}),
+            pricing: subscription ? 'unavailable' : (metrics.pricing ?? 'unavailable'),
+          });
+        }
         const target = runtime.getModel(reply.provider, reply.model) ?? model;
         if (task !== 'access' && options.traces?.active())
           options.traces.record(
@@ -117,31 +135,12 @@ export function createPiMemoryCurator(options: {
               { source: 'curator', task },
             ),
           );
-        if (reply.usage?.totalTokens)
-          report?.({
-            id: crypto.randomUUID(),
-            provider: reply.provider,
-            model: reply.model,
-            durationMs,
-            ...piUsageMetrics(reply.usage),
-            status:
-              reply.stopReason === 'error'
-                ? 'failed'
-                : reply.stopReason === 'aborted'
-                  ? 'cancelled'
-                  : 'succeeded',
-            costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
-            ...(subscription ? { estimateUsd: piUsageMetrics(reply.usage).costUsd ?? null } : {}),
-            pricing: subscription ? 'unavailable' : piUsageMetrics(reply.usage).pricing,
-          });
         return reply;
       };
       let reply = await complete();
       for (
         let attempt = 0;
-        attempt < (task === 'analytics' || task === 'vision' ? 0 : 2) &&
-        reply.stopReason === 'error' &&
-        !signal?.aborted;
+        attempt < (task === 'vision' ? 0 : 2) && reply.stopReason === 'error' && !signal?.aborted;
         attempt++
       )
         reply = await complete();

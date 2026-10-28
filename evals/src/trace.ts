@@ -6,6 +6,8 @@ import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
+import type { UsageDetails } from '../../src/shared/execution.ts';
+import { redactedInput } from './capture.ts';
 
 export interface ToolCall {
   id?: string;
@@ -49,6 +51,7 @@ export interface Run {
     waiting_reason?: string | null;
     waiting?: boolean;
     proactive?: boolean;
+    agentStarted?: boolean;
     screened?: boolean;
     startedAt?: number;
     finishedAt?: number;
@@ -73,7 +76,13 @@ export interface Run {
   modelErrors: string[];
   approvals: Array<{ turnId: string; action: string; status: string; args: unknown }>;
   visits: Visit[];
-  usage: { tokens: number; modelCalls: number; costUsd: number | null };
+  usage: {
+    tokens: number;
+    modelCalls: number;
+    costUsd: number | null;
+    requests?: UsageDetails[];
+  };
+  compactions?: number;
   firstReplySeconds: number | null;
   acknowledgement: { turnsWithTools: number; acknowledged: number };
   seconds: number;
@@ -98,7 +107,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
       turn.background &&
       turn.status === 'succeeded' &&
       turn.startedAt !== undefined &&
-      !turn.screened &&
+      (!turn.screened || turn.agentStarted !== false) &&
       !captured.has(turn.id),
   );
   if (missing.length)
@@ -130,7 +139,7 @@ function capturedTools(stack: Stack) {
   const tools: ToolCall[] = [];
   const started = new Map<string, ToolCall>();
   for (const { turnId, event } of stack.observations) {
-    if (event.type === 'model_usage' || !event.execution?.parentRunId) continue;
+    if (event.type === 'model_usage' || !event.execution) continue;
     const id = `${event.execution?.runId ?? turnId}:${event.id}`;
     if (event.type === 'tool_start') {
       if (started.has(id)) continue;
@@ -184,6 +193,7 @@ export async function collect(options: {
   const { stack, session, world } = options;
   const tools = capturedTools(stack);
   const calls = new Map<string, ToolCall>();
+  const matched = new Set<ToolCall>();
   const prompts = [...stack.prompts];
   const currentTurns = new Map<string, string | undefined>();
   let turnsWithTools = 0;
@@ -191,7 +201,9 @@ export async function collect(options: {
   let waitingForFirst = false;
   let foreground = false;
   const modelErrors: string[] = [];
+  let compactions = 0;
   for (const { sessionId, entry } of await sessionEvents(stack.sessionRoot)) {
+    if (entry.type === 'compaction') compactions++;
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {
@@ -225,13 +237,34 @@ export async function collect(options: {
         .trim();
       for (const block of message.content ?? []) {
         if (block.type !== 'toolCall') continue;
+        const name =
+          block.name === 'nod_browser'
+            ? 'browser'
+            : block.name === 'nod_tool_search'
+              ? 'tool_search'
+              : block.name;
         const id = `${sessionId}:${block.id}`;
+        const captured = tools.find(
+          (call) =>
+            !call.parentRunId &&
+            !matched.has(call) &&
+            call.sessionId === sessionId &&
+            call.name === name &&
+            JSON.stringify(call.input) === JSON.stringify(redactedInput(name, block.arguments)),
+        );
+        if (captured) {
+          captured.input = block.arguments;
+          captured.lead = lead;
+          matched.add(captured);
+          calls.set(id, captured);
+          continue;
+        }
         const call: ToolCall = {
           id: block.id,
           turnId: currentTurns.get(sessionId),
           sessionId,
           browser: browserSessionId(sessionId),
-          name: block.name,
+          name,
           input: block.arguments,
           output: '',
           isError: false,
@@ -252,7 +285,12 @@ export async function collect(options: {
       }
     }
   }
-  const usage = (await stack.pool.query('SELECT cost_usd,details FROM model_usage')).rows;
+  const usage = (
+    await stack.pool.query(`SELECT m.cost_usd,m.details,
+    CASE WHEN (to_jsonb(t)->>'proactive')::boolean THEN 'observer' WHEN t.background THEN 'background'
+      WHEN t.id IS NOT NULL THEN 'foreground' ELSE 'housekeeping' END AS role
+    FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id`)
+  ).rows;
   const tokens = usage.reduce(
     (total, row) =>
       total +
@@ -278,22 +316,19 @@ export async function collect(options: {
   const artifacts = (
     await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
   ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
-  const screened = new Set(
-    (
-      await stack.pool.query(
-        `SELECT turn_id FROM model_usage WHERE turn_id IS NOT NULL GROUP BY turn_id
-        HAVING bool_or(details->>'operation'='attention') AND NOT bool_or(details->>'operation'='request')`,
-      )
-    ).rows.map((row: { turn_id?: string }) => row.turn_id),
-  );
   const turns = (
     await stack.pool.query(
       `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting,
-      COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive FROM turns t ORDER BY t.created_at, t.id`,
+      COALESCE((to_jsonb(t)->>'proactive')::boolean,false) AS proactive,
+      (EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=t.id AND e.type='agent_start')
+        OR EXISTS (SELECT 1 FROM model_usage m WHERE m.turn_id=t.id AND m.owner_id=t.owner_id
+          AND m.details->>'category'='agent' AND m.details->>'operation'='request')) AS agent_started,
+      EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=t.id AND e.type='source_screened') AS screened
+      FROM turns t ORDER BY t.created_at, t.id`,
     )
-  ).rows.map(({ started_at, finished_at, ...turn }) => ({
+  ).rows.map(({ started_at, finished_at, agent_started, ...turn }) => ({
     ...turn,
-    screened: screened.has(turn.id),
+    agentStarted: agent_started,
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
@@ -400,7 +435,17 @@ export async function collect(options: {
     modelErrors,
     approvals,
     visits: options.visits,
-    usage: { tokens, modelCalls: usage.length, costUsd: costKnown ? cost : null },
+    usage: {
+      tokens,
+      modelCalls: usage.length,
+      costUsd: costKnown ? cost : null,
+      requests: usage.map((row) => ({
+        ...row.details,
+        costUsd: row.cost_usd,
+        ...(row.role ? { role: row.role } : {}),
+      })),
+    },
+    compactions,
     firstReplySeconds,
     acknowledgement: { turnsWithTools, acknowledged },
     seconds: options.seconds,
@@ -465,6 +510,12 @@ export async function collect(options: {
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${replies.length}.`,
+        ...messages
+          .filter((message) => message.role === 'assistant' && message.text.trim())
+          .map(
+            (message) =>
+              `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}`,
+          ),
         `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'

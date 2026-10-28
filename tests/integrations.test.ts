@@ -6882,12 +6882,6 @@ test(
         "INSERT INTO app_actions(owner_id,turn_id,action,effect,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE','change',now()-interval '90 minutes')",
         [scheduled],
       );
-      const chatAnswer = randomUUID();
-      const scheduledAnswer = randomUUID();
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,turn_id) VALUES($1,'owner','assistant','Chat reply',$3),($2,'owner','assistant','Scheduled reply',$4)",
-        [chatAnswer, scheduledAnswer, chat, scheduled],
-      );
       await pool.query(
         "INSERT INTO turn_events(turn_id,type) VALUES($1,'tool_complete'),($1,'tool_complete'),($2,'tool_complete'),($3,'tool_complete')",
         [chat, scheduled, foreign],
@@ -6981,16 +6975,6 @@ test(
       await pool.query(
         `UPDATE app_actions SET basis='{"kind":"approved"}' WHERE action='NOTION_UPDATE_PAGE'`,
       );
-      assert.deepEqual(await ledger.receipts([chat, scheduled, foreign]), {
-        [scheduledAnswer]: {
-          sessionId: scheduled,
-          actions: [{ label: 'Notion: update page', count: 1 }],
-          costUsd: null,
-        },
-      });
-      await pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [scheduled]);
-      assert.deepEqual(await ledger.receipts([scheduled]), {});
-      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [scheduled]);
       assert.deepEqual(
         (await pool.query('SELECT action FROM app_actions ORDER BY created_at')).rows,
         [
@@ -7045,9 +7029,6 @@ test(
           { label: 'Slack: send message' },
         ],
       );
-      assert.deepEqual((await ledger.receipts([scheduled]))[scheduledAnswer]!.actions, [
-        { label: 'Notion: update page', count: 1 },
-      ]);
       assert.deepEqual(
         (await app.inject(`/api/trust/entries?session=${scheduled}`))
           .json()

@@ -371,17 +371,17 @@ export function markdown(runs: Loaded[]) {
       .sort((a, b) => a.attempt - b.attempt)
       .map((attempt) => (attempt.status === 'pass' ? '✓' : attempt.status === 'fail' ? '✗' : '~'))
       .join('');
-  const spent = runs.reduce(
-    (total, run) => total + (run.summary.costUsd ?? 0) + (run.summary.efficiency.judgeCostUsd ?? 0),
-    0,
-  );
+  const costs = runs.flatMap((run) => [run.summary.costUsd, run.summary.efficiency.judgeCostUsd]);
+  const spent = costs.every((cost) => cost !== null)
+    ? costs.reduce<number>((total, cost) => total + cost!, 0)
+    : null;
   const safety = latest.trust.safetyIncidents;
   const lines = [
     latest.coverage.missing.length || latest.coverage.incomplete
       ? `### Incomplete run: ${coverage(latest)}`
       : `### ${pct(latest.combined.percent)} of regression attempts pass all required checks (${latest.combined.passed}/${latest.combined.total})${moved ? `, ${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label}` : ''}`,
     '',
-    `\`${latest.manifest.model}\` · judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · ${safety} safety incident${safety === 1 ? '' : 's'} · $${spent.toFixed(2)} on models`,
+    `\`${latest.manifest.model}\` · judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · ${safety} safety incident${safety === 1 ? '' : 's'} · ${money(spent)} on models`,
     '',
   ];
   for (const run of runs) {

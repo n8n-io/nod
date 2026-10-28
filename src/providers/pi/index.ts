@@ -472,10 +472,10 @@ export function createPiAgent(options: {
           },
         })),
         ...input.tools.map((tool): ToolDefinition => ({
-          name: tool.name,
+          name: tool.name === 'browser' ? 'nod_browser' : tool.name,
           label: tool.name.replaceAll('_', ' '),
           description: tool.description,
-          parameters: (budget.compact && tool.name === 'send_message'
+          parameters: (tool.name === 'send_message'
             ? {
                 ...tool.parameters,
                 properties: { ...(tool.parameters.properties as object), presentation: openSchema },
@@ -483,7 +483,7 @@ export function createPiAgent(options: {
             : tool.deferred
               ? toolSchema(tool.parameters)
               : tool.parameters) as ToolDefinition['parameters'],
-          ...(tool.deferred || budget.compact
+          ...((!input.restricted && !tool.eager) || tool.deferred || budget.compact
             ? {
                 exposure: 'deferred' as const,
                 namespace: tool.deferred
@@ -493,11 +493,9 @@ export function createPiAgent(options: {
                       description: 'Nod tools for apps, browsers, files, memory and tasks.',
                     },
               }
-            : { exposure: 'model-only' as const }),
+            : { exposure: 'direct' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args, signal) => {
-            if (id.includes('/') && !tool.deferred)
-              throw new Error('Call this Nod tool directly, outside codemode.');
             return {
               ...(await boundedOutput(
                 tool.name,
@@ -513,39 +511,45 @@ export function createPiAgent(options: {
           },
         })),
       ];
-      const deferred = budget.compact || input.tools.some((tool) => tool.deferred);
+      const deferred =
+        !input.restricted || budget.compact || input.tools.some((tool) => tool.deferred);
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
         settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
         additionalExtensionPaths: input.restricted ? [] : [webExtension],
         extensionFactories: [
-          ...(input.restricted ? [] : [createCodemodeExtension()]),
+          ...(input.restricted
+            ? []
+            : [createCodemodeExtension({ inlineBudget: 0, models: false })]),
           ...(deferred
             ? [
-                budget.compact
-                  ? (pi: ExtensionAPI) =>
-                      createToolSearchExtension()({
-                        ...pi,
-                        registerTool: (tool) =>
-                          pi.registerTool({
-                            ...tool,
-                            execute: (id, params, signal, update, context) => {
-                              pi.setActiveTools([
-                                ...sandboxTools.map((tool) => tool.name),
-                                'tool_search',
-                              ]);
-                              return tool.execute(
-                                id,
-                                { ...(params as object), limit: 1 } as typeof params,
-                                signal,
-                                update,
-                                context,
-                              );
-                            },
-                          }),
-                      })
-                  : createToolSearchExtension(),
+                (pi: ExtensionAPI) =>
+                  createToolSearchExtension()({
+                    ...pi,
+                    registerTool: (tool) =>
+                      pi.registerTool({
+                        ...tool,
+                        name: 'nod_tool_search',
+                        description: tool.description.replaceAll('tool_search', 'nod_tool_search'),
+                        execute: (id, params, signal, update, context) => {
+                          if (budget.compact)
+                            pi.setActiveTools([
+                              ...sandboxTools.map((tool) => tool.name),
+                              'nod_tool_search',
+                            ]);
+                          return tool.execute(
+                            id,
+                            budget.compact
+                              ? ({ ...(params as object), limit: 1 } as typeof params)
+                              : params,
+                            signal,
+                            update,
+                            context,
+                          );
+                        },
+                      }),
+                  }),
               ]
             : []),
           recentImages,
@@ -577,7 +581,8 @@ export function createPiAgent(options: {
             ...registered,
             definition: {
               ...registered.definition,
-              ...(budget.compact && name !== 'tool_search'
+              ...((!input.restricted || budget.compact) &&
+              !['nod_tool_search', 'codemode'].includes(name)
                 ? { exposure: 'deferred' as const, namespace: { name: web ? 'web' : 'workspace' } }
                 : {}),
               ...(web
@@ -600,7 +605,7 @@ export function createPiAgent(options: {
                     }
                   : params;
                 const result = await input.runTool(
-                  name,
+                  name === 'nod_tool_search' ? 'tool_search' : name,
                   args,
                   () =>
                     boundedOutput(
@@ -665,10 +670,13 @@ export function createPiAgent(options: {
       ];
       if (guidelines.some((rule) => rule.includes('codemode')))
         guidelines.push(
-          deferred
-            ? 'Codemode scripts can call workspace, web and connected MCP server tools (mcp__ names, found with tool_search, searchTools or describeTool); call apps, browser and other Nod tools directly.'
-            : 'Codemode scripts can call only workspace and web tools; call apps, browser and other Nod tools directly.',
+          'Codemode can call workspace, web, app and Nod tools. Every call keeps its normal validation, owner authority, approval and stop checks. Read schemas with searchTools or describeTool when needed. Await every call and inspect its result. Use direct tool calls when you need images.',
         );
+      if (input.tools.some((tool) => tool.name === 'browser'))
+        guidelines.push(
+          'Use nod_browser for browser calls. In older procedures, browser means this tool.',
+        );
+      if (deferred) guidelines.push('Use nod_tool_search to load deferred tools.');
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
         : input.systemPrompt;
@@ -682,8 +690,12 @@ export function createPiAgent(options: {
         tools: [
           ...tools
             .filter((tool) => budget.compact || tool.exposure !== 'deferred')
-            .map((tool) => tool.name),
-          ...extensions.extensions.flatMap((extension) => [...extension.tools.keys()]),
+            .map((tool) => `+${tool.name}`),
+          ...extensions.extensions.flatMap((extension) =>
+            [...extension.tools.entries()]
+              .filter(([, tool]) => budget.compact || tool.definition.exposure !== 'deferred')
+              .map(([name]) => `+${name}`),
+          ),
         ],
         customTools: tools,
         noTools: 'builtin',
@@ -701,7 +713,7 @@ export function createPiAgent(options: {
         }),
       });
       if (budget.compact)
-        session.setActiveToolsByName([...sandboxTools.map((tool) => tool.name), 'tool_search']);
+        session.setActiveToolsByName([...sandboxTools.map((tool) => tool.name), 'nod_tool_search']);
       if (disposed) {
         session.dispose();
         throw new Error('The agent service has stopped.');

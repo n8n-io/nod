@@ -25,8 +25,8 @@ import {
   toolUsed,
   type CaptureAnalytics,
 } from './analytics.ts';
+import { clearConversationAnalytics } from './conversation-analytics.ts';
 import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
-import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
   type BrowserAction,
@@ -37,7 +37,7 @@ import { fileBytes } from '../shared/files.ts';
 import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
-import { privateEmailResult } from './integration-result.ts';
+import { cacheMailChecks, privateEmailResult } from './integration-result.ts';
 import { createMailCheck } from './mail-check.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
@@ -211,7 +211,6 @@ export interface ApplicationAdapters {
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
   imageCurator?: MemoryCurator;
-  analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
   messaging?: MessagingTransport;
@@ -543,7 +542,6 @@ export function createDefaultAdapters(
       resolve: () => models.resolveImage(),
       traces,
     }),
-    analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     decisions,
     messagingSetup: {
@@ -741,7 +739,7 @@ async function initializeApplication(
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
       : undefined;
   };
-  const mailCheck = createMailCheck({ curator, decisions });
+  const mailCheck = cacheMailChecks(createMailCheck({ curator, decisions }));
   const skillLibrary = createSkillLibrary(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
@@ -1361,14 +1359,7 @@ async function initializeApplication(
     if (enabled) void observeConnections?.();
   });
   void observeConnections();
-  const conversationAnalytics = createConversationAnalytics({
-    pool,
-    ownerId,
-    analytics,
-    curator: adapters.analyticsCurator ? ledger.curator(adapters.analyticsCurator) : curator,
-    secrets,
-  });
-  await conversationAnalytics.initialize();
+  await clearConversationAnalytics(pool, ownerId);
   const accountProfile = async () =>
     runtimeAccount({
       name: null,
@@ -1491,7 +1482,7 @@ async function initializeApplication(
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
       observeTurn: (turnId, operation) =>
-        conversationAnalytics.observe(turnId, operation).finally(() => {
+        analytics.withRun(ownerId, operation, turnId).finally(() => {
           void admission
             .run(() => proactivity.due())
             ?.catch((error) => logFailure('proactivity_wake', error));
@@ -1552,6 +1543,16 @@ async function initializeApplication(
         const args = browserStepArgs(request);
         const verdict = await trust.check(turn, 'NOD_browser', args);
         if (!verdict.confirm) return 'run';
+        if (
+          request.step.action === 'click' &&
+          request.step.x !== undefined &&
+          !request.page.controls?.some(
+            ({ role, name }) => name && !['RootWebArea', 'WebArea', 'document'].includes(role),
+          )
+        )
+          throw new Error(
+            'The click target is not identified. Inspect a fresh snapshot or screenshot and choose the actual control. Do not ask the owner to approve an unidentified click.',
+          );
         if (request.subagent) return 'refused';
         const visible =
           turn.browserId &&
@@ -1912,7 +1913,6 @@ async function initializeApplication(
     taskLedger: tasks.read,
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
-    receipts: ledger.receipts,
     questionStates: approvals.states,
     computer,
     configuration: () =>
@@ -2001,7 +2001,6 @@ async function initializeApplication(
     ownerId,
     pool,
     keyStore: adapters.keyStore,
-    curator: onboardingCurator,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
@@ -2169,7 +2168,6 @@ async function initializeApplication(
       () => channels?.close(),
       () => activity.close(),
       () => stopThreadWorkers(),
-      () => conversationAnalytics.close(),
       finishWork,
       () => runtime.dispose(),
       () => artifacts.close(),

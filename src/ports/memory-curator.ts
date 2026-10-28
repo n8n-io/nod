@@ -11,12 +11,10 @@ export interface MemoryCurator {
         | 'remember'
         | 'review'
         | 'access'
-        | 'interview'
         | 'style'
         | 'skill'
         | 'plan'
         | 'brief'
-        | 'analytics'
         | 'vision'
         | 'attention';
       instructions: string;

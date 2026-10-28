@@ -47,7 +47,7 @@ flowchart TD
 - **It replies where you asked.** A schedule you set up on Telegram sends its messages to Telegram.
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Nod asks you first. See [Approvals](/trust/approvals/).
 
-Each run appears in **Tasks → Previous**. A run that messages you ends with a receipt of what it did and cost. A recurring schedule that has finished priced runs shows about what it costs a month, from the cost of its recent runs and how often it runs.
+Each run appears in **Tasks → Previous**. Review its cost and recorded app actions in [Usage](/use/spending/). A recurring schedule that has finished priced runs shows about what it costs a month, from the cost of its recent runs and how often it runs.
 
 ## Work Nod starts on its own
 

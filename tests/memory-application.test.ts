@@ -29,7 +29,6 @@ import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
-import { termsInstructions } from '../src/server/trust-terms.ts';
 
 type Step = {
   tool: string;
@@ -163,14 +162,8 @@ test(
         memoryCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, instructions, input }) => {
+          curate: async ({ task, input }) => {
             if (task === 'review') reviews.push(JSON.stringify(input));
-            if (task === 'review' && instructions === termsInstructions)
-              return {
-                verdict: 'compatible',
-                comparisons: [],
-                reason: 'Synthetic memory terms unchanged.',
-              };
             if (task === 'remember') {
               rememberInputs.push(JSON.stringify(input));
               return rememberAnswer(input as Remembered);
@@ -778,7 +771,7 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
 });
 
 test(
-  'onboarding interview drafts survive restart encrypted and owner-bound until save, reset or expiry',
+  'retired interview records stay encrypted and owner-bound until save, reset or expiry',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const schema = `test_interview_${randomUUID().replaceAll('-', '')}`;
@@ -799,20 +792,9 @@ test(
     const store = createPostgresObjectStore({ database, ownerId });
     await store.initialize();
     const memory = createMemoryService({ pool: database, ownerId, store });
-    let reply: unknown = { messages: ['What synthetic project are you working on?'], done: false };
-    let calls = 0;
     let failSeal = false;
     let keyUnavailable = false;
     let keyReads = 0;
-    const curator: MemoryCurator = {
-      id: 'draft-fixture',
-      configured: true,
-      async curate() {
-        calls++;
-        if (reply instanceof Error) throw reply;
-        return reply;
-      },
-    };
     const create = (owner = ownerId, secret = key) => {
       const app = Fastify();
       createOnboardingInterview({
@@ -828,8 +810,6 @@ test(
             return secret;
           },
         },
-        curator,
-        brief: async () => undefined,
       }).registerRoutes(app);
       t.after(() => app.close());
       return app;
@@ -846,23 +826,34 @@ test(
       done: false,
     });
     assert.deepEqual((await create().inject(path)).json(), initial);
-    for (const response of await Promise.all([
-      first.inject({ method: 'POST', url: path, payload: { generation, talk: [] } }),
-      first.inject({ method: 'POST', url: path, payload: { generation, talk: [] } }),
-    ]))
-      assert.equal(response.statusCode, 200);
-    assert.equal(calls, 1);
+    assert.equal(
+      (await first.inject({ method: 'POST', url: path, payload: { generation, talk: [] } }))
+        .statusCode,
+      404,
+    );
+    const seed = async (draft: object) => {
+      const previous = await store.read('onboarding/interview', 128 * 1024);
+      await store.write(
+        'onboarding/interview',
+        Buffer.from(
+          sealVaultValue(
+            key,
+            ['nod-onboarding-interview-v1', ownerId],
+            JSON.stringify({ ...draft, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 }),
+          ),
+        ),
+        { expectedVersion: previous?.version ?? null },
+      );
+    };
     const question = 'What synthetic project are you working on?';
     const answer = 'A synthetic client project with weekly reports.';
-    const talk = [
-      { from: 'nod', text: question },
-      { from: 'owner', text: answer },
-    ];
-    reply = new Error('Synthetic model unavailable');
-    assert.equal(
-      (await first.inject({ method: 'POST', url: path, payload: { generation, talk } })).statusCode,
-      503,
-    );
+    await seed({
+      generation,
+      completed: false,
+      answers: [answer],
+      turns: [[question]],
+      done: false,
+    });
     await first.close();
     const restarted = create();
     const pending = await restarted.inject(path);
@@ -877,22 +868,16 @@ test(
     const stored = (await store.read('onboarding/interview', 128 * 1024))!;
     assert.equal(Buffer.from(stored.bytes).includes(answer), false);
     assert.equal(Buffer.from(stored.bytes).includes(question), false);
-    reply = { messages: ['That helps with the synthetic setup.'], done: true };
-    assert.deepEqual(
-      (await restarted.inject({ method: 'POST', url: path, payload: { generation, talk } })).json(),
-      reply,
-    );
-    const beforeReplay = calls;
-    assert.deepEqual(
-      (await create().inject({ method: 'POST', url: path, payload: { generation, talk } })).json(),
-      reply,
-    );
-    assert.equal(calls, beforeReplay);
-    assert.equal(
-      (await restarted.inject({ method: 'POST', url: path, payload: { generation, talk: [] } }))
-        .statusCode,
-      409,
-    );
+    await seed({
+      generation,
+      completed: false,
+      answers: [answer],
+      turns: [[question], ['Synthetic closing.']],
+      done: true,
+    });
+    const resumed = (await restarted.inject(path)).json();
+    assert.equal(resumed.done, true);
+    assert.deepEqual((await create().inject(path)).json(), resumed);
     const other = create('synthetic-other-owner');
     const otherDraft = (await other.inject(path)).json();
     assert.deepEqual(otherDraft.answers, []);
@@ -984,10 +969,8 @@ test(
     assert.notEqual(current.generation, generation);
     assert.deepEqual(current.answers, []);
     for (const [method, payload] of [
-      ['POST', { generation, talk }],
       ['PUT', { generation, answers: [answer] }],
       ['DELETE', { generation }],
-      ['POST', { talk }],
       ['PUT', { answers: [answer] }],
       ['DELETE', {}],
     ] as const) {
@@ -995,20 +978,13 @@ test(
     }
     assert.deepEqual((await restarted.inject(path)).json(), current);
     const newerAnswer = 'A newer synthetic project.';
-    const newerTalk = [
-      { from: 'nod', text: question },
-      { from: 'owner', text: newerAnswer },
-    ];
-    assert.equal(
-      (
-        await restarted.inject({
-          method: 'POST',
-          url: path,
-          payload: { generation: current.generation, talk: newerTalk },
-        })
-      ).statusCode,
-      200,
-    );
+    await seed({
+      generation: current.generation,
+      completed: false,
+      answers: [newerAnswer],
+      turns: [[question], ['Synthetic closing.']],
+      done: true,
+    });
     assert.equal(
       (
         await restarted.inject({
@@ -1058,74 +1034,36 @@ test(
       409,
     );
     const beforeForbidden = await store.read('onboarding/interview', 128 * 1024);
-    const forbidden = await restarted.inject({
-      method: 'POST',
-      url: path,
-      payload: {
-        generation: current.generation,
-        talk: [
-          { from: 'nod', text: question },
-          { from: 'owner', text: '4111 1111 1111 1111' },
-        ],
-      },
-    });
-    assert.equal(forbidden.statusCode, 400);
+    for (const answers of [['4111 1111 1111 1111'], ['4111 1111', '1111 1111']]) {
+      assert.equal(
+        (
+          await restarted.inject({
+            method: 'PUT',
+            url: path,
+            payload: { generation: current.generation, answers },
+          })
+        ).statusCode,
+        400,
+      );
+    }
     assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), beforeForbidden);
     assert.equal(
       (
         await restarted.inject({
-          method: 'POST',
+          method: 'PUT',
           url: path,
-          payload: {
-            generation: current.generation,
-            talk: [{ from: 'owner', text: 'a'.repeat(128 * 1024) }],
-          },
+          payload: { generation: current.generation, answers: ['a'.repeat(128 * 1024)] },
         })
       ).statusCode,
       413,
     );
-    let started!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      started = resolve;
+    await seed({
+      generation: current.generation,
+      completed: false,
+      answers: [answer],
+      turns: [[question], ['Synthetic closing.']],
+      done: true,
     });
-    const paused = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    curator.curate = async () => {
-      started();
-      await paused;
-      return { messages: [question], done: false };
-    };
-    const writing = Promise.resolve(
-      restarted.inject({
-        method: 'POST',
-        url: path,
-        payload: { generation: current.generation, talk: [] },
-      }),
-    );
-    await entered;
-    current = (
-      await create().inject({
-        method: 'DELETE',
-        url: path,
-        payload: { generation: current.generation },
-      })
-    ).json();
-    release();
-    assert.equal((await writing).statusCode, 409);
-    assert.deepEqual((await restarted.inject(path)).json(), current);
-    curator.curate = async () => ({ messages: ['Synthetic closing.'], done: true });
-    assert.equal(
-      (
-        await restarted.inject({
-          method: 'POST',
-          url: path,
-          payload: { generation: current.generation, talk },
-        })
-      ).statusCode,
-      200,
-    );
     const blocker = await database.connect();
     await blocker.query('BEGIN');
     await blocker.query(

@@ -2,7 +2,7 @@ import type { Agent, ModelUsageObservation, RuntimeObservation } from '../../src
 
 export type Observation = RuntimeObservation | ModelUsageObservation;
 
-function redactedInput(name: string, input: unknown) {
+export function redactedInput(name: string, input: unknown) {
   const action = (input as { action?: unknown } | null)?.action;
   if (name === 'manage_personal_context' && String(action).startsWith('memory_'))
     return { action, args: '[private memory omitted]' };

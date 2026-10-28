@@ -25,6 +25,7 @@ import {
   inlineAppResult,
   privateEmailResult,
   mailCheckText,
+  cacheMailChecks,
   type MailCheck,
 } from '../src/server/integration-result.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
@@ -203,6 +204,149 @@ test('speech failure stays available to the agent for a text fallback without re
   assert.equal(attempted, 1);
   assert.deepEqual(result.replies, ['The synthetic answer is ready. Voice is unavailable.']);
   assert.equal(result.result.status, 'succeeded');
+});
+
+test('mail checks reuse exact content, isolate caches and do not keep failures', async () => {
+  let calls = 0;
+  const check: MailCheck = async (emails) => {
+    calls++;
+    if (emails.some((email) => email.from === 'broken@example.test'))
+      throw new Error('Synthetic check failure.');
+    return emails.map((email) => email.text.includes('Synthetic access token'));
+  };
+  const cached = cacheMailChecks(check);
+  const mail = {
+    id: 'same-message',
+    from: 'sender@example.test',
+    subject: 'Notice',
+    text: 'Ordinary update',
+  };
+  const first = await privateEmailResult([mail, { ...mail }], cached);
+  assert.deepEqual(first, [mail, mail]);
+  assert.equal(calls, 1);
+  const changed = { ...mail, text: 'Synthetic access token: fixture-secret' };
+  const hidden = await privateEmailResult(changed, cached);
+  assert.equal(JSON.stringify(hidden).includes('fixture-secret'), false);
+  assert.equal(calls, 2);
+  await privateEmailResult({ ...mail, from: 'other@example.test' }, cached);
+  await privateEmailResult({ ...mail, subject: 'Changed notice' }, cached);
+  assert.equal(calls, 4);
+  await privateEmailResult(mail, cacheMailChecks(check));
+  assert.equal(calls, 5);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const failed = await privateEmailResult({ ...mail, from: 'broken@example.test' }, cached);
+    assert.equal(JSON.stringify(failed).includes('Ordinary update'), false);
+  }
+  assert.equal(calls, 7);
+  const stop = new AbortController();
+  stop.abort();
+  await assert.rejects(
+    cached([{ from: mail.from, subject: mail.subject, text: mail.text }], stop.signal),
+  );
+  assert.equal(calls, 7);
+});
+
+test('mail cache keeps batch positions, retries unknown checks and refuses stopped callers', async () => {
+  let calls = 0;
+  const batches: string[][] = [];
+  const cached = cacheMailChecks(async (emails) => {
+    batches.push(emails.map(({ subject }) => subject));
+    calls++;
+    return emails.map(({ subject }) => (subject === 'unknown' ? undefined : subject === 'access'));
+  });
+  const mail = (subject: string) => ({ from: 'fixture@example.test', subject, text: subject });
+  assert.deepEqual(await cached([mail('access'), mail('ordinary'), mail('access')]), [
+    true,
+    false,
+    true,
+  ]);
+  assert.deepEqual(await cached([mail('ordinary'), mail('unknown'), mail('access')]), [
+    false,
+    undefined,
+    true,
+  ]);
+  assert.deepEqual(await cached([mail('unknown')]), [undefined]);
+  assert.deepEqual(batches, [['access', 'ordinary'], ['unknown'], ['unknown']]);
+  assert.equal(calls, 3);
+  const stop = new AbortController();
+  let finish: (values: Array<boolean | undefined>) => void = () => {};
+  const pending = cacheMailChecks(
+    async () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const result = pending([mail('ordinary')], stop.signal);
+  stop.abort();
+  finish([false]);
+  await assert.rejects(result);
+  const many = Array.from({ length: 300 }, (_, index) => mail(String(index)));
+  assert.deepEqual(
+    await cached(many),
+    many.map(() => false),
+  );
+});
+
+test('stopping one email check does not cancel another caller for the same mail', async () => {
+  const first = new AbortController();
+  const second = new AbortController();
+  const finish: Array<(values: Array<boolean | undefined>) => void> = [];
+  const cached = cacheMailChecks(
+    async (_emails, signal) =>
+      new Promise((resolve, reject) => {
+        finish.push(resolve);
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+  );
+  const mail = { from: 'fixture@example.test', subject: 'Notice', text: 'Ordinary update' };
+  const a = cached([mail], first.signal);
+  const rejected = assert.rejects(a);
+  const b = cached([mail], second.signal);
+  first.abort();
+  await rejected;
+  assert.equal(finish.length, 2);
+  finish[1]!([false]);
+  assert.deepEqual(await b, [false]);
+  assert.deepEqual(await cached([mail]), [false]);
+  assert.equal(finish.length, 2);
+});
+
+test('compact owner context retains the memory saving switch without the note index', async () => {
+  await fixture(
+    async (_tools, emit, options) => {
+      assert.ok(options.compactInstructions?.ownerContext);
+      assert.ok(options.compactInstructions.ownerContext.includes('savingEnabled: false'));
+      assert.ok(!options.compactInstructions.ownerContext.includes('Synthetic private note'));
+      emit({ type: 'final', text: 'The synthetic answer is ready.' });
+    },
+    { memory: 'savingEnabled: false\nabout/fixture: Synthetic private note' },
+  );
+});
+
+test('a quiet source screen records its result without opening the agent', async () => {
+  const events: string[] = [];
+  const result = await fixture(
+    async () => {
+      assert.fail('A quiet screen must not start the agent.');
+    },
+    {
+      background: true,
+      emit: async (type) => {
+        events.push(type);
+      },
+      proactivity: {
+        instructions: 'Inspect synthetic records.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+        screen: async () => true,
+      },
+    },
+  );
+  assert.equal(result.result.status, 'succeeded');
+  assert.deepEqual(result.replies, []);
+  assert.deepEqual(events, ['source_screened']);
 });
 
 test('mail that grants account access stays out of app tool results and workspace files', async () => {

@@ -508,16 +508,9 @@ test(
       });
 
       const { createTrust } = await import('../src/server/trust.ts');
-      const { termsInstructions } = await import('../src/server/trust-terms.ts');
       const reviews: Array<Record<string, any>> = [];
       const prompts: string[] = [];
-      const termReviews: Array<Record<string, any>> = [];
-      const compatible = () => ({
-        verdict: 'compatible',
-        comparisons: [],
-        reason: 'No changed term.',
-      });
-      let compareTerms: (input: Record<string, any>) => unknown | Promise<unknown> = compatible;
+      let duringReview: () => Promise<void> = async () => {};
       let aligned:
         boolean | string | ((input: Record<string, any>) => boolean | Record<string, unknown>) =
         false;
@@ -531,7 +524,7 @@ test(
       t.beforeEach(() => {
         aligned = false;
         ruled = false;
-        compareTerms = compatible;
+        duringReview = async () => {};
       });
       const replies: object[] = [];
       const replyAnswers: Record<string, string> = {
@@ -545,10 +538,6 @@ test(
         pool: db.pool,
         ownerId,
         review: async (instructions, input) => {
-          if (instructions === termsInstructions) {
-            termReviews.push(structuredClone(input as Record<string, any>));
-            return compareTerms(input as Record<string, any>);
-          }
           if ('reply' in input) {
             replies.push(input);
             const reply = String(input.reply)
@@ -559,6 +548,7 @@ test(
           }
           reviews.push(input as Record<string, any>);
           prompts.push(instructions);
+          await duringReview();
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
           if (yes && typeof yes === 'object') return yes;
@@ -581,24 +571,8 @@ test(
         });
         return { promise, resolve };
       };
-      const comparedBody = (input: Record<string, any>, relation = 'preserved') => ({
-        verdict: relation === 'preserved' ? 'compatible' : relation,
-        comparisons: [
-          {
-            owner: {
-              path: `/userMessages/${input.userMessages.length - 1}/text`,
-              quote: input.userMessages.at(-1).text,
-            },
-            action: { path: '/action/arguments/body', quote: input.action.arguments.body },
-            relation,
-            reason: 'Synthetic explicit-term assessment.',
-          },
-        ],
-        reason: 'Synthetic explicit-term assessment.',
-      });
-
       await t.test(
-        'compatible terms preserve the original review input and executed arguments',
+        'one authorization review preserves the original instructions and executed arguments',
         async () => {
           const turn = await begin(
             'Email Ana at ana@example.test: EUR 1,200, due at the end of November 2026.',
@@ -611,15 +585,11 @@ test(
           const original = structuredClone(args);
           const before = calls.length;
           const primary = reviews.length;
-          const secondary = termReviews.length;
           aligned = true;
-          compareTerms = comparedBody;
           try {
             await approvals.request(turn, 'GMAIL_SEND_EMAIL', args);
             assert.equal(reviews.length, primary + 1);
-            assert.equal(termReviews.length, secondary + 1);
-            assert.deepEqual(termReviews.at(-1), reviews.at(-1));
-            assert.deepEqual(termReviews.at(-1)!.action, {
+            assert.deepEqual(reviews.at(-1)!.action, {
               name: 'GMAIL_SEND_EMAIL',
               arguments: original,
             });
@@ -633,142 +603,23 @@ test(
         },
       );
 
-      await t.test(
-        'changed or unusable term assessments require the exact action to be confirmed',
-        async () => {
-          const assessments: Array<(input: Record<string, any>) => unknown> = [
-            (input) => comparedBody(input, 'changed'),
-            (input) => comparedBody(input, 'unresolved'),
-            (input) => ({ ...comparedBody(input), replacementArguments: { body: 'Substitute' } }),
-            (input) => {
-              const result = comparedBody(input);
-              result.comparisons[0]!.owner.quote = 'Words the owner never supplied.';
-              return result;
-            },
-            (input) => {
-              const result = comparedBody(input);
-              result.comparisons[0]!.action.path = '/action/arguments/missing';
-              return result;
-            },
-            () => {
-              throw new Error('Synthetic term reviewer outage.');
-            },
-          ];
-          aligned = true;
-          for (const [index, assess] of assessments.entries()) {
-            const turn = await begin(
-              `Email Ana at ana@example.test: payment at the end of November. Request ${index}.`,
-            );
-            const args = { ...email('ana@example.test'), body: 'Payment before 30 November.' };
-            const original = structuredClone(args);
-            const before = calls.length;
-            compareTerms = assess;
-            try {
-              const id = await propose(turn, 'GMAIL_SEND_EMAIL', args);
-              assert.equal(calls.length, before);
-              assert.deepEqual((await stored(id)).args, original);
-              if (index === 0) {
-                args.body = 'Changed after the exact proposal was saved.';
-                await confirmTurn(turn.turnId);
-                await execute(id);
-                assert.equal(calls.length, before + 1);
-                assert.deepEqual(calls.at(-1)!.args, original);
-                assert.equal(await execute(id), undefined);
-                assert.equal(calls.length, before + 1);
-              }
-            } finally {
-              await finish(turn.turnId, 'cancelled');
-            }
-          }
-        },
-      );
-
-      await t.test(
-        'reads, private preparation and rejected authority do not invoke term comparison',
-        async () => {
-          compareTerms = () => {
-            throw new Error('The term reviewer must not run.');
-          };
-          const secondary = termReviews.length;
-          const before = calls.length;
-          aligned = () => ({ run: true, because: 'read' });
-          for (const action of ['GMAIL_FETCH_EMAILS', 'GMAIL_CREATE_EMAIL_DRAFT']) {
-            const turn = await begin('Read the invoice and prepare private work.');
-            await approvals.request(turn, action, email('ana@example.test'));
-            await finish(turn.turnId, 'succeeded');
-          }
-          assert.equal(calls.length, before + 2);
-          for (const answer of [{ run: false }, { run: true, because: 'Invented authority.' }]) {
-            const turn = await begin('Only read my inbox.');
-            aligned = () => answer;
-            await propose(turn, 'GMAIL_SEND_EMAIL', email('ana@example.test'));
-            await finish(turn.turnId, 'cancelled');
-          }
-          assert.equal(calls.length, before + 2);
-          assert.equal(termReviews.length, secondary);
-        },
-      );
-
-      await t.test('a stopped authorization review cannot start another term review', async () => {
+      await t.test('a stopped turn cannot use an awaited authorization result', async () => {
         for (const status of ['cancelled', 'succeeded']) {
-          const turn = await begin('Send the agreed invoice to ana@example.test.');
-          const entered = deferred();
-          const release = deferred();
-          let comparisons = 0;
-          const checking = createTrust({
-            pool: db.pool,
-            ownerId,
-            review: async (instructions, input) => {
-              if (instructions === termsInstructions) {
-                comparisons++;
-                return compatible();
-              }
-              entered.resolve();
-              await release.promise;
-              return { run: true, because: cite(input) };
-            },
-          });
-          const args = email('ana@example.test');
-          const before = calls.length;
-          const outcome = checking
-            .check(turn, 'GMAIL_SEND_EMAIL', args)
-            .then((verdict) =>
-              approved.request(turn, 'GMAIL_SEND_EMAIL', args, { allowed: !verdict.confirm }),
-            )
-            .then(
-              () => undefined,
-              (error: unknown) => error,
-            );
-          await entered.promise;
-          await finish(turn.turnId, status);
-          release.resolve();
-          assert.ok((await outcome) instanceof Error);
-          assert.equal(comparisons, 0);
-          assert.equal(calls.length, before);
-          assert.equal(await proposal(turn.turnId), undefined);
-        }
-      });
-
-      await t.test(
-        'a stopped or completed turn cannot execute after an awaited term comparison',
-        async () => {
-          aligned = true;
-          for (const status of ['cancelled', 'succeeded']) {
+          for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_FETCH_EMAILS']) {
             const turn = await begin('Send the agreed invoice to ana@example.test.');
             const entered = deferred();
             const release = deferred();
-            compareTerms = async (input) => {
+            aligned =
+              action === 'GMAIL_FETCH_EMAILS' ? () => ({ run: true, because: 'read' }) : true;
+            duringReview = async () => {
               entered.resolve();
               await release.promise;
-              return comparedBody(input);
             };
             const before = calls.length;
-            const outcome = approvals
-              .request(turn, 'GMAIL_SEND_EMAIL', email('ana@example.test'))
-              .then(
-                () => undefined,
-                (error: unknown) => error,
-              );
+            const outcome = approvals.request(turn, action, email('ana@example.test')).then(
+              () => undefined,
+              (error: unknown) => error,
+            );
             await entered.promise;
             await finish(turn.turnId, status);
             release.resolve();
@@ -776,8 +627,8 @@ test(
             assert.equal(calls.length, before);
             assert.equal(await proposal(turn.turnId), undefined);
           }
-        },
-      );
+        }
+      });
 
       await t.test(
         'owner corrections and changed rules reject stale proposals without asking for them',
@@ -801,10 +652,9 @@ test(
               );
               const entered = deferred();
               const release = deferred();
-              compareTerms = async () => {
+              duringReview = async () => {
                 entered.resolve();
                 await release.promise;
-                return compatible();
               };
               const before = calls.length;
               const outcome = approvals
@@ -841,7 +691,7 @@ test(
       );
 
       await t.test(
-        'term review freshness ignores unrelated task messages and detects replies to its own task',
+        'authorization ignores unrelated task messages and detects replies to its own task',
         async (t) => {
           const parent = await begin('Email Ana the fixture invoice for EUR 1,200.');
           const task = (await tasks.execute(
@@ -875,10 +725,9 @@ test(
           for (const own of [false, true]) {
             const entered = deferred();
             const release = deferred();
-            compareTerms = async () => {
+            duringReview = async () => {
               entered.resolve();
               await release.promise;
-              return compatible();
             };
             const before = calls.length;
             const outcome = approvals
@@ -905,7 +754,7 @@ test(
               assert.ok('result' in result);
               assert.equal(calls.length, before + 1);
               assert.equal(
-                termReviews
+                reviews
                   .at(-1)!
                   .userMessages.some((message: { text: string }) =>
                     message.text.includes('hotel@example.test'),
@@ -946,10 +795,7 @@ test(
           const checking = createTrust({
             pool,
             ownerId,
-            review: async (instructions, input) =>
-              instructions === termsInstructions
-                ? compatible()
-                : { run: true, because: cite(input) },
+            review: async (_instructions, input) => ({ run: true, because: cite(input) }),
           });
           const args = email('ana@example.test');
           const before = calls.length;

@@ -33,20 +33,11 @@ What Nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 4. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in the introduction, before connecting a model. The welcome screen and introduction aren't reported later.
 5. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
 
-## Count real jobs
+## Count observed work
 
-A real job is the product's main measure: the latest `nod_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Nod's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
+Use server and app events for tool use, model cost, turn timing and delivery. Keep their stated limits. A finished turn does not prove that the complete requested job is done.
 
-## Evolve the task vocabulary
-
-The task labels, `use_case`, `context` and `collaboration` values are one list each in [`src/server/analytics-events.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics-events.ts). The event schema and the classifier prompt in `src/server/conversation-analytics.ts` both read them, so a value exists in one place.
-
-1. Watch `unknown_label_count` and `other_label_count` on `nod_task_analysis`. A rising share of `unknown`, `other` or `unclear` shows a gap.
-2. Add a value only when it names a reusable category across many requests: an action, subject or task type, or for `use_case` a product need. Never add one for a single template, brand or private topic, and never add sensitive topics such as health, religion or politics.
-3. Add one line to the prompt rules only when the value is easy to confuse with an existing one, such as `order` and `pay`.
-4. Add a reference case in `evals/src/analytics.ts`, then run `pnpm --dir evals run check` and `pnpm --dir evals test`. Run the live analytics eval by hand to compare agreement before and after.
-
-Renaming a value changes its meaning, so it needs a schema bump. Adding one doesn't.
+Do not add a model call to infer analytics labels from private conversations. Older task and frustration events are historical data. Keep dashboard descriptions clear about their date range and limitations.
 
 ## Keep recordings private
 

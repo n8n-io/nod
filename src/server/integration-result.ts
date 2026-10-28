@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
 
 export const appResultInlineChars = 40_000;
@@ -59,6 +60,36 @@ export type MailCheck = (
   emails: Mail[],
   signal?: AbortSignal,
 ) => Promise<Array<boolean | undefined>>;
+
+export function cacheMailChecks(check: MailCheck): MailCheck {
+  const cache = new Map<string, { until: number; result: boolean }>();
+  return async (emails, signal) => {
+    signal?.throwIfAborted();
+    const keys = emails.map((email) =>
+      createHash('sha256').update(JSON.stringify(email)).digest('hex'),
+    );
+    const results = new Map<string, boolean | undefined>();
+    const missing = new Map<string, Mail>();
+    for (const [index, key] of keys.entries()) {
+      const entry = cache.get(key);
+      if (entry && entry.until > Date.now()) results.set(key, entry.result);
+      else missing.set(key, emails[index]!);
+    }
+    if (missing.size) {
+      const checked = await check([...missing.values()], signal);
+      signal?.throwIfAborted();
+      for (const [index, key] of [...missing.keys()].entries()) {
+        const result = checked[index];
+        results.set(key, result);
+        if (typeof result === 'boolean') {
+          cache.set(key, { until: Date.now() + 300_000, result });
+          if (cache.size > 256) cache.delete(cache.keys().next().value!);
+        }
+      }
+    }
+    return keys.map((key) => results.get(key));
+  };
+}
 
 export const mailCheckChars = 8000;
 

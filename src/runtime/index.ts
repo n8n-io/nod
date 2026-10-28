@@ -2,7 +2,6 @@ import type { Presentation } from '../shared/presentation.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { setTimeout as wait } from 'node:timers/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import { Type } from '@sinclair/typebox';
@@ -206,7 +205,6 @@ export function createAgentRuntime(dependencies: {
     let answered = false;
     let lastNote = '';
     let reported = false;
-    let deliveredMessage = false;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -394,7 +392,6 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
-          if (name === 'create_audio') deliveredMessage = true;
           if (
             name === 'send_message' ||
             name === 'create_audio' ||
@@ -453,6 +450,7 @@ export function createAgentRuntime(dependencies: {
           signal,
         )
       ) {
+        await context.emit('source_screened', '', { execution });
         completed = screened = true;
         return { status };
       }
@@ -536,6 +534,7 @@ export function createAgentRuntime(dependencies: {
               name,
               description,
               parameters,
+              ...(tool.eager ? { eager: true } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),
               execute: async (params, options) => {
@@ -589,7 +588,7 @@ export function createAgentRuntime(dependencies: {
           replyToMessageId?: string,
           presentation?: Presentation,
         ) => {
-          if (await reply(text, id, replyToMessageId, presentation)) deliveredMessage = true;
+          await reply(text, id, replyToMessageId, presentation);
         },
         pause,
         confirm,
@@ -675,24 +674,11 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
-      const followUps: string[] = [];
-      const followUp = (text: string) => {
-        const trimmed = text.trim();
-        if (!trimmed) throw new Error('Write the follow-up line.');
-        if (!deliveredMessage)
-          throw new Error(
-            'Deliver the requested result with send_message or create_audio before offering a follow-up.',
-          );
-        if (followUps.length) return 'A follow-up is already queued.';
-        followUps.push(trimmed);
-        return 'Queued. It goes out as its own message; do not repeat the result or the offer.';
-      };
       const tools = bind(
         {
           ...shared,
           execution,
           delegate,
-          ...(speaks ? { followUp } : {}),
           ...(speaks
             ? {
                 setStatus: async (text: string) => {
@@ -958,21 +944,11 @@ export function createAgentRuntime(dependencies: {
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
-      let result =
+      const result =
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult
           : undefined;
       const spokenReply = result?.trim() || lastReply;
-      if (status === 'succeeded' && followUps.length) {
-        if (result) {
-          await deliverReply(result);
-          result = undefined;
-        }
-        for (const text of followUps) {
-          await wait(1200, undefined, { signal });
-          await deliverReply(text);
-        }
-      }
       waitingForUser = status !== 'succeeded';
       completed = true;
       return {

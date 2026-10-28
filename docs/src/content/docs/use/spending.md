@@ -18,7 +18,7 @@ Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Lin
 
 Standing instructions and rules appear as short labels. Select **follows your instruction** or **your rules** to read or edit the full text.
 
-A finished task or scheduled run ends with a quiet receipt under its last message in chat, such as _Gmail: send email ×2 · $0.38_. Select it to see only that work in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
+Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
@@ -66,6 +66,10 @@ A task checks in with you when its spending since your last message to it passes
 The count covers every turn of the task and its helpers, so a task that works in small steps over several days checks in too. Chat, schedules, and the background observer check in the same way. The observer counts across its turns until you answer its check-in.
 
 Trust checks, confirmation fact checks and the [decision check](/connect/models/#decision-checks) count toward the monthly limit. Those made during a running task, and its other model calls, also count toward its check-in. The approval-reply check runs before the task resumes. Each request counts once.
+
+An action that your words cover needs one authorization review. If it needs approval, Nod also calls the model to write and check the question. Reading your answer adds another check. A rejected question can need one new draft and fact check. Each extra conversation turn also uses the main model with its session context.
+
+To reduce repeated questions, set [rules for what Nod can do directly](/trust/approvals/#your-rules). Nod can change from an app tool to the same service's website when the account and requested outcome stay the same. It also reuses saved procedures and writing style. Routine drafts do not require fresh style samples, and optional offers do not require extra schedule or history reads.
 
 Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra.
 

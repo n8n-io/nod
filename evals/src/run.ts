@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
+import type { ModelEffort } from '../../src/shared/models.ts';
 import { summarize } from './aggregate.ts';
 import { diagnoseAll } from './diagnose.ts';
 import { ensureDatabase, evalImages } from './environment.ts';
@@ -19,6 +20,7 @@ export const defaultJudge = 'anthropic/claude-sonnet-5-5';
 export interface RunOptions {
   root: string;
   model?: string;
+  effort?: ModelEffort;
   judge?: string;
   repeat: number;
   k?: number;
@@ -116,15 +118,23 @@ export function select(
 async function attemptOnce(options: {
   directory: string;
   model: string;
+  effort?: ModelEffort;
   judge: string;
   task: { item: (typeof scenarios)[number]; attempt: number };
 }) {
-  const { directory, model, judge, task } = options;
+  const { directory, model, effort, judge, task } = options;
   const file = join(directory, 'attempts', `${task.item.id}.${task.attempt}.json`);
   const specPath = join(tmpdir(), `nod-eval-${randomUUID()}.json`);
   await writeFile(
     specPath,
-    JSON.stringify({ scenario: task.item.id, attempt: task.attempt, outFile: file, model, judge }),
+    JSON.stringify({
+      scenario: task.item.id,
+      attempt: task.attempt,
+      outFile: file,
+      model,
+      effort,
+      judge,
+    }),
   );
   const child = spawn(
     process.execPath,
@@ -254,6 +264,7 @@ export async function runSuite(options: RunOptions) {
       dirty: options.ref ? false : git('status', '--porcelain', '--', 'src', 'evals').length > 0,
       ...(options.ref ? { ref: options.ref } : {}),
       model,
+      effort: options.effort ?? 'high',
       judge,
       repeat: options.repeat,
       scenarioIds: selected.map((item) => item.id),
@@ -295,7 +306,13 @@ export async function runSuite(options: RunOptions) {
         let result =
           options.resume && previous && previous.status !== 'incomplete' ? previous : undefined;
         for (let tries = 0; !result && tries <= options.retries; tries++) {
-          result = await attemptOnce({ directory, model, judge, task });
+          result = await attemptOnce({
+            directory,
+            model,
+            effort: options.effort ?? 'high',
+            judge,
+            task,
+          });
           if (
             result.status === 'incomplete' &&
             result.blame !== 'agent' &&

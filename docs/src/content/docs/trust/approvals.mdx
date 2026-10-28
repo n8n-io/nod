@@ -9,7 +9,7 @@ Before Nod runs an action in a connected app, or a step in its browser that coul
 
 ## Your request covers its steps
 
-Ask for an outcome and Nod takes the steps it needs, in the apps, accounts and websites you named, up to the order, booking or message you asked for. You aren't asked about each step on the way.
+Ask for an outcome and Nod takes the steps it needs, in the apps, accounts and websites you named, up to the order, booking or message you asked for. You are not asked about each step on the way. Searches, filters and navigation run without confirmation, including a search form that uses POST. A flight search covers airport, date and cabin choices, but does not authorize booking or a traveler profile change. If a coordinate does not identify a control, Nod inspects the page again instead of asking you to approve a vague click.
 
 | You say                                          | Runs without asking                                                        | Waits for you                                                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -19,13 +19,17 @@ Ask for an outcome and Nod takes the steps it needs, in the apps, accounts and w
 
 Nothing past the outcome is covered: another website or recipient, a subscription or another purchase, a new account, publishing, deleting something you didn't name, changing your account or its settings, or sending your details for anything the job doesn't need. When Nod proposes a specific action or outcome, including what it will commit to and where, your yes covers its necessary steps.
 
+After a definite app failure, Nod can use the same service's website without asking you to approve the outcome again. The account, target, terms, and requested result must stay the same. If you explicitly chose a method, Nod asks before changing it. A sign-in request appears only when the website needs it. If the result is uncertain or the call was interrupted, Nod checks the result before another attempt.
+
+For example, a request to create a Gmail filter covers creating that filter through Gmail's website when the app connection lacks permission. It does not cover other account changes. Nod can reuse a saved procedure for this work. A procedure records the steps, not permission.
+
 A request to help with a problem can leave that outside action undecided. After advice about possible remedies, "please handle it" and an attached receipt let Nod read and prepare; they don't choose an email, a claim submission or a booking. Nod asks before the commitment when you haven't chosen it. The same short reply can approve a specific proposal, such as sending a repair request to the retailer named in that proposal.
 
-Before an action beyond reading or preparation runs automatically, a second comparison checks its explicit terms against your words. It checks amounts, currencies, dates, times, obligations, and conditions, including later corrections. Translation can change the wording, but not the commitment. If you delegate a choice within a budget or time window, choosing inside that limit doesn't need another confirmation.
+One model review checks permission and your explicit terms together. It compares the amounts, currencies, dates, times, obligations, and conditions you state, including later corrections. A request such as "move the meeting back an hour" lets Nod look up the event and calculate its new times. The checker does not receive that source record and does not ask again only because the original time is absent. Nod must still check the event and the calculation. Explicit limits, recipients and other commitments remain boundaries. A final financial commitment with no way to compare your financial limit still needs approval. Translation can change the wording, but not the commitment. A choice within your budget or time window does not need another confirmation.
 
-Both checks use the same action and your original instructions. If the comparison finds changed terms, cannot resolve them, or fails, the action waits for your confirmation. Reads and private drafts skip this extra comparison. After this comparison, Nod rechecks the instructions it used. If those instructions changed during review, Nod rejects the old proposal instead of asking you to approve it.
+The review uses the exact action and your original instructions. Changed or unclear terms require confirmation. After review, Nod checks that the instructions and action arguments are still the same. A change rejects the old proposal instead of asking you to approve it.
 
-The model decides which terms apply and whether it compared all of them. It can return no comparisons when it finds no material terms. The server verifies the shape of its response and that its quoted evidence appears in the original input; it cannot prove that the model found every term or interpreted it correctly.
+The model decides which terms apply and whether the action preserves them. The server checks that the quoted permission appears in the original instructions. It cannot prove that the model found every term or interpreted it correctly.
 
 Details needed to identify or carry out the requested action don't all need to appear in your message. They cannot add an obligation or expand what you asked for. This checks permission, not whether every detail is factually correct; the checker never sees the sources Nod read.
 
@@ -35,7 +39,7 @@ Private preparation starts on its own for every connected app: it reads, prepare
 
 ## What the checker sees
 
-The checker uses your selected model at its lowest reasoning setting. For an audio model, it uses the same-connection text companion shown under **Text support**, also at its lowest setting. Its first check covers every app action, reads included: run it, or ask you? To run something it must also name [what allows it](#because-you-said). The term comparison uses that same model. Looking up which app tools exist reads no account data, so it runs without a check. With a [local model](/connect/local-models/), the checker is that model, and smaller models decide less reliably.
+The checker uses your selected model at its lowest reasoning setting. For an audio model, it uses the same-connection text companion shown under **Text support**, also at its lowest setting. One review covers every app action, reads included: run it, or ask you? To run something it must also name [what allows it](#because-you-said). Looking up which app tools exist reads no account data, so it runs without a check. With a [local model](/connect/local-models/), the checker is that model, and smaller models decide less reliably.
 
 Reading your reply to a confirmation can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
 
@@ -102,6 +106,8 @@ Anyone can send you an email that claims to be from Ana. A standing instruction 
 ## Your rules
 
 Tell Nod once how it should work for you, and the checker holds every chat, task, scheduled run and background run to it. For example: "Always ask me before you send email outside my company" or "You can reply to my landlord about repairs without asking."
+
+Use rules to set how much Nod can do. Name the work it can do directly and the actions that need your approval. For example: "Manage my Gmail labels, filters, and archiving without asking. Always ask before permanently deleting email." You can set these rules in **Usage** or tell Nod in chat. Repeated yes replies alone do not create a lasting rule.
 
 - **A rule to ask first wins.** Nod asks before anything the rule names, even when your request covers it, reads and drafts included. Your yes runs that one action.
 - **A rule to go ahead covers only what it says.** It counts as your words for that action and target, and never for a change to Nod's own schedules, settings, rules, limits or memory.

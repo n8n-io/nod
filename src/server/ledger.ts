@@ -10,7 +10,6 @@ import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { TrustAction, TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
-import type { MessageReceipt } from '../shared/contracts.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -244,9 +243,7 @@ export function createLedger({
                     ? 'review'
                     : request.task === 'plan'
                       ? 'tasks'
-                      : request.task === 'analytics'
-                        ? 'analytics'
-                        : 'memory',
+                      : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,
@@ -430,57 +427,6 @@ export function createLedger({
     return Object.fromEntries(rows.map(({ sessionId, costUsd }) => [sessionId, costUsd]));
   }
 
-  async function receipts(turnIds: string[]): Promise<Record<string, MessageReceipt>> {
-    if (!turnIds.length) return {};
-    const { rows } = await pool.query<{
-      sessionId: string;
-      messageId: string;
-      actions: string[] | null;
-    }>(
-      `WITH sessions AS (
-         SELECT DISTINCT u.session_id FROM turns u
-         WHERE u.owner_id=$1 AND u.id=ANY($2::uuid[]) AND u.session_id<>u.thread_id)
-       SELECT s.session_id AS "sessionId",
-         (SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
-           WHERE m.owner_id=$1 AND u.session_id=s.session_id AND m.role='assistant' AND m.text<>''
-           ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
-         (SELECT array_agg(a.action ORDER BY a.created_at) FROM app_actions a
-           JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
-           WHERE a.owner_id=$1 AND u.session_id=s.session_id
-             AND a.basis IS NOT NULL AND a.basis->>'kind'<>'read') AS actions
-       FROM sessions s
-       WHERE (SELECT u.source FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
-           ORDER BY u.created_at,u.id LIMIT 1) IN ('task','schedule')
-         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
-           AND u.status IN ('queued','running','waiting'))`,
-      [ownerId, [...new Set(turnIds)]],
-    );
-    const costs = await sessionCosts(rows.map((row) => row.sessionId));
-    return Object.fromEntries(
-      rows.flatMap((row) => {
-        if (!row.messageId) return [];
-        const counts = new Map<string, number>();
-        for (const name of row.actions ?? []) {
-          const { app, label } = actionTitle(name);
-          const title = app ? `${app}: ${label}` : label;
-          counts.set(title, (counts.get(title) ?? 0) + 1);
-        }
-        const costUsd = costs[row.sessionId] ?? null;
-        if (!counts.size && costUsd === null) return [];
-        return [
-          [
-            row.messageId,
-            {
-              sessionId: row.sessionId,
-              actions: [...counts].map(([label, count]) => ({ label, count })),
-              costUsd,
-            },
-          ],
-        ];
-      }),
-    );
-  }
-
   async function entries(before?: { at: string; id: string }, session?: string) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
@@ -650,7 +596,6 @@ export function createLedger({
     limits,
     setLimits,
     sessionCosts,
-    receipts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     withExecution: <T>(
       execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,

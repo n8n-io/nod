@@ -1,4 +1,5 @@
 import type { Capability, FailureClass } from './scenario.ts';
+import type { UsageDetails } from '../../src/shared/execution.ts';
 
 export interface CheckResult {
   id: string;
@@ -46,6 +47,19 @@ export interface AttemptResult {
   toolErrors: number;
   firstReplySeconds: number | null;
   judgeCostUsd: number | null;
+  metrics?: {
+    modelUsage: UsageDetails[];
+    interactions: Record<string, number>;
+    browserHandoffs: number;
+    compactions?: number;
+    turns: Array<{
+      source: string;
+      status?: string;
+      error?: string | null;
+      startedAt?: number;
+      finishedAt?: number;
+    }>;
+  };
   final: string;
   transcript: string;
   groundTruth: string;
@@ -59,6 +73,7 @@ export interface RunManifest {
   dirty: boolean;
   ref?: string;
   model: string;
+  effort?: import('../../src/shared/models.ts').ModelEffort;
   judge: string;
   repeat: number;
   scenarioIds?: string[];

@@ -3,7 +3,6 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { summarizePopulation } from './proactivity.ts';
-import { runAnalyticsEval } from './analytics.ts';
 import { runDecisionEval } from './decisions.ts';
 import { parseSetups, runLongMemEval } from './longmemeval.ts';
 import { parseModes, runWhisperBench } from './whisperbench.ts';
@@ -31,8 +30,6 @@ export const help = `Nod capability evals
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing
     run [--tier pr|full|release|live]  run the suite and print the pass rate, trust profile and what went wrong
     list                       show every scenario
-    analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
-                               (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
                                (--baseline main, --repeat 3, --scenario a,b, --label name, --out directory)
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Nod, graded by the official judge
@@ -98,6 +95,16 @@ function runOptions(args: Args): RunOptions {
   return {
     root: resultsRoot(text(args, 'out')),
     model: text(args, 'model'),
+    ...(text(args, 'effort')
+      ? {
+          effort: choice(
+            args,
+            'effort',
+            ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const,
+            'high',
+          ),
+        }
+      : {}),
     judge: text(args, 'judge'),
     repeat,
     k: whole(args, 'k', repeat),
@@ -235,24 +242,6 @@ export async function main(args: Args) {
         caseIds: text(args, 'scenario')?.split(','),
       });
       console.log(JSON.stringify(result, null, 2));
-      return;
-    }
-    case 'analytics': {
-      const model = text(args, 'model');
-      if (!model)
-        throw new Error(
-          'Analytics evaluation requires --model <provider/name>. It calls a live model.',
-        );
-      const result = await runAnalyticsEval({
-        model: parseModel(model, await loadEnvironment()),
-        root,
-        label: text(args, 'label'),
-        repeat: whole(args, 'repeat', 3),
-        caseIds: text(args, 'scenario')?.split(','),
-      });
-      console.log(JSON.stringify(result.summary, null, 2));
-      console.log(`Saved ${join(result.directory, 'results.json')}`);
-      if (!result.summary.scored) process.exitCode = 1;
       return;
     }
     case 'longmemeval': {

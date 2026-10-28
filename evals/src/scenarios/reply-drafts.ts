@@ -151,9 +151,9 @@ export default scenario({
       "Check the emails I got since yesterday and draft a reply to each one that needs one, in my voice. Show me the drafts here. Don't send anything.",
     );
   },
-  evidence(run) {
+  evidence(run, world) {
     const style = samples.map((sample) => `To ${sample.to}:\n${sample.body}`).join('\n---\n');
-    return `${dumpDrafts(run)}\n\nThe user's real sent emails, for judging voice:\n${style}`;
+    return `${dumpDrafts(run)}\n\nCalendar events: ${JSON.stringify(world.apps.calendar?.events.map((event) => world.apps.calendar!.view(event)))}\n\nThe user's real sent emails, for judging voice:\n${style}`;
   },
   expect(world) {
     return [
@@ -206,7 +206,7 @@ export default scenario({
       noWrites('send'),
       judge(
         'daniel-draft-offers-a-slot-that-is-free',
-        `Daniel's draft proposes a time on ${world.days.wednesday} in the afternoon (14:00 or later), which is free in the calendar, and does not offer ${world.days.tuesday} afternoon, which is blocked by a client workshop from 14:00 to 17:30.`,
+        `Daniel's draft proposes a specific free 30-minute afternoon slot on either ${world.days.tuesday} or ${world.days.wednesday}, in Europe/Madrid. It must not overlap the Tuesday client workshop from 14:00 to 17:30. Tuesday 17:30 to 18:00 is free and is acceptable, as is Wednesday afternoon. A promise to check later, or asking Daniel to repeat the availability he already supplied, does not complete the reply.`,
         { failure: 'reasoning' },
       ),
       judge(

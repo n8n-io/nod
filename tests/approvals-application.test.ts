@@ -14,7 +14,6 @@ import { createDecisionModel } from '../src/providers/decisions.ts';
 import { BrowserActionError, type CredentialInput } from '../src/ports/computer.ts';
 import { authenticatorKey } from '../src/shared/authenticator-key.ts';
 import { authenticatorCode } from '../src/server/authenticator.ts';
-import { termsInstructions } from '../src/server/trust-terms.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -76,14 +75,13 @@ test(
     const connectionLabels: unknown[] = [];
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
-    const termChecks: object[] = [];
-    const termUsageIds: string[] = [];
     const executedApps: string[] = [];
     const uploads: string[] = [];
     const workspaceFiles = new Map<string, Uint8Array>();
     const browserActs: Array<Record<string, unknown>> = [];
     const injected: CredentialInput[] = [];
     let browserUrl = 'https://bank.example.test/transfer';
+    let browserControls = [{ role: 'button', name: 'Authorize payment' }];
     let allowMethodBrowser = false;
     let methodBindings = 0;
     let dialogOpen = false;
@@ -253,7 +251,7 @@ test(
                 ? { dialog: 'Send 120 EUR to the synthetic payee?' }
                 : step
                   ? {
-                      controls: [{ role: 'button', name: 'Authorize payment' }],
+                      controls: browserControls,
                       ...(step.action === 'click'
                         ? { submits: { method: 'POST', to: formTarget } }
                         : {}),
@@ -343,16 +341,7 @@ test(
         onboardingCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, instructions, input }, _signal, report) => {
-            if (task === 'review' && instructions === termsInstructions) {
-              termChecks.push(input);
-              if (checkCost !== undefined) {
-                const id = randomUUID();
-                termUsageIds.push(id);
-                report?.({ id, model: 'fixture', costUsd: checkCost });
-              }
-              return { verdict: 'compatible', comparisons: [], reason: 'Synthetic term review.' };
-            }
+          curate: async ({ task, input }, _signal, report) => {
             if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
               return connectionLabels.shift();
             if ('purpose' in input && input.purpose === 'confirmation') {
@@ -662,6 +651,31 @@ test(
           } finally {
             appResult = undefined;
             asked.delete(forged);
+          }
+        },
+      );
+
+      await t.test(
+        'an unidentified coordinate returns to inspection without an approval',
+        async () => {
+          const text = `Synthetic unidentified click ${randomUUID()}`;
+          const before = browserActs.filter((act) => act.action === 'click').length;
+          const errors = batchErrors.length;
+          batches.set(text, {
+            subagents: false,
+            calls: [{ tool: 'browser', action: 'click', args: { x: 0.5, y: 0.5 } }],
+          });
+          browserControls = [{ role: 'RootWebArea', name: 'Synthetic bank' }];
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turnId = response.json().turnId;
+            await waitFor(turnId, 'succeeded');
+            assert.deepEqual(await approvalsFor(turnId), []);
+            assert.equal(browserActs.filter((act) => act.action === 'click').length, before);
+            assert.match(batchErrors.slice(errors).join('\n'), /click target is not identified/);
+          } finally {
+            browserControls = [{ role: 'button', name: 'Authorize payment' }];
           }
         },
       );
@@ -1177,6 +1191,54 @@ test(
       });
 
       await t.test(
+        'large tool catalogs retain exact schema lookup without an action check',
+        async () => {
+          const schema = { type: 'object', properties: { value: { type: 'string' } } };
+          toolSearch = Object.fromEntries(
+            Array.from({ length: 8 }, (_, index) => [
+              `GMAIL_SYNTHETIC_READ_${index}`,
+              { description: `Synthetic read ${index}`, inputSchema: schema, hasFullSchema: true },
+            ]),
+          );
+          const checks = fallbackChecks.length;
+          try {
+            const indexed = (await application.integrations.execute(ownerId, 'SEARCH_TOOLS', {
+              query: 'Gmail tools',
+            })) as { tools: Record<string, { inputSchema?: unknown; hasFullSchema?: boolean }> };
+            assert.equal(Object.keys(indexed.tools).length, 8);
+            assert.deepEqual(indexed.tools.GMAIL_SYNTHETIC_READ_0.inputSchema, schema);
+            assert.equal(indexed.tools.GMAIL_SYNTHETIC_READ_7.hasFullSchema, false);
+            assert.equal(indexed.tools.GMAIL_SYNTHETIC_READ_7.inputSchema, undefined);
+            const exact = (await application.integrations.execute(ownerId, 'SEARCH_TOOLS', {
+              query: 'GMAIL_SYNTHETIC_READ_7',
+            })) as { tools: Record<string, { inputSchema?: unknown }> };
+            assert.deepEqual(Object.keys(exact.tools), ['GMAIL_SYNTHETIC_READ_7']);
+            assert.deepEqual(exact.tools.GMAIL_SYNTHETIC_READ_7.inputSchema, schema);
+            const grouped = (await application.integrations.execute(ownerId, 'SEARCH_TOOLS', {
+              query: 'GMAIL_SYNTHETIC_READ_3, GMAIL_SYNTHETIC_READ_7',
+            })) as { tools: Record<string, { inputSchema?: unknown }> };
+            assert.deepEqual(Object.keys(grouped.tools), [
+              'GMAIL_SYNTHETIC_READ_3',
+              'GMAIL_SYNTHETIC_READ_7',
+            ]);
+            assert.deepEqual(grouped.tools.GMAIL_SYNTHETIC_READ_3.inputSchema, schema);
+            assert.deepEqual(grouped.tools.GMAIL_SYNTHETIC_READ_7.inputSchema, schema);
+            const missing = (await application.integrations.execute(ownerId, 'SEARCH_TOOLS', {
+              query: 'GMAIL_MISSING_ACTION',
+            })) as { schemaError: string; tools: Record<string, unknown> };
+            assert.match(missing.schemaError, /No tool named GMAIL_MISSING_ACTION/);
+            assert.ok(Object.keys(missing.tools).includes('GMAIL_SYNTHETIC_READ_7'));
+            const turn = await propose('SEARCH_TOOLS', { query: 'GMAIL_SYNTHETIC_READ_7' }, 'apps');
+            assert.ok(results.get(turn));
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(fallbackChecks.length, checks);
+          } finally {
+            toolSearch = undefined;
+          }
+        },
+      );
+
+      await t.test(
         'a schedule cancellation steered into a confirmed turn uses the fresh owner request',
         async () => {
           const schedule = await reminder();
@@ -1339,7 +1401,7 @@ test(
       );
 
       await t.test(
-        'authorization and term review costs stop later tools at the task check-in',
+        'one authorization review per action stops later tools at the task check-in',
         async () => {
           for (const item of [
             {
@@ -1347,7 +1409,6 @@ test(
               args: { max_results: 1 },
               instruction: 'Read the synthetic inbox three times',
               completed: 2,
-              comparisons: 0,
               mailChecks: 2,
             },
             {
@@ -1358,8 +1419,7 @@ test(
                 body: 'Synthetic budget check.',
               },
               instruction: 'Send the synthetic update three times to budget@example.test',
-              completed: 1,
-              comparisons: 1,
+              completed: 2,
               mailChecks: 0,
             },
           ]) {
@@ -1369,8 +1429,6 @@ test(
             assert.equal(reset.statusCode, 200, reset.body);
             const before = executedApps.filter((action) => action === item.action).length;
             const checks = fallbackChecks.length;
-            const compared = termChecks.length;
-            const usageIds = termUsageIds.length;
             const text = `${item.instruction} ${randomUUID()}`;
             asked.add(text);
             batches.set(text, {
@@ -1394,11 +1452,6 @@ test(
                 before + item.completed,
               );
               assert.equal(fallbackChecks.length, checks + item.completed);
-              assert.equal(termChecks.length, compared + item.comparisons);
-              assert.deepEqual(
-                termChecks.slice(compared),
-                fallbackChecks.slice(checks, checks + item.comparisons),
-              );
               assert.deepEqual(await approvalsFor(turnId), []);
               const rows = (
                 await pool.query(
@@ -1410,10 +1463,6 @@ test(
               assert.deepEqual(
                 reviews.map((row) => row.cost_usd),
                 [0.6, 0.6],
-              );
-              assert.equal(
-                reviews.filter((row) => termUsageIds.slice(usageIds).includes(row.id)).length,
-                item.comparisons,
               );
               assert.equal(
                 rows.filter((row) => row.operation === 'access').length,
