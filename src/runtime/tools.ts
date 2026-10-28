@@ -215,7 +215,7 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Send a useful result or necessary decision to the owner now. Background final text is private, so use this tool for delivery. Do not repeat delivered text. Completion needs a confirmed result and inspectable output. Optional presentation adds a visual; read visual-replies for its schema. Text must be useful alone. Use only checked facts.',
+    'Deliver a checked result or necessary decision now. Background final text is private. Do not repeat delivered text. Read visual-replies for the presentation schema when comparisons, locations, layouts or trends benefit from a native view. Text gives the conclusion, caveats and sources without repeating every value. Completion requires confirmed, inspectable output.',
     Type.Object({
       text: Type.String({ minLength: 1 }),
       presentation: Type.Optional(presentation),
@@ -836,8 +836,12 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         if (
           skills?.core?.includes(p.name) ||
           skills?.catalog.some((skill) => skill.name === p.name)
-        )
-          return skills.read(p.name, p.file);
+        ) {
+          const guide = skills.read(p.name, p.file);
+          return p.name === 'visual-replies' && guide.file === 'SKILL.md'
+            ? { ...guide, presentationSchema: presentationJsonSchema }
+            : guide;
+        }
         if (p.file) throw new Error('A learned skill has no reference files.');
         return untrustedBlock(
           'learned skill',

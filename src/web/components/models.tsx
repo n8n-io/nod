@@ -124,7 +124,6 @@ export function ModelKeyHelp({
         <a href={`https://${info.keyUrl}`} target="_blank" rel="noreferrer">
           Get API key
         </a>
-        {' · '}Your saved key stays private.
         {info.catalog === 'bundled' && ' Access checked on first use.'}
       </p>
       {provider === 'google' && (
@@ -236,15 +235,22 @@ export function CloudKeyFields({
   onChange,
   disabled,
   workspaces = [],
+  showWorkspace = false,
 }: {
   provider: ModelProvider;
   value: KeySettings;
   onChange(value: KeySettings): void;
   disabled?: boolean;
   workspaces?: ModelWorkspace[];
+  showWorkspace?: boolean;
 }) {
+  const [workspaceFallback, setWorkspaceFallback] = useState(false);
+  useEffect(() => setWorkspaceFallback(false), [provider]);
+  useEffect(() => {
+    if (showWorkspace) setWorkspaceFallback(true);
+  }, [showWorkspace, provider]);
   if (provider === 'anthropic')
-    return (
+    return showWorkspace || workspaceFallback || workspaces.length > 0 ? (
       <>
         {workspaces.length > 0 && (
           <Field label="Workspace" hint="Choose the workspace Nod should use.">
@@ -287,7 +293,7 @@ export function CloudKeyFields({
           </Field>
         </details>
       </>
-    );
+    ) : null;
   if (provider === 'amazon-bedrock')
     return (
       <Field label="Region">
@@ -625,6 +631,7 @@ export function ModelSettings({
                     provider={provider}
                     value={settings}
                     workspaces={models.workspaces}
+                    showWorkspace={Boolean(keySubmissionError)}
                     onChange={(next) => {
                       setSettings(next);
                       models.setError('');
@@ -851,23 +858,6 @@ export function ModelSettings({
       {(!keySubmissionError || !keyProvider || searching) && models.error && (
         <Notice>{models.error}</Notice>
       )}
-      <details className="model-details">
-        <summary>Connection details</summary>
-        <p className="model-footnote">
-          Claude plans do not support this connection. Use an Anthropic API key or OpenRouter.{' '}
-          <a
-            href="https://code.claude.com/docs/en/legal-and-compliance"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Provider conditions
-          </a>
-        </p>
-        <p className="model-footnote">
-          Voice uses an OpenAI API key, OpenRouter, or free local voices. Set it up in Settings →
-          General → Voice.
-        </p>
-      </details>
     </div>
   );
 }
@@ -906,10 +896,6 @@ export function ModelPicker({
   const sharedThinking =
     available.length > 1 &&
     available.every(({ item }) => item.efforts.some((effort) => effort !== 'off'));
-  const sharedCapabilities = [
-    sharedImages && 'read images',
-    sharedThinking && 'think before replying',
-  ].filter(Boolean);
   const choices = available
     .filter(({ source, item }) =>
       `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
@@ -988,9 +974,7 @@ export function ModelPicker({
         >
           <DialogTitle>Choose a model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
-            Your choice applies to your next message.
-            {sharedCapabilities.length > 0 &&
-              ` All these models can ${sharedCapabilities.join(' and ')}.`}
+            Choose the model for your next message.
           </p>
           <SearchField
             inputRef={searchInput}
@@ -1006,6 +990,11 @@ export function ModelPicker({
           <div className="model-options">
             {choices.map(({ source, item, recommended }) => {
               const active = selected?.connectionId === source.id && selected.modelId === item.id;
+              const providerName =
+                source.method === 'subscription' ? 'ChatGPT' : modelProviderNames[source.provider];
+              const customLabel = ![providerName, modelSource(source)].some(
+                (name) => name.toLowerCase() === source.label.trim().toLowerCase(),
+              );
               const sharedLabel = connections.some(
                 (other) =>
                   other.id !== source.id &&
@@ -1029,10 +1018,8 @@ export function ModelPicker({
                     </span>
                     <span className="model-option-details">
                       <span>
-                        {source.method === 'subscription'
-                          ? 'ChatGPT'
-                          : modelProviderNames[source.provider]}
-                        {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
+                        {providerName}
+                        {customLabel ? ` · ${source.label}` : ''}
                         {sharedLabel && source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
                       </span>
                       {item.images && !sharedImages && (
@@ -1062,9 +1049,7 @@ export function ModelPicker({
                       )}
                     </span>
                   </span>
-                  <span className="model-option-status">
-                    {active && <Check size={18} aria-hidden="true" />}
-                  </span>
+                  <span className="model-option-status" aria-hidden="true" />
                 </button>
               );
             })}

@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import type { SpeechVoice } from '../../shared/speech';
-import { Check, ChevronDown, LoaderCircle, Play, Square } from './icons';
+import { Check, ChevronDown, LoaderCircle, Play, Sparkles, Square } from './icons';
 import {
   Button,
   Dialog,
@@ -123,6 +123,9 @@ export function VoicePicker({
       ),
     )
     .sort((a, b) => Number(b.id === selected?.id) - Number(a.id === selected?.id));
+  const showAutomatic = words.every((word) =>
+    'automatic matches the conversation language'.includes(word),
+  );
   const groups = [...new Set(matches.map(language))];
   return (
     <Dialog
@@ -153,7 +156,7 @@ export function VoicePicker({
       >
         <span className="voice-picker-label">
           <span id={`${id}-value`}>
-            {selected ? selected.name : value ? 'Choose another voice' : 'Choose a voice'}
+            {value === null ? 'Automatic' : selected ? selected.name : 'Choose another voice'}
           </span>
           {selected && <small id={`${id}-detail`}>{selected.description}</small>}
         </span>
@@ -223,6 +226,26 @@ export function VoicePicker({
           clearLabel="Clear voice search"
         />
         <div className="voice-picker-options">
+          {showAutomatic && (
+            <div className="voice-picker-option" data-selected={value === null}>
+              <span className="voice-automatic-icon" aria-hidden="true">
+                <Sparkles size={18} />
+              </span>
+              <button
+                type="button"
+                className="voice-choice"
+                aria-pressed={value === null}
+                disabled={disabled}
+                onClick={() => onChange(null)}
+              >
+                <span className="voice-picker-label">
+                  <span>Automatic</span>
+                  <small>Matches the conversation language</small>
+                </span>
+                {value === null && <Check size={16} aria-hidden="true" />}
+              </button>
+            </div>
+          )}
           {groups.map((group) => (
             <div key={group} role="group" aria-label={group}>
               {groups.length > 1 && <h3 className="voice-picker-group">{group}</h3>}
@@ -232,7 +255,7 @@ export function VoicePicker({
                   <div
                     className="voice-picker-option"
                     key={voice.id}
-                    data-selected={voice.id === (value ?? defaultVoice)}
+                    data-selected={voice.id === value}
                   >
                     <VoiceSample
                       voice={voice}
@@ -245,7 +268,7 @@ export function VoicePicker({
                       type="button"
                       className="voice-choice"
                       aria-label={`Choose ${voice.name}, ${voice.description}, ${sourceLabel(voice)}`}
-                      aria-pressed={voice.id === (value ?? defaultVoice)}
+                      aria-pressed={voice.id === value}
                       title={`${voice.name}\n${voice.description}`}
                       disabled={disabled}
                       onClick={() => onChange(voice.id)}
@@ -254,13 +277,13 @@ export function VoicePicker({
                         <span>{voice.name}</span>
                         {voice.description !== group && <small>{voice.description}</small>}
                       </span>
-                      {voice.id === (value ?? defaultVoice) && <Check size={16} />}
+                      {voice.id === value && <Check size={16} />}
                     </button>
                   </div>
                 ))}
             </div>
           ))}
-          {!matches.length && (
+          {!matches.length && !showAutomatic && (
             <p className="voice-picker-empty" role="status">
               No voices found. Try another name or language.
             </p>

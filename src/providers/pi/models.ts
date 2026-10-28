@@ -571,7 +571,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       let exchange!: Promise<ModelCredential>;
       const server = createServer((request, response) => {
         const send = (status: number) => {
-          const page = signInPage(status === 200, random());
+          const page = signInPage(status === 200, random(), 'ChatGPT');
           response.writeHead(status, { ...page.headers, Connection: 'close' });
           response.end(page.html);
         };

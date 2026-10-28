@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Copy, Download, List, Plus } from './icons';
 import type { Artifact } from '../../shared/contracts';
 import type { ImagePreview } from './attachment-images';
@@ -41,6 +42,51 @@ export function FileActions({ item }: { item: ImagePreview }) {
   activeId.current = item.id;
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const tooltipElement = useRef<HTMLSpanElement>(null);
+  const [tooltip, setTooltip] = useState<{
+    label: string;
+    x: number;
+    y: number;
+    below: number;
+  } | null>(null);
+  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  function hideTooltip() {
+    clearTimeout(tooltipTimer.current);
+    setTooltip(null);
+  }
+  function showTooltip(target: EventTarget, delay: number) {
+    hideTooltip();
+    const control =
+      target instanceof Element ? target.closest<HTMLElement>('[data-tooltip]') : null;
+    if (!control) return;
+    tooltipTimer.current = setTimeout(() => {
+      const box = control.getBoundingClientRect();
+      setTooltip({
+        label: control.dataset.tooltip!,
+        x: box.left + box.width / 2,
+        y: box.top - 8,
+        below: box.bottom + 8,
+      });
+    }, delay);
+  }
+  useLayoutEffect(() => {
+    const element = tooltipElement.current;
+    if (!tooltip || !element) return;
+    const { width, height } = element.getBoundingClientRect();
+    element.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, tooltip.x - width / 2))}px`;
+    const above = tooltip.y - height;
+    element.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, above >= 8 ? above : tooltip.below))}px`;
+  }, [tooltip]);
+  useEffect(() => {
+    const hide = () => hideTooltip();
+    window.addEventListener('resize', hide);
+    document.addEventListener('scroll', hide, true);
+    return () => {
+      clearTimeout(tooltipTimer.current);
+      window.removeEventListener('resize', hide);
+      document.removeEventListener('scroll', hide, true);
+    };
+  }, []);
   useEffect(() => {
     setNotice('');
     setBusy(false);
@@ -96,12 +142,25 @@ export function FileActions({ item }: { item: ImagePreview }) {
     }
   }
   return (
-    <span className="file-actions" ref={actions}>
+    <span
+      className="file-actions"
+      ref={actions}
+      onPointerOver={(event) => {
+        if (event.pointerType === 'mouse') showTooltip(event.target, 550);
+      }}
+      onPointerOut={hideTooltip}
+      onFocus={(event) => showTooltip(event.target, 0)}
+      onBlur={hideTooltip}
+      onClick={hideTooltip}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') hideTooltip();
+      }}
+    >
       <Button
         variant="ghost"
         size="icon"
         aria-label={`Use ${item.name} in message`}
-        title="Use in message"
+        data-tooltip="Add to message"
         onClick={() => reuseFile(item)}
       >
         <Plus size={15} />
@@ -112,7 +171,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
           size="icon"
           disabled={busy}
           aria-label={`Copy image ${item.name}`}
-          title="Copy image"
+          data-tooltip="Copy image"
           onClick={() => void run('copy')}
         >
           <Copy size={15} />
@@ -125,7 +184,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
             size="icon"
             disabled={busy}
             aria-label={`Save ${item.name}`}
-            title="Save to Downloads"
+            data-tooltip="Save to Downloads"
             onClick={() => void run('save')}
           >
             <Download size={15} />
@@ -135,7 +194,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
             size="icon"
             disabled={busy}
             aria-label={`File actions for ${item.name}`}
-            title="File actions"
+            data-tooltip="More file actions"
             onClick={() => void menu()}
           >
             <List size={15} />
@@ -146,7 +205,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
           href={artifact.url}
           download={item.name}
           aria-label={`Download ${item.name}`}
-          title="Download"
+          data-tooltip="Download file"
         >
           <Download size={15} />
         </a>
@@ -166,6 +225,18 @@ export function FileActions({ item }: { item: ImagePreview }) {
           )}
         </span>
       )}
+      {tooltip &&
+        createPortal(
+          <span
+            ref={tooltipElement}
+            role="tooltip"
+            className="file-action-tooltip"
+            style={{ left: tooltip.x, top: tooltip.y }}
+          >
+            {tooltip.label}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }

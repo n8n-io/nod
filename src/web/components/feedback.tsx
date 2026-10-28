@@ -24,7 +24,14 @@ import { feedbackActivitySnapshot } from '../lib/feedback-activity';
 import { feedbackErrorsAvailable, feedbackErrorsSnapshot } from '../lib/feedback-errors';
 import { clipboardFiles } from '../lib/composer-editor';
 import type { FeedbackAttachment } from '../lib/feedback-attachment';
-import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
+import {
+  hasFeedbackDraft,
+  loadFeedbackDraft,
+  readFeedbackPending,
+  saveFeedbackDraft,
+  writeFeedbackPending,
+  type FeedbackDraft,
+} from '../lib/feedback-draft';
 import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
 import { FeedbackAttachments } from './feedback-attachments';
 import { FeedbackDiagnostics, feedbackReportData } from './feedback-diagnostics';
@@ -32,28 +39,10 @@ import { FeedbackEditor, type FeedbackEditorHandle } from './feedback-editor';
 import { Button, Dialog, DialogContent, DialogTitle } from './ui';
 
 const categories = [
-  { id: 'bug', title: 'Bug or issue', icon: Bug },
+  { id: 'bug', title: 'Bug', icon: Bug },
   { id: 'feature', title: 'Idea', icon: Lightbulb },
   { id: 'other', title: 'Other', icon: MessageCircle },
 ] as const;
-
-function readPending(key: string) {
-  try {
-    const id = window.localStorage.getItem(key);
-    return id && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
-      ? id
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function writePending(key: string, id: string | null) {
-  try {
-    if (id) window.localStorage.setItem(key, id);
-    else window.localStorage.removeItem(key);
-  } catch {}
-}
 
 async function encodeAttachment(file: File): Promise<SubmittedAttachment> {
   const data = await new Promise<string>((resolve, reject) => {
@@ -71,6 +60,7 @@ type FeedbackDialogProps = {
   onOpenChange(open: boolean): void;
   returnFocus(): HTMLElement | null;
   screenshot?: File | null;
+  onDraftCleared?(): void;
 };
 
 function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
@@ -84,12 +74,6 @@ function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
   );
 }
 
-function hasDraft(draft: FeedbackDraft) {
-  return (
-    !!draft.feedback || !!draft.attachments.length || draft.category !== 'bug' || !!draft.pendingId
-  );
-}
-
 export function FeedbackDialog(props: FeedbackDialogProps) {
   return <FeedbackDraftDialog key={props.ownerId} {...props} />;
 }
@@ -100,10 +84,11 @@ function FeedbackDraftDialog({
   onOpenChange,
   returnFocus,
   screenshot,
+  onDraftCleared,
 }: FeedbackDialogProps) {
   const storageKey = `nod.feedback.pending.${ownerId}`;
   const reportKey = `nod.feedback.report.${ownerId}` as const;
-  const [pendingId, setPendingId] = useState(() => readPending(storageKey));
+  const [pendingId, setPendingId] = useState(() => readFeedbackPending(storageKey));
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');
   const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
@@ -182,7 +167,7 @@ function FeedbackDraftDialog({
         attachments: [],
         pendingId: null,
       };
-      const pending = readPending(storageKey) ?? value.pendingId;
+      const pending = readFeedbackPending(storageKey) ?? value.pendingId;
       persisted.current = value;
       setKind(value.category);
       setFeedback(value.feedback);
@@ -191,7 +176,7 @@ function FeedbackDraftDialog({
       setAttachments(value.attachments);
       setPendingId(pending);
       setReceipt(pending ? { submissionId: pending, status: 'unknown' } : null);
-      started.current = (!!saved && hasDraft(saved)) || !!pending;
+      started.current = (!!saved && hasFeedbackDraft(saved)) || !!pending;
       allowSave.current = true;
       setRestoreFailed(false);
     } catch {
@@ -211,7 +196,7 @@ function FeedbackDraftDialog({
     setSavingDraft(true);
     setRestoreFailed(false);
     try {
-      await saveFeedbackDraft(ownerId, hasDraft(value) ? value : null);
+      await saveFeedbackDraft(ownerId, hasFeedbackDraft(value) ? value : null);
       if (!active.current || storageVersion.current !== version) return;
       persisted.current = value;
       if (sameDraft(currentDraft.current, value)) {
@@ -245,7 +230,7 @@ function FeedbackDraftDialog({
       if (dirty.current && allowSave.current)
         void saveFeedbackDraft(
           ownerId,
-          hasDraft(currentDraft.current) ? currentDraft.current : null,
+          hasFeedbackDraft(currentDraft.current) ? currentDraft.current : null,
         ).catch(() => {});
     };
   }, []);
@@ -310,7 +295,7 @@ function FeedbackDraftDialog({
 
   useEffect(() => {
     if (!open || pendingId) return;
-    const saved = readPending(storageKey);
+    const saved = readFeedbackPending(storageKey);
     if (!saved) return;
     started.current = true;
     setPendingId(saved);
@@ -405,7 +390,7 @@ function FeedbackDraftDialog({
     persisted.current = empty;
     currentDraft.current = empty;
     dirty.current = false;
-    writePending(storageKey, null);
+    writeFeedbackPending(storageKey, null);
     setPendingId(null);
     submission.current = null;
     setReceipt(null);
@@ -433,6 +418,7 @@ function FeedbackDraftDialog({
       await saveFeedbackDraft(ownerId, null);
       if (!active.current) return;
       resetDraft();
+      onDraftCleared?.();
       if (accepted) setToast(true);
       onOpenChange(false);
     } catch {
@@ -461,7 +447,7 @@ function FeedbackDraftDialog({
     }
     setReceipt(result);
     if (result.status === 'rejected') {
-      writePending(storageKey, null);
+      writeFeedbackPending(storageKey, null);
       setPendingId(null);
       submission.current = null;
       setError(
@@ -471,14 +457,14 @@ function FeedbackDraftDialog({
             : 'This submission was not received. Add your feedback to try again.'),
       );
     } else {
-      writePending(storageKey, result.submissionId);
+      writeFeedbackPending(storageKey, result.submissionId);
       setPendingId(result.submissionId);
     }
   }
 
   async function send() {
     if (!valid || frozen || sendRequest.current || !context?.enabled) return;
-    const existing = readPending(storageKey);
+    const existing = readFeedbackPending(storageKey);
     if (existing) {
       setPendingId(existing);
       setReceipt({ submissionId: existing, status: 'unknown' });
@@ -514,7 +500,7 @@ function FeedbackDraftDialog({
       };
       submission.current = payload;
       id = payload.submissionId;
-      writePending(storageKey, id);
+      writeFeedbackPending(storageKey, id);
       setPendingId(id);
       await persistDraft({ ...currentDraft.current, pendingId: id });
       if (controller.signal.aborted) return;
@@ -532,7 +518,7 @@ function FeedbackDraftDialog({
           cause.status === 503);
       if (id && !rejected) applyReceipt({ submissionId: id, status: 'unknown' });
       else {
-        writePending(storageKey, null);
+        writeFeedbackPending(storageKey, null);
         setPendingId(null);
         submission.current = null;
         setError(errorMessage(cause));
@@ -815,14 +801,14 @@ function FeedbackDraftDialog({
                       <Button
                         type="button"
                         variant="ghost"
-                        size="sm"
+                        size="icon"
+                        aria-label="Attach files"
+                        title="Attach files"
                         disabled={frozen}
                         onClick={() => fileInput.current?.click()}
                       >
                         <Paperclip size={16} aria-hidden="true" />
-                        Add files
                       </Button>
-                      <span>Paste or drop files</span>
                     </div>
                   </div>
                   {(!pendingId || submission.current) && (
@@ -979,7 +965,7 @@ function FeedbackDraftDialog({
             <footer className="feedback-footer">
               <div className="feedback-footer-actions">
                 {development && copyButton}
-                {hydrated && hasDraft(draft) && !confirmDiscard && (
+                {hydrated && hasFeedbackDraft(draft) && !confirmDiscard && (
                   <Button
                     type="button"
                     variant="ghost"

@@ -148,7 +148,11 @@ function useConnect() {
       setFresh(result.connections.at(-1)?.id);
       return true;
     } catch (cause) {
-      setKeyError(errorMessage(cause));
+      setKeyError(
+        cause instanceof ApiError
+          ? errorMessage(cause)
+          : 'The connection couldn’t be completed. Try again.',
+      );
       if (cause instanceof ApiError && cause.workspaces) models.setWorkspaces(cause.workspaces);
       return false;
     } finally {
@@ -294,14 +298,18 @@ function KeyForm({
   autoFocus?: boolean;
 }) {
   const [key, setKey] = useState('');
+  const [keyTouched, setKeyTouched] = useState(false);
   const [settings, setSettings] = useState<KeySettings>(noKeySettings);
   const { setWorkspaces } = c.models;
   useEffect(() => {
     setKey('');
+    setKeyTouched(false);
     setSettings(noKeySettings);
     setWorkspaces([]);
   }, [provider, setWorkspaces]);
   const id = `ob-brain-key-${provider}`;
+  const formatError = key ? modelKeyError(provider, key) : undefined;
+  const error = c.keyError || (keyTouched ? formatError : undefined);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (await c.save(provider, key, settings)) {
@@ -315,6 +323,7 @@ function KeyForm({
         provider={provider}
         value={settings}
         workspaces={c.models.workspaces}
+        showWorkspace={Boolean(c.keyError && !formatError)}
         onChange={(next) => {
           setSettings(next);
           c.clearError();
@@ -340,8 +349,11 @@ function KeyForm({
           }
           value={key}
           disabled={c.checking}
-          aria-invalid={!!c.keyError}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : undefined}
           data-analytics-private
+          onBlur={() => setKeyTouched(true)}
+          onPaste={() => setKeyTouched(true)}
           onChange={(event) => {
             setKey(event.target.value);
             setSettings((current) => ({ ...current, workspaceId: '' }));
@@ -352,10 +364,16 @@ function KeyForm({
         <ConnectButton
           checking={c.checking}
           saved={modelProviderInfo[provider].catalog === 'bundled'}
-          disabled={c.models.workspaces.length > 0 && !settings.workspaceId.trim()}
+          disabled={
+            !!formatError || (c.models.workspaces.length > 0 && !settings.workspaceId.trim())
+          }
         />
       </div>
-      <Problem>{c.keyError}</Problem>
+      {error && (
+        <div id={`${id}-error`}>
+          <Problem>{error}</Problem>
+        </div>
+      )}
       <ModelKeyHelp provider={provider} className="ob-brain-note" />
     </form>
   );

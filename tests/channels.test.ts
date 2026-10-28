@@ -20,7 +20,7 @@ import { createWhatsAppLinkedTransport } from '../src/providers/chat-sdk/whatsap
 import { combineMessagingTransports } from '../src/providers/chat-sdk/combined.ts';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
-import { createSpeech } from '../src/server/speech.ts';
+import { automaticSpeechVoice, createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
 import {
   createElevenLabsSpeechProvider,
@@ -1488,6 +1488,65 @@ test('speech honors the selected OpenAI voice and refuses voices from another en
     service.synthesize('Synthetic reply.', undefined, { voice: 'openai:missing' }),
   );
   assert.equal(requests.length, 1);
+});
+
+test('automatic speech selects the spoken language within the current provider and cancels pending selection', async () => {
+  const { speechVoices } = await import('../src/shared/speech.ts');
+  const provider = { voices: speechVoices, defaultVoice: 'local:af_heart' };
+  let calls = 0;
+  let language: unknown = 'fr-FR';
+  const review = async (_instructions: string, input: object) => {
+    calls++;
+    const request = input as { text: string; availableLanguages: string[] };
+    assert.equal(request.text, 'Une réponse dans la langue de notre conversation.');
+    assert.ok(!request.availableLanguages.includes('ja-jp'));
+    return { language };
+  };
+  const select = () =>
+    automaticSpeechVoice(provider, 'Une réponse dans la langue de notre conversation.', review);
+  assert.equal(await select(), 'local:ff_siwis');
+  for (language of ['FR', ' FR_fr ', 'fr-FR-u-ca-gregory'])
+    assert.equal(await select(), 'local:ff_siwis');
+  for (language of ['ja-JP', null, 42, 'local:pf_dora', 'fr--FR', 'fr/<script>'])
+    assert.equal(await select(), 'local:af_heart');
+  const before = calls;
+  assert.equal(
+    await automaticSpeechVoice(
+      { ...provider, defaultVoice: 'openai:coral' },
+      'A multilingual reply.',
+      review,
+    ),
+    'openai:coral',
+  );
+  assert.equal(
+    await automaticSpeechVoice(
+      {
+        ...provider,
+        voices: speechVoices.filter(
+          (voice) => 'language' in voice && voice.language.startsWith('en'),
+        ),
+      },
+      'An English reply.',
+      review,
+    ),
+    'local:af_heart',
+  );
+  assert.equal(calls, before);
+  assert.equal(
+    await automaticSpeechVoice(provider, 'A reply after classification fails.', async () => {
+      throw new Error('Synthetic language classification failure.');
+    }),
+    'local:af_heart',
+  );
+  const controller = new AbortController();
+  const pending = automaticSpeechVoice(
+    provider,
+    'A cancelled reply.',
+    async () => new Promise(() => {}),
+    controller.signal,
+  );
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
 });
 
 test('OpenRouter speech reuses the current key for selected voices and never silently changes the selected engine', async () => {

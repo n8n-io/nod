@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
+import { PasswordInput } from '../../src/web/components/password-input';
 import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
 import { Introduction } from '../../src/web/pages/onboarding/steps/intro';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
@@ -143,8 +144,9 @@ function ConnectionSetup() {
             disabled={busy || loading}
           />
           <label htmlFor="server-token">Authentication token</label>
-          <input
+          <PasswordInput
             id="server-token"
+            revealLabel="authentication token"
             type="password"
             value={token}
             onChange={(event) => setToken(event.target.value)}

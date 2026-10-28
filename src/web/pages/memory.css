@@ -246,10 +246,13 @@
 }
 
 .memory-settings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 24px;
+  display: grid;
+  gap: 16px;
   margin-top: 24px;
+}
+.memory-setting-copy {
+  display: grid;
+  gap: 2px;
 }
 .memory-setting {
   display: inline-flex;

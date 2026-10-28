@@ -91,7 +91,13 @@ export function useModels() {
       if (path === '/api/models/keys') setWorkspaces([]);
       return true;
     } catch (cause) {
-      setFailure({ message: errorMessage(cause), path });
+      setFailure({
+        message:
+          cause instanceof ApiError
+            ? errorMessage(cause)
+            : 'The change couldn’t be saved. Check your connection and try again.',
+        path,
+      });
       if (path === '/api/models/keys' && cause instanceof ApiError && cause.workspaces)
         setWorkspaces(cause.workspaces);
       void page.refresh();

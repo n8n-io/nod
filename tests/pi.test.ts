@@ -2051,6 +2051,9 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
 });
 
 test('send_message validates structured visuals and delivers each distinct presentation once', async (t) => {
+  const { Compile } = await import('typebox/compile');
+  const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { coreSkills } = await import('../src/runtime/prompt.ts');
   const directory = await mkdtemp(join(tmpdir(), 'nod-presentations-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const presentation: Presentation = {
@@ -2073,6 +2076,13 @@ test('send_message validates structured visuals and delivers each distinct prese
         abort() {},
         dispose() {},
         prompt: async () => {
+          const skills = input.tools.find((tool) => tool.name === 'skills')!;
+          const result = await skills.execute({ action: 'read', name: 'visual-replies' });
+          const guide = JSON.parse(result.content.find((part) => part.type === 'text')!.text);
+          assert.ok(guide.presentationSchema);
+          const exposed = Compile(guide.presentationSchema as Parameters<typeof Compile>[0]);
+          assert.equal(exposed.Check(presentation), true);
+          assert.equal(exposed.Check({ ...presentation, version: 2 }), false);
           const send = input.tools.find((tool) => tool.name === 'send_message')!;
           for (const value of [
             { text: 'Answer', presentation: { ...presentation, version: 2 } },
@@ -2102,6 +2112,7 @@ test('send_message validates structured visuals and delivers each distinct prese
     },
     computer: fakeComputer(),
     workspace: fakeWorkspace(),
+    skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
   });
   t.after(() => runtime.dispose());
   const result = await runtime.runTurn({

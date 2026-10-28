@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { Presentation } from '../../shared/presentation';
-import { Check, ChevronDown, ChevronLeft, ChevronRight } from './icons';
+import { ChevronLeft, ChevronRight } from './icons';
 
 type ChartVisual = Extract<Presentation, { type: 'chart' }>;
 type Series = ChartVisual['series'][number];
@@ -40,47 +40,6 @@ function nextPoint(event: KeyboardEvent, index: number, count: number) {
   }[event.key];
   if (next !== undefined) event.preventDefault();
   return next;
-}
-
-function DataTable({ visual, labels }: { visual: ChartVisual; labels: string[] }) {
-  return (
-    <details className="chart-data">
-      <summary>
-        <span>View data table</span>
-        <ChevronDown size={16} aria-hidden="true" />
-      </summary>
-      <div tabIndex={0} role="region" aria-label="Chart data">
-        <table>
-          <caption>
-            {visual.title}
-            {visual.unit ? ` (${visual.unit})` : ''}
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">{visual.xLabel || 'Category'}</th>
-              {visual.series.map((series) => (
-                <th key={series.id} scope="col">
-                  {series.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {labels.map((label) => (
-              <tr key={label}>
-                <th scope="row">{label}</th>
-                {visual.series.map((series) => (
-                  <td key={series.id}>
-                    {series.points.find((point) => point.label === label)?.value ?? '—'}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  );
 }
 
 function Reading({
@@ -161,31 +120,40 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
   }, []);
   return (
     <>
-      <div className="chart-legend" aria-label="Chart series">
-        {visual.series.map((series, index) => (
-          <button
-            type="button"
-            key={series.id}
-            aria-pressed={!hidden.has(series.id)}
-            disabled={visible.length === 1 && !hidden.has(series.id)}
-            onClick={() =>
-              setHidden((current) => {
-                const next = new Set(current);
-                if (next.has(series.id)) next.delete(series.id);
-                else next.add(series.id);
-                return next;
-              })
-            }
-          >
-            <i style={{ color: colours[index] }}>{!hidden.has(series.id) && <Check size={12} />}</i>
-            {series.label}
-          </button>
-        ))}
-      </div>
+      {visual.series.length > 1 && (
+        <div className="chart-legend" aria-label="Chart series">
+          {visual.series.map((series, index) => (
+            <button
+              type="button"
+              key={series.id}
+              aria-pressed={!hidden.has(series.id)}
+              disabled={visible.length === 1 && !hidden.has(series.id)}
+              onClick={() =>
+                setHidden((current) => {
+                  const next = new Set(current);
+                  if (next.has(series.id)) next.delete(series.id);
+                  else next.add(series.id);
+                  return next;
+                })
+              }
+            >
+              <i
+                style={{
+                  background: hidden.has(series.id) ? 'transparent' : colours[index],
+                  color: colours[index],
+                }}
+              />
+              {series.label}
+            </button>
+          ))}
+        </div>
+      )}
       {(visual.yLabel || visual.unit) && (
         <p className="chart-measure">{[visual.yLabel, visual.unit].filter(Boolean).join(' · ')}</p>
       )}
-      <Reading visual={visual} series={visible} label={labels[selected]!} id={readingId} />
+      {(visual.chart === 'line' || visible.length > 1) && (
+        <Reading visual={visual} series={visible} label={labels[selected]!} id={readingId} />
+      )}
       {visual.chart === 'line' ? (
         <>
           <div className="chart-line-controls">
@@ -322,6 +290,7 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
                     {visible[0]!.points.some((point) => point.label === label)
                       ? exact(visible[0]!.points.find((point) => point.label === label)!.value)
                       : '—'}
+                    {visual.unit && <small>{` ${visual.unit}`}</small>}
                   </strong>
                 )}
               </span>
@@ -374,7 +343,6 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
           </div>
         </div>
       )}
-      <DataTable visual={visual} labels={labels} />
     </>
   );
 }
@@ -390,6 +358,7 @@ function slicePath(start: number, end: number, inner: number) {
 
 function RadialChart({ visual }: { visual: ChartVisual }) {
   const points = visual.series[0]!.points;
+  const percentages = visual.unit?.trim() === '%';
   const [selected, setSelected] = useState(points.findIndex((point) => point.value > 0));
   const scale = Math.max(...points.map((point) => point.value));
   const sum = points.reduce((total, point) => total + point.value / scale, 0);
@@ -404,14 +373,16 @@ function RadialChart({ visual }: { visual: ChartVisual }) {
   let angle = -Math.PI / 2;
   return (
     <>
-      <div className="chart-radial-summary">
-        <span>{visual.series[0]!.label}</span>
-        {Number.isFinite(total) && (
-          <strong>
-            {exact(Number(total.toPrecision(15)))} <span>{visual.unit || 'total'}</span>
-          </strong>
-        )}
-      </div>
+      {!percentages && (
+        <div className="chart-radial-summary">
+          <span>{visual.series[0]!.label}</span>
+          {Number.isFinite(total) && (
+            <strong>
+              {exact(Number(total.toPrecision(15)))} <span>{visual.unit || 'total'}</span>
+            </strong>
+          )}
+        </div>
+      )}
       <div className="chart-radial-layout">
         <div className="chart-radial-figure">
           <svg
@@ -447,7 +418,7 @@ function RadialChart({ visual }: { visual: ChartVisual }) {
           {visual.chart === 'donut' && (
             <div className="chart-donut-centre" aria-hidden="true">
               <strong>{percent(points[selected]!.value)}</strong>
-              <span>of total</span>
+              <span>{points[selected]!.label}</span>
             </div>
           )}
         </div>
@@ -464,17 +435,20 @@ function RadialChart({ visual }: { visual: ChartVisual }) {
               <i style={{ background: colours[index] }} />
               <span>
                 <span>{point.label}</span>
-                <strong>
-                  {exact(point.value)}
-                  {visual.unit && <small>{` ${visual.unit}`}</small>}
-                </strong>
+                {!percentages && (
+                  <strong>
+                    {exact(point.value)}
+                    {visual.unit && <small>{` ${visual.unit}`}</small>}
+                  </strong>
+                )}
               </span>
-              <span className="chart-share">{percent(point.value)}</span>
+              <span className="chart-share">
+                {percentages ? `${exact(point.value)}%` : percent(point.value)}
+              </span>
             </button>
           ))}
         </div>
       </div>
-      <DataTable visual={visual} labels={points.map((point) => point.label)} />
     </>
   );
 }

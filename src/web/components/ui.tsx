@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { LoaderCircle, Search, X } from './icons';
 import { cn } from '../lib/utils';
+import { PasswordInput } from './password-input';
 
 const buttonVariants = cva('button', {
   variants: {
@@ -30,12 +31,48 @@ export function Button({
   return <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
+interface FieldContext {
+  id: string;
+  label: string;
+  labelId: string;
+  hintId?: string;
+  setControlId(id: string): void;
+}
+const FieldLabelContext = React.createContext<FieldContext | undefined>(undefined);
+
+function fieldAttributes(props: React.AriaAttributes & { id?: string }, field?: FieldContext) {
+  return {
+    id: props.id ?? field?.id,
+    'aria-labelledby':
+      props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined
+        ? props['aria-labelledby']
+        : field?.labelId,
+    'aria-describedby':
+      [props['aria-describedby'], field?.hintId].filter(Boolean).join(' ') || undefined,
+  };
+}
+
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
->(({ className, ...props }, ref) => (
-  <input ref={ref} className={cn('input', className)} {...props} />
-));
+>(({ className, ...props }, ref) => {
+  const field = React.useContext(FieldLabelContext);
+  const attributes = fieldAttributes(props, field);
+  React.useLayoutEffect(() => {
+    if (attributes.id) field?.setControlId(attributes.id);
+  }, [attributes.id, field?.setControlId]);
+  return props.type === 'password' ? (
+    <PasswordInput
+      ref={ref}
+      className={className}
+      {...props}
+      {...attributes}
+      revealLabel={field?.label}
+    />
+  ) : (
+    <input ref={ref} className={cn('input', className)} {...props} {...attributes} />
+  );
+});
 Input.displayName = 'Input';
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -72,12 +109,40 @@ export function Field({
   children: React.ReactNode;
   hint?: string;
 }) {
+  const id = React.useId();
+  const [controlId, setControlId] = React.useState(id);
+  const field = {
+    id,
+    label,
+    labelId: `${id}-label`,
+    hintId: hint ? `${id}-hint` : undefined,
+    setControlId,
+  };
+  let labelledControl = controlId;
+  const controls = React.Children.map(children, (child) => {
+    if (
+      !React.isValidElement<React.AriaAttributes & { id?: string }>(child) ||
+      !['input', 'select', 'textarea'].includes(String(child.type))
+    )
+      return child;
+    const attributes = fieldAttributes(child.props, field);
+    labelledControl = attributes.id!;
+    return React.cloneElement(child, attributes);
+  });
   return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      {children}
-      {hint && <span className="field-hint">{hint}</span>}
-    </label>
+    <FieldLabelContext.Provider value={field}>
+      <div className="field">
+        <label id={field.labelId} htmlFor={labelledControl} className="field-label">
+          {label}
+        </label>
+        {controls}
+        {hint && (
+          <span id={field.hintId} className="field-hint">
+            {hint}
+          </span>
+        )}
+      </div>
+    </FieldLabelContext.Provider>
   );
 }
 

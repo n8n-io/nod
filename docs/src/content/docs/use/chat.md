@@ -28,7 +28,7 @@ Unsent files become eligible for cleanup 24 hours after upload or their last suc
 
 Select a passage in a message, then **Reply to selection** to quote it. Selected passages keep their exact text, including literal symbols, and stay separate from your own message. Select a reply quote to visit its source. **Return to where you were** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
 
-Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches, with highlighted text and each message’s date. Use the arrow keys to move between results and Enter to open a message. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
 
 Action confirmations show the question without extra status labels. [Usage](/use/spending/) shows the recorded action results.
 
@@ -46,7 +46,7 @@ With **Auto**, Nod chooses when a spoken reply helps. Ask it to answer in audio 
 
 In **Settings → General → Voice**, choose a **Voice provider**, then open **Assistant voice** to compare samples and choose a voice. Set **Spoken replies** to **Auto**, **When I send audio**, **Always**, or **Off**. Auto is the default for new settings; existing choices stay unchanged. Off stops automatic spoken replies, but you can still explicitly request an audio file.
 
-**Automatic** uses the first connected speech service in this order: OpenRouter, OpenAI, ElevenLabs, then downloaded free voices. It uses that service's default voice; it does not match a voice to the conversation language. **Assistant voice** shows the current voice and provider, with a sample you can play. This default can change when your connections or provider's voice list change. To keep a particular voice, choose its provider, then select the voice. Your chat model stays unchanged. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
+**Automatic** uses the first connected speech service in this order: OpenRouter, OpenAI, ElevenLabs, then downloaded free voices. Multilingual voices follow the reply's language. For voices with a specific language, **Automatic** chooses a matching voice from that service. If the language is unclear or unsupported, it keeps the service's default. Select **Automatic** in the voice picker to restore this behavior. This default can change when your connections or provider's voice list change. To keep a particular voice, choose its provider, then select the voice. Your chat model stays unchanged. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
 
 Native audio keeps the two most recent recording messages available across follow-ups and session compaction. Older recordings remain saved and their transcripts provide conversation context. Each recording is limited to five minutes and 25 MB. Browser recordings are converted to WAV for compatible models; externally uploaded native audio supports WAV, WebM, Ogg and MP3. Audio input uses the selected model's API credits, separately from your chosen spoken-reply voice.
 
@@ -54,7 +54,7 @@ Existing API connections make their voices available automatically. Select a pro
 
 A direct ElevenLabs connection brings in voices saved in your account. Give the key Text to Speech, Speech to Text, and Voices read access. Select **Browse voices** to add or create voices on ElevenLabs, then **Refresh voices** to see them in Nod. Saved keys have a **Disconnect** action. Samples and replies use the selected provider’s credits.
 
-ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Pick a voice that matches your conversation; changing a voice doesn't change the language Nod writes in.
+ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Choose a specific voice to keep it across replies, or **Automatic** to follow the conversation language. Changing a voice doesn't change the language Nod writes in.
 
 Under **Free voices**, select **Download voices** for a one-time download of about 180 MB, with no account needed. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices. Downloads need an internet connection; downloaded voices run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
 
@@ -62,7 +62,7 @@ Under **Free voices**, select **Download voices** for a one-time download of abo
 
 When a visual makes an answer easier to understand, nod can include images, maps, flight comparisons, seat plans, booking summaries, diagrams, or charts.
 
-Each visual stays beside its explanation. Open **Sources** to check its references and information date. nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it at full size.
+Each visual stays beside its explanation. References stay in the reply as links. Nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it in the file panel.
 
 Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Source** link opens its supplied reference separately.
 
@@ -72,7 +72,7 @@ Seat plans group the supplied rows by cabin and deck, preserving different layou
 
 Venue cards can include photos, review summaries with their source rating and review count, and notes such as access or cancellation conditions. Comparisons keep each venue's details together. A proposed booking stays an option until nod has evidence of confirmation.
 
-Charts use bars for comparisons, lines for trends, and pie or donut charts for parts of a whole. Select a category to inspect its values, or open the data table for the underlying numbers.
+Charts use bars for comparisons, lines for trends, and pie or donut charts for parts of a whole. Select a category or point to inspect its values.
 
 Telegram and WhatsApp receive the answer and visual details as text, with source links. Locations keep their marked map links. Flight options keep their numbers and separate journey details. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. The WhatsApp Cloud API receives PNG and JPEG images up to 5 MB each. If a file cannot be delivered in the channel, the answer points you back to nod to open it. Interactive visuals stay in nod's chat.
 
@@ -174,13 +174,7 @@ In Telegram and WhatsApp, a screen link opens a public page. Select **Open in No
 
 You can also ask Nod to change supported settings from any channel. For example, ask it to use a connected model, set quiet hours, change the time zone or clock format, or set a spending limit. Nod uses its tools and reports the saved result. It asks when your request does not identify the target or value. Model sign-in and device settings, such as launch at login, still need the app.
 
-Hover over a link in one of Nod's replies, or focus it with the keyboard, to see its full address. Select the address to open the page, or press Enter on the focused link. Press Escape to dismiss the address.
-
-Under a reply, Nod lists the linked pages that publish a preview image, one row per page, in the order the links appear. Each row keeps the link text as its title and shows the full address as written in the reply. If the link text is just the address, the row uses the public page title when available. Private pages can publish a generic website title, so previews never add it beneath a named link. Hovering or focusing a link highlights its row, and hovering or focusing a row highlights its link. Rows appear as their images load. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and links Nod recognises as sign-in, Vault or payment pages are never previewed.
-
-When a video page offers a player, such as YouTube or Vimeo, select the play button on its row to watch it in the chat. Your browser doesn't load the player until you select play.
-
-Nod's server reads the start of each linked page and its image, so your browser doesn't contact the site until you open or play it. Telegram and WhatsApp show their own previews.
+Links stay inline in the reply. Hover over a link, or focus it with the keyboard, to see its full address. Select a link, or press Enter while it is focused, to open its page. Telegram and WhatsApp control their own link previews.
 
 ## Replies go back where you wrote
 
@@ -188,17 +182,17 @@ Nod answers each request in the app you sent it from. A message from Telegram ge
 
 ## Send feedback
 
-Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea** or **Other**, and describe what happened. The dialog names the recipient: the Nod team at n8n by default, or your server operator's configured collector.
+Select **Send feedback** at the top of the chat, choose **Bug**, **Idea** or **Other**, and describe what happened. The dialog names the recipient: the Nod team at n8n by default, or your server operator's configured collector.
 
 After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
 **Include diagnostic report** starts selected for every feedback category until you change it. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve Nod. Known secrets and recognized personal details are masked, but redaction can miss information.
 
-Select **Review** to inspect the exact report that will be attached. Untick the checkbox to leave it out. Nod remembers your choice for your account on this device, including after sending or discarding a draft.
+Select **Review** to inspect the **Chat**, **Activity** and **Connections** tabs. Tool activity groups each input with its result and status. **Download** saves the same redacted report as a JSON file. Untick the checkbox to leave it out. Nod remembers your choice for your account on this device, including after sending or discarding a draft.
 
 Preparing a report sends recent app activity and errors to your Nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
 
-In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. Review, annotate, or remove the screenshot before sending. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided, so check them for personal information too.
+In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Reopening a draft keeps its original screenshot. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. You can annotate or remove the screenshot. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided.
 
 ## Start with an empty chat
 

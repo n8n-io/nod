@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { mapLocationUrl, presentationSchema, type Presentation } from '../../shared/presentation';
-import { ArrowRight, ChevronDown, ExternalLink, Link2, MapPin } from './icons';
+import { ArrowRight, ExternalLink, MapPin } from './icons';
 import { useArtifactDrawer } from './artifact-context';
 import { Booking } from './presentation-booking';
 import { PresentationChart } from './presentation-chart';
@@ -35,6 +35,7 @@ export function MessagePresentation({ value }: { value: unknown }) {
       <header className="presentation-heading">
         <h3 id={titleId}>{visual.title}</h3>
         {visual.caption && <p>{visual.caption}</p>}
+        {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
       </header>
       {visual.type === 'image' && <PresentedImage key={visual.artifactId} visual={visual} />}
       {visual.type === 'flights' && <Flights key={JSON.stringify(visual)} visual={visual} />}
@@ -44,39 +45,6 @@ export function MessagePresentation({ value }: { value: unknown }) {
       {visual.type === 'diagram' && <Diagram key={JSON.stringify(visual)} visual={visual} />}
       {visual.type === 'chart' && (
         <PresentationChart key={JSON.stringify(visual)} visual={visual} />
-      )}
-      {(visual.sources.length > 0 || visual.asOf) && (
-        <details className="presentation-sources">
-          <summary>
-            <Link2 size={14} aria-hidden="true" />
-            <span>{visual.sources.length ? 'Sources' : 'Information date'}</span>
-            {visual.sources.length > 0 && (
-              <span className="presentation-source-count">{visual.sources.length}</span>
-            )}
-            <ChevronDown size={14} aria-hidden="true" />
-          </summary>
-          <div className="presentation-source-details">
-            {visual.sources.length > 0 && (
-              <ul>
-                {visual.sources.map((source, index) => (
-                  <li key={index}>
-                    <SourceLink href={source.url}>
-                      <span>
-                        <strong>{source.label}</strong>
-                        <small>{new URL(source.url).hostname.replace(/^www\./, '')}</small>
-                      </span>
-                    </SourceLink>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {visual.asOf && (
-              <p>
-                <span>Information from</span> {visual.asOf}
-              </p>
-            )}
-          </div>
-        </details>
       )}
     </section>
   );
@@ -109,9 +77,6 @@ function PresentedImage({ visual }: { visual: Visual<'image'> }) {
         loading="lazy"
         onError={() => setFailed(true)}
       />
-      <span>
-        Open image <ExternalLink size={13} aria-hidden="true" />
-      </span>
     </button>
   );
 }

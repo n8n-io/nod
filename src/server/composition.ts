@@ -165,7 +165,7 @@ import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createLearnedSkills } from './learned-skills.ts';
-import { createSpeech } from './speech.ts';
+import { automaticSpeechVoice, createSpeech } from './speech.ts';
 import {
   activeThread,
   boss,
@@ -823,7 +823,10 @@ async function initializeApplication(
       return speechProvider.defaultVoice;
     },
     async synthesize(text, signal, report, options) {
-      const voice = options?.voice ?? (await speechPreferences.get()).speechVoice;
+      const voice =
+        options?.voice ??
+        (await speechPreferences.get()).speechVoice ??
+        (await automaticSpeechVoice(speechProvider, text, review, signal));
       return speechProvider.synthesize(text, signal, report, voice ? { voice } : undefined);
     },
   });

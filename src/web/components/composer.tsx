@@ -102,7 +102,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [sendingAudio, setSendingAudio] = useState(false);
   const audioSend = useRef(false);
   const [error, setError] = useState('');
-  const [removed, setRemoved] = useState<DraftAttachment | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const sendButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -321,7 +320,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       URL.revokeObjectURL(item.previewUrl);
   }
   function removeAttachment(item: DraftAttachment) {
-    if (item.state === 'ready') setRemoved(item);
     item.controller?.abort();
     if (item.controller) uploads.current.delete(item.controller);
     releasePreview(item);
@@ -504,7 +502,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const sequence = ++sends.current;
     pendingSends.current++;
     setError('');
-    setRemoved(null);
     if (draftKey) writeChatDraft(draftKey, null);
     editor.commands.clearContent();
     updateAttachments([]);
@@ -619,41 +616,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     <div className="composer-wrap">
       {error && <Notice>{error}</Notice>}
       {recorder.error && <Notice onDismiss={recorder.clearError}>{recorder.error}</Notice>}
-      {removed && (
-        <Notice
-          kind="info"
-          onDismiss={() => {
-            setRemoved(null);
-            focus();
-          }}
-        >
-          Attachment removed.{' '}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (
-                !attachmentValues.current.some(
-                  (item) =>
-                    item.id === removed.id ||
-                    (removed.artifact && item.artifact?.id === removed.artifact.id),
-                )
-              ) {
-                updateAttachments([
-                  ...attachmentValues.current,
-                  { ...removed, state: 'checking', previewUrl: undefined },
-                ]);
-                void renewAttachments([removed.id]);
-              }
-              setRemoved(null);
-              focus();
-            }}
-          >
-            Undo
-          </Button>
-        </Notice>
-      )}
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
@@ -828,6 +790,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <span className="sr-only" id="composer-keyboard-hint">
           Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
+        {onStop && hasRecording && (
+          <div className="composer-work-control">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Stop all work"
+              disabled={stopping}
+              onClick={onStop}
+            >
+              {stopping ? 'Stopping Nod…' : 'Stop Nod'}
+            </Button>
+          </div>
+        )}
         <div className="composer-tools">
           <div className="composer-left">
             {active && hasRecording && (
@@ -898,7 +874,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 />
               </div>
             )}
-            {onStop && (
+            {onStop && !hasRecording && (
               <Button
                 type="button"
                 variant="ghost"

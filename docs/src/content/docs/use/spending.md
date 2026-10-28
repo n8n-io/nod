@@ -20,7 +20,7 @@ Standing instructions and rules appear as short labels. Select **follows your in
 
 Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
 
-Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
+Select this month's total to see a chart and a forecast, such as "On track for $12.40". Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
 ![Usage shows model spending, a monthly limit, task check-in, links to instructions and rules, and recent activity.](../../../assets/screens/usage-light.png)
 

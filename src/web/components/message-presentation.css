@@ -12,21 +12,18 @@
   overflow-wrap: anywhere;
 }
 .chat-page .message .message-row > .message-bubble:has(.message-presentation) {
-  width: min(calc(100% - 72px), 680px);
-  max-width: calc(100% - 72px);
+  width: min(calc(100% - var(--message-action-space)), 680px);
+  max-width: calc(100% - var(--message-action-space));
 }
 .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
   width: 100%;
-  padding-right: 16px;
+  padding-right: 40px;
 }
 .chat-page .message-body > .message-presentation:first-child {
   margin-top: 0;
 }
 .chat-page .message-body > .message-presentation:last-child {
   margin-bottom: 0;
-}
-.chat-page .message-bubble:has(.message-presentation) > .message-menu-trigger {
-  right: -36px;
 }
 .presentation-heading {
   padding: 18px 20px 16px;
@@ -62,75 +59,6 @@
 .flight-option summary {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-}
-.presentation-sources {
-  border-top: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.presentation-sources summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 8px 20px;
-  cursor: pointer;
-  list-style: none;
-}
-.presentation-sources summary::-webkit-details-marker {
-  display: none;
-}
-.presentation-sources summary > svg:last-child {
-  margin-left: auto;
-}
-.presentation-sources[open] summary > svg:last-child {
-  transform: rotate(180deg);
-}
-.presentation-source-count {
-  display: grid;
-  place-items: center;
-  min-width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: var(--control);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-}
-.presentation-source-details {
-  padding: 0 20px 16px;
-}
-.presentation-source-details ul {
-  display: grid;
-  gap: 4px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-.presentation-source-details a {
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 44px;
-  width: 100%;
-  padding-block: 6px;
-}
-.presentation-source-details a > span {
-  display: grid;
-  gap: 2px;
-}
-.presentation-source-details strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-.presentation-source-details small {
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-.presentation-source-details p {
-  margin: 12px 0 0;
-  font-size: 12px;
-}
-.presentation-source-details p > span {
-  color: var(--text-secondary);
 }
 .presentation-tag,
 .booking-status {
@@ -168,15 +96,6 @@
   width: 100%;
   max-height: 480px;
   object-fit: contain;
-}
-.presentation-image-button > span {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 10px 16px;
-  color: var(--muted-foreground);
-  font-size: 12px;
 }
 .places-map {
   position: relative;
@@ -398,6 +317,14 @@
 .diagram-detail li span {
   flex-basis: 100%;
   color: var(--muted-foreground);
+}
+@media (max-width: 640px) {
+  .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
+    padding-right: 12px;
+  }
+  .chat-page .message-body > .message-presentation:first-child {
+    margin-top: 26px;
+  }
 }
 @media (hover: hover) and (pointer: fine) {
   .presentation-sources summary:hover {

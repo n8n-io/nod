@@ -1658,6 +1658,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       ['first C1 control character', 'openai', 'fixture-invalid\u0080key'],
       ['C1 next-line control character', 'openai', 'fixture-invalid\u0085key'],
       ['last C1 control character', 'openai', 'fixture-invalid\u009fkey'],
+      ['incomplete Anthropic key', 'anthropic', 'sk-ant-api'],
+      ['incomplete OpenRouter key', 'openrouter', 'sk-or-v1-'],
       ['bundled provider', 'baseten', 'sk-ant-api03-synthetic-bundled-key'],
     ] as const) {
       await t.test(name, async () => {
@@ -3790,4 +3792,82 @@ test('browser notifications remain revoked when persisting permission reconcilia
   assert.equal(f.notifications.length, 3);
   assert.equal(f.notifications.at(-1)!.visible, true);
   assert.equal(f.permissionRequests(), 0);
+});
+
+test('feedback capture runs once for a fresh owned draft and skips restored or pending submissions', async (t) => {
+  const { IDBFactory } = await import('fake-indexeddb');
+  const { createFeedbackCapture } = await import('../src/web/lib/feedback-capture.ts');
+  const { saveFeedbackDraft, writeFeedbackPending } =
+    await import('../src/web/lib/feedback-draft.ts');
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const originalDatabase = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+  const storage = new Map<string, string>();
+  let captures = 0;
+  let refused = false;
+  const bridge = {
+    async captureFeedbackScreenshot() {
+      captures++;
+      return refused ? null : new Uint8Array([255, 216, 255, 217]);
+    },
+  };
+  const window = {
+    nodDesktop: bridge as typeof bridge | undefined,
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    },
+  };
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: window });
+  Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: new IDBFactory() });
+  t.after(() => {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+    if (originalDatabase) Object.defineProperty(globalThis, 'indexedDB', originalDatabase);
+    else Reflect.deleteProperty(globalThis, 'indexedDB');
+  });
+  const capture = createFeedbackCapture('capture-owner-one');
+  const [first, simultaneous] = await Promise.all([capture.capture(), capture.capture()]);
+  assert.equal(captures, 1);
+  assert.equal(first?.type, 'image/jpeg');
+  assert.equal(first?.name, 'nod-screenshot.jpg');
+  assert.deepEqual(
+    new Uint8Array(await simultaneous!.arrayBuffer()),
+    new Uint8Array([255, 216, 255, 217]),
+  );
+  await capture.capture();
+  assert.equal(captures, 1);
+  await saveFeedbackDraft('capture-owner-one', {
+    category: 'bug',
+    feedback: 'Synthetic saved draft',
+    attachments: [{ id: randomUUID(), file: first! }],
+    pendingId: null,
+    reportChoice: true,
+  });
+  assert.equal(await createFeedbackCapture('capture-owner-one').capture(), null);
+  assert.equal(captures, 1);
+  const otherOwner = createFeedbackCapture('capture-owner-two');
+  assert.ok(await otherOwner.capture());
+  assert.equal(captures, 2);
+  writeFeedbackPending('nod.feedback.pending.capture-pending-owner', randomUUID());
+  assert.equal(await createFeedbackCapture('capture-pending-owner').capture(), null);
+  assert.equal(captures, 2);
+  await saveFeedbackDraft('capture-owner-one', null);
+  capture.reset();
+  assert.ok(await capture.capture());
+  assert.equal(captures, 3);
+  refused = true;
+  capture.reset();
+  assert.equal(await capture.capture(), null);
+  assert.equal(await capture.capture(), null);
+  assert.equal(captures, 4);
+  window.nodDesktop = undefined;
+  Object.defineProperty(globalThis, 'indexedDB', {
+    configurable: true,
+    get() {
+      assert.fail('Web feedback must not wait for native screenshot draft storage.');
+    },
+  });
+  assert.equal(await createFeedbackCapture('web-owner').capture(), null);
+  assert.equal(captures, 4);
 });

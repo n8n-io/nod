@@ -28,11 +28,13 @@ import {
 } from '../lib/message-links';
 import { rehypeLocalLinks, rehypeMessageBreaks, remarkLinkDestinations } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
-import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
 import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
+import { AudioPlayer } from './audio-player';
+import { MessageLinkTooltip } from './message-link-tooltip';
+import type { ImagePreview } from './attachment-images';
 import { MessagePresentation } from './message-presentation';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { copyContent, selectedText } from '../lib/clipboard';
@@ -169,14 +171,12 @@ export function MessageQuote({
 
 export const MessageText = memo(function MessageText({
   text,
-  previews = false,
   connectedAppIds,
   handoff,
   handoffPaused,
   handoffTurnId,
 }: {
   text: string;
-  previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
   handoff?: boolean;
   handoffPaused?: boolean;
@@ -261,7 +261,7 @@ export const MessageText = memo(function MessageText({
           <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>
-      {previews && <MessageLinkPreviews key={telegramUrl} content={content} text={text} />}
+      <MessageLinkTooltip content={content} text={text} />
     </>
   );
 });
@@ -272,6 +272,7 @@ type MessagePanel =
 
 export function MessageBubble({
   message,
+  pendingAudio,
   connectedAppIds,
   grouped = false,
   streaming = false,
@@ -280,6 +281,7 @@ export function MessageBubble({
   handoffPaused,
 }: {
   message: Message;
+  pendingAudio?: ImagePreview;
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
   streaming?: boolean;
@@ -289,6 +291,9 @@ export function MessageBubble({
 }) {
   const dateFormat = useDateFormat();
   const visibleText = message.audioCaption ?? message.text;
+  const canCopy = Boolean(
+    visibleText.trim() || presentationSchema.safeParse(message.presentation).success,
+  );
   const visibleReply =
     message.replyTo && !(message.role === 'assistant' && message.replyTo.role === 'assistant')
       ? message.replyTo
@@ -515,6 +520,7 @@ export function MessageBubble({
     }
   }
   async function copy(method: 'button' | 'context_menu', markdown = false) {
+    if (!canCopy) return;
     captureAnalytics('nod_message_action', { action: 'copy', role: message.role, method });
     setPanel(null);
     try {
@@ -552,6 +558,7 @@ export function MessageBubble({
       onKeyUp={selectQuote}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
+        if (!(event.target as HTMLElement).closest('.message-bubble')) return;
         if ((event.target as HTMLElement).closest('a,button,audio,video,input,textarea,select'))
           return;
         setSelected(true);
@@ -575,6 +582,7 @@ export function MessageBubble({
               onContextMenu={(event) => {
                 if (
                   streaming ||
+                  (!onReply && !canCopy) ||
                   selectedText(articleElement.current) ||
                   (event.target as HTMLElement).closest(
                     'a,button,audio,video,input,textarea,select,[contenteditable="true"],[role="button"]',
@@ -593,13 +601,17 @@ export function MessageBubble({
               }}
             >
               {visibleReply && <MessageQuote message={visibleReply} />}
+              {pendingAudio && (
+                <div className="message-attachments">
+                  <AudioPlayer item={pendingAudio} />
+                </div>
+              )}
               {message.role === 'user' && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
               {visibleText && (
                 <MessageText
                   text={visibleText}
-                  previews={!streaming}
                   connectedAppIds={connectedAppIds}
                   handoff={!streaming && handoff}
                   handoffPaused={handoffPaused}
@@ -630,60 +642,81 @@ export function MessageBubble({
                 >
                   {formatTime(message.createdAt, dateFormat)}
                 </time>
-                {onReply && (
+                <div className="message-actions" role="group" aria-label="Message actions">
+                  {onReply && (
+                    <button
+                      type="button"
+                      className="message-trigger message-reply-trigger"
+                      aria-label="Reply to message"
+                      title="Reply"
+                      onClick={() => reply('button')}
+                    >
+                      <CornerUpLeft size={17} aria-hidden="true" />
+                    </button>
+                  )}
+                  {message.role === 'assistant' && (
+                    <button
+                      type="button"
+                      className="message-trigger message-react-trigger"
+                      ref={pickerTrigger}
+                      aria-label="React to message"
+                      title="React"
+                      aria-haspopup="dialog"
+                      aria-expanded={panel?.kind === 'reactions'}
+                      disabled={reacting}
+                      onClick={() =>
+                        setPanel(
+                          panel?.kind === 'reactions'
+                            ? null
+                            : { kind: 'reactions', expanded: false },
+                        )
+                      }
+                    >
+                      <SmilePlus size={17} aria-hidden="true" />
+                    </button>
+                  )}
+                  {canCopy && (
+                    <button
+                      type="button"
+                      className="message-trigger message-copy-trigger"
+                      aria-label={copied ? 'Message copied' : 'Copy message'}
+                      title={copied ? 'Copied' : 'Copy message'}
+                      onClick={() => void copy('button')}
+                    >
+                      {copied ? (
+                        <Check size={17} aria-hidden="true" />
+                      ) : (
+                        <Copy size={17} aria-hidden="true" />
+                      )}
+                    </button>
+                  )}
+                </div>
+                {(onReply || canCopy) && (
                   <button
                     type="button"
-                    className="message-trigger message-reply-trigger"
-                    aria-label="Reply to message"
-                    title="Reply"
-                    onClick={() => reply('button')}
-                  >
-                    <CornerUpLeft size={17} aria-hidden="true" />
-                  </button>
-                )}
-                {message.role === 'assistant' && (
-                  <button
-                    type="button"
-                    className="message-trigger message-react-trigger"
-                    ref={pickerTrigger}
-                    aria-label="React to message"
-                    title="React"
-                    aria-haspopup="dialog"
-                    aria-expanded={panel?.kind === 'reactions'}
-                    disabled={reacting}
-                    onClick={() =>
+                    className="message-trigger message-menu-trigger"
+                    ref={menuTrigger}
+                    aria-label="Message actions"
+                    title="Message actions"
+                    aria-haspopup="menu"
+                    aria-expanded={panel?.kind === 'menu'}
+                    onClick={(event) =>
                       setPanel(
-                        panel?.kind === 'reactions' ? null : { kind: 'reactions', expanded: false },
+                        panel?.kind === 'menu'
+                          ? null
+                          : {
+                              kind: 'menu',
+                              method: 'button',
+                              point: event.detail
+                                ? { x: event.clientX, y: event.clientY }
+                                : undefined,
+                            },
                       )
                     }
                   >
-                    <SmilePlus size={17} aria-hidden="true" />
+                    <ChevronDown size={16} aria-hidden="true" />
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="message-trigger message-menu-trigger"
-                  ref={menuTrigger}
-                  aria-label="Message actions"
-                  title="Message actions"
-                  aria-haspopup="menu"
-                  aria-expanded={panel?.kind === 'menu'}
-                  onClick={(event) =>
-                    setPanel(
-                      panel?.kind === 'menu'
-                        ? null
-                        : {
-                            kind: 'menu',
-                            method: 'button',
-                            point: event.detail
-                              ? { x: event.clientX, y: event.clientY }
-                              : undefined,
-                          },
-                    )
-                  }
-                >
-                  <ChevronDown size={16} aria-hidden="true" />
-                </button>
                 {reaction && message.role === 'assistant' ? (
                   <button
                     key={reaction}
@@ -750,18 +783,26 @@ export function MessageBubble({
                   Reply
                 </button>
               )}
-              <button type="button" role="menuitem" onClick={() => void copy(panel.method)}>
-                {copied ? (
-                  <Check size={16} aria-hidden="true" />
-                ) : (
-                  <Copy size={16} aria-hidden="true" />
-                )}
-                Copy
-              </button>
-              <button type="button" role="menuitem" onClick={() => void copy(panel.method, true)}>
-                <Copy size={16} aria-hidden="true" />
-                Copy Markdown
-              </button>
+              {canCopy && (
+                <>
+                  <button type="button" role="menuitem" onClick={() => void copy(panel.method)}>
+                    {copied ? (
+                      <Check size={16} aria-hidden="true" />
+                    ) : (
+                      <Copy size={16} aria-hidden="true" />
+                    )}
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void copy(panel.method, true)}
+                  >
+                    <Copy size={16} aria-hidden="true" />
+                    Copy Markdown
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div

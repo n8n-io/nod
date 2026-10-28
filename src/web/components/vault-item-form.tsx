@@ -302,17 +302,7 @@ export function VaultItemForm({
 
   return (
     <>
-      <div className="vault-bar">
-        <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
-          Cancel
-        </Button>
-        <div className="vault-bar-actions">
-          <Button type="submit" size="sm" form={formId} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      </div>
-      <div className="vault-hero">
+      <div className="vault-hero vault-add-heading">
         <span className="vault-hero-icon" aria-hidden="true">
           {kind === 'card' ? <CreditCard size={48} /> : <Globe size={48} />}
         </span>
@@ -326,6 +316,14 @@ export function VaultItemForm({
         autoComplete="off"
       >
         <VaultFields kind={kind} disabled={saving} />
+        <div className="vault-form-actions">
+          <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
       </form>
       {error && <Notice>{error}</Notice>}
     </>

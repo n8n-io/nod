@@ -23,6 +23,11 @@
   color: var(--foreground);
 }
 
+.attachment-card .file-actions {
+  margin: 0 8px 8px;
+  border-color: transparent;
+}
+
 .attachment-card-open {
   display: flex;
   flex-direction: column;
@@ -404,6 +409,9 @@
 }
 
 @container audio-player (max-width: 190px) {
+  .audio-player-info {
+    grid-column: 1 / -1;
+  }
   .audio-player-current,
   .audio-player-separator {
     display: none;

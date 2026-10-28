@@ -9,6 +9,30 @@ export type FeedbackDraft = {
   reportChoice: boolean | null;
 };
 
+export function hasFeedbackDraft(draft: FeedbackDraft) {
+  return (
+    !!draft.feedback || !!draft.attachments.length || draft.category !== 'bug' || !!draft.pendingId
+  );
+}
+
+export function readFeedbackPending(key: string) {
+  try {
+    const id = window.localStorage.getItem(key);
+    return id && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+      ? id
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeFeedbackPending(key: string, id: string | null) {
+  try {
+    if (id) window.localStorage.setItem(key, id);
+    else window.localStorage.removeItem(key);
+  } catch {}
+}
+
 const writes = new Map<string, Promise<void>>();
 
 function database() {

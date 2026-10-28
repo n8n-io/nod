@@ -20,6 +20,8 @@ export function modelKeyError(provider: ModelProvider, key: string) {
   if (/[\s\x00-\x1f\x7f-\x9f]/.test(value))
     return 'API keys cannot contain spaces or control characters. Paste the key again.';
   const format = keyFormats.find(({ prefix }) => value.startsWith(prefix));
+  if (format && value.length < format.prefix.length + 8)
+    return 'Paste the complete API key from your provider.';
   if (format && !format.providers.includes(provider)) {
     const name = format.name ?? modelProviderNames[format.providers[0]!];
     return `This looks like a key for ${name}. Choose ${name} or enter a key for ${modelProviderNames[provider]}.`;

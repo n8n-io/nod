@@ -2788,6 +2788,21 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
         assert.equal(document.activeElement, provider());
         assert.deepEqual(writes.at(-1), { speechVoice: 'openai:coral' });
+        const downloadedVoices = settings.voices.filter(voice => voice.engine === 'Local');
+        settings = { ...settings, local: { state: 'not_downloaded' },
+          voices: settings.voices.filter(voice => voice.engine !== 'Local') };
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await chooseProvider('Free voices');
+        await settle(() => button('Download voices'));
+        assert.equal(settings.speechVoice, 'openai:coral');
+        await act(async () => button('Download voices').click());
+        settings = { ...settings, local: { state: 'ready' }, voices: [...settings.voices, ...downloadedVoices] };
+        await act(async () => preparations.at(-1).resolve(Response.json({ local: { state: 'ready' } })));
+        await settle(() => settings.speechVoice === 'local:pm_alex' && busy.at(-1) === false);
+        assert.deepEqual(writes.at(-1), { speechVoice: 'local:pm_alex' });
+        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Free voices');
+        await chooseProvider('OpenAI');
+        await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
         await open();
         assert.ok(picker().querySelector('[aria-label="Choose Coral, Warm and friendly, OpenAI"]'));
         assert.equal(picker().querySelector('[aria-label="Choose Dora, Brazilian Portuguese, Free voices"]'), null);
@@ -2831,7 +2846,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
         assert.equal(trigger(), undefined);
         const automatic = () => document.querySelector('.voice-automatic-choice');
-        assert.ok(automatic().textContent.includes(settings.voices.find(voice => voice.id === settings.defaultVoice).name));
+        assert.ok(automatic());
         const beforeAutomaticSample = writes.length;
         await click('Play ' + dora);
         assert.deepEqual(JSON.parse(requests.at(-1).options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
@@ -2843,7 +2858,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(automaticPlayer.playing, true);
         settings = { ...settings, defaultVoice: 'openai:coral' };
         await act(async () => window.dispatchEvent(new Event('focus')));
-        await settle(() => automatic().textContent.includes(settings.voices.find(voice => voice.id === settings.defaultVoice).name));
+        await settle(() => !automaticPlayer.playing);
         released(automaticPlayer, automaticUrl);
         assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
         assert.equal(trigger(), undefined);
@@ -2982,7 +2997,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         result = { sent: false, restoreText: true },
         currentText,
         changeActive,
-        replaceText;
+        replaceText,
+        workStops = 0;
       const setDrafts = (value) => {
         drafts = value;
       };
@@ -3003,6 +3019,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             setText,
             replyTo: null,
             clearReply() {},
+            onStop() { workStops++; },
             onSend: async (text, attachments, recording) => {
               sends.push({ text, attachments, ...(recording ? { recording } : {}) });
               return result;
@@ -3320,6 +3337,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
         assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
+        await click('Stop all work');
+        assert.equal(workStops, 1);
+        assert.equal(recorded.track.stopped, false);
         assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
         let recordingPickers = 0;
         document.querySelector('input[type="file"]').addEventListener('click', () => recordingPickers++);
@@ -3606,6 +3626,11 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         HTMLElement.prototype.scrollTo = () => {};
         HTMLElement.prototype.scrollIntoView = () => {};
         const audioRequests = [];
+        const sentAudio = {
+          id: '00000000-0000-4000-8000-000000000222',
+          name: 'Synthetic recording.mp4', mimeType: 'audio/mp4', size: 15,
+          url: '/api/artifacts/00000000-0000-4000-8000-000000000222',
+        };
         let outcome = 'unknown';
         fetch = async (url, options = {}) => {
           if (url === '/api/speech') return Response.json({ transcription: true, transcriptionFormat: speechFormat });
@@ -3618,7 +3643,11 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           audioRequests.push({ body, file, bytes: await file.arrayBuffer() });
           if (outcome === 'unknown') throw new TypeError('Synthetic lost response');
           if (outcome === 'retryable') return Response.json({ error: 'Synthetic unavailable transcription', retryable: true }, { status: 503 });
-          return Response.json({ messageId: JSON.parse(body).clientMessageId, turnId: 'synthetic-turn', messageText: '', audioCaption: '' });
+          return Response.json({
+            messageId: JSON.parse(body).clientMessageId, turnId: 'synthetic-turn',
+            messageText: '', audioCaption: '',
+            ...(outcome === 'private' ? { verificationStatus: 'submitted' } : { attachments: [sentAudio] }),
+          });
         };
         let chatState = {
           threadId: 'synthetic-thread', turns: [], activity: [], tasks: [],
@@ -3636,7 +3665,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await click('Record an audio message');
         await act(async () => microphoneRequests.at(-1).resolve(microphone()));
         await submit();
-        await settle(() => audioRequests.length === 1 && document.querySelector('audio'));
+        await settle(() => audioRequests.length === 1 && document.querySelector('.composer audio'));
         const uncertain = audioRequests[0];
         assert.equal(uncertain.file.type, 'audio/mp4');
         speechFormat = 'wav';
@@ -3644,9 +3673,13 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await renderChat();
         await act(async () => window.dispatchEvent(new Event('focus')));
         outcome = 'success';
+        const retryPreviewStart = created.length;
         await submit();
-        await settle(() => audioRequests.length === 2 && !document.querySelector('audio'));
-        assert.equal(created.at(-1).file.type, 'audio/wav');
+        await settle(() => audioRequests.length === 2 && !document.querySelector('.composer audio'));
+        assert.ok(document.querySelector('.message-user audio'));
+        assert.equal(document.querySelector('.message-user audio').getAttribute('src'), sentAudio.url);
+        assert.ok(revoked.includes(created.at(-1).url));
+        assert.ok(created.slice(retryPreviewStart).some(item => item.file.type === 'audio/wav'));
         assert.equal(audioRequests[1].body, uncertain.body);
         assert.equal(audioRequests[1].file.type, uncertain.file.type);
         assert.equal(audioRequests[1].file.name, uncertain.file.name);
@@ -3657,14 +3690,22 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests.at(-1).resolve(microphone()));
         outcome = 'retryable';
         await submit();
-        await settle(() => audioRequests.length === 3 && document.querySelector('audio'));
+        await settle(() => audioRequests.length === 3 && document.querySelector('.composer audio'));
         speechFormat = 'wav';
         await act(async () => window.dispatchEvent(new Event('focus')));
         outcome = 'success';
         await submit();
-        await settle(() => audioRequests.length === 4 && !document.querySelector('audio'));
+        await settle(() => audioRequests.length === 4 && !document.querySelector('.composer audio'));
         assert.notEqual(JSON.parse(audioRequests[3].body).clientMessageId, JSON.parse(audioRequests[2].body).clientMessageId);
         assert.equal(audioRequests[3].file.type, 'audio/wav');
+        const publicPlayers = document.querySelectorAll('.message-user audio').length;
+        await click('Record an audio message');
+        await act(async () => microphoneRequests.at(-1).resolve(microphone()));
+        outcome = 'private';
+        await submit();
+        await settle(() => audioRequests.length === 5 && !document.querySelector('.composer audio'));
+        assert.equal(document.querySelectorAll('.message-user audio').length, publicPlayers);
+        assert.ok(revoked.includes(created.at(-1).url));
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

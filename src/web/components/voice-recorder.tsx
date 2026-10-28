@@ -146,7 +146,7 @@ function RecordingWaveform({ levels, progress = 1 }: { levels: number[]; progres
   const bars = Array.from({ length: 64 }, (_, index) => {
     const start = Math.floor((index * levels.length) / 64);
     const end = Math.max(start + 1, Math.floor(((index + 1) * levels.length) / 64));
-    const peak = Math.max(0.06, ...levels.slice(start, end));
+    const peak = Math.max(0.12, Math.sqrt(Math.min(1, Math.max(0, ...levels.slice(start, end)))));
     return (
       <rect key={index} x={index * 5} y={16 - peak * 14} width="3" height={peak * 28} rx="1.5" />
     );
@@ -429,40 +429,37 @@ export function VoiceSetup({
       <div className="voice-recorder-header">
         <div className="voice-recorder-status" role="status">
           {preparing && !ready ? <LoaderCircle size={16} className="spin" /> : <Mic size={16} />}
-          <span>{ready ? 'Audio is ready' : preparing ? 'Preparing audio…' : 'Local audio'}</span>
+          <span>
+            {ready ? 'Audio is ready' : preparing ? 'Preparing audio…' : 'Enable audio messages'}
+          </span>
         </div>
+        {(!preparing || ready) && (
+          <Button type="button" size="sm" onClick={ready ? onRecord : onPrepare}>
+            {ready ? 'Record audio' : failed ? 'Try again' : 'Set up audio'}
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Cancel audio setup"
+          aria-label="Close audio setup"
           onClick={onCancel}
         >
           <X size={16} />
         </Button>
       </div>
       {preparing && !ready ? (
-        <>
-          <div className="voice-setup-progress">
-            <progress aria-label="Downloading speech models" max={100} value={percent} />
-            {percent !== undefined && <span>{percent}%</span>}
-          </div>
-          <p>You can keep typing while this downloads.</p>
-        </>
-      ) : (
-        <>
-          <p>
-            {ready
-              ? 'Your microphone will only turn on when you start recording.'
-              : failed
-                ? 'Audio setup did not finish. Try again when you are connected.'
-                : 'Downloads speech models once to the computer running Nod.'}
-          </p>
-          <Button type="button" size="sm" onClick={ready ? onRecord : onPrepare}>
-            {ready ? 'Record audio' : failed ? 'Try again' : 'Enable local audio'}
-          </Button>
-        </>
-      )}
+        <div className="voice-setup-progress">
+          <progress aria-label="Downloading speech models" max={100} value={percent} />
+          {percent !== undefined && <span>{percent}%</span>}
+        </div>
+      ) : !ready ? (
+        <p>
+          {failed
+            ? 'Audio setup did not finish. Check your connection and try again.'
+            : 'Download speech models to enable audio messages.'}
+        </p>
+      ) : null}
     </section>
   );
 }

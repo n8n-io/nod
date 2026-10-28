@@ -193,8 +193,24 @@
 .vault-inset {
   display: grid;
 }
-.vault-inset:not(.vault-edit-form) > * + * {
+.vault-inset:not(.vault-edit-form, .vault-add-form) > * + * {
   border-top: 1px solid var(--border);
+}
+.vault-add-heading .vault-hero-icon {
+  grid-row: 1;
+}
+.vault-add-form {
+  gap: 12px;
+}
+.vault-inset.vault-add-form > .field {
+  gap: 8px;
+  padding: 0;
+}
+.vault-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
 }
 .vault-inset-row,
 .vault-inset > .field {

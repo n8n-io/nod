@@ -117,7 +117,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       const next = await api<SpeechSettings>('/api/speech', { signal: controller.signal });
       controller.signal.throwIfAborted();
       update(() => next);
-      await chooseProvider('local', next);
+      if (providerChoice === 'local') await chooseProvider('local', next);
     } catch (cause) {
       if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {
@@ -248,7 +248,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
   const providerSelection =
     providerChoice ?? (data?.speechVoice ? voiceProvider(data.speechVoice) : 'auto');
   useEffect(() => {
-    if (providerSelection === 'auto') setPickerOpen(false);
+    setPickerOpen(false);
   }, [providerSelection]);
   const automaticVoice = data?.voices.find((item) => item.id === data.defaultVoice);
   const provider =
@@ -335,81 +335,79 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
               </ConnectionMenu>
             </div>
           </div>
-          <div className="voice-provider-connection">
-            {provider === 'local' ? (
-              <div className="voice-connect-option">
-                {data.local?.state !== 'ready' && (
-                  <p className="field-hint">No account needed. Download once, about 180 MB.</p>
-                )}
-                <div className="voice-connect-actions">
-                  {data.local?.state === 'ready' ? (
-                    <span className="voice-connect-ready">
-                      <Check size={14} /> Downloaded
-                    </span>
-                  ) : data.local ? (
-                    <>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={preparing || data.local.state === 'downloading'}
-                        onClick={() => void prepare()}
-                      >
-                        {preparing || data.local.state === 'downloading' ? (
-                          <>
-                            <LoaderCircle size={14} className="voice-preview-loading" />
-                            Downloading…
-                            {data.local.progress !== undefined &&
-                              ` ${Math.round(data.local.progress)}%`}
-                          </>
-                        ) : (
-                          'Download voices'
-                        )}
-                      </Button>
-                      {preparing && (
+          {(provider !== 'local' || data.local?.state !== 'ready') && (
+            <div className="voice-provider-connection">
+              {provider === 'local' ? (
+                <div className="voice-connect-option">
+                  {data.local?.state !== 'ready' && (
+                    <p className="field-hint">No account needed. Download once, about 180 MB.</p>
+                  )}
+                  <div className="voice-connect-actions">
+                    {data.local ? (
+                      <>
                         <Button
                           type="button"
-                          variant="ghost"
                           size="sm"
-                          onClick={() => prepareRequest.current?.abort()}
+                          disabled={preparing || data.local.state === 'downloading'}
+                          onClick={() => void prepare()}
                         >
-                          Cancel download
+                          {preparing || data.local.state === 'downloading' ? (
+                            <>
+                              <LoaderCircle size={14} className="voice-preview-loading" />
+                              Downloading…
+                              {data.local.progress !== undefined &&
+                                ` ${Math.round(data.local.progress)}%`}
+                            </>
+                          ) : (
+                            'Download voices'
+                          )}
                         </Button>
-                      )}
-                    </>
-                  ) : (
-                    <p className="field-hint">Free voices are unavailable on this server.</p>
-                  )}
+                        {preparing && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => prepareRequest.current?.abort()}
+                          >
+                            Cancel download
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <p className="field-hint">Free voices are unavailable on this server.</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <VoiceConnections
-                key={provider}
-                provider={provider}
-                voices={data.voices}
-                disabled={preparing || saving}
-                onRefresh={async () => {
-                  await refreshVoices();
-                }}
-                onBusyChange={setConnectionBusy}
-                onConnected={() => {
-                  setError('');
-                  void refreshVoices().then((next) => {
-                    if (next) void chooseProvider(provider, next);
-                  });
-                }}
-              />
-            )}
-          </div>
+              ) : (
+                <VoiceConnections
+                  key={provider}
+                  provider={provider}
+                  voices={data.voices}
+                  disabled={preparing || saving}
+                  onRefresh={async () => {
+                    await refreshVoices();
+                  }}
+                  onBusyChange={setConnectionBusy}
+                  onConnected={() => {
+                    setError('');
+                    void refreshVoices().then((next) => {
+                      if (next) void chooseProvider(provider, next);
+                    });
+                  }}
+                />
+              )}
+            </div>
+          )}
           <div className="account-preference-row account-picker-row">
             <span id={`${id}-voice`}>Assistant voice</span>
             <div className="voice-settings-choice">
               {providerSelection === 'auto' ? (
                 <div className="voice-automatic-choice" aria-labelledby={`${id}-voice`}>
                   <span className="voice-picker-label">
-                    <span>{selectedVoice ? selectedVoice.name : 'No voice available'}</span>
+                    <span>Automatic</span>
                     <small>
                       {selectedVoice
-                        ? `${providerNames[provider]} default`
+                        ? 'Matches the conversation language'
                         : 'Choose a provider to get started'}
                     </small>
                   </span>

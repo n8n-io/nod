@@ -3264,11 +3264,17 @@ test(
     );
     view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
       'synthetic-panel-password';
-    await click('.credential-secret button');
+    await click('.password-input-toggle');
     assert.equal(
       view.document.querySelector<HTMLInputElement>('input[name="password"]')!.type,
       'text',
     );
+    await act(async () => view.document.querySelector('form')!.reset());
+    const clearedPassword =
+      view.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+    assert.equal(clearedPassword.value, '');
+    assert.equal(clearedPassword.type, 'password');
+    clearedPassword.value = 'synthetic-panel-password';
     await act(async () => {
       const form = view.document.querySelector('form')!;
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));

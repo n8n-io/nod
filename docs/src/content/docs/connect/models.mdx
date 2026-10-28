@@ -90,7 +90,7 @@ ChatGPT sign-in listens on port `1455` where Nod's server runs. If another progr
 
 Nod uses keys limited to one workspace directly. For other keys, Nod connects automatically when it finds exactly one workspace that accepts the key. If it finds several, choose a named **Workspace** and save again.
 
-If discovery isn't available, expand **Enter workspace ID manually**. Enter the **Workspace ID (optional)** from [Anthropic's workspace settings](https://platform.claude.com/settings/workspaces), then save again. Your API key stays in the form while you choose. No environment variable is needed when connecting in Nod.
+If the connection fails because workspace discovery isn't available, **Enter workspace ID manually** appears. Enter the **Workspace ID (optional)** from [Anthropic's workspace settings](https://platform.claude.com/settings/workspaces), then save again. Your API key stays in the form while you choose. No environment variable is needed when connecting in Nod.
 
 </TabItem>
 <TabItem label="OpenRouter">
@@ -248,7 +248,7 @@ In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to u
 A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice without another account]
-Open **Settings → General → Voice**. Leave **Voice provider** on **Automatic** to use an available speech connection, or choose a provider and compare **Assistant voice** samples. **Connect** or **Manage** beside the provider opens setup on the same page. Choose [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model.
+Open **Settings → General → Voice**. Leave **Voice provider** on **Automatic** to use an available speech connection and match voices to the conversation language. Or choose a provider and compare **Assistant voice** samples. **Connect** or **Manage** beside the provider opens setup on the same page. Choose [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model.
 :::
 
 ## Set connections in server settings

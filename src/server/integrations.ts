@@ -2524,7 +2524,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .header('Referrer-Policy', 'no-referrer')
           .redirect(
             new URL(
-              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || completionPage) && service ? `&service=${service}` : ''}${completionPage && attempt ? `&attempt=${attempt}` : ''}${destination === 'desktop' ? '&desktop=1' : ''}`,
+              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || completionPage) && service ? `&service=${service}` : ''}${completionPage && service ? `&serviceName=${encodeURIComponent(serviceInfo(service).name)}` : ''}${completionPage && attempt ? `&attempt=${attempt}` : ''}${destination === 'desktop' ? '&desktop=1' : ''}`,
               options.baseUrl,
             ).href,
           );

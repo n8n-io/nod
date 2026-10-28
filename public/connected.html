@@ -52,9 +52,6 @@
       main {
         width: min(100%, 440px);
         padding: 28px;
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        background: var(--surface);
         text-align: center;
       }
       .brand {
@@ -87,8 +84,6 @@
         display: flex;
         justify-content: center;
         margin-top: 28px;
-        padding-top: 20px;
-        border-top: 1px solid var(--border);
       }
       .return {
         display: inline-flex;
@@ -103,9 +98,15 @@
         font-size: 14px;
         font-weight: 500;
         text-decoration: none;
+        border: 0;
+        font-family: inherit;
+        cursor: pointer;
       }
       .return:hover {
         background: #ffd0d9;
+      }
+      [hidden] {
+        display: none !important;
       }
       .return:focus-visible {
         outline: 2px solid var(--focus);
@@ -133,6 +134,7 @@
       <h1 id="title">Return to Nod</h1>
       <p id="message">Check your connection in Nod.</p>
       <div class="actions">
+        <button id="close" class="return" type="button" hidden>Close page</button>
         <a id="return" class="return" href="/apps">Return to Nod</a>
       </div>
     </main>
@@ -152,17 +154,23 @@
           : 'failed';
         const attempt = query.get('attempt');
         const succeeded = connection === 'connected' || connection === 'continued';
+        const suppliedName = query.get('serviceName')?.trim();
+        const name =
+          suppliedName && suppliedName.length <= 200 && !/[\x00-\x1f\x7f]/.test(suppliedName)
+            ? suppliedName
+            : service?.replaceAll('_', ' ').replaceAll('-', ' ');
         const title = succeeded
-          ? 'Connected'
+          ? name
+            ? `${name} is connected`
+            : 'Your app is connected'
           : connection === 'cancelled'
             ? 'Sign-in cancelled'
             : connection === 'expired'
               ? 'Sign-in link no longer active'
               : 'Sign-in didn’t finish';
         document.getElementById('title').textContent = title;
-        document.getElementById('message').hidden = succeeded;
         document.getElementById('message').textContent = succeeded
-          ? ''
+          ? 'You can close this page and continue in Nod.'
           : connection === 'expired'
             ? 'Check your connection in Nod.'
             : connection === 'cancelled'
@@ -170,6 +178,10 @@
               : 'Try again in Nod.';
         const desktop = query.get('desktop') === '1';
         const returnLink = document.getElementById('return');
+        const closeButton = document.getElementById('close');
+        returnLink.hidden = succeeded && !desktop;
+        closeButton.hidden = !succeeded;
+        closeButton.addEventListener('click', () => window.close());
         returnLink.href = desktop ? 'nod://open/apps' : '/apps';
         returnLink.addEventListener('click', (event) => {
           if (
