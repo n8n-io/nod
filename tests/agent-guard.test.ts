@@ -988,6 +988,7 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   let appImage: AgentToolResult | undefined;
   let mcpBlocks: AgentToolResult | undefined;
   let catalog: AgentToolResult | undefined;
+  let savedSession: AgentToolResult | undefined;
   const text = (result: { content: Array<{ type: string; text?: string }> }) =>
     result.content.map((part) => part.text ?? '').join('');
   const page = (body: string) => async () => ({
@@ -1003,6 +1004,11 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
       appImage = await call(tools, 'apps', { action: 'SLACK_DOWNLOAD_SLACK_FILE', args: {} });
       mcpBlocks = await call(tools, 'apps', { action: 'CONNECTED_MCP_CALL', args: {} });
       catalog = await call(tools, 'manage_apps', { action: 'discover', query: 'calendar' });
+      savedSession = await call(tools, 'browser_session', {
+        action: 'use',
+        url: 'https://example.com',
+        connectionId: randomUUID(),
+      });
       texts.push(text(await options.runTool('fetch_content', { urls: [] }, page(injected))));
       texts.push(
         text(
@@ -1019,6 +1025,11 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
       }));
     },
     {
+      browserConnection: async () => ({
+        status: 'session_opened',
+        connectionId: randomUUID(),
+        observation: { text: injected, url: 'https://example.com' },
+      }),
       connections: async (action, _service, _proposal, _newAccount, query) => {
         assert.equal(action, 'discover');
         assert.equal(query, 'calendar');
@@ -1056,6 +1067,9 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   assert.equal(texts[3], injected);
   assert.match(text(catalog!), /^<untrusted_tool_result source="manage_apps">/);
   assert.equal(text(catalog!).match(/untrusted_tool_result/gi)?.length, 2);
+  assert.match(text(savedSession!), /^<untrusted_tool_result source="browser_session">/);
+  assert.equal(text(savedSession!).match(/untrusted_tool_result/gi)?.length, 2);
+  assert.match(text(savedSession!), /Invoice due/);
   assert.deepEqual(
     screenshot?.content.map((part) => part.type),
     ['text', 'image', 'text'],

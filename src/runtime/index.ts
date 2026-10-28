@@ -83,6 +83,7 @@ const delimitedTools = new Set([
   'apps',
   'delegate',
   'browser',
+  'browser_session',
   'web_search',
   'fetch_content',
   'get_search_content',
