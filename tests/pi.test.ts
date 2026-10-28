@@ -27,6 +27,7 @@ import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/comput
 import { openLocalSession, readPiSessionEntries } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
+import { createPiUsageTracker } from '../src/providers/pi/usage.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
@@ -3998,6 +3999,77 @@ test('image analysis passes image blocks to Pi and does not retry a failed charg
   failed = true;
   await assert.rejects(curator.curate(request), /image model is unavailable/);
   assert.equal(calls, 2);
+});
+
+test('failed model requests keep unknown costs and remain separate from their retries', async () => {
+  const failed = { ...fauxAssistantMessage(''), stopReason: 'error' as const };
+  const succeeded = {
+    ...fauxAssistantMessage('{"saved":true}'),
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0.2, output: 0.1, cacheRead: 0, cacheWrite: 0, total: 0.3 },
+    },
+  };
+  const observe = createPiUsageTracker({
+    sessionId: 'fixture-session',
+    provider: 'openai',
+    model: 'fixture',
+    history: [],
+  });
+  assert.equal(observe(failed)?.costUsd, null);
+  assert.equal(observe(failed), undefined);
+  const cancelled = observe({ ...failed, stopReason: 'aborted' });
+  assert.equal(cancelled?.status, 'cancelled');
+  assert.equal(cancelled?.costUsd, null);
+  assert.equal(observe({ ...failed, stopReason: 'stop' })?.costUsd, null);
+  assert.equal(observe(succeeded)?.costUsd, 0.3);
+  const reports: Array<Partial<ProviderUsageEvent>> = [];
+  let calls = 0;
+  const runtime = {
+    setRuntimeApiKey: async () => {},
+    getModel: () => ({ provider: 'openai', id: 'fixture' }),
+    completeSimple: async () => (calls++ === 0 ? failed : succeeded),
+  };
+  const curator = createPiMemoryCurator({
+    provider: 'openai',
+    model: 'fixture',
+    apiKey: 'fixture',
+    runtime: runtime as never,
+  });
+  assert.deepEqual(
+    await curator.curate(
+      { task: 'review', instructions: 'Check the synthetic action', input: {} },
+      undefined,
+      (report) => reports.push(report),
+    ),
+    { saved: true },
+  );
+  assert.deepEqual(
+    reports.map(({ status, costUsd }) => ({ status, costUsd })),
+    [
+      { status: 'failed', costUsd: null },
+      { status: 'succeeded', costUsd: 0.3 },
+    ],
+  );
+  assert.equal(new Set(reports.map((report) => report.id)).size, 2);
+  runtime.completeSimple = async () => {
+    throw new Error('Synthetic transport failure');
+  };
+  await assert.rejects(
+    curator.curate(
+      { task: 'review', instructions: 'Check the synthetic action', input: {} },
+      undefined,
+      (report) => reports.push(report),
+    ),
+    /Synthetic transport failure/,
+  );
+  assert.equal(reports.length, 3);
+  assert.equal(reports[2].costUsd, null);
+  assert.equal(reports[2].status, 'failed');
 });
 
 test('subscription image analysis retains an API-price estimate for the task check-in', async (t) => {
