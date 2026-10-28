@@ -37,10 +37,10 @@ function useNotificationChoice(ownerId: string) {
     scope.active = true;
     setBusy(false);
     setError('');
-    const unsubscribe = subscribeBrowserNotifications(() => {
+    const unsubscribe = subscribeBrowserNotifications(ownerId, (revoked) => {
       const consent = browserNotificationStatus(ownerId);
-      if (!consent.enabled) {
-        if (scope.consent.enabled || scope.consent.choice !== consent.choice)
+      if (revoked || !consent.enabled) {
+        if (revoked || scope.consent.enabled || scope.consent.choice !== consent.choice)
           scope.consentGeneration++;
         for (const notification of scope.confirmations) notification.close();
         scope.confirmations.clear();
@@ -126,21 +126,18 @@ export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
 
 export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   const choice = useNotificationChoice(ownerId);
-  const optedIn = choice.choice === 'enabled';
-  const needsPermission = optedIn && choice.available && choice.permission === 'default';
   if (desktopSettingsAvailable()) return null;
   return (
-    <section className="account-region" aria-label="Browser notifications">
+    <section className="account-region" aria-label="Notifications">
+      <h2 data-analytics-public>Notifications</h2>
       <div className="account-preference-row">
         <span data-analytics-public>
           <Bell size={16} aria-hidden="true" />
           Browser notifications
         </span>
         <Switch
-          checked={optedIn}
-          disabled={
-            choice.busy || (!optedIn && (!choice.available || choice.permission === 'denied'))
-          }
+          checked={choice.enabled}
+          disabled={choice.busy || !choice.available || choice.permission === 'denied'}
           aria-label="Browser notifications"
           onCheckedChange={(enabled) => void choice.change(enabled)}
         />
@@ -149,20 +146,24 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
         {!choice.available
           ? 'Notifications need a supported browser and a secure connection.'
           : choice.permission === 'denied'
-            ? 'Allow notifications for this site in your browser settings to enable them.'
-            : needsPermission
-              ? 'Browser permission is needed before Nod can notify you.'
-              : 'Get notified by Nod while you’re away. Keep this tab open to receive replies.'}
+            ? 'Blocked by your browser. Allow notifications for this site in your browser settings.'
+            : choice.permission === 'default'
+              ? 'Turn on to allow Nod to notify you about new replies.'
+              : choice.enabled
+                ? 'On in this browser. Nod will notify you about new replies while you’re away. Keep this tab open.'
+                : 'Get notified by Nod while you’re away. Keep this tab open to receive replies.'}
       </p>
-      {needsPermission && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={choice.busy}
-          onClick={() => void choice.change(true)}
-        >
-          Allow notifications
-        </Button>
+      {choice.enabled && (
+        <div className="account-settings-actions">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={choice.busy}
+            onClick={() => void choice.change(true)}
+          >
+            Send test notification
+          </Button>
+        </div>
       )}
       {choice.error && <Notice>{choice.error}</Notice>}
     </section>

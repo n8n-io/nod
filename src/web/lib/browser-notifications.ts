@@ -2,6 +2,7 @@ import type { Message, Preferences } from '../../shared/contracts';
 import { desktopSettingsAvailable } from './desktop';
 
 const changed = 'nod:browser-notifications';
+const invalidatedChoices = new Set<string>();
 const preferenceKey = (ownerId: string) => `nod.browser-notifications.${ownerId}`;
 const foregroundKey = (ownerId: string) => `nod.browser-notifications.foreground.${ownerId}`;
 
@@ -15,6 +16,7 @@ export function browserNotificationStatus(ownerId: string) {
   try {
     choice = window.localStorage.getItem(preferenceKey(ownerId));
   } catch {}
+  if (choice === 'enabled' && invalidatedChoices.has(ownerId)) choice = 'disabled';
   const permission = available ? window.Notification.permission : 'default';
   return {
     available,
@@ -26,19 +28,39 @@ export function browserNotificationStatus(ownerId: string) {
 
 function saveChoice(ownerId: string, value: string) {
   window.localStorage.setItem(preferenceKey(ownerId), value);
+  invalidatedChoices.delete(ownerId);
   window.dispatchEvent(new Event(changed));
 }
 
-export function subscribeBrowserNotifications(listener: () => void) {
-  window.addEventListener(changed, listener);
-  window.addEventListener('storage', listener);
-  window.addEventListener('focus', listener);
-  document.addEventListener('visibilitychange', listener);
+export function subscribeBrowserNotifications(
+  ownerId: string,
+  listener: (revoked: boolean) => void,
+) {
+  const update = (event?: Event) => {
+    const storage = event?.type === 'storage' ? (event as StorageEvent) : undefined;
+    const owned = storage && (storage.key === preferenceKey(ownerId) || storage.key === null);
+    const status = browserNotificationStatus(ownerId);
+    if (status.available && status.choice === 'enabled' && status.permission !== 'granted') {
+      invalidatedChoices.add(ownerId);
+      try {
+        saveChoice(ownerId, 'disabled');
+      } catch {
+        window.dispatchEvent(new Event(changed));
+      }
+      return;
+    }
+    listener(Boolean(owned && storage.newValue !== 'enabled'));
+  };
+  window.addEventListener(changed, update);
+  window.addEventListener('storage', update);
+  window.addEventListener('focus', update);
+  document.addEventListener('visibilitychange', update);
+  update();
   return () => {
-    window.removeEventListener(changed, listener);
-    window.removeEventListener('storage', listener);
-    window.removeEventListener('focus', listener);
-    document.removeEventListener('visibilitychange', listener);
+    window.removeEventListener(changed, update);
+    window.removeEventListener('storage', update);
+    window.removeEventListener('focus', update);
+    document.removeEventListener('visibilitychange', update);
   };
 }
 
@@ -121,6 +143,7 @@ export async function setBrowserNotifications(
   notification.onshow = () => {
     if (!isCurrent() || !browserNotificationStatus(ownerId).enabled) notification.close();
   };
+  invalidatedChoices.delete(ownerId);
   window.dispatchEvent(new Event(changed));
   return notification;
 }

@@ -38,10 +38,10 @@ export function useBrowserNotifications(ownerId: string, state: AppState | null)
       for (const notification of scope.displayed) notification.close();
       scope.displayed.clear();
     };
-    const unsubscribe = subscribeBrowserNotifications(() => {
+    const unsubscribe = subscribeBrowserNotifications(ownerId, (revoked) => {
       const consent = browserNotificationStatus(ownerId);
-      if (!consent.enabled) {
-        if (scope.consent.enabled || scope.consent.choice !== consent.choice)
+      if (revoked || !consent.enabled) {
+        if (revoked || scope.consent.enabled || scope.consent.choice !== consent.choice)
           scope.consentGeneration++;
         scope.pending = undefined;
         clear();

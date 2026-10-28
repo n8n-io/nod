@@ -3450,7 +3450,7 @@ test('browser notification settings revoke a saved opt-in after browser permissi
   const f = await notificationPage(t);
   const { BrowserNotificationSettings } =
     await import('../src/web/components/browser-notifications.tsx');
-  const { browserNotificationStatus, setBrowserNotifications } =
+  const { browserNotificationStatus, deliverBrowserNotification, setBrowserNotifications } =
     await import('../src/web/lib/browser-notifications.ts');
   f.setPermission('granted');
   await setBrowserNotifications(f.owner(), true);
@@ -3458,14 +3458,37 @@ test('browser notification settings revoke a saved opt-in after browser permissi
   await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
   const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
   assert.ok(control);
-  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, true);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(f.permissionRequests(), 0);
+  assert.equal(f.notifications.length, 1);
+  f.setPermission('granted');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(control.getAttribute('aria-checked'), 'false');
   assert.equal(control.disabled, false);
-  await f.click(0);
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(
+    await deliverBrowserNotification(
+      f.owner(),
+      'notification-denied-settings',
+      { id: 'reply-after-external-grant', createdAt: '2035-01-01T12:00:00.000Z' },
+      () => true,
+    ),
+    null,
+  );
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => control.click());
+  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(f.notifications.length, 2);
+  assert.equal(f.permissionRequests(), 0);
+  f.setPermission('denied');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
   assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
   assert.equal(control.getAttribute('aria-checked'), 'false');
   assert.equal(control.disabled, true);
-  assert.equal(f.permissionRequests(), 0);
-  assert.equal(f.notifications.length, 1);
 });
 
 test('browser notification settings recover a reset permission only after an explicit choice', async (t) => {
@@ -3479,29 +3502,267 @@ test('browser notification settings recover a reset permission only after an exp
   f.setPermission('default');
   await f.render(f.createElement(BrowserNotificationSettings, { ownerId: f.owner() }));
   const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
-  const recovery = [...f.document.querySelectorAll('button')].find(
-    (button) => button.getAttribute('role') !== 'switch',
-  );
   assert.ok(control);
-  assert.ok(recovery);
-  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(control.getAttribute('aria-checked'), 'false');
   assert.equal(control.disabled, false);
   assert.equal(f.permissionRequests(), 0);
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
-  f.respondPermission(async () => 'default');
-  await f.act(async () => recovery.click());
-  assert.equal(f.permissionRequests(), 1);
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(f.permissionRequests(), 0);
+  f.setPermission('granted');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(control.getAttribute('aria-checked'), 'false');
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
-  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(f.notifications.length, 1);
+  f.setPermission('default');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  let answer: (permission: NotificationPermission) => void = () => {};
+  f.respondPermission(() => new Promise((resolve) => (answer = resolve)));
+  await f.act(async () => control.click());
+  assert.equal(f.permissionRequests(), 1);
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, true);
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(f.permissionRequests(), 1);
+  assert.equal(control.disabled, true);
+  await f.act(async () => answer('default'));
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, false);
   assert.ok(f.document.querySelector('[role="alert"]'));
-  f.respondPermission(async () => 'granted');
-  await f.act(async () => recovery.click());
+  await f.act(async () => control.click());
   assert.equal(f.permissionRequests(), 2);
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(control.disabled, true);
+  await f.act(async () => answer('granted'));
   assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(control.getAttribute('aria-checked'), 'true');
+  assert.equal(control.disabled, false);
   assert.equal(f.notifications.length, 2);
-  assert.equal(f.document.querySelectorAll('button').length, 1);
   assert.equal(f.document.querySelector('[role="alert"]'), null);
+  const testAction = [...f.document.querySelectorAll('button')].find(
+    (button) => button.getAttribute('role') !== 'switch' && !button.disabled,
+  );
+  assert.ok(testAction);
+  await f.act(async () => testAction.click());
+  assert.equal(f.notifications.length, 3);
+  assert.equal(f.permissionRequests(), 2);
   await f.act(async () => control.click());
   assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(control.getAttribute('aria-checked'), 'false');
+  assert.equal(
+    [...f.document.querySelectorAll('button')].some(
+      (button) => button.getAttribute('role') !== 'switch' && !button.disabled,
+    ),
+    false,
+  );
   assert.equal(f.permissionRequests(), 2);
+});
+
+test('browser notifications revoke background consent without mounting settings and require a fresh opt-in', async (t) => {
+  const f = await notificationPage(t);
+  f.setOwner('notification-hook-revocation-owner');
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { browserNotificationStatus, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  function Watch() {
+    useBrowserNotifications(f.owner(), {
+      threadId: 'notification-hook-revocation-thread',
+      messages: [...messages],
+    } as AppState);
+    return null;
+  }
+  const render = () => f.render(f.createElement(Watch));
+  const add = () =>
+    messages.push({
+      id: `message-${messages.length}`,
+      role: 'assistant',
+      text: 'Synthetic reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 12, 0, messages.length)).toISOString(),
+      attachments: [],
+    });
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 1);
+  f.setPermission('default');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(f.permissionRequests(), 0);
+  f.setPermission('granted');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  add();
+  await render();
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => setBrowserNotifications(f.owner(), true));
+  assert.equal(f.notifications.length, 2);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 3);
+  assert.equal(f.notifications.at(-1)!.visible, true);
+  assert.equal(f.permissionRequests(), 0);
+});
+
+test('browser notifications honor queued cross-tab revocations without cancelling another owner', async (t) => {
+  const f = await notificationPage(t);
+  f.setOwner('notification-storage-revocation-owner');
+  const { BrowserNotificationSettings } =
+    await import('../src/web/components/browser-notifications.tsx');
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { browserNotificationStatus } = await import('../src/web/lib/browser-notifications.ts');
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  function Watch() {
+    useBrowserNotifications(f.owner(), {
+      threadId: 'notification-storage-revocation-thread',
+      messages: [...messages],
+    } as AppState);
+    return f.createElement(BrowserNotificationSettings, { ownerId: f.owner() });
+  }
+  const render = () => f.render(f.createElement(Watch));
+  const add = () =>
+    messages.push({
+      id: `message-${messages.length}`,
+      role: 'assistant',
+      text: 'Synthetic reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 12, 0, messages.length)).toISOString(),
+      attachments: [],
+    });
+  const revoke = (owner: string) =>
+    f.act(async () =>
+      f.window.dispatchEvent(
+        new f.window.StorageEvent('storage', {
+          key: `nod.browser-notifications.${owner}`,
+          oldValue: 'enabled',
+          newValue: 'disabled',
+          storageArea: f.window.localStorage,
+        }),
+      ),
+    );
+  f.setPermission('granted');
+  f.delayShow(true);
+  add();
+  await render();
+  const control = f.document.querySelector<HTMLButtonElement>('[role="switch"]');
+  assert.ok(control);
+  await f.act(async () => control.click());
+  assert.equal(f.notifications.length, 1);
+  const confirmation = f.notifications[0]!;
+  add();
+  await render();
+  assert.equal(f.notifications.length, 2);
+  const shownReply = f.notifications[1]!;
+  shownReply.show();
+  await revoke('notification-unrelated-owner');
+  confirmation.show();
+  assert.equal(confirmation.visible, true);
+  assert.equal(shownReply.visible, true);
+  assert.equal(shownReply.closed, 0);
+  const testAction = [...f.document.querySelectorAll('button')].find(
+    (button) => button.getAttribute('role') !== 'switch' && !button.disabled,
+  );
+  assert.ok(testAction);
+  await f.act(async () => testAction.click());
+  assert.equal(f.notifications.length, 3);
+  const queuedConfirmation = f.notifications[2]!;
+  add();
+  await render();
+  assert.equal(f.notifications.length, 4);
+  const queuedReply = f.notifications[3]!;
+  assert.equal(f.window.localStorage.getItem(`nod.browser-notifications.${f.owner()}`), 'enabled');
+  await revoke(f.owner());
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(confirmation.visible, false);
+  assert.equal(shownReply.visible, false);
+  queuedConfirmation.show();
+  queuedReply.show();
+  assert.equal(queuedConfirmation.visible, false);
+  assert.equal(queuedReply.visible, false);
+  await f.act(async () => testAction.click());
+  assert.equal(f.notifications.length, 5);
+  const freshConfirmation = f.notifications[4]!;
+  add();
+  await render();
+  assert.equal(f.notifications.length, 6);
+  const freshReply = f.notifications[5]!;
+  freshConfirmation.show();
+  freshReply.show();
+  assert.equal(freshConfirmation.visible, true);
+  assert.equal(freshReply.visible, true);
+  assert.equal(f.permissionRequests(), 0);
+});
+
+test('browser notifications remain revoked when persisting permission reconciliation fails', async (t) => {
+  const f = await notificationPage(t);
+  f.setOwner('notification-storage-failure-owner');
+  const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
+  const { browserNotificationStatus, setBrowserNotifications } =
+    await import('../src/web/lib/browser-notifications.ts');
+  type AppState = import('../src/shared/contracts.ts').AppState;
+  const messages: AppState['messages'] = [];
+  function Watch() {
+    useBrowserNotifications(f.owner(), {
+      threadId: 'notification-storage-failure-thread',
+      messages: [...messages],
+    } as AppState);
+    return null;
+  }
+  const render = () => f.render(f.createElement(Watch));
+  const add = () =>
+    messages.push({
+      id: `message-${messages.length}`,
+      role: 'assistant',
+      text: 'Synthetic reply',
+      turnId: null,
+      createdAt: new Date(Date.UTC(2035, 0, 1, 12, 0, messages.length)).toISOString(),
+      attachments: [],
+    });
+  f.setPermission('granted');
+  await setBrowserNotifications(f.owner(), true);
+  f.setPermission('default');
+  const key = `nod.browser-notifications.${f.owner()}`;
+  const prototype = Object.getPrototypeOf(f.window.localStorage) as Storage;
+  const originalSetItem = prototype.setItem;
+  const setItem = t.mock.method(prototype, 'setItem', function (this: Storage, name, value) {
+    if (name === key) throw new Error('Synthetic storage write failed');
+    return originalSetItem.call(this, name, value);
+  });
+  add();
+  await render();
+  assert.equal(f.window.localStorage.getItem(key), 'enabled');
+  assert.equal(browserNotificationStatus(f.owner()).choice, 'disabled');
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  setItem.mock.restore();
+  f.setPermission('granted');
+  await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
+  await f.act(async () =>
+    f.window.dispatchEvent(
+      new f.window.StorageEvent('storage', {
+        key,
+        oldValue: 'disabled',
+        newValue: 'enabled',
+        storageArea: f.window.localStorage,
+      }),
+    ),
+  );
+  add();
+  await render();
+  assert.equal(browserNotificationStatus(f.owner()).enabled, false);
+  assert.equal(f.notifications.length, 1);
+  await f.act(async () => setBrowserNotifications(f.owner(), true));
+  assert.equal(browserNotificationStatus(f.owner()).enabled, true);
+  assert.equal(f.notifications.length, 2);
+  add();
+  await render();
+  assert.equal(f.notifications.length, 3);
+  assert.equal(f.notifications.at(-1)!.visible, true);
+  assert.equal(f.permissionRequests(), 0);
 });
