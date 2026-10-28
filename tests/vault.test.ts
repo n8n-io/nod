@@ -971,6 +971,7 @@ test(
             assert.equal(entry.origin, origin);
             assert.equal((await read(entry.id, 'details')).json().origin, origin);
             assert.equal((await save(`Website ${index}`, origin)).id, entry.id);
+            assert.equal(credentialOrigin(origin), origin);
             assert.throws(() => credentialOrigin(url));
           }
           const before = (await pool.query('SELECT count(*) FROM vault_entries')).rows[0].count;
