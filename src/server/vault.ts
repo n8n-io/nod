@@ -469,10 +469,11 @@ function metadata(entry: EntryRow, username?: string): VaultLoginEntry {
 }
 
 function normalizedCardNumber(value: string) {
-  if (!/^[0-9 -]+$/.test(value)) throw new VaultError('Check the card number.');
+  if (!/^[0-9 -]+$/.test(value))
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   const number = value.replace(/[ -]/g, '');
   if (!/^\d{12,19}$/.test(number) || /^(\d)\1+$/.test(number))
-    throw new VaultError('Check the card number.');
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   let sum = 0;
   let double = false;
   for (let index = number.length - 1; index >= 0; index--) {
@@ -484,18 +485,22 @@ function normalizedCardNumber(value: string) {
     sum += digit;
     double = !double;
   }
-  if (sum % 10 !== 0) throw new VaultError('Check the card number.');
+  if (sum % 10 !== 0)
+    throw new VaultError('The card number is not valid. Check that all digits match your card.');
   return number;
 }
 
 function validateCardExpiry(month: number, year: number) {
   const now = new Date();
+  if (year > now.getUTCFullYear() + 30)
+    throw new VaultError(
+      'The expiry year is too far in the future. Enter the year shown on your card.',
+    );
   if (
     year < now.getUTCFullYear() ||
-    year > now.getUTCFullYear() + 30 ||
     (year === now.getUTCFullYear() && month < now.getUTCMonth() + 1)
   )
-    throw new VaultError('Check the card expiry date.');
+    throw new VaultError('This card has expired. Use a card that has not expired.');
 }
 
 function cardBrand(number: string) {

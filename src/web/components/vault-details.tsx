@@ -285,10 +285,10 @@ export function VaultDetails({
     } catch (error) {
       if (current())
         setError(
-          isCard
-            ? 'This card could not be updated. Try again.'
-            : error instanceof ApiError && error.status === 400
-              ? error.message
+          error instanceof ApiError && error.status === 400
+            ? error.message
+            : isCard
+              ? 'This card could not be updated. Try again.'
               : 'This login could not be updated. Try again.',
         );
     } finally {

@@ -285,10 +285,10 @@ export function VaultItemForm({
     } catch (error) {
       if (current())
         setError(
-          kind === 'card'
-            ? 'This card could not be saved. Check the details and try again.'
-            : error instanceof ApiError && error.status === 400
-              ? error.message
+          error instanceof ApiError && error.status === 400
+            ? error.message
+            : kind === 'card'
+              ? 'This card could not be saved. Try again.'
               : 'This login could not be saved. Try again.',
         );
     } finally {
