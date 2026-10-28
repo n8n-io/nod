@@ -3081,6 +3081,57 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
         await settle(() => document.querySelector('[contenteditable]'));
         await edit();
+        const field = document.querySelector('[contenteditable]');
+        const input = document.querySelector('input[type="file"]');
+        let pickerCount = 0;
+        input.addEventListener('click', () => pickerCount++);
+        const attachKey = async (modifiers = {}) => {
+          await act(async () => document.querySelector('[contenteditable]').dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'u', code: 'KeyU', bubbles: true, cancelable: true, metaKey: true, ...modifiers,
+          })));
+        };
+        const originalDraft = currentText;
+        await act(async () => {
+          window.getSelection().selectAllChildren(field);
+          document.dispatchEvent(new Event('selectionchange'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        await attachKey();
+        assert.equal(pickerCount, 1);
+        assert.equal(currentText, originalDraft);
+        assert.equal(field.querySelector('u'), null);
+        assert.equal(requests.length, 0);
+        assert.equal(sends.length, 0);
+        await settle(() => document.querySelector('[aria-label="Underline"]'));
+        const underline = document.querySelector('[aria-label="Underline"]');
+        assert.ok(underline);
+        assert.equal(document.querySelector('form').contains(underline), false);
+        await act(async () => {
+          underline.focus();
+          underline.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'u', code: 'KeyU', metaKey: true, bubbles: true, cancelable: true,
+          }));
+        });
+        assert.equal(pickerCount, 2);
+        assert.equal(currentText, originalDraft);
+        assert.equal(field.querySelector('u'), null);
+        await act(async () => field.focus());
+        await attachKey({ repeat: true });
+        assert.equal(pickerCount, 2);
+        for (const modifiers of [{ metaKey: false }, { shiftKey: true }, { altKey: true }, { isComposing: true }, { keyCode: 229 }])
+          await attachKey(modifiers);
+        assert.equal(pickerCount, 2);
+        await act(async () => changeActive(false));
+        await attachKey();
+        assert.equal(pickerCount, 2);
+        await act(async () => changeActive(true));
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'Win32' });
+        await act(async () => replaceText('Windows attachment shortcut'));
+        await attachKey({ metaKey: false, ctrlKey: true });
+        assert.equal(pickerCount, 3);
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+        await act(async () => replaceText(originalDraft));
+        await edit();
         for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
           await enter(modifiers);
           assert.equal(sends.length, 0);
@@ -3270,6 +3321,12 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(recorded.track.stopped, false);
         assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
         assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
+        let recordingPickers = 0;
+        document.querySelector('input[type="file"]').addEventListener('click', () => recordingPickers++);
+        await attachKey();
+        assert.equal(recordingPickers, 0);
+        assert.equal(recorded.track.stopped, false);
+        assert.equal(currentText, 'Keep this synthetic draft');
         await act(async () =>
           window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact })),
         );

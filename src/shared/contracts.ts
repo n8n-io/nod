@@ -26,7 +26,6 @@ export interface Message {
   createdAt: string;
   attachments: Artifact[];
   presentation?: Presentation;
-  receipt?: MessageReceipt;
   questionState?:
     'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
   streamId?: string | null;
@@ -35,11 +34,6 @@ export interface Message {
   replyToMessageId?: string | null;
   replyTo?: { id: string; role: 'user' | 'assistant'; text: string } | null;
   suggestions?: TaskSuggestions | null;
-}
-export interface MessageReceipt {
-  sessionId: string;
-  actions: Array<{ label: string; count: number }>;
-  costUsd: number | null;
 }
 export interface SubmitMessageResponse {
   threadId: string;

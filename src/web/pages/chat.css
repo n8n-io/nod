@@ -863,11 +863,11 @@
   }
 }
 .chat-page .messages {
-  gap: 24px;
+  gap: 12px;
   padding-block: 24px 32px;
 }
 .chat-page .message-grouped {
-  margin-top: -8px;
+  margin-top: -4px;
 }
 .chat-page .message {
   position: relative;
@@ -1174,19 +1174,6 @@
   .task-planning .ob-glyph-orbit[data-phase] {
     animation: none;
   }
-}
-
-.message-receipt {
-  align-self: flex-start;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  text-decoration: none;
-}
-.message-receipt:hover {
-  color: var(--foreground);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .conversation-scroll[data-drop-files] {

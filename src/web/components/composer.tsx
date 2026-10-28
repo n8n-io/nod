@@ -599,6 +599,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
   const { setDrafts } = drawer;
   const hasRecording = recorder.phase !== 'idle';
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
   const microphoneTitle = !recorder.supported
     ? 'This browser cannot record audio'
@@ -676,6 +677,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
+        }}
+        onKeyDownCapture={(event) => {
+          if (
+            !active ||
+            event.defaultPrevented ||
+            event.nativeEvent.isComposing ||
+            event.keyCode === 229 ||
+            event.altKey ||
+            event.shiftKey ||
+            !(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) ||
+            event.key.toLowerCase() !== 'u'
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!hasRecording && !event.repeat) fileInput.current?.click();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !event.defaultPrevented && hasRecording && !sendingAudio) {
@@ -809,7 +826,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
         <EditorContent editor={editor} />
-        <EditorFormatting editor={editor} />
+        <EditorFormatting editor={editor} underlineShortcut={false} />
         <span className="sr-only" id="composer-keyboard-hint">
           Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
@@ -842,7 +859,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 variant="ghost"
                 size="icon"
                 aria-label="Attach files"
-                title="Attach files or paste an image"
+                title={`Attach files (${mac ? '⌘U' : 'Ctrl+U'}) or paste an image`}
+                aria-keyshortcuts={mac ? 'Meta+U' : 'Control+U'}
                 onClick={() => fileInput.current?.click()}
               >
                 <Paperclip size={16} />

@@ -18,7 +18,7 @@ Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Lin
 
 Standing instructions and rules appear as short labels. Select **follows your instruction** or **your rules** to read or edit the full text.
 
-A finished task or scheduled run ends with a quiet receipt under its last message in chat, such as _Gmail: send email ×2 · $0.38_. Select it to see only that work in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
+Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
