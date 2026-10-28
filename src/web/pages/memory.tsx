@@ -1152,8 +1152,10 @@ export function Memory({
                 checked={view.sensitive}
                 onCheckedChange={(sensitive) => void setting({ sensitive })}
               />
-              Remember sensitive topics
-              <span className="memory-setting-hint">Health, religion, politics and similar</span>
+              <span className="memory-setting-copy">
+                <span>Include sensitive details</span>
+                <span className="memory-setting-hint">Such as health, religion and politics</span>
+              </span>
             </label>
           </footer>
           {settingError && <Notice>{settingError}</Notice>}

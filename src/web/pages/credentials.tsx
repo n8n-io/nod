@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  Check,
-  ChevronLeft,
-  Eye,
-  EyeOff,
-  KeyRound,
-  LockKeyhole,
-  ArrowUpRight,
-} from '../components/icons';
+import { Check, ChevronLeft, KeyRound, LockKeyhole, ArrowUpRight } from '../components/icons';
 import type {
   CredentialRequest,
   PasswordManagerLogin,
@@ -247,7 +239,6 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
   const [saving, setSaving] = useState(false);
   const [retried, setRetried] = useState(false);
   const [enterNew, setEnterNew] = useState(false);
-  const [revealed, setRevealed] = useState(false);
   const [manager, setManager] = useState<ManagerState | null>(null);
   useEffect(() => {
     if (!request || (request.status === 'uncertain' && !retried)) return;
@@ -280,7 +271,6 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             setRequest(null);
             setError('');
             setEnterNew(false);
-            setRevealed(false);
             setRetried(false);
             setManager(null);
             setActiveId(flow.nextId);
@@ -470,7 +460,6 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             ...(username ? { username: data.get('username') } : {}),
           };
     form.reset();
-    setRevealed(false);
     return perform(
       '',
       input,
@@ -677,7 +666,6 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                 disabled={saving}
                 onClick={() => {
                   setEnterNew(false);
-                  setRevealed(false);
                 }}
               >
                 <ChevronLeft size={16} aria-hidden="true" />
@@ -729,26 +717,14 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                           fields.find((field) => field.kind === 'password')?.label || 'Password'
                         }
                       >
-                        <span className="credential-secret">
-                          <Input
-                            name="password"
-                            type={revealed ? 'text' : 'password'}
-                            autoComplete="current-password"
-                            autoFocus={Boolean(request.username)}
-                            required
-                            maxLength={8192}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={revealed ? 'Hide password' : 'Show password'}
-                            aria-pressed={revealed}
-                            onClick={() => setRevealed((value) => !value)}
-                          >
-                            {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
-                          </Button>
-                        </span>
+                        <Input
+                          name="password"
+                          type="password"
+                          autoComplete="current-password"
+                          autoFocus={Boolean(request.username)}
+                          required
+                          maxLength={8192}
+                        />
                       </Field>
                     )}
                   </>

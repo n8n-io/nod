@@ -58,7 +58,7 @@ Replaced and expired notes, and guesses not mentioned again for 60 days, move to
 
 ## Sensitive topics
 
-Nod doesn't learn about health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history unless you ask it to. To let Nod learn them, turn on **Remember sensitive topics** in **Settings → Memory**.
+Nod doesn't learn about health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history unless you ask it to. To let Nod learn them, turn on **Include sensitive details** in **Settings → Memory**.
 
 ## Your writing style from Gmail
 

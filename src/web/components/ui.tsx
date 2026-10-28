@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { LoaderCircle, Search, X } from './icons';
 import { cn } from '../lib/utils';
+import { PasswordInput } from './password-input';
 
 const buttonVariants = cva('button', {
   variants: {
@@ -30,12 +31,23 @@ export function Button({
   return <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
+const FieldLabelContext = React.createContext<string | undefined>(undefined);
+
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
->(({ className, ...props }, ref) => (
-  <input ref={ref} className={cn('input', className)} {...props} />
-));
+>(({ className, ...props }, ref) => {
+  const labelId = React.useContext(FieldLabelContext);
+  const labelledBy =
+    props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined
+      ? props['aria-labelledby']
+      : labelId;
+  return props.type === 'password' ? (
+    <PasswordInput ref={ref} className={className} {...props} aria-labelledby={labelledBy} />
+  ) : (
+    <input ref={ref} className={cn('input', className)} {...props} aria-labelledby={labelledBy} />
+  );
+});
 Input.displayName = 'Input';
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -72,12 +84,17 @@ export function Field({
   children: React.ReactNode;
   hint?: string;
 }) {
+  const labelId = React.useId();
   return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      {children}
-      {hint && <span className="field-hint">{hint}</span>}
-    </label>
+    <FieldLabelContext.Provider value={labelId}>
+      <label className="field">
+        <span id={labelId} className="field-label">
+          {label}
+        </span>
+        {children}
+        {hint && <span className="field-hint">{hint}</span>}
+      </label>
+    </FieldLabelContext.Provider>
   );
 }
 

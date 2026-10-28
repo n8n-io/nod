@@ -67,8 +67,7 @@ export function registerSpeechSettings(
     return current(reply, true);
   });
   app.post('/api/speech/prepare', async (request, reply) => {
-    const { locale } = z
-      .object({ locale: z.string().max(35).optional() })
+    z.object({ locale: z.string().max(35).optional() })
       .strict()
       .parse(request.body ?? {});
     if (!options.local) return reply.code(404).send({ error: 'On-device audio is unavailable.' });
@@ -79,14 +78,6 @@ export function registerSpeechSettings(
     try {
       await options.local.prepare(controller.signal);
       controller.signal.throwIfAborted();
-      const saved = await preferences.get();
-      if (!saved.speechVoice && speech.voices.every((voice) => voice.engine === 'Local')) {
-        const language = locale?.toLowerCase();
-        const initial =
-          speech.voices.find((voice) => voice.language?.toLowerCase() === language) ??
-          speech.voices.find((voice) => voice.language?.split('-')[0] === language?.split('-')[0]);
-        if (initial) await preferences.update({ speechVoice: initial.id });
-      }
       return { local: options.local.status() };
     } finally {
       preparations.delete(controller);

@@ -211,7 +211,7 @@ export function AppDiscoveryDialog({
       finish();
     } catch (cause) {
       if (controller.signal.aborted) return;
-      for (const input of form.querySelectorAll('input[type="password"]'))
+      for (const input of form.querySelectorAll('input[type="password"], input[data-secret-input]'))
         if (input instanceof HTMLInputElement) input.value = '';
       setError(errorMessage(cause));
     } finally {
@@ -288,7 +288,7 @@ export function AppDiscoveryDialog({
     } catch (cause) {
       popup?.close();
       if (controller.signal.aborted) return;
-      for (const input of form.querySelectorAll('input[type="password"]'))
+      for (const input of form.querySelectorAll('input[type="password"], input[data-secret-input]'))
         if (input instanceof HTMLInputElement) input.value = '';
       setError(errorMessage(cause));
       if (pending.current) show({ ...pending.current, outcome: 'failed' });

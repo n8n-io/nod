@@ -242,7 +242,7 @@ test('speech previews reject unavailable voices, serialize generation and releas
     }
   });
   await t.test(
-    'local preparation preserves a chosen voice and matches region before language',
+    'local preparation preserves automatic and explicit voice choices independently of browser language',
     async () => {
       const localApp = Fastify();
       let ready = false;
@@ -272,13 +272,7 @@ test('speech previews reject unavailable voices, serialize generation and releas
         },
       });
       try {
-        for (const [locale, expected] of [
-          ['en-GB', 'local:bf_emma'],
-          ['EN-gb', 'local:bf_emma'],
-          ['en-AU', 'local:af_heart'],
-          ['pt-PT', 'local:pf_dora'],
-          ['zz-ZZ', null],
-        ]) {
+        for (const locale of ['en-GB', 'EN-gb', 'en-AU', 'pt-PT', 'zz-ZZ']) {
           ready = false;
           saved.speechVoice = null;
           const response = await localApp.inject({
@@ -287,7 +281,7 @@ test('speech previews reject unavailable voices, serialize generation and releas
             payload: { locale },
           });
           assert.equal(response.statusCode, 200);
-          assert.equal(saved.speechVoice, expected, locale!);
+          assert.equal(saved.speechVoice, null, locale);
         }
         saved.speechVoice = 'local:bm_george';
         assert.equal(

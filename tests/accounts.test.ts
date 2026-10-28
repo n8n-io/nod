@@ -1658,6 +1658,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       ['first C1 control character', 'openai', 'fixture-invalid\u0080key'],
       ['C1 next-line control character', 'openai', 'fixture-invalid\u0085key'],
       ['last C1 control character', 'openai', 'fixture-invalid\u009fkey'],
+      ['incomplete Anthropic key', 'anthropic', 'sk-ant-api'],
+      ['incomplete OpenRouter key', 'openrouter', 'sk-or-v1-'],
       ['bundled provider', 'baseten', 'sk-ant-api03-synthetic-bundled-key'],
     ] as const) {
       await t.test(name, async () => {

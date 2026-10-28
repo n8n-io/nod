@@ -404,13 +404,6 @@
 .voice-library-link:hover {
   color: var(--foreground);
 }
-.voice-connect-ready {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .voice-settings-choice {
   display: flex;
   align-items: center;
@@ -525,6 +518,13 @@
 }
 .voice-picker-option[data-selected='true'] {
   background: var(--accent-soft);
+}
+.voice-automatic-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  flex: none;
+  color: var(--muted-foreground);
 }
 .voice-choice {
   display: flex;

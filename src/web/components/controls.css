@@ -1,3 +1,5 @@
+@import './password-input.css';
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -112,4 +114,10 @@
 :root[data-focus-input='pointer']
   :focus-visible:not(input, textarea, select, [contenteditable='true']) {
   outline: none;
+}
+
+:root[data-focus-input='pointer']
+  button.input:focus-visible:not([data-state='open'], [aria-invalid='true']) {
+  border-color: var(--input);
+  box-shadow: none;
 }

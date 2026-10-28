@@ -677,10 +677,9 @@ export function AccountSettings({
                         />
                       </div>
                       <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                        Send Nod’s conversations, including what it reads and does, to the Nod team
-                        at n8n to improve Nod. Your name, email addresses, phone numbers, card
-                        numbers and IBANs are removed first, and traces carry no account or device
-                        ID. Kept for 14 days and never used to train AI models.
+                        Share conversations and activity with the Nod team at n8n. We remove
+                        identifiable details where possible. Kept for 14 days, never for AI
+                        training.
                       </p>
                     </>
                   )}

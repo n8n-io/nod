@@ -815,14 +815,14 @@ function FeedbackDraftDialog({
                       <Button
                         type="button"
                         variant="ghost"
-                        size="sm"
+                        size="icon"
+                        aria-label="Attach files"
+                        title="Attach files"
                         disabled={frozen}
                         onClick={() => fileInput.current?.click()}
                       >
                         <Paperclip size={16} aria-hidden="true" />
-                        Add files
                       </Button>
-                      <span>Paste or drop files</span>
                     </div>
                   </div>
                   {(!pendingId || submission.current) && (

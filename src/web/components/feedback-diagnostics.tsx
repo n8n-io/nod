@@ -1,5 +1,5 @@
 import { useId, useMemo } from 'react';
-import { ChevronDown } from './icons';
+import { ChevronDown, Download, FileText } from './icons';
 import type { FeedbackReport } from '../../shared/feedback';
 import { parseFeedbackActivity } from '../../shared/feedback-activity';
 import { Button, Checkbox } from './ui';
@@ -99,9 +99,20 @@ export function FeedbackDiagnostics({
   const unavailable = Object.values(sections ?? {}).some(
     (section) => record(section)?.status === 'unavailable',
   );
+  function download() {
+    if (!report || !data) return;
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'nod-diagnostic-report.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   return (
-    <section className="feedback-diagnostics" aria-label="Diagnostic report">
+    <section className="feedback-diagnostics" aria-label="Diagnostic report" data-analytics-private>
       <div className="feedback-diagnostics-heading">
         <label>
           <Checkbox checked={included} disabled={frozen} onChange={onToggleIncluded} />
@@ -124,9 +135,8 @@ export function FeedbackDiagnostics({
         )}
       </div>
       <p className="feedback-diagnostics-disclosure">
-        Recent messages, tool inputs and results, logs and app activity help us fix bugs and improve
-        Nod. Known secrets and personal details are masked. Redaction can miss information; review
-        before sending or uncheck to leave the report out.
+        Messages and app activity, with personal details masked where possible. Review before
+        sending.
       </p>
       {included && error && (
         <div className="feedback-diagnostics-error" role="alert">
@@ -155,31 +165,39 @@ export function FeedbackDiagnostics({
         <div id={previewId} className="feedback-diagnostics-preview">
           {data ? (
             <>
-              <p className="feedback-diagnostics-snapshot">
-                {messages.length} {messages.length === 1 ? 'message' : 'messages'}, {turns.length}{' '}
-                {turns.length === 1 ? 'request' : 'requests'}, {execution.length} agent{' '}
-                {execution.length === 1 ? 'event' : 'events'} and {connections.length}{' '}
-                {connections.length === 1 ? 'connection' : 'connections'}
-                {typeof coverage?.hours === 'number'
-                  ? ` from the last ${coverage.hours} hours.`
-                  : '.'}
-                {coverage?.truncated === true ? ' Some older activity was omitted.' : ''}
-                {unavailable ? ' Some diagnostics are unavailable.' : ''}
-                {coverage?.redaction === 'unavailable'
-                  ? ' Message content and logs were omitted because redaction was unavailable.'
-                  : ''}
-              </p>
+              <div className="feedback-diagnostics-toolbar">
+                <span>
+                  <FileText size={16} /> Report preview
+                </span>
+                <Button type="button" variant="ghost" size="sm" onClick={download}>
+                  <Download size={16} /> Download
+                </Button>
+              </div>
+              {(unavailable || coverage?.redaction === 'unavailable') && (
+                <p className="feedback-diagnostics-snapshot">
+                  {coverage?.redaction === 'unavailable'
+                    ? 'Message content and logs were omitted because redaction was unavailable.'
+                    : 'Some diagnostics are unavailable.'}
+                </p>
+              )}
               <details className="feedback-diagnostics-section feedback-diagnostics-raw">
                 <summary>
-                  <span>Messages ({messages.length})</span>
+                  <span>
+                    Messages <small>{messages.length}</small>
+                  </span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </summary>
                 <div className="feedback-diagnostics-items">
                   {messages.map((message, index) => (
-                    <div key={index}>
+                    <div
+                      className="feedback-diagnostics-message"
+                      key={index}
+                      data-role={message.role}
+                    >
                       <div className="feedback-diagnostics-activity">
-                        <span>{label(message.role, 'Message')}</span>
-                        <span>{String(message.turnId ?? '')}</span>
+                        <strong>
+                          {message.role === 'assistant' ? 'Nod' : label(message.role, 'Message')}
+                        </strong>
                       </div>
                       <pre>
                         {typeof message.text === 'string' ? message.text : '[content omitted]'}
@@ -198,7 +216,7 @@ export function FeedbackDiagnostics({
                 >
                   <summary>
                     <span>
-                      {title} ({entries.length})
+                      {title} <small>{entries.length}</small>
                     </span>
                     <ChevronDown size={14} aria-hidden="true" />
                   </summary>
@@ -211,14 +229,14 @@ export function FeedbackDiagnostics({
                               record(entry.data)?.tool,
                               label(record(entry.data)?.event, label(entry.event, 'Event')),
                             )}
-                            {entry.event === 'tool_start'
-                              ? ' · Input'
-                              : record(entry.data)?.status
-                                ? ` · ${label(record(entry.data)?.status, 'Result')}`
-                                : ''}{' '}
-                            · {String(entry.callId ?? entry.turnId ?? '')}
                           </span>
-                          <span>{Math.round(Number(entry.ageMs ?? 0) / 1000)} s ago</span>
+                          <Status
+                            value={
+                              entry.event === 'tool_start'
+                                ? 'input'
+                                : (record(entry.data)?.status ?? 'result')
+                            }
+                          />
                         </summary>
                         <pre>{JSON.stringify(entry, null, 2)}</pre>
                       </details>
@@ -231,7 +249,9 @@ export function FeedbackDiagnostics({
               ))}
               <details className="feedback-diagnostics-section">
                 <summary>
-                  <span>Chat and agent activity</span>
+                  <span>
+                    Chat and agent activity <small>{turns.length + execution.length}</small>
+                  </span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </summary>
                 <div className="feedback-diagnostics-items">
@@ -259,7 +279,9 @@ export function FeedbackDiagnostics({
               </details>
               <details className="feedback-diagnostics-section">
                 <summary>
-                  <span>Connections</span>
+                  <span>
+                    Connections <small>{connections.length}</small>
+                  </span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </summary>
                 <div className="feedback-diagnostics-items">
@@ -281,7 +303,9 @@ export function FeedbackDiagnostics({
               </details>
               <details className="feedback-diagnostics-section">
                 <summary>
-                  <span>App activity</span>
+                  <span>
+                    App activity <small>{activity.length}</small>
+                  </span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </summary>
                 <div className="feedback-diagnostics-items">
@@ -315,7 +339,6 @@ export function FeedbackDiagnostics({
                           {title}
                           {details ? ` · ${details}` : ''}
                         </span>
-                        <span>{Math.round(event.ageMs / 1000)} s ago</span>
                       </div>
                     );
                   })}
@@ -326,7 +349,7 @@ export function FeedbackDiagnostics({
               </details>
               <details className="feedback-diagnostics-section feedback-diagnostics-raw">
                 <summary>
-                  <span>Full report</span>
+                  <span>Raw JSON</span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </summary>
                 <pre aria-label="Diagnostic report">{report.content}</pre>

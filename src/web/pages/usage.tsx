@@ -13,6 +13,7 @@ import { api, errorMessage } from '../lib/api';
 import { navigate } from '../lib/navigation';
 import { savePreferences } from '../lib/preferences';
 import {
+  dayKey,
   formatDayLabel,
   formatNumber,
   formatTime,
@@ -55,6 +56,15 @@ function saveLimits(body: { monthlyUsd?: number | null; taskUsd?: number | null 
 }
 
 function Chart({ month, limit }: { month: TrustView['month']; limit: number | undefined }) {
+  const format = useDateFormat();
+  const count = Math.max(1, Math.min(month.daily.length, Math.ceil(month.elapsedDays)));
+  const [selected, setSelected] = useState(count - 1);
+  const current = Math.min(selected, count - 1);
+  const spent = month.daily[current] ?? 0;
+  const cumulative = month.daily.slice(0, current + 1).reduce((sum, value) => sum + value, 0);
+  const firstDay = Date.parse(dayKey(month.start, format));
+  const dayLabel = (index: number) => date(firstDay + index * day, { ...format, timeZone: 'UTC' });
+  const selectedDate = dayLabel(current);
   const top = Math.max(month.forecastUsd, month.spentUsd, limit ?? 0) * 1.1 || 1;
   const x = (days: number) => (days / month.days) * 600;
   const y = (usd: number) => 116 - (usd / top) * 108;
@@ -65,26 +75,89 @@ function Chart({ month, limit }: { month: TrustView['month']; limit: number | un
     points.push(`${x(Math.min(index + 1, month.elapsedDays))},${y(total)}`);
   });
   const now = `${x(month.elapsedDays)},${y(month.spentUsd)}`;
+  function selectDay(event: React.MouseEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSelected(
+      Math.max(
+        0,
+        Math.min(count - 1, Math.ceil(((event.clientX - rect.left) / rect.width) * month.days) - 1),
+      ),
+    );
+  }
   return (
-    <svg
-      className="usage-chart"
-      viewBox="0 0 600 120"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      {limit !== undefined && (
-        <line className="usage-chart-limit" x1="0" x2="600" y1={y(limit)} y2={y(limit)} />
-      )}
-      <polygon
-        className="usage-chart-area"
-        points={`${points.join(' ')} ${x(month.elapsedDays)},116`}
-      />
-      <polyline className="usage-chart-spent" points={points.join(' ')} />
-      <polyline
-        className="usage-chart-forecast"
-        points={`${now} ${x(month.days)},${y(month.forecastUsd)}`}
-      />
-    </svg>
+    <div className="usage-chart-detail">
+      <div className="usage-chart-summary" aria-live="polite">
+        <span>{selectedDate}</span>
+        <strong>
+          {money(spent)} <small>that day</small>
+        </strong>
+        <span>{money(cumulative)} total</span>
+      </div>
+      <svg
+        className="usage-chart"
+        viewBox="0 0 600 120"
+        preserveAspectRatio="none"
+        role="slider"
+        tabIndex={0}
+        aria-label="Daily spending"
+        aria-valuemin={1}
+        aria-valuemax={count}
+        aria-valuenow={current + 1}
+        aria-valuetext={`${selectedDate}: ${money(spent)}, ${money(cumulative)} total`}
+        onPointerMove={selectDay}
+        onClick={selectDay}
+        onKeyDown={(event) => {
+          if (
+            !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+          )
+            return;
+          event.preventDefault();
+          setSelected(
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? count - 1
+                : Math.max(
+                    0,
+                    Math.min(
+                      count - 1,
+                      current + (['ArrowRight', 'ArrowUp'].includes(event.key) ? 1 : -1),
+                    ),
+                  ),
+          );
+        }}
+      >
+        {limit !== undefined && (
+          <line className="usage-chart-limit" x1="0" x2="600" y1={y(limit)} y2={y(limit)} />
+        )}
+        <polygon
+          className="usage-chart-area"
+          points={`${points.join(' ')} ${x(month.elapsedDays)},116`}
+        />
+        <polyline className="usage-chart-spent" points={points.join(' ')} />
+        <polyline
+          className="usage-chart-forecast"
+          points={`${now} ${x(month.days)},${y(month.forecastUsd)}`}
+        />
+        <line
+          className="usage-chart-cursor"
+          x1={x(Math.min(current + 1, month.elapsedDays))}
+          x2={x(Math.min(current + 1, month.elapsedDays))}
+          y1="0"
+          y2="120"
+        />
+        <circle
+          className="usage-chart-point"
+          cx={x(Math.min(current + 1, month.elapsedDays))}
+          cy={y(cumulative)}
+          r="4"
+        />
+      </svg>
+      <div className="usage-chart-dates">
+        <span>{dayLabel(0)}</span>
+        <span>{dayLabel(month.days - 1)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -101,7 +174,7 @@ function Month({ view }: { view: TrustView }) {
         )
       : undefined;
   return (
-    <div className="usage-month">
+    <div className="usage-month" data-analytics-private>
       {month.spentUsd > 0 && (
         <span className={crossing ? 'is-over' : undefined}>
           On track for {money(month.forecastUsd)}

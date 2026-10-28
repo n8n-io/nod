@@ -1,5 +1,6 @@
 .chat-page .message .message-row > .message-bubble {
-  max-width: min(calc(100% - 72px), 640px);
+  --message-action-space: 104px;
+  max-width: min(calc(100% - var(--message-action-space)), 640px);
 }
 
 .chat-page .message-bubble:has(> .message-time) {
@@ -12,22 +13,6 @@
 
 .chat-page .message .message-bubble > .message-body {
   padding: 10px 40px 10px 16px;
-}
-
-.chat-page .message-user .message-bubble > .message-body,
-.chat-page .message .message-bubble:has(.message-attachments) > .message-body {
-  padding-right: 16px;
-}
-
-.chat-page .message-assistant .message-bubble:has(.message-attachments) > .message-menu-trigger {
-  right: -36px;
-}
-
-.chat-page
-  .message-bubble:is(:has(.message-attachments), :has(.message-presentation))
-  > :is(.message-react-trigger, .message-reply-trigger) {
-  top: 44px;
-  transform: none;
 }
 
 .chat-page .message .message-time {
@@ -46,82 +31,74 @@
   opacity: 0;
 }
 
-.chat-page .message-assistant .message-time {
-  right: 40px;
-}
-
 .chat-page .message .has-reaction > .message-time {
   right: 60px;
 }
 
-.chat-page .message:hover .message-time,
-.chat-page .message:focus-within .message-time,
+.chat-page .message-bubble:hover .message-time,
+.chat-page .message-bubble:focus-within .message-time,
 .chat-page .message-selected .message-time,
 .chat-page .message-panel-open .message-time {
   opacity: 1;
 }
 
-.chat-page .message-trigger {
+.chat-page .message-actions {
   position: absolute;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted-foreground);
+  z-index: 2;
+  top: min(50%, 32px);
+  left: 100%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 2px;
+  padding-left: 6px;
   opacity: 0;
   pointer-events: none;
+  transition: opacity 110ms;
+}
+
+.chat-page .message-trigger {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--menu-item-radius);
+  background: transparent;
+  color: var(--muted-foreground);
   cursor: pointer;
   transition:
-    opacity 110ms,
     background 110ms,
     color 110ms;
 }
 
-.chat-page .message-react-trigger {
-  right: -36px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.chat-page .message-reply-trigger {
-  right: -68px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.chat-page .message-user .message-reply-trigger {
-  right: auto;
-  left: -68px;
-}
-
-.chat-page .message-menu-trigger {
-  right: 3px;
-  top: 4px;
-  background: var(--surface-subtle);
-}
-
-.chat-page .message-user .message-menu-trigger {
-  right: auto;
-  left: -36px;
-  background: var(--chat-sent);
-}
-
-.chat-page .message:hover .message-trigger,
-.chat-page .message:focus-within .message-trigger,
-.chat-page .message-selected .message-trigger,
-.chat-page .message-panel-open .message-trigger {
+.chat-page .message-bubble:hover > :is(.message-actions, .message-menu-trigger),
+.chat-page .message-bubble:focus-within > :is(.message-actions, .message-menu-trigger),
+.chat-page .message-selected :is(.message-actions, .message-menu-trigger),
+.chat-page .message-panel-open :is(.message-actions, .message-menu-trigger) {
   opacity: 1;
   pointer-events: auto;
 }
 
+.chat-page .message-user .message-actions {
+  left: auto;
+  right: 100%;
+  padding: 0 6px 0 0;
+}
+
+.chat-page .message-menu-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .chat-page .message-trigger:hover,
 .chat-page .message-trigger[aria-expanded='true'] {
-  color: var(--foreground);
-  background: var(--control);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .chat-page .message-bubble.has-reaction {
@@ -206,16 +183,34 @@
   }
 }
 
+@container (max-width: 600px) {
+  .chat-page .message .message-row > .message-bubble {
+    --message-action-space: 42px;
+  }
+  .chat-page .message-actions {
+    flex-direction: column;
+    top: 4px;
+    transform: none;
+  }
+}
+
 @media (hover: none), (pointer: coarse) {
+  .chat-page .message .message-row > .message-bubble {
+    --message-action-space: 50px;
+  }
+  .chat-page .message-actions {
+    flex-direction: column;
+    top: 4px;
+    transform: none;
+  }
   .chat-page .message-trigger {
-    opacity: 1;
-    pointer-events: auto;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-page .message-actions,
   .chat-page .message-trigger,
   .chat-page .reaction-pin {
     animation: none;

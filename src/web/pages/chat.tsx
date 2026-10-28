@@ -54,6 +54,7 @@ import {
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
 import { recordingSource } from '../lib/recording';
+import type { ImagePreview } from '../components/attachment-images';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -299,7 +300,10 @@ export function Chat({
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
   );
-  const [optimistic, setOptimistic] = useState<Array<{ threadId: string; message: Message }>>([]);
+  const [optimistic, setOptimistic] = useState<
+    Array<{ threadId: string; message: Message; audio?: ImagePreview }>
+  >([]);
+  const audioPreviews = useRef(new Map<string, string>());
   const [stopping, setStopping] = useState(false);
   const composer = useRef<ComposerHandle>(null);
   const sendQueue = useRef(Promise.resolve(true));
@@ -452,6 +456,25 @@ export function Chat({
       return next.length === current.length ? current : next;
     });
   }, [state.messages, threadId]);
+  useEffect(() => {
+    const retained = new Set(
+      optimistic.flatMap((item) =>
+        item.threadId === threadId && item.audio ? [item.audio.url] : [],
+      ),
+    );
+    for (const [id, url] of audioPreviews.current) {
+      if (retained.has(url)) continue;
+      URL.revokeObjectURL(url);
+      audioPreviews.current.delete(id);
+    }
+  }, [optimistic, threadId]);
+  useEffect(
+    () => () => {
+      for (const url of audioPreviews.current.values()) URL.revokeObjectURL(url);
+      audioPreviews.current.clear();
+    },
+    [],
+  );
   useEffect(() => {
     if (initializedThread.current === threadId) return;
     initializedThread.current = threadId;
@@ -636,6 +659,20 @@ export function Chat({
         : null;
     const id = previousAttempt?.id ?? crypto.randomUUID();
     const submittedRecording = previousAttempt?.recording ?? recording;
+    let audio: ImagePreview | undefined;
+    if (submittedRecording && !privateVerification) {
+      const previousUrl = audioPreviews.current.get(id);
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      const url = URL.createObjectURL(submittedRecording);
+      audioPreviews.current.set(id, url);
+      audio = {
+        id,
+        name: submittedRecording.name,
+        mimeType: submittedRecording.type,
+        size: submittedRecording.size,
+        url,
+      };
+    }
     const previous = sendQueue.current;
     let finished!: (sent: boolean) => void;
     sendQueue.current = new Promise<boolean>((resolve) => {
@@ -654,7 +691,7 @@ export function Chat({
     const message: Message = {
       id,
       role: 'user',
-      text: privateVerification ? masked : value || (recording ? 'Audio message' : ''),
+      text: privateVerification ? masked : value,
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -667,7 +704,7 @@ export function Chat({
     };
     setOptimistic((current) => [
       ...current.filter((item) => item.message.id !== id),
-      { threadId: sentThread, message },
+      { threadId: sentThread, message, audio },
     ]);
     historyVersion.current++;
     setLoadingHistory(false);
@@ -753,6 +790,11 @@ export function Chat({
           item.message.id === id
             ? {
                 ...item,
+                audio:
+                  privateVerification ||
+                  result.attachments?.some((attachment) => attachment.mimeType.startsWith('audio/'))
+                    ? undefined
+                    : item.audio,
                 message: {
                   ...item.message,
                   turnId,
@@ -1177,6 +1219,9 @@ export function Chat({
                   ) : (
                     <MessageBubble
                       message={message}
+                      pendingAudio={
+                        optimistic.find((item) => item.message.id === message.id)?.audio
+                      }
                       handoffPaused={spendingPaused}
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}

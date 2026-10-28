@@ -63,7 +63,6 @@ The panel remembers reading state for up to eight recently viewed files, with a 
 - **Copy image** copies raster image data where the clipboard supports it. **Download** keeps the original file format.
 - In the desktop app, drag a file card, image, or preview file icon to a folder to copy the file. **Save to Downloads** shows **Open** and **Show in folder** after the save completes. The file menu uses the system menu.
 - **Edit copy** lets you change a plain-text or Markdown file. **Save copy to message** creates a new file and attaches it to your draft. The original file remains available.
-- **Export files** lets you select several files and download them as one ZIP file, up to 90 MB in total.
 
 Native opening is limited to supported document and raster image types. Save other formats and open them from your file manager.
 

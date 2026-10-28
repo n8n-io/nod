@@ -34,7 +34,7 @@ import {
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { FileActions, fileDrag, prepareFile } from './file-actions';
-import { ArtifactEdit, ArtifactExport } from './artifact-edit';
+import { ArtifactEdit } from './artifact-edit';
 import { apiResponse } from '../lib/api';
 import { Button } from './ui';
 import { SharedMessageCard } from './shared-message-card';
@@ -549,7 +549,6 @@ function ArtifactDrawer({
                   Edit copy
                 </Button>
               )}
-            {items.length > 1 && <ArtifactExport files={items} />}
             <Button
               variant="ghost"
               size="icon"

@@ -37,12 +37,44 @@
 }
 .feedback-diagnostics-preview {
   margin-top: 16px;
+  display: grid;
+  gap: 6px;
+}
+.feedback-diagnostics-toolbar,
+.feedback-diagnostics-toolbar > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.feedback-diagnostics-toolbar {
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 .feedback-diagnostics-snapshot {
   margin-bottom: 12px;
 }
 .feedback-diagnostics-section {
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  overflow: hidden;
+}
+.feedback-diagnostics-section > summary:hover {
+  background: var(--surface-subtle);
+}
+.feedback-diagnostics-section[open] > summary {
+  background: var(--surface-subtle);
+}
+.feedback-diagnostics-section > summary small {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-inset);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
 }
 .feedback-diagnostics summary {
   display: flex;
@@ -52,6 +84,10 @@
   cursor: pointer;
   list-style: none;
   font-size: var(--text-control);
+}
+.feedback-diagnostics-section > summary {
+  padding-inline: 12px;
+  font-weight: 500;
 }
 .feedback-diagnostics summary::-webkit-details-marker {
   display: none;
@@ -73,15 +109,23 @@
   color: var(--muted-foreground);
   font-size: 12px;
   white-space: nowrap;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
 }
 .feedback-diagnostics-status[data-status='failed'] {
   color: var(--error);
+  background: var(--error-soft);
+}
+.feedback-diagnostics-status:is([data-status='succeeded'], [data-status='connected']) {
+  color: var(--success);
+  background: var(--success-soft);
 }
 .feedback-diagnostics-items {
   max-height: 300px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 8px;
+  padding: 0 12px 8px;
 }
 .feedback-diagnostics-activity {
   display: flex;
@@ -96,17 +140,41 @@
 .feedback-diagnostics-activity:first-child {
   border: 0;
 }
+.feedback-diagnostics-message {
+  padding-block: 8px;
+}
+.feedback-diagnostics-message + .feedback-diagnostics-message {
+  border-top: 1px solid var(--border);
+}
+.feedback-diagnostics-message strong {
+  font-weight: 500;
+}
+.feedback-diagnostics-message[data-role='user'] > pre {
+  background: var(--accent-soft);
+}
 .feedback-diagnostics-raw pre {
   max-height: 260px;
   overflow: auto;
   padding: 12px;
   margin: 0 0 4px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--surface-subtle);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.feedback-diagnostics-message pre {
+  font-family: inherit;
+  font-size: var(--text-control);
+  line-height: 1.6;
+}
+.feedback-diagnostics-raw > pre {
+  margin: 12px;
+}
+.feedback-diagnostics summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 .feedback-diagnostics-error {
   display: flex;

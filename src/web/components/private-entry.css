@@ -48,19 +48,7 @@
 .credential-method-back {
   margin: 0 0 16px -8px;
 }
-.credential-secret {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.credential-secret .input {
-  width: 100%;
-  padding-right: 46px;
-}
-.credential-secret > .button {
-  position: absolute;
-  right: 4px;
-}
+
 .credential-payment {
   display: grid;
   gap: 20px;

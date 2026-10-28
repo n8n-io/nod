@@ -645,6 +645,7 @@ export function createModelService(options: {
     attempt.expires >= Date.now()
       ? attempt.completion
       : complete(callback));
+    return attempt?.provider;
   }
   function start(provider: 'openai' | 'openrouter', connectionId?: string) {
     const result = starting.then(() => begin(provider, connectionId));
@@ -1077,11 +1078,13 @@ export function createModelService(options: {
         });
         routes.get('/api/models/oauth/callback', async (request, reply) => {
           let succeeded = false;
+          let provider: 'ChatGPT' | 'OpenRouter' | undefined;
           try {
-            await completeCallback(new URL(request.url, options.origin));
+            const connected = await completeCallback(new URL(request.url, options.origin));
+            provider = connected === 'openai' ? 'ChatGPT' : 'OpenRouter';
             succeeded = true;
           } catch {}
-          const page = signInPage(succeeded, randomUUID());
+          const page = signInPage(succeeded, randomUUID(), provider);
           return reply
             .code(succeeded ? 200 : 400)
             .headers(page.headers)
