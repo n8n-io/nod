@@ -38,12 +38,98 @@ export function feedbackReportData(content: string) {
 }
 
 function Status({ value }: { value: unknown }) {
-  const status = typeof value === 'string' ? value : 'unknown';
+  const status = typeof value === 'string' || typeof value === 'number' ? String(value) : 'unknown';
   return (
     <span className="feedback-diagnostics-status" data-status={status}>
       {status === 'succeeded' ? 'Completed' : label(status, 'Unknown')}
     </span>
   );
+}
+
+function ReportValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || value === undefined) return <span>Not recorded</span>;
+  if (typeof value === 'boolean') return <span>{value ? 'Yes' : 'No'}</span>;
+  if (typeof value !== 'object')
+    return <span className="feedback-diagnostics-value">{String(value)}</span>;
+  if (depth >= 6)
+    return (
+      <span className="feedback-diagnostics-empty">See the full report for nested details.</span>
+    );
+  if (Array.isArray(value))
+    return value.length ? (
+      <ul className="feedback-diagnostics-values">
+        {value.map((item, index) => (
+          <li key={index}>
+            <ReportValue value={item} depth={depth + 1} />
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <span>None</span>
+    );
+  const fields = Object.entries(value);
+  return fields.length ? (
+    <dl className="feedback-diagnostics-fields">
+      {fields.map(([name, item]) => (
+        <div key={name}>
+          <dt>{label(name, 'Detail')}</dt>
+          <dd>
+            <ReportValue value={item} depth={depth + 1} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  ) : (
+    <span>No details</span>
+  );
+}
+
+function reportDetails(entry: unknown) {
+  const data = record(entry);
+  return Object.entries(record(data?.data) ?? data ?? {}).filter(
+    ([name]) =>
+      ![
+        'id',
+        'turnId',
+        'sessionId',
+        'runId',
+        'parentRunId',
+        'callId',
+        'messageId',
+        'at',
+        'createdAt',
+        'ageMs',
+        'tool',
+        'event',
+        'type',
+        'status',
+        'app',
+        'provider',
+        'source',
+        'channel',
+      ].includes(name),
+  );
+}
+
+function reportLogs(data: ReportRecord | null) {
+  const entries: ReportRecord[] = [];
+  const starts = new Map<string, number>();
+  for (const entry of [...rows(data?.logs), ...rows(data?.clientErrors)]) {
+    const key = typeof entry.callId === 'string' ? `${entry.turnId ?? ''}:${entry.callId}` : null;
+    const index = key ? starts.get(key) : undefined;
+    if (entry.event === 'tool_end' && index !== undefined) {
+      entries[index] = {
+        ...entries[index],
+        ...entry,
+        data: { ...record(entries[index]?.data), ...record(entry.data) },
+      };
+      starts.delete(key!);
+    } else {
+      if (entry.event === 'tool_start' && key) starts.set(key, entries.length);
+      entries.push(entry);
+    }
+  }
+  return entries.reverse();
 }
 
 function ReportEntry({
@@ -57,18 +143,44 @@ function ReportEntry({
   status?: unknown;
   entry: unknown;
 }) {
+  const details = reportDetails(entry);
+  const Container = details.length ? 'details' : 'div';
+  const Heading = details.length ? 'summary' : 'div';
   return (
-    <details className="feedback-diagnostics-entry">
-      <summary>
+    <Container className="feedback-diagnostics-entry">
+      <Heading className="feedback-diagnostics-entry-heading">
         <span>
           <strong>{title}</strong>
           {typeof description === 'string' && description && <span>{description}</span>}
         </span>
         {status !== undefined && <Status value={status} />}
-        <ChevronDown size={14} />
-      </summary>
-      <pre>{JSON.stringify(entry, null, 2)}</pre>
-    </details>
+        {!!details.length && <ChevronDown size={14} />}
+      </Heading>
+      {!!details.length && (
+        <div className="feedback-diagnostics-details">
+          {details.map(([name, value]) => (
+            <section key={name}>
+              <h4>
+                {name === 'output' || name === 'result'
+                  ? 'Result'
+                  : name === 'prompt'
+                    ? 'Request'
+                    : name === 'durationMs'
+                      ? 'Duration'
+                      : label(name, 'Details')}
+              </h4>
+              <ReportValue
+                value={
+                  name === 'durationMs' && typeof value === 'number'
+                    ? `${(value / 1000).toFixed(1)} seconds`
+                    : value
+                }
+              />
+            </section>
+          ))}
+        </div>
+      )}
+    </Container>
   );
 }
 
@@ -101,7 +213,7 @@ export function FeedbackDiagnostics({
   const messages = rows(data?.messages);
   const turns = rows(data?.turns).reverse();
   const execution = rows(data?.execution).reverse();
-  const logs = [...rows(data?.logs), ...rows(data?.clientErrors)].reverse();
+  const logs = reportLogs(data);
   const connections: ReportRecord[] = [
     ...rows(data?.connections),
     ...rows(data?.browserConnections),
@@ -157,10 +269,7 @@ export function FeedbackDiagnostics({
           </Button>
         )}
       </div>
-      <p className="feedback-diagnostics-disclosure">
-        Includes messages, tool inputs and results, and app logs. Masking may miss personal details;
-        review before sending.
-      </p>
+      <p className="feedback-diagnostics-disclosure">Data is anonymized before sending.</p>
       {included && error && (
         <div className="feedback-diagnostics-error" role="alert">
           <span>{error}</span>
@@ -389,7 +498,7 @@ export function FeedbackDiagnostics({
                     <span>Full report</span>
                     <ChevronDown size={14} />
                   </summary>
-                  <pre aria-label="Full diagnostic report">{report.content}</pre>
+                  <pre aria-label="Full diagnostic report">{JSON.stringify(data, null, 2)}</pre>
                 </details>
                 <Button
                   type="button"

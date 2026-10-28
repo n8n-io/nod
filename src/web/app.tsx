@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from './components/icons';
 import { Chat } from './pages/chat';
 import { Usage } from './pages/usage';
@@ -20,7 +20,7 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
-import { captureFeedbackScreenshot } from './lib/feedback-capture';
+import { createFeedbackCapture } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
 import { appPagePath, preparedWorkId } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
@@ -324,6 +324,7 @@ function AuthenticatedApp({
   };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
+  const draftCapture = useMemo(() => createFeedbackCapture(session.user!.id), [session.user!.id]);
   const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
   const openFeedback = async () => {
@@ -331,7 +332,7 @@ function AuthenticatedApp({
     dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
-    const capture = captureFeedbackScreenshot();
+    const capture = draftCapture.capture();
     feedbackCapture.current = capture;
     const screenshot = await capture;
     if (feedbackCapture.current !== capture) return;
@@ -590,6 +591,7 @@ function AuthenticatedApp({
         key={session.user!.id}
         ownerId={session.user!.id}
         screenshot={feedbackScreenshot}
+        onDraftCleared={draftCapture.reset}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>

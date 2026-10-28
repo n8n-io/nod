@@ -451,6 +451,11 @@
   color: var(--foreground);
   font-size: 15px;
 }
+@media (pointer: coarse) {
+  .model-current .model-picker-trigger {
+    min-height: 44px;
+  }
+}
 .model-details {
   margin-top: 16px;
   font-size: var(--text-control);

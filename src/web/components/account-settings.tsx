@@ -677,9 +677,8 @@ export function AccountSettings({
                         />
                       </div>
                       <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                        Share conversations and activity with the Nod team at n8n. Nod masks known
-                        personal details and replaces session and run IDs, but content may still
-                        identify you. Kept for 14 days, never for AI training.
+                        Share anonymized conversations and activity with the Nod team at n8n to
+                        improve Nod. Kept for 14 days, never used to train AI models.
                       </p>
                     </>
                   )}

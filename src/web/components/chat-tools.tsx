@@ -27,7 +27,7 @@ function searchText(source: string) {
 
 function highlighted(text: string, query: string) {
   const terms = [...new Set(query.match(/[\p{L}\p{N}]+/gu) ?? [])]
-    .filter((term) => term !== 'OR')
+    .filter((term) => term.toUpperCase() !== 'OR')
     .sort((a, b) => b.length - a.length);
   if (!terms.length) return text;
   return text

@@ -947,7 +947,7 @@
   .chat-page .message .message-bubble > .message-body {
     padding: 10px 12px;
   }
-  .chat-page .message-body > .message-text:first-child {
+  .chat-page .message-body > :is(.message-text, .message-reply-quote):first-child {
     padding-right: 24px;
   }
   .chat-page

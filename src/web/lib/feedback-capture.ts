@@ -1,5 +1,26 @@
 import { feedbackLimits } from '../../shared/feedback';
-import { desktopFeedbackScreenshot } from './desktop';
+import { desktopFeedbackScreenshot, desktopFeedbackScreenshotAvailable } from './desktop';
+import { hasFeedbackDraft, loadFeedbackDraft, readFeedbackPending } from './feedback-draft';
+
+export function createFeedbackCapture(ownerId: string) {
+  let pending: Promise<File | null> | undefined;
+  return {
+    capture() {
+      return (pending ??=
+        desktopFeedbackScreenshotAvailable() &&
+        !readFeedbackPending(`nod.feedback.pending.${ownerId}`)
+          ? loadFeedbackDraft(ownerId)
+              .then((draft) =>
+                draft && hasFeedbackDraft(draft) ? null : captureFeedbackScreenshot(),
+              )
+              .catch(() => null)
+          : Promise.resolve(null));
+    },
+    reset() {
+      pending = undefined;
+    },
+  };
+}
 
 export async function captureFeedbackScreenshot(): Promise<File | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;

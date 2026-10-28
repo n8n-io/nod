@@ -128,11 +128,15 @@
 .feedback-diagnostics summary::-webkit-details-marker {
   display: none;
 }
-.feedback-diagnostics-entry > summary {
+.feedback-diagnostics-entry-heading {
+  display: flex;
+  gap: 8px;
+  min-height: 44px;
   align-items: flex-start;
   padding-block: 12px;
+  font-size: var(--text-control);
 }
-.feedback-diagnostics-entry > summary > span:first-child {
+.feedback-diagnostics-entry-heading > span:first-child {
   flex: 1;
   min-width: 0;
   display: grid;
@@ -142,7 +146,7 @@
 .feedback-diagnostics-entry strong {
   font-weight: 500;
 }
-.feedback-diagnostics-entry > summary > span:first-child > span {
+.feedback-diagnostics-entry-heading > span:first-child > span {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
@@ -263,5 +267,63 @@
   .feedback-diagnostics-heading > label,
   .feedback-diagnostics-review {
     min-height: 44px;
+  }
+}
+.feedback-diagnostics-details {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 12px;
+  padding: 16px;
+  border-radius: var(--control-radius);
+  background: var(--surface-subtle);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.feedback-diagnostics-details h4 {
+  margin: 0 0 8px;
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.feedback-diagnostics-fields,
+.feedback-diagnostics-values {
+  margin: 0;
+  padding: 0;
+}
+.feedback-diagnostics-fields > div {
+  display: grid;
+  grid-template-columns: minmax(72px, 28%) minmax(0, 1fr);
+  gap: 8px 16px;
+  padding-block: 6px;
+}
+.feedback-diagnostics-fields dt {
+  color: var(--muted-foreground);
+}
+.feedback-diagnostics-fields dd {
+  min-width: 0;
+  margin: 0;
+}
+.feedback-diagnostics-fields .feedback-diagnostics-fields > div {
+  display: block;
+}
+.feedback-diagnostics-values {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+}
+.feedback-diagnostics-values > li + li {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.feedback-diagnostics-value {
+  white-space: pre-wrap;
+}
+@container (max-width: 360px) {
+  .feedback-diagnostics-details {
+    padding: 12px;
+  }
+  .feedback-diagnostics-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
 }

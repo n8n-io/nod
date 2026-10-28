@@ -173,6 +173,10 @@ export function desktopFeedbackScreenshot() {
   return (window as DesktopWindow).nodDesktop?.captureFeedbackScreenshot?.();
 }
 
+export function desktopFeedbackScreenshotAvailable() {
+  return typeof (window as DesktopWindow).nodDesktop?.captureFeedbackScreenshot === 'function';
+}
+
 export function onFeedbackRequested(listener: () => void) {
   return (window as DesktopWindow).nodDesktop?.onFeedbackRequested?.(listener) ?? (() => {});
 }
