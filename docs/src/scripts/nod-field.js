@@ -10,8 +10,6 @@ float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract
 float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
 float ease(float x){x=clamp(x,0.,1.);return x<.5?4.*x*x*x:1.-pow(-2.*x+2.,3.)/2.;}
 float nod1(float t){float u=t/.95;if(u<=0.||u>=1.)return 0.;return u<.42?ease(u/.42):1.-ease((u-.42)/.58);}
-float nodC(float t){float u=t/1.25;if(u<=0.||u>=1.)return 0.;if(u<.2)return ease(u/.2);if(u<.44)return 1.-ease((u-.2)/.24);if(u<.62)return .62*ease((u-.44)/.18);return .62*(1.-ease((u-.62)/.38));}
-bool miss(float i){return abs(i-27.)<.5||abs(i-73.)<.5;}
 float env(vec2 q){
  if(uShape<.5){float bot=exp(-(pow((q.x-.5)/.5,2.)+pow(q.y/.36,2.)));float sid=max(exp(-(pow(q.x/.2,2.)+pow(q.y/.6,2.))),exp(-(pow((1.-q.x)/.2,2.)+pow(q.y/.6,2.))));return (bot*.8+sid*.7)*(1.-smoothstep(.4,.72,q.y));}
  if(uShape<1.5)return exp(-(pow((q.x-.5)/.55,2.)+pow(q.y/.3,2.)))*.9;
@@ -26,26 +24,6 @@ float nodAt(vec2 p){
 void main(){
  vec2 f=gl_FragCoord.xy/uDpr;
  vec2 sc=vec2(uS.x,uRes.y-uS.y);
- if(uShape>3.5){
-  float cell=uRes.x/20.;
-  vec2 tc=vec2(f.x,uRes.y-f.y)/cell;vec2 id=floor(tc);
-  if(id.x<0.||id.x>19.||id.y<0.||id.y>4.){gl_FragColor=vec4(0.);return;}
-  vec2 cc=vec2((id.x+.5)*cell,uRes.y-(id.y+.5)*cell);
-  float dd=length(f-cc);float h=hash(id+.37);
-  float rad=cell*.27,wd=max(1.2,cell*.1);
-  float ring=1.-smoothstep(wd*.5-.7,wd*.5+.7,abs(dd-rad));
-  if(miss(id.y*20.+id.x)){float A=ring*.9*uAlpha;gl_FragColor=vec4(vec3(.74,.71,.72)*A,A);return;}
-  vec2 tcur=sc-cc;float dl=length(tcur);
-  float look=exp(-dl*dl/40000.)*uMA;
-  vec2 dir=normalize(mix(vec2(.669,.743),tcur/max(dl,.001),look)+vec2(.001,0.));
-  float an=-nodC(fract(uT/9.+h)*9.)*.8;
-  float cs=cos(an),sn=sin(an);dir=vec2(cs*dir.x-sn*dir.y,sn*dir.x+cs*dir.y);
-  float dr=rad*.42;float dt_=1.-smoothstep(dr-.7,dr+.7,length(f-cc-dir*rad*1.3));
-  float pulse=.78+.22*sin(uT*(.6+h*.8)+h*40.);ring*=pulse;
-  vec3 o=vec3(1.,.569,.675)*ring;float oa=ring;
-  o=vec3(.53,0.,.235)*dt_+o*(1.-dt_);oa=dt_+oa*(1.-dt_);
-  gl_FragColor=vec4(o*uAlpha,oa*uAlpha);return;
- }
  float s=uCell;vec2 c;float k,G,nd=0.,szv=1.;
  vec2 C;float R=0.;
  if(uShape<.5)C=vec2(uRes.x*(.5+.06*uScatter),-uRes.y*.04);
@@ -108,7 +86,7 @@ void main(){
  o+=hc*HA*(1.-oa);oa+=HA*(1.-oa);
  gl_FragColor=vec4(o,oa);
 }`;
-  const SHAPE = { field: 0, glow: 1, sides: 2, arc: 3, tasks: 4 };
+  const SHAPE = { field: 0, glow: 1, sides: 2, arc: 3 };
   const num = (el, a, d) => {
     const v = parseFloat(el.getAttribute(a));
     return isNaN(v) ? d : v;

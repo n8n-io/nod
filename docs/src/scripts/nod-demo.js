@@ -1,4 +1,4 @@
-const hello = { who: 'nod', text: "👋 Hey, I'm nod, your personal agent." };
+const hello = { who: 'nod', text: "👋 Hey, I'm Nod, your personal agent." };
 const conversations = [
   {
     items: [
@@ -67,14 +67,17 @@ export function startDemo() {
   const caps = [...document.querySelectorAll('.cap')];
   const providers = [...document.querySelectorAll('.provider')];
   const models = providers.map((button) => ({
+    key: button.dataset.key,
     name: button.dataset.name,
     note: button.dataset.note,
   }));
+  const local = models.findIndex((entry) => entry.key === 'local');
+  const first = providers.findIndex((button) => button.classList.contains('on'));
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let timers = [];
   let current = -1;
   let fading = false;
-  let model = 1;
+  let model = first;
   let picker = null;
   let previous = null;
 
@@ -112,7 +115,7 @@ export function startDemo() {
         who: 'nod',
         nod: true,
         text:
-          index === 3
+          index === local
             ? 'Switched. Same memory, same jobs, now running on your computer.'
             : `Switched to ${models[index].name}. Same memory, same jobs.`,
       });
@@ -236,7 +239,7 @@ export function startDemo() {
           setTyping(false);
           push(item);
           if (item.models) {
-            later(() => choose(model === 3 ? 1 : 3), 3600);
+            later(() => choose(model === local ? first : local), 3600);
             return;
           }
           later(() => step(i + 1), 1300 + item.text.length * 14 + (item.list ? 2200 : 0));

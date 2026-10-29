@@ -259,7 +259,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
         image.size > 24 * 1024 ** 3,
     )
   )
-    throw new Error('The Windows runtime is incompatible. Reinstall this preview.');
+    throw new Error('The Windows runtime is incompatible. Reinstall Nod.');
   if (
     manifest.transport?.file !== 'bin/docker.exe' ||
     !/^[a-f0-9]{64}$/.test(manifest.transport.sha256)

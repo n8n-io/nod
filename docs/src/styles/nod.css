@@ -178,20 +178,6 @@ input {
   color: var(--fg);
   transform: translateY(-1px);
 }
-.download[aria-busy='true'],
-.platforms a[aria-busy='true'] {
-  cursor: progress;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .download[aria-busy='true'] .badge nod-glyph {
-    animation: busy 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
-  }
-}
-@keyframes busy {
-  to {
-    transform: rotate(360deg);
-  }
-}
 .download .badge {
   display: flex;
   align-items: center;
@@ -614,45 +600,6 @@ input {
   line-height: 1;
 }
 
-.video {
-  padding: clamp(56px, 7cqi, 112px) clamp(16px, 4cqi, 64px);
-}
-.video .frame {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: clamp(20px, 2.4cqi, 32px);
-  background: repeating-linear-gradient(135deg, #f3f2f2 0 14px, #f8f7f7 14px 28px);
-  box-shadow:
-    0 0 0 1px rgba(25, 25, 25, 0.06),
-    0 48px 90px -56px rgba(25, 25, 25, 0.4);
-}
-.video .placeholder {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--muted);
-  text-align: center;
-}
-.video .sound {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  display: inline-flex;
-  align-items: center;
-  height: 34px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .pillars {
   padding: clamp(48px, 6cqi, 96px) clamp(16px, 4cqi, 64px) clamp(72px, 8cqi, 128px);
 }
@@ -756,29 +703,57 @@ input {
 .panel.trust {
   padding: clamp(16px, 2cqi, 24px);
 }
-.runs {
+.apps {
   position: relative;
-  display: block;
-  width: 100%;
-  aspect-ratio: 4 / 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(10px, 1.2cqi, 14px);
 }
-.legend {
+.app {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px 20px;
-  margin-top: 22px;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border-radius: 20px;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--lift);
+}
+.app img {
+  width: 38%;
+  height: auto;
+}
+.browser {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(10px, 1.2cqi, 14px);
+  padding: 10px 14px 10px 18px;
+  border-radius: 20px;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--lift);
+}
+.browser .dots {
+  display: flex;
+  gap: 6px;
+}
+.browser .dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 9px;
+  background: var(--line);
+}
+.browser .address {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--panel);
   font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
-}
-.legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.legend svg {
-  flex: none;
 }
 .arc {
   position: relative;
@@ -913,13 +888,16 @@ input {
   mask: var(--logo) center / contain no-repeat;
 }
 .logo.openai {
-  --logo: url('../../../public/logos/chatgpt.svg');
+  --logo: url('../../../public/logos/models/openai.svg');
 }
 .logo.anthropic {
-  --logo: url('../../../public/logos/anthropic.svg');
+  --logo: url('../../../public/logos/models/anthropic.svg');
+}
+.logo.google {
+  --logo: url('../../../public/logos/models/google.svg');
 }
 .logo.openrouter {
-  --logo: url('../../../public/logos/openrouter.svg');
+  --logo: url('../../../public/logos/models/openrouter.svg');
 }
 .logo.local {
   --logo: url('../../../public/logos/server.svg');

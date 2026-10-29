@@ -60,7 +60,7 @@
 
 **Self-hosted server.** Run one assistant on a VPS, cloud VM, or Mac mini and connect from your devices. See [Host your own server](docs/src/content/docs/deploy/self-host.mdx).
 
-**Desktop app.** Download the newest **Nod** release for Mac (Apple silicon or Intel) or Windows (preview) from the [releases page](https://github.com/n8n-io/nod/releases). See [Install the desktop app](docs/src/content/docs/get-started/install-desktop.mdx).
+**Desktop app.** Download the newest **Nod** release for Mac (Apple silicon or Intel) or Windows from the [releases page](https://github.com/n8n-io/nod/releases). See [Install the desktop app](docs/src/content/docs/get-started/install-desktop.mdx).
 
 **From source**, on macOS or Linux with Node.js 24.21+, pnpm and Docker:
 

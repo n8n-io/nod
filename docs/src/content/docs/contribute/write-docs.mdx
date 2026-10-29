@@ -74,6 +74,19 @@ pnpm dlx wrangler@4.152.0 pages deploy docs/dist --project-name nod-docs --branc
 
 Use a different branch for a preview deployment. Open the returned deployment URL, check the changed pages and their links, then check the live address after a production deployment. For automated publishing, follow [Cloudflare's CI guide](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/) with credentials restricted to the project account. The **Docs** workflow does not yet implement that step.
 
+### Publish the landing page
+
+The Cloudflare Pages project **nod-n8n**, at [nod-n8n.pages.dev](https://nod-n8n.pages.dev) and `nod.n8n.io`, serves the landing page, `src/pages/next.astro`, at its root and these docs under `/docs/`. Its production branch is `main`. Build the docs under `/docs/`, then copy the landing page and the 404 page to the root. Without a root `404.html`, Pages serves the landing page for every unknown address.
+
+```sh title="Terminal"
+DOCS_SITE=https://nod.n8n.io DOCS_BASE=/docs/ pnpm --dir docs build
+site="$(mktemp -d)"
+cp -R docs/dist "$site/docs"
+cp "$site/docs/next/index.html" "$site/index.html"
+cp "$site/docs/404.html" "$site/404.html"
+pnpm dlx wrangler@4.152.0 pages deploy "$site" --project-name nod-n8n --branch main
+```
+
 ## Where pages live
 
 <FileTree>
