@@ -384,9 +384,10 @@ export function createLedger({
                AND (t.created_at,t.id)<=(c.created_at,c.id)
            ORDER BY t.created_at DESC,t.id DESC LIMIT 1
          ) SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
-         FROM model_usage WHERE owner_id=$1 AND session_id=$2
-           AND (created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
-             OR turn_id=(SELECT id FROM boundary))`,
+         FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id
+         WHERE m.owner_id=$1 AND COALESCE(m.session_id,t.session_id)=$2
+           AND (m.created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
+             OR m.turn_id=(SELECT id FROM boundary))`,
         [ownerId, sessionId, turnId],
       ),
     ]);

@@ -7300,6 +7300,21 @@ test(
       );
       assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 4.75 });
       assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      const unscopedUsage = randomUUID();
+      await ledger.withTurn(resumed, () =>
+        ledger
+          .curator({
+            id: 'fixture-review',
+            configured: true,
+            curate: async (_request, _signal, report) => {
+              report?.({ id: unscopedUsage, model: 'fixture-review', costUsd: 0.1 });
+              return {};
+            },
+          })
+          .curate({ task: 'review', instructions: 'Synthetic review', input: {} }),
+      );
+      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.85 });
+      await pool.query('DELETE FROM model_usage WHERE id=$1', [unscopedUsage]);
       const preprocessing = randomUUID();
       await pool.query(
         `INSERT INTO model_usage(id,owner_id,cost_usd,details,created_at)
