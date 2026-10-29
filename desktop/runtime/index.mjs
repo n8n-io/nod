@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs';
 import {
   access,
   chmod,
+  copyFile,
   mkdir,
   readdir,
   readFile,
@@ -35,6 +36,22 @@ async function fileHash(path) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+export async function retainStopExecutable(lima, controlRoot) {
+  const hash = await fileHash(lima);
+  const target = join(controlRoot, 'limactl-stop');
+  const temporary = `${target}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await copyFile(lima, temporary);
+    if ((await fileHash(temporary)) !== hash)
+      throw new Error('The Nod computer stop program changed.');
+    await chmod(temporary, 0o700);
+    await rename(temporary, target);
+    return hash;
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 export function execute(
@@ -245,6 +262,7 @@ async function prepare(options, onComputerStart) {
     port: await availablePort(),
     password: randomBytes(32).toString('hex'),
   };
+  saved.stopExecutableSha256 = await retainStopExecutable(lima, controlRoot);
   const temporaryState = `${configPath}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(temporaryState, JSON.stringify(saved), { mode: 0o600, flag: 'wx' });
   await rename(temporaryState, configPath);
@@ -958,15 +976,21 @@ async function stopComputer(options) {
     if (state.version !== 1 || state.limaHome !== expected)
       throw new Error('The Nod computer identity changed.');
     if (!exists) return;
-    const assets = await findRuntimeAssets({ resourcesPath });
-    if (!assets) throw new Error('Nod could not find its local computer runtime.');
+    let lima = join(dataRoot, 'desktop-runtime/limactl-stop');
+    if (
+      !/^[a-f0-9]{64}$/.test(state.stopExecutableSha256) ||
+      (await fileHash(lima).catch(() => undefined)) !== state.stopExecutableSha256
+    ) {
+      const assets = await findRuntimeAssets({ resourcesPath });
+      if (!assets) throw new Error('Nod could not find its local computer runtime.');
+      lima = join(assets, 'lima/bin/limactl');
+    }
     const env = {
-      PATH: [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
+      PATH: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
       HOME: homedir(),
       LIMA_HOME: expected,
       LIMA_SSH_PORT_FORWARDER: 'true',
     };
-    const lima = join(assets, 'lima/bin/limactl');
     await execute(lima, ['stop', '--tty=false', 'nod'], { env, timeout: 90_000 }).catch(() => {});
     await waitFor(
       async () => {

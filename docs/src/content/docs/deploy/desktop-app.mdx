@@ -152,7 +152,11 @@ On a Mac, Nod removes temporary file copies before it asks the native updater to
 
 The [Terminal installer](/get-started/install-desktop/#install-nod) stops an old ShipIt update job before it replaces the app. It removes that job's cache only after the new app passes its checks. It keeps the previous app copy if the new app cannot open. For a manual DMG install after an update failure, see [update recovery](/get-started/install-desktop/#a-failed-mac-update-blocks-a-new-install).
 
+On a Mac, Nod keeps a verified copy of the stop program in its private profile before it starts the private computer. Shutdown can use that copy while the runtime pack downloads, or after an interrupted download removes the pack. Nod checks the saved program's hash and the computer's profile before it runs the stop command.
+
 If startup fails and the private computer cannot stop, the technical details keep both failures. The quit prompt offers **Try again** and **Quit anyway**. **Quit anyway** closes Nod even if its private computer has not stopped.
+
+Mac key storage keeps the original `nod Safe Storage` name even though the app is called **Nod**. If 0.4.0 saved a key through `Nod Safe Storage`, Nod reads that entry and encrypts each saved value with the original entry. It saves a value only after it checks that encryption and decryption agree. It does not replace or delete either Keychain entry. A failed read keeps the saved settings unchanged and reports that Nod could not read its saved key.
 
 If a manual update check fails, choose **Try again** or **Not now** and keep using Nod. Background check failures stay quiet. If restarting fails before shutdown begins, **Retry restart** uses the update already downloaded. Once shutdown begins, Nod keeps its separate shutdown recovery prompt.
 

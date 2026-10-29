@@ -189,7 +189,8 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       throw new Error(keyStoreMessage);
     }
   }
-  async function reveal(value, failure) {
+  async function reveal(field, failure) {
+    const value = current.secrets[field];
     if (!value) return '';
     await available();
     try {
@@ -202,11 +203,34 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       }
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
+      if (platform === 'darwin' && encryption.decryptLegacyStringAsync) {
+        try {
+          const result = await encryption.decryptLegacyStringAsync(Buffer.from(value, 'base64'));
+          if (
+            field === 'vaultKey'
+              ? Buffer.from(result, 'base64').length !== 32 ||
+                Buffer.from(result, 'base64').toString('base64') !== result
+              : !/^[A-Za-z0-9_-]{43,}$/.test(result)
+          )
+            throw new Error();
+          const replacement = await protect(result);
+          if (
+            (await encryption.decryptStringAsync(Buffer.from(replacement, 'base64'))).result !==
+            result
+          )
+            throw new Error();
+          await write({
+            ...current,
+            secrets: { ...current.secrets, [field]: replacement },
+          });
+          return result;
+        } catch {}
+      }
       throw (
         failure ??
         new Error(
           platform === 'darwin'
-            ? keyStoreMessage
+            ? 'Nod could not read its saved key. Please quit and reopen Nod. If this error continues, contact support.'
             : 'The system key store could not unlock your saved keys.',
         )
       );
@@ -238,7 +262,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         return {
           url: value.serverUrl,
           token: await reveal(
-            value.secrets.serverToken,
+            'serverToken',
             Object.assign(
               new Error(
                 'Nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
@@ -362,7 +386,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               vaultKey: await protect(randomBytes(32).toString('base64')),
             },
           });
-        return { NOD_VAULT_KEY: await reveal(current.secrets.vaultKey) };
+        return { NOD_VAULT_KEY: await reveal('vaultKey') };
       });
     },
   };

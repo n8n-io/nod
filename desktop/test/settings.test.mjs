@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  pbkdf2Sync,
+  randomBytes,
+  randomUUID,
+} from 'node:crypto';
 import {
   appendFile,
   mkdir,
@@ -36,6 +43,7 @@ import { createReadinessNotice, createUnreadBadge, isQuietTime } from '../main/n
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createArtifactFiles } from '../main/artifact-files.mjs';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
+import { createMacEncryption } from '../main/mac-encryption.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 
@@ -544,6 +552,7 @@ async function runningDesktop(
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
+    createMacEncryption,
     serverOrigin,
     setupResource,
     desktopContentPolicy,
@@ -4057,6 +4066,62 @@ test('macOS settings unlock asynchronously without rewriting existing ciphertext
     await assert.rejects(readFile(fresh), { code: 'ENOENT' });
     assert.equal(await readFile(f.path, 'utf8'), bytes);
     assert.deepEqual(await f.reopen().environment(), previous);
+  }
+});
+
+test('macOS settings migrate each key from the previous app name without changing other secrets', async (t) => {
+  for (const failure of [null, 'denied', 'wrong-key', 'invalid-value']) {
+    await t.test(failure || 'migration', async (t) => {
+      const f = await fixture(t, 'darwin');
+      const environment = await f.store.environment();
+      const token = randomBytes(32).toString('base64url');
+      await f.store.saveConnection({ url: 'https://server.example', token });
+      const original = JSON.parse(await readFile(f.path, 'utf8'));
+      const password = randomBytes(16).toString('base64');
+      const key = pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+      const legacy = (value) => {
+        const cipher = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 32));
+        return Buffer.concat([Buffer.from('v10'), cipher.update(value), cipher.final()]).toString(
+          'base64',
+        );
+      };
+      original.secrets.vaultKey = legacy(
+        failure === 'invalid-value' ? 'invalid key' : environment.NOD_VAULT_KEY,
+      );
+      await writeFile(f.path, JSON.stringify(original));
+      const before = await readFile(f.path, 'utf8');
+      let reads = 0;
+      const encryption = createMacEncryption(f.encryption, {
+        readPreviousPassword: async (name) => {
+          assert.equal(name, 'Nod');
+          reads++;
+          if (failure === 'denied') throw new Error('Synthetic denial');
+          return Buffer.from(`${failure === 'wrong-key' ? 'wrong' : password}\n`);
+        },
+      });
+      const store = createSettingsStore(f.path, encryption, 'darwin');
+      if (failure) {
+        await assert.rejects(store.environment());
+        assert.equal(await readFile(f.path, 'utf8'), before);
+        assert.deepEqual(await store.connection(), { url: 'https://server.example', token });
+        return;
+      }
+      assert.deepEqual(await store.environment(), environment);
+      const migrated = JSON.parse(await readFile(f.path, 'utf8'));
+      assert.equal(migrated.secrets.serverToken, original.secrets.serverToken);
+      assert.notEqual(migrated.secrets.vaultKey, original.secrets.vaultKey);
+      assert.deepEqual(await f.reopen().environment(), environment);
+      migrated.secrets.serverToken = legacy(token);
+      await writeFile(f.path, JSON.stringify(migrated));
+      const reopened = createSettingsStore(f.path, encryption, 'darwin');
+      assert.deepEqual(await reopened.connection(), { url: 'https://server.example', token });
+      const after = await readFile(f.path, 'utf8');
+      assert.equal(JSON.parse(after).secrets.vaultKey, migrated.secrets.vaultKey);
+      assert.deepEqual(await f.reopen().connection(), { url: 'https://server.example', token });
+      assert.equal(await readFile(f.path, 'utf8'), after);
+      assert.equal(reads, 1);
+      assert.equal((await stat(f.path)).mode & 0o777, 0o600);
+    });
   }
 });
 

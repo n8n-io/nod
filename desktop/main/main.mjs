@@ -44,6 +44,7 @@ import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { registerArtifactFileHandlers } from './artifact-file-handlers.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle } from './lifecycle.mjs';
+import { createMacEncryption } from './mac-encryption.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 import { windowsInstallCommand } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
@@ -90,7 +91,8 @@ const testInstall =
   app.isPackaged &&
   JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).nodBuild?.testProfile ===
     true;
-app.setName(testInstall ? 'nod Setup Test' : 'Nod');
+const appName = testInstall ? 'nod Setup Test' : 'Nod';
+app.setName(process.platform === 'darwin' && !testInstall ? 'nod' : appName);
 const developmentDataRoot =
   !app.isPackaged || testInstall ? process.env.NOD_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))
@@ -101,7 +103,12 @@ app.setPath(
 );
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'nod', 'updates');
-const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
+const settings = createSettingsStore(
+  join(profileRoot, 'settings.json'),
+  process.platform === 'darwin' && app.isPackaged && !testInstall
+    ? createMacEncryption(safeStorage)
+    : safeStorage,
+);
 const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
   packaged: app.isPackaged,
 });
@@ -1877,6 +1884,7 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      app.setName(appName);
       const setupSession = session.fromPartition('nod-settings');
       setupSession.setPermissionCheckHandler(() => false);
       setupSession.setPermissionRequestHandler((_sender, _permission, callback) => callback(false));
