@@ -125,7 +125,9 @@ function senderApps(addresses: string[], own: string[]) {
     for (const [slug, app] of Object.entries(knownSenders))
       if (
         app.senders?.includes(address) ||
-        (notificationSender.test(local) && app.domains?.some((root) => within(domain, root)))
+        (notificationSender.test(local) &&
+          app.domains?.some((root) => within(domain, root)) &&
+          (!app.locals || app.locals.some((part) => local.includes(part))))
       )
         found.add(slug);
   }
@@ -409,7 +411,7 @@ export function createOnboardingSuggestions(options: {
     const available: DiscoveryAccount[] = [];
     for (const account of accounts) if (await active(account)) available.push(account);
     return {
-      accounts: available,
+      accounts: available.map(({ email: _email, ...account }) => account),
       briefs,
       seen: [...seen].filter((slug) => !available.some((account) => account.slug === slug)),
     };

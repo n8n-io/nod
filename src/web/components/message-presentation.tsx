@@ -28,20 +28,17 @@ export function MessagePresentation({ value }: { value: unknown }) {
       </p>
     );
   const visual = parsed.data;
+  if (visual.type === 'apps') return <ConnectApps visual={visual} />;
   return (
     <section
       className={`message-presentation presentation-${visual.type}`}
-      aria-labelledby={visual.type === 'apps' ? undefined : titleId}
-      aria-label={visual.type === 'apps' ? visual.title : undefined}
+      aria-labelledby={titleId}
     >
-      {visual.type !== 'apps' && (
-        <header className="presentation-heading">
-          <h3 id={titleId}>{visual.title}</h3>
-          {visual.caption && <p>{visual.caption}</p>}
-          {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
-        </header>
-      )}
-      {visual.type === 'apps' && <ConnectApps visual={visual} />}
+      <header className="presentation-heading">
+        <h3 id={titleId}>{visual.title}</h3>
+        {visual.caption && <p>{visual.caption}</p>}
+        {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
+      </header>
       {visual.type === 'image' && <PresentedImage key={visual.artifactId} visual={visual} />}
       {visual.type === 'flights' && <Flights key={JSON.stringify(visual)} visual={visual} />}
       {visual.type === 'seats' && <Seats key={JSON.stringify(visual)} visual={visual} />}

@@ -23,43 +23,54 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
     onSettled: () => void apps.refresh(),
     onSetup: (url) => navigate(url),
   });
+  const reconnect = (slug: string) =>
+    apps.data?.find(
+      (item) =>
+        item.slug === slug &&
+        item.connectionId &&
+        item.accountId &&
+        !item.disconnectPending &&
+        item.canReconnect &&
+        (item.status === 'disconnected' || item.reconnectRequired),
+    )?.connectionId;
+  const start = (slug: string) =>
+    void signIn.connect({ service: slug, connectionId: reconnect(slug) });
   const shown = visual.services.filter((slug) => entry(slug));
   if (!shown.length) return null;
   return (
-    <div className="connect-rows">
-      {shown.map((slug) => {
-        const connection = entry(slug);
-        const mine = signIn.service === slug;
-        return (
-          <ConnectRow
-            key={slug}
-            logo={<ServiceLogo slug={slug} logoUrl={connection?.logoUrl} size={28} />}
-            name={name(slug)}
-            details={[integrationMetadata(slug, connection).description]}
-            error={mine ? signInIssue(signIn) || signIn.error : ''}
-            actions={
-              linked(slug) ? (
-                <span className="connect-row-done">Connected</span>
-              ) : mine && signIn.pending ? (
-                <SignInActions
-                  signIn={signIn}
-                  onRestart={() => void signIn.connect({ service: slug })}
-                />
-              ) : (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Connect ${name(slug)}`}
-                  disabled={Boolean(signIn.pending)}
-                  onClick={() => void signIn.connect({ service: slug })}
-                >
-                  {mine && signIn.error ? 'Try again' : 'Connect'}
-                </Button>
-              )
-            }
-          />
-        );
-      })}
-    </div>
+    <section className="message-presentation presentation-apps" aria-label={visual.title}>
+      <div className="connect-rows">
+        {shown.map((slug) => {
+          const connection = entry(slug);
+          const mine = signIn.service === slug;
+          return (
+            <ConnectRow
+              key={slug}
+              logo={<ServiceLogo slug={slug} logoUrl={connection?.logoUrl} size={28} />}
+              name={name(slug)}
+              details={[integrationMetadata(slug, connection).description]}
+              error={mine ? signInIssue(signIn) || signIn.error : ''}
+              actions={
+                linked(slug) ? (
+                  <span className="connect-row-done">Connected</span>
+                ) : mine && signIn.pending ? (
+                  <SignInActions signIn={signIn} onRestart={() => start(slug)} />
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`${mine && signIn.error ? 'Try again' : 'Connect'} ${name(slug)}`}
+                    disabled={Boolean(signIn.pending)}
+                    onClick={() => start(slug)}
+                  >
+                    {mine && signIn.error ? 'Try again' : 'Connect'}
+                  </Button>
+                )
+              }
+            />
+          );
+        })}
+      </div>
+    </section>
   );
 }

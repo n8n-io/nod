@@ -515,10 +515,13 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   assert.ok(presentationSchema.safeParse(seats).success);
   const apps = { ...common, type: 'apps', services: ['slack', 'google_drive'] };
   assert.ok(presentationSchema.safeParse(apps).success);
+  assert.ok(presentationSchema.safeParse({ ...apps, services: [`a${'b'.repeat(79)}`] }).success);
   for (const services of [
     ['../apps'],
     ['slack/connect'],
     ['Slack'],
+    ['1slack'],
+    [`a${'b'.repeat(80)}`],
     ['slack', 'slack'],
     ['a', 'b', 'c', 'd'],
     [],

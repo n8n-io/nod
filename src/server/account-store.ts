@@ -17,7 +17,7 @@ export function createAccountStore(database: Pool): AccountStore & {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<AccountSettings>(
       `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision,traces)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,true),CASE WHEN COALESCE($4,true) THEN 1 ELSE 0 END,COALESCE($5,false))
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,true),CASE WHEN COALESCE($4,true) THEN 1 ELSE 2 END,COALESCE($5,false))
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),

@@ -53,6 +53,9 @@ export function SignInActions({ signIn, onRestart }: { signIn: SignIn; onRestart
   const recovery = signIn.stale || signIn.pollFailing;
   return (
     <div className="connect-row-actions" data-recovery={recovery ? true : undefined}>
+      <span className="sr-only" role="status">
+        {signIn.pending === 'opening' ? 'Opening sign-in…' : 'Waiting for sign-in…'}
+      </span>
       <Button variant="ghost" size="sm" onClick={signIn.cancel}>
         Cancel
       </Button>

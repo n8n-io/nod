@@ -78,7 +78,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     source: ['composer', 'task_card', 'ask_nod', 'task_reply'],
   },
   nod_chat_stop_requested: {},
-  nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2] },
+  nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
   nod_setup_link_clicked: { setup: ['app', 'vault', 'website', 'browser'] },
   nod_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
   nod_message_reaction_changed: {

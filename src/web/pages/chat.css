@@ -1008,7 +1008,7 @@
     transform 140ms;
 }
 .task-card:hover:not(:disabled) {
-  background: var(--surface-subtle);
+  background: var(--hover);
 }
 .task-card:active:not(:disabled) {
   transform: scale(0.98);

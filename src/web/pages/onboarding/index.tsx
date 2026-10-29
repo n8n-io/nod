@@ -170,6 +170,10 @@ export function Onboarding({
         setModelOk(ready);
         if (!ready && index > onboardingSteps.indexOf('brain'))
           setPosition({ step: 'brain', arrived: 'forward' });
+        if (ready)
+          setPosition((position) =>
+            position.step === 'brain' ? { step: 'privacy', arrived: 'forward' } : position,
+          );
       })
       .catch(() => {
         if (current) setModelOk(false);
@@ -389,16 +393,13 @@ export function Onboarding({
     </div>
   );
 
-  if (step === 'preferences') return <DesktopPreferencesSetup notice={recovery} onReady={next} />;
+  const steps = onboardingSteps.filter((item) => item !== 'brain' || modelOk !== true);
+  if (step === 'preferences')
+    return <DesktopPreferencesSetup notice={recovery} onReady={next} steps={steps} />;
 
   const Screen = screens[step];
   return (
-    <OnboardingFrame
-      step={step}
-      steps={onboardingSteps.filter((item) => item !== 'brain' || modelOk !== true)}
-      onFeedback={onFeedback}
-      mainRef={main}
-    >
+    <OnboardingFrame step={step} steps={steps} onFeedback={onFeedback} mainRef={main}>
       <div className="ob-screen" inert={Boolean(finishing)} aria-busy={Boolean(finishing)}>
         <Screen
           key={step}

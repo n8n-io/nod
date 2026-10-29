@@ -143,6 +143,18 @@ function TaskCards({
   const card = (task: SuggestedTask, index: number) => {
     const state = status(task);
     const connection = connections.find((entry) => entry.slug === task.source);
+    const label =
+      state === 'working'
+        ? 'On it…'
+        : state === 'needs_you'
+          ? 'Waiting for you'
+          : state === 'waiting'
+            ? 'Waiting'
+            : state === 'sent'
+              ? 'Request sent'
+              : task.kind === 'ongoing'
+                ? 'Set up'
+                : 'Done';
     return (
       <Rise key={task.id} show={shown} index={index} className="task-card-rise">
         <button
@@ -194,29 +206,22 @@ function TaskCards({
                   {(task.source !== 'web' || task.kind === 'ongoing') && (
                     <span className="task-dot" aria-hidden="true" />
                   )}
-                  <span className="task-state" role="status">
+                  <span className="task-state">
                     {state === 'working' ? (
                       <LoaderCircle size={12} className="spin" aria-hidden="true" />
                     ) : state === 'done' || state === 'sent' ? (
                       <Check size={12} aria-hidden="true" />
                     ) : null}
-                    {state === 'working'
-                      ? 'On it…'
-                      : state === 'needs_you'
-                        ? 'Waiting for you'
-                        : state === 'waiting'
-                          ? 'Waiting'
-                          : state === 'sent'
-                            ? 'Request sent'
-                            : task.kind === 'ongoing'
-                              ? 'Set up'
-                              : 'Done'}
+                    {label}
                   </span>
                 </>
               )}
             </span>
           )}
         </button>
+        <span className="sr-only" aria-live="polite">
+          {state === 'idle' ? '' : `${task.title}: ${label}`}
+        </span>
       </Rise>
     );
   };
@@ -1200,14 +1205,7 @@ export function Chat({
                   {message.suggestions ? (
                     <TaskCards
                       id={message.id}
-                      grouped={
-                        visibleMessages[index - 1]?.role === 'assistant' &&
-                        isSameDay(
-                          visibleMessages[index - 1].createdAt,
-                          message.createdAt,
-                          dateFormat,
-                        )
-                      }
+                      grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                       suggestions={message.suggestions}
                       connections={connections ?? []}
                       status={(task) =>

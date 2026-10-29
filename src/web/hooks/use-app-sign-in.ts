@@ -6,7 +6,7 @@ import { analyticsForCurrentSession } from '../lib/analytics';
 import { cancelSetup, connectionUrl, setupLinkHash } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
-const outcomes = ['connected', 'cancelled', 'failed', 'expired'];
+const outcomes = ['connected', 'continued', 'cancelled', 'failed', 'expired'];
 
 export type SignInTarget = { service: string; connectionId?: string; managed?: boolean };
 
@@ -75,7 +75,8 @@ export function useAppSignIn({
           return;
         const selected = attempt.current;
         clearAttempt();
-        setCompleted(connection === 'connected' ? selected : undefined);
+        const success = connection === 'connected' || connection === 'continued';
+        setCompleted(success ? selected : undefined);
         setError(outcomeMessage(latest.current.name(selected.service), connection));
         setPending((current) => (current === 'waiting' ? undefined : current));
         latest.current.onSettled();

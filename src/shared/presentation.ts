@@ -209,7 +209,7 @@ export const presentationSchema = z
       ...common,
       type: z.literal('apps'),
       services: z
-        .array(text(60).regex(/^[a-z0-9_]+$/))
+        .array(z.string().regex(/^[a-z][a-z0-9_]{0,79}$/))
         .min(1)
         .max(3),
     }),

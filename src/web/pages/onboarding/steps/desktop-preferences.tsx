@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { OnboardingStep } from '../../../../shared/onboarding';
 import { OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
@@ -8,9 +9,11 @@ import { Messages } from '../motion';
 export function DesktopPreferencesSetup({
   onReady,
   notice,
+  steps,
 }: {
   onReady(): void;
   notice?: ReactNode;
+  steps: readonly OnboardingStep[];
 }) {
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -40,7 +43,7 @@ export function DesktopPreferencesSetup({
   }, [retry]);
 
   return (
-    <OnboardingFrame step="privacy">
+    <OnboardingFrame step="privacy" steps={steps}>
       <section className="ob-step">
         <Messages items={[]} typing={!error} />
         {error && (

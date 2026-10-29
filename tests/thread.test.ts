@@ -3335,6 +3335,11 @@ test(
                 /^I looked at your recent (?:slack and fixture-mcp|fixture-mcp and slack) and picked the first three ideas/,
               );
               assert.doesNotMatch(JSON.stringify(posted), /notifications@|Synthetic issue/);
+              const cached = await db.pool.query(
+                'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
+                [owner],
+              );
+              assert.doesNotMatch(JSON.stringify(cached.rows[0]?.suggestions), /owner@n8n\.io/);
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
               if (['unknown', 'invalid', 'refused', 'revoked_read', 'cancelled'].includes(mode))
