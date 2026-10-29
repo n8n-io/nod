@@ -56,6 +56,7 @@ Tools and model usage keep this scope. `turn_events` records execution and tool 
 `model_usage` is the only cost ledger. Each model request reports one usage ID, including subagent, compaction, review, and memory requests.
 Repeated reports with the same ID create no extra charge record. Parent runs never add child costs again.
 All totals come from these ledger rows. Missing prices stay unknown. Shutdown waits for pending usage writes after the model sessions close. A failed write makes shutdown fail.
+Usage that arrives after a conversation reset stays on the owner's ledger without a turn link. A reference to another owner's turn is refused.
 
 ## Keeping the context small
 

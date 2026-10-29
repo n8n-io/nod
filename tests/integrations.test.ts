@@ -7393,6 +7393,38 @@ test(
         ).rows[0].n,
         0,
       );
+      await ledger.setLimits({ monthlyUsd: null });
+      const late = await agent.open({
+        ...fakeExecution(conversation, chat),
+        systemPrompt: 'Synthetic prompt',
+        tools: [],
+        workspace: fakeWorkspace().open({
+          threadId: conversation,
+          workspacePath: '/fixture/workspace',
+          signal: new AbortController().signal,
+        }),
+        runTool: (_name, _params, run) => run(),
+        shouldStop: () => false,
+        onEvent() {},
+      });
+      const beforeReset = (await pool.query('SELECT id FROM model_usage')).rows.map(
+        (row) => row.id,
+      );
+      await pool.query('DELETE FROM turns WHERE id=$1', [chat]);
+      await late.prompt('Synthetic model usage after reset', []);
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT owner_id,turn_id,cost_usd FROM model_usage WHERE NOT(id=ANY($1::text[])) ORDER BY cost_usd',
+            [beforeReset],
+          )
+        ).rows,
+        [
+          { owner_id: 'owner', turn_id: null, cost_usd: 0.1 },
+          { owner_id: 'owner', turn_id: null, cost_usd: 0.4 },
+        ],
+      );
+      await late.dispose();
     } finally {
       await app.close();
       await pool.end();

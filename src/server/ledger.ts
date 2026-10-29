@@ -140,8 +140,9 @@ export function createLedger({
   }
 
   const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,created_at,run_id,parent_run_id,session_id,browser_id,details)
-    SELECT $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb
-    WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+    SELECT $1,$2,t.id,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb
+    FROM (VALUES($3::uuid)) u(id) LEFT JOIN turns t ON t.id=u.id
+    WHERE t.id IS NULL OR t.owner_id=$2
     ON CONFLICT(id) DO NOTHING`;
   const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
   async function flushUsage() {
