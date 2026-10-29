@@ -1031,7 +1031,13 @@ export function createProactivity(options: {
       read: (input, signal) => read(turn, input, signal, scope, false, assessmentPolicy),
       update: (input, signal) => save(turn, input, scope, signal),
       screen: async (owner, signal) => {
-        assessmentPolicy = fingerprint([attentionInstructions, options.curator?.id, scope, owner]);
+        assessmentPolicy = fingerprint([
+          attentionInstructions,
+          proactivityInstructions,
+          options.curator?.id,
+          scope,
+          owner,
+        ]);
         return batch.length && !row.issues_due
           ? screen(turn, batch, owner, scope, signal, assessmentPolicy)
           : false;
