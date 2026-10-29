@@ -409,6 +409,7 @@ export function createProactivity(options: {
     signal: AbortSignal,
     expectedPolicy?: string,
     saving = false,
+    assessmentPolicy?: string,
   ) {
     let input: SourceQuery = sourceRead.parse(raw);
     const prefs = await preferences.get();
@@ -633,9 +634,10 @@ export function createProactivity(options: {
       );
       for (const record of parsed.data.records) {
         await client.query(
-          `INSERT INTO proactive_evidence(owner_id,source_id,resource_id,version,available,url,turn_id,checked_at,source_revision,retry_after,attempts)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $5::boolean IS NULL THEN clock_timestamp()+${interval(checkInterval)} END,CASE WHEN $5::boolean IS NULL THEN 1 ELSE 0 END) ON CONFLICT(owner_id,source_id,resource_id)
-          DO UPDATE SET version=EXCLUDED.version,available=EXCLUDED.available,url=EXCLUDED.url,turn_id=EXCLUDED.turn_id,checked_at=EXCLUDED.checked_at,source_revision=EXCLUDED.source_revision,screen_policy=NULL,
+          `INSERT INTO proactive_evidence(owner_id,source_id,resource_id,version,available,url,turn_id,checked_at,source_revision,retry_after,attempts,screen_policy)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $5::boolean IS NULL THEN clock_timestamp()+${interval(checkInterval)} END,CASE WHEN $5::boolean IS NULL THEN 1 ELSE 0 END,$10) ON CONFLICT(owner_id,source_id,resource_id)
+          DO UPDATE SET version=EXCLUDED.version,available=EXCLUDED.available,url=EXCLUDED.url,turn_id=EXCLUDED.turn_id,checked_at=EXCLUDED.checked_at,source_revision=EXCLUDED.source_revision,
+            screen_policy=COALESCE($10::text,CASE WHEN proactive_evidence.turn_id=EXCLUDED.turn_id AND proactive_evidence.version=EXCLUDED.version AND proactive_evidence.source_revision=EXCLUDED.source_revision THEN proactive_evidence.screen_policy END),
             retry_after=CASE WHEN EXCLUDED.available IS NULL THEN ${backoff('proactive_evidence.attempts')} END,
             attempts=CASE WHEN EXCLUDED.available IS NULL THEN proactive_evidence.attempts+1 ELSE 0 END`,
           [
@@ -648,6 +650,7 @@ export function createProactivity(options: {
             turn.turnId,
             parsed.data.checkedAt,
             descriptor.revision,
+            assessmentPolicy ?? null,
           ],
         );
       }
@@ -996,7 +999,8 @@ export function createProactivity(options: {
   ): Promise<RuntimeContext['proactivity']> {
     const row = (
       await pool.query(
-        `SELECT u.proactive,u.session_id=t.observer_session_id AS observer FROM turns u
+        `SELECT u.proactive,u.session_id=t.observer_session_id AS observer,
+          EXISTS(SELECT 1 FROM proactive_issues i WHERE i.owner_id=u.owner_id AND i.claimed_turn=u.id AND i.state IN ('open','offered')) AS issues_due FROM turns u
          JOIN threads t ON t.id=u.thread_id AND t.owner_id=u.owner_id WHERE u.id=$1 AND u.owner_id=$2`,
         [turn.turnId, ownerId],
       )
@@ -1011,6 +1015,7 @@ export function createProactivity(options: {
       );
     const prefs = await preferences.get();
     const scope = fingerprint([prefs.notificationRule, prefs.rules]);
+    let assessmentPolicy: string | undefined;
     const batch = (
       await pool.query<{ source_id: string }>(
         'SELECT source_id FROM proactive_sources WHERE owner_id=$1 AND claimed_turn=$2',
@@ -1023,13 +1028,14 @@ export function createProactivity(options: {
       sources: (await sourceCatalog(signal)).map(
         ({ revision: _, changeToken: _token, ...source }) => source,
       ),
-      read: (input, signal) => read(turn, input, signal, scope),
+      read: (input, signal) => read(turn, input, signal, scope, false, assessmentPolicy),
       update: (input, signal) => save(turn, input, scope, signal),
-      ...(batch.length
-        ? {
-            screen: (owner, signal) => screen(turn, batch, owner, scope, signal),
-          }
-        : {}),
+      screen: async (owner, signal) => {
+        assessmentPolicy = fingerprint([attentionInstructions, options.curator?.id, scope, owner]);
+        return batch.length && !row.issues_due
+          ? screen(turn, batch, owner, scope, signal, assessmentPolicy)
+          : false;
+      },
     };
   }
   async function screen(
@@ -1038,9 +1044,9 @@ export function createProactivity(options: {
     owner: Record<string, unknown>,
     scope: string,
     signal: AbortSignal,
+    policy: string,
   ) {
     type Seen = { sourceId: string; id: string; version: string; error?: string };
-    const policy = fingerprint([attentionInstructions, options.curator?.id, scope, owner]);
     let quiet = true;
     try {
       const [catalog, sources, evidence, saved] = await Promise.all([
@@ -1055,7 +1061,9 @@ export function createProactivity(options: {
           version: string;
           source_revision: string;
         }>(
-          'SELECT source_id,resource_id,version,source_revision FROM proactive_evidence WHERE owner_id=$1 AND source_id=ANY($2::text[]) AND screen_policy=$3',
+          `SELECT e.source_id,e.resource_id,e.version,e.source_revision FROM proactive_evidence e
+           JOIN turns u ON u.id=e.turn_id AND u.owner_id=e.owner_id WHERE e.owner_id=$1 AND e.source_id=ANY($2::text[])
+           AND e.screen_policy=$3 AND u.status='succeeded'`,
           [ownerId, sourceIds, policy],
         ),
         pool.query<{ source_id: string; resource_id: string }>(

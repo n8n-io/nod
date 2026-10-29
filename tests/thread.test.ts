@@ -4942,14 +4942,29 @@ test(
                     },
                   },
                 });
-                const screen = async (changeVersion = true, rotate = false) => {
+                let issueDue = false;
+                let saveMode: 'same' | 'changed' | undefined;
+                const screen = async (
+                  changeVersion = true,
+                  rotate = false,
+                  fullStatus?: 'succeeded' | 'failed' | 'cancelled',
+                ) => {
+                  const checkTurn = { ...ref, turnId: randomUUID() };
+                  await db.pool.query(
+                    "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic source check','running',true,true,now())",
+                    [checkTurn.turnId, ownerId, currentThread],
+                  );
                   if (changeVersion) version = randomUUID();
-                  screening.release(turnId);
                   await db.pool.query(
                     'UPDATE proactive_sources SET claimed_turn=$3,signal_version=signal_version+1 WHERE owner_id=$1 AND source_id=$2',
-                    [ownerId, sourceId, turnId],
+                    [ownerId, sourceId, checkTurn.turnId],
                   );
-                  const context = (await screening.context(ref))!;
+                  if (issueDue)
+                    await db.pool.query(
+                      'UPDATE proactive_issues SET claimed_turn=$2 WHERE owner_id=$1',
+                      [ownerId, checkTurn.turnId],
+                    );
+                  const context = (await screening.context(checkTurn))!;
                   rotateSource = rotate;
                   const quiet = await context.screen!(owner, new AbortController().signal);
                   const { dirty } = (
@@ -4958,6 +4973,40 @@ test(
                       [ownerId, sourceId],
                     )
                   ).rows[0];
+                  let status = fullStatus ?? (quiet ? 'succeeded' : 'failed');
+                  try {
+                    if (fullStatus)
+                      await context.read(
+                        { sourceId, ...(tools ? { tool: 'fixture_read', args: {} } : {}) },
+                        new AbortController().signal,
+                      );
+                    if (fullStatus && saveMode) {
+                      const draft = proposal({ matterKey: 'screened-native-cache' });
+                      if (saveMode === 'changed') {
+                        version = randomUUID();
+                        assert.equal(
+                          (
+                            (await context.update(draft, new AbortController().signal)) as {
+                              status: string;
+                            }
+                          ).status,
+                          'source_changed',
+                        );
+                      } else await context.update(draft, new AbortController().signal);
+                    }
+                  } catch (error) {
+                    status = 'failed';
+                    throw error;
+                  } finally {
+                    await db.pool.query(
+                      'UPDATE turns SET status=$2,finished_at=now() WHERE id=$1',
+                      [checkTurn.turnId, status],
+                    );
+                    await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [
+                      checkTurn.turnId,
+                    ]);
+                    screening.release(checkTurn.turnId);
+                  }
                   return [quiet, dirty];
                 };
                 await transaction((client) => engine.signal(sourceId, client), db.pool);
@@ -4994,6 +5043,25 @@ test(
                 fail = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, beforeRetry + 1);
+                verdict = true;
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                const afterFull = checks;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, afterFull);
+                saveMode = 'same';
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [true, false]);
+                await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
+                saveMode = 'changed';
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [false, true]);
+                saveMode = undefined;
+                for (const status of ['failed', 'cancelled'] as const) {
+                  assert.deepEqual(await screen(true, false, status), [false, true]);
+                  const afterFailure = checks;
+                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.equal(checks, afterFailure + 1);
+                }
                 sourceRevision = 'screening-new-revision';
                 verdict = true;
                 assert.deepEqual(await screen(false), [false, true]);
@@ -5015,6 +5083,10 @@ test(
                 verdict = false;
                 await save({ matterKey: 'screened-matter' });
                 assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(false, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [true, false]);
+                issueDue = true;
+                assert.deepEqual(await screen(false), [false, true]);
                 screening.release(turnId);
               },
             );
