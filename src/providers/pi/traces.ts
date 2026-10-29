@@ -13,6 +13,8 @@ import { untrustedParts } from '../../shared/untrusted.ts';
 
 const omitted = '[owner context omitted]';
 const learnedSkill = untrustedParts('learned skill').open;
+const memory = (name: string, args: Record<string, unknown> | undefined) =>
+  name === 'manage_personal_context' && String(args?.action).startsWith('memory_');
 
 export interface PiModelCall {
   model: Model<Api>;
@@ -34,7 +36,7 @@ function text(content: string | { type: string; text?: string }[]) {
     .join('\n');
 }
 
-function chat(message: Message) {
+function chat(message: Message, hidden = new Set<string>()) {
   if (message.role === 'system')
     return {
       role: 'system',
@@ -63,7 +65,14 @@ function chat(message: Message) {
           tool_calls: calls.map((call) => ({
             id: call.id,
             type: 'function',
-            function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+            function: {
+              name: call.name,
+              arguments: JSON.stringify(
+                hidden.has(call.id) || memory(call.name, call.arguments)
+                  ? { action: call.arguments.action }
+                  : call.arguments,
+              ),
+            },
           })),
         }
       : {}),
@@ -92,9 +101,13 @@ export function piModelTrace(
     ),
   );
   const owned = (message: ToolResultMessage) =>
-    (message.toolName === 'manage_personal_context' &&
-      String(calls.get(message.toolCallId)?.action).startsWith('memory_')) ||
+    memory(message.toolName, calls.get(message.toolCallId)) ||
     (message.toolName === 'skills' && text(message.content).startsWith(learnedSkill));
+  const hidden = new Set(
+    call.context.messages.flatMap((message) =>
+      message.role === 'toolResult' && owned(message) ? [message.toolCallId] : [],
+    ),
+  );
   return {
     id: randomUUID(),
     name: call.model.id,
@@ -106,9 +119,9 @@ export function piModelTrace(
         ? [{ role: 'system', content: call.context.systemPrompt }]
         : []),
       ...call.context.messages.map((message) =>
-        message.role === 'toolResult' && owned(message)
+        message.role === 'toolResult' && hidden.has(message.toolCallId)
           ? { role: 'tool', tool_call_id: message.toolCallId, content: omitted }
-          : chat(message),
+          : chat(message, hidden),
       ),
     ].map((message) =>
       header && message.role === 'user' && message.content.startsWith(header)

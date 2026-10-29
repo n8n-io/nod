@@ -2720,8 +2720,18 @@ test('each model call yields one chat-format trace without image data', async ()
                 name: 'manage_personal_context',
                 arguments: { action: 'memory_read', path: 'about/sizes' },
               },
-              { type: 'toolCall', id: 'learned', name: 'skills', arguments: { action: 'read' } },
-              { type: 'toolCall', id: 'guide', name: 'skills', arguments: { action: 'read' } },
+              {
+                type: 'toolCall',
+                id: 'learned',
+                name: 'skills',
+                arguments: { action: 'read', name: 'synthetic-flow' },
+              },
+              {
+                type: 'toolCall',
+                id: 'guide',
+                name: 'skills',
+                arguments: { action: 'read', name: 'synthetic-guide' },
+              },
             ],
           },
           result('memory', 'manage_personal_context', 'Synthetic saved note'),
@@ -2733,8 +2743,14 @@ test('each model call yields one chat-format trace without image data', async ()
     { source: 'agent' },
   );
   const sent = JSON.stringify(reads.messages);
-  assert.ok(!sent.includes('Synthetic saved note') && !sent.includes('Synthetic learned flow'));
-  assert.ok(sent.includes('Synthetic built-in guide'));
+  for (const value of [
+    'Synthetic saved note',
+    'Synthetic learned flow',
+    'about/sizes',
+    'synthetic-flow',
+  ])
+    assert.ok(!sent.includes(value), value);
+  assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
 });
 
 test('a long tool call does not send model requests without usage records', async (t) => {
