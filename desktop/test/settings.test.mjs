@@ -565,7 +565,9 @@ async function runningDesktop(
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
       sync: async () => {},
-      get: async () => ({ preferences: webPreferences }),
+      get: async () => ({
+        preferences: typeof webPreferences === 'function' ? await webPreferences() : webPreferences,
+      }),
     }),
     createChatReadCursorStore,
     createArtifactFiles: createFiles,
@@ -5085,6 +5087,188 @@ test('background and manual checks still discover releases when an older update 
   assert.deepEqual(prepared, ['0.3.9', '0.4.1', '0.4.2']);
   assert.equal(f.updateMenu.enabled, true);
   assert.equal(f.restartMenu.enabled, true);
+});
+
+test('update notification clicks during refresh wait for the latest verified release and coalesce into one restart choice', async (t) => {
+  for (const phase of ['source', 'native', 'notification']) {
+    const refresh = deferred();
+    const refreshing = deferred();
+    const choosing = deferred();
+    const choice = deferred();
+    let version = '0.3.9';
+    let selected;
+    const installed = [];
+    const native = new EventEmitter();
+    native.setFeedURL = () => {};
+    native.checkForUpdates = () => {
+      if (version === '0.4.1' && phase === 'native') {
+        refreshing.resolve();
+        void refresh.promise.then(() => native.emit('update-downloaded', {}, '', 'nod 0.4.1'));
+      } else
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+    };
+    const updater = createDesktopUpdater({
+      currentVersion: '0.3.7',
+      source: {
+        latest: async () => {
+          if (version === '0.4.1' && phase === 'source') {
+            refreshing.resolve();
+            await refresh.promise;
+          }
+          selected = { version, feedUrl: `https://updates.example.invalid/${version}` };
+          return selected;
+        },
+      },
+      native,
+      prepareRuntime: async () => {},
+      restart: async (candidate) => installed.push(candidate.version),
+    });
+    t.after(() => updater.dispose());
+    let prompts = 0;
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      notificationsSupported: true,
+      webPreferences: async () => {
+        if (version === '0.4.1' && phase === 'notification') {
+          refreshing.resolve();
+          await refresh.promise;
+        }
+        return { quietHoursEnabled: false };
+      },
+      prompt: () => {
+        prompts++;
+        choosing.resolve();
+        return choice.promise;
+      },
+    });
+    await f.showSettings();
+    const window = f.windows.at(-1);
+    await f.handlers.get('nod:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { notifications: true },
+    );
+    await f.checkUpdates(updater, false);
+    const notification = f.notifications.at(-1);
+    version = '0.4.1';
+    const checked = f.checkUpdates(updater, false);
+    await refreshing.promise;
+    if (phase === 'native') assert.equal(updater.ready, undefined);
+    notification.emit('click');
+    notification.emit('click');
+    assert.equal(prompts, 0);
+    refresh.resolve();
+    await new Promise(setImmediate);
+    assert.equal(prompts, 1);
+    await choosing.promise;
+    notification.emit('click');
+    choice.resolve({ response: 0 });
+    await checked;
+    assert.equal(prompts, 1);
+    assert.deepEqual(installed, ['0.4.1']);
+  }
+});
+
+test('update notification requests survive refresh failures and stop safely during shutdown', async (t) => {
+  for (const scenario of [
+    'source-failure',
+    'native-failure',
+    'shutdown',
+    'notification-shutdown',
+    'manual',
+  ]) {
+    const refresh = deferred();
+    const refreshing = deferred();
+    let version = '0.3.9';
+    let selected;
+    let selections = 0;
+    const installed = [];
+    const native = new EventEmitter();
+    native.setFeedURL = () => {};
+    native.checkForUpdates = () => {
+      if (version === '0.4.1' && scenario !== 'notification-shutdown') {
+        refreshing.resolve();
+        void refresh.promise.then(() => {
+          if (scenario === 'native-failure')
+            native.emit('error', new Error('Synthetic native refresh failure'));
+          else native.emit('update-downloaded', {}, '', 'nod 0.4.1');
+        });
+      } else
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+    };
+    const updater = createDesktopUpdater({
+      currentVersion: '0.3.7',
+      source: {
+        latest: async () => {
+          selections++;
+          if (version === '0.4.1' && scenario === 'source-failure') {
+            refreshing.resolve();
+            await refresh.promise;
+            throw new Error('Synthetic source refresh failure');
+          }
+          selected = { version, feedUrl: `https://updates.example.invalid/${version}` };
+          return selected;
+        },
+      },
+      native,
+      prepareRuntime: async () => {},
+      restart: async (candidate) => installed.push(candidate.version),
+    });
+    t.after(() => updater.dispose());
+    const choosing = deferred();
+    const choice = deferred();
+    let prompts = 0;
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      notificationsSupported: true,
+      webPreferences: async () => {
+        if (version === '0.4.1' && scenario === 'notification-shutdown') {
+          refreshing.resolve();
+          await refresh.promise;
+        }
+        return { quietHoursEnabled: false };
+      },
+      prompt: () => {
+        prompts++;
+        choosing.resolve();
+        return choice.promise;
+      },
+    });
+    await f.showSettings();
+    const window = f.windows.at(-1);
+    await f.handlers.get('nod:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { notifications: true },
+    );
+    await f.checkUpdates(updater, false);
+    const notification = f.notifications.at(-1);
+    version = '0.4.1';
+    const checked = f.checkUpdates(updater, scenario === 'manual');
+    await refreshing.promise;
+    notification.emit('click');
+    notification.emit('click');
+    if (scenario.endsWith('shutdown')) {
+      f.crash();
+      await f.close();
+    }
+    refresh.resolve();
+    if (!scenario.endsWith('shutdown')) {
+      await choosing.promise;
+      notification.emit('click');
+      assert.equal(prompts, 1);
+      choice.resolve({ response: scenario === 'manual' ? 0 : 1 });
+    }
+    await checked;
+    await new Promise(setImmediate);
+    assert.equal(prompts, scenario.endsWith('shutdown') ? 0 : 1);
+    assert.equal(selections, 2);
+    assert.deepEqual(installed, scenario === 'manual' ? ['0.4.1'] : []);
+    if (scenario === 'source-failure') assert.equal(updater.ready.version, '0.3.9');
+    if (scenario === 'native-failure') {
+      assert.equal(updater.ready, undefined);
+      notification.emit('click');
+      await new Promise(setImmediate);
+      assert.equal(prompts, 1);
+      assert.equal(selections, 2);
+    }
+  }
 });
 
 test('retrying a failed manual refresh checks again instead of restarting an older staged update', async (t) => {

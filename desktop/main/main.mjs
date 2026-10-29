@@ -134,6 +134,7 @@ let installingUpdate = false;
 let updateSource;
 let updates;
 let checkingUpdates;
+let updateRequestedManually = false;
 let updatePhase = 'idle';
 let updateProgress;
 let updateFailed = false;
@@ -1379,7 +1380,11 @@ function refreshUpdateMenu() {
 
 async function checkForUpdates(manual = true, restartReady = false) {
   if (!updates || quitting) return;
-  if (checkingUpdates) return checkingUpdates;
+  if (checkingUpdates) {
+    if (manual) updateRequestedManually = true;
+    return checkingUpdates;
+  }
+  updateRequestedManually = manual;
   const release = () => {
     if (checkingUpdates === checking) checkingUpdates = undefined;
     refreshUpdateMenu();
@@ -1397,13 +1402,13 @@ async function checkForUpdates(manual = true, restartReady = false) {
         updateFailed = false;
         if (quitting) return;
         if (!candidate) {
-          if (manual)
+          if (updateRequestedManually)
             await dialog.showMessageBox({ message: 'Nod is up to date.', buttons: ['OK'] });
           return;
         }
-        if (!manual) {
+        if (!updateRequestedManually) {
           if (candidate.version !== previousVersion) await notifyUpdate(candidate);
-          return;
+          if (!updateRequestedManually || quitting) return;
         }
         const { response } = await dialog.showMessageBox({
           message: `Nod ${candidate.version} is ready.`,
@@ -1420,7 +1425,8 @@ async function checkForUpdates(manual = true, restartReady = false) {
         if (quitting) return;
         if (!restarting) updateFailed = true;
         await writeDiagnostic(error.message).catch(() => {});
-        if (!manual && !restarting) throw error;
+        if (quitting) return;
+        if (!updateRequestedManually && !restarting) throw error;
         const { response } = await dialog.showMessageBox({
           type: 'info',
           message: restarting ? 'Couldn’t restart Nod' : 'Couldn’t check for updates',
@@ -1453,7 +1459,7 @@ async function notifyUpdate(candidate) {
       notification.close();
   });
   notification.on('click', () => {
-    if (!quitting && updates?.ready) void checkForUpdates(true, true);
+    if (!quitting && (checkingUpdates || updates?.ready)) void checkForUpdates(true, true);
   });
   notification.on('close', () => displayedNotifications.delete(notification));
   notification.on('failed', () => displayedNotifications.delete(notification));
