@@ -84,7 +84,7 @@ Or tell Nod, for example "Check in when a task passes $20".
 ![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/usage-task-limit.png)
 
 :::note
-Nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Nod ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.**
+Nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Nod ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.** When the background observer stops at its check-in without asking, it waits on that notice, and checks resume once you reply to it.
 :::
 
 ## Check usage from Telegram or WhatsApp

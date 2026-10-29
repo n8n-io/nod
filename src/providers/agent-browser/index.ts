@@ -1637,6 +1637,15 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function pointOf(state: BrowserState, ref: string) {
+    await command(state, { action: 'scrollintoview', selector: `@${ref}` });
+    const box = z
+      .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+      .passthrough()
+      .parse(await command(state, { action: 'boundingbox', selector: `@${ref}` }));
+    return { pixel: { x: box.x + box.width / 2, y: box.y + box.height / 2 } };
+  }
+
   async function submissionOf(
     state: BrowserState,
     target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
@@ -1646,16 +1655,8 @@ export function createAgentBrowserComputer(options: {
     if (ref && !state.refs.has(ref)) return undefined;
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      const pixel = async (ref: string) => {
-        await command(state, { action: 'scrollintoview', selector: `@${ref}` });
-        const box = z
-          .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
-          .passthrough()
-          .parse(await command(state, { action: 'boundingbox', selector: `@${ref}` }));
-        return { pixel: { x: box.x + box.width / 2, y: box.y + box.height / 2 } };
-      };
       const found = devtools
-        ? await (ref ? pixel(ref) : Promise.resolve(target))
+        ? await (ref ? pointOf(state, ref) : Promise.resolve(target))
             .then((query) => devtools.submits(query, enter))
             .catch(() => 'unknown' as const)
         : ('unknown' as const);
@@ -1776,12 +1777,11 @@ export function createAgentBrowserComputer(options: {
         for (const method of methods) {
           signal?.throwIfAborted();
           const target = selector(method.selector);
-          if (referenceOf(target))
-            throw new BrowserActionError(
-              'browser_target_changed',
-              'Sign-in method choices need concrete CSS selectors. Inspect the current page and use a selector for each visible control.',
-            );
-          const control = await devtools.signInControl({ selector: target });
+          const ref = referenceOf(target);
+          if (ref && !state.refs.has(ref)) throw new BrowserActionError('browser_target_changed');
+          const control = await devtools.signInControl(
+            ref ? await pointOf(state, ref) : { selector: target },
+          );
           if (
             control.origin !== origin ||
             [...controls.values()].some(

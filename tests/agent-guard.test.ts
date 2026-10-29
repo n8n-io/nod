@@ -1617,6 +1617,22 @@ test('a spending check-in stops the observer from starting more tasks', async ()
   assert.equal(started, 0);
   assert.equal(screened, 1);
   assert.equal(result.result.status, 'waiting_user');
+  const quiet = await fixture(
+    async (_tools, emit) => emit({ type: 'final', text: 'Checks remain paused.' }),
+    {
+      background: true,
+      checkIn: { budgetUsd: 5, spentUsd: 6 },
+      proactivity: {
+        instructions: 'Read synthetic sources.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+      },
+    },
+  );
+  assert.equal(quiet.result.status, 'waiting_user');
+  assert.match(quiet.result.message ?? '', /\$5 check-in/);
 });
 
 test('parsed email results never return raw content when preparation fails', async () => {

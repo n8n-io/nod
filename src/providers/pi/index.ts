@@ -415,15 +415,16 @@ export function createPiAgent(options: {
       closeInterruptedCalls(manager);
       const prior = manager.buildSessionContext().messages;
       const last = prior.findLast((message) => message.role === 'assistant');
+      const priorTokens = input.restartable === true ? estimateModelTokens(prior) : 0;
       const restart =
         input.restartable === true &&
         prior.length > 0 &&
-        (!last || Date.now() - last.timestamp >= warmCache);
+        (!last || Date.now() - last.timestamp >= warmCache || priorTokens > budget.recent);
       if (restart)
         manager.appendCompaction(
           'Earlier checks are saved outside this context. Use the current request and fresh source reads.',
           null,
-          estimateModelTokens(prior),
+          priorTokens,
         );
       const historyTokens = budget.compact
         ? estimateModelTokens(manager.buildSessionContext().messages)

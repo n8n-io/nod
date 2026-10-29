@@ -708,7 +708,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
     });
 });
 
-test('a proactive check starts fresh once its cache is cold, and a resumed check keeps its context', async () => {
+test('a proactive check starts fresh once its cache is cold or its context outgrows compaction, and a resumed check keeps its context', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
   const prompts: string[] = [];
   let answeredAgo = 0;
@@ -776,6 +776,10 @@ test('a proactive check starts fresh once its cache is cold, and a resumed check
     assert.equal(prompts[1].includes('COLD-BATCH'), false);
     assert.equal(prompts[2].includes('WARM-BATCH'), true);
     assert.equal(prompts[4].includes('WAITING-BATCH'), true);
+    answeredAgo = 0;
+    await check('LARGE-BATCH ' + 'x '.repeat(250_000));
+    await check('AFTER-LARGE');
+    assert.equal(prompts[6].includes('LARGE-BATCH'), false);
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
