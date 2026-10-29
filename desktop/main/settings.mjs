@@ -174,7 +174,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       )
         throw new Error();
     } catch {
-      throw new Error(keyStoreMessage);
+      throw Object.assign(new Error(keyStoreMessage), { code: 'NOD_KEY_STORE_UNAVAILABLE' });
     }
   }
   async function protect(value) {
@@ -186,7 +186,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           : encryption.encryptString(value)
       ).toString('base64');
     } catch {
-      throw new Error(keyStoreMessage);
+      throw Object.assign(new Error(keyStoreMessage), { code: 'NOD_KEY_STORE_UNAVAILABLE' });
     }
   }
   async function reveal(field, failure) {
@@ -204,8 +204,10 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
       if (platform === 'darwin' && encryption.decryptLegacyStringAsync) {
+        let result;
+        let replacement;
         try {
-          const result = await encryption.decryptLegacyStringAsync(Buffer.from(value, 'base64'));
+          result = await encryption.decryptLegacyStringAsync(Buffer.from(value, 'base64'));
           if (
             field === 'vaultKey'
               ? Buffer.from(result, 'base64').length !== 32 ||
@@ -213,18 +215,23 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               : !/^[A-Za-z0-9_-]{43,}$/.test(result)
           )
             throw new Error();
-          const replacement = await protect(result);
+          replacement = await protect(result);
           if (
             (await encryption.decryptStringAsync(Buffer.from(replacement, 'base64'))).result !==
             result
           )
             throw new Error();
+        } catch (error) {
+          if (error.code === 'NOD_KEY_STORE_UNAVAILABLE') throw error;
+          replacement = undefined;
+        }
+        if (replacement) {
           await write({
             ...current,
             secrets: { ...current.secrets, [field]: replacement },
           });
           return result;
-        } catch {}
+        }
       }
       throw (
         failure ??

@@ -92,7 +92,7 @@ const testInstall =
   JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).nodBuild?.testProfile ===
     true;
 const appName = testInstall ? 'nod Setup Test' : 'Nod';
-app.setName(process.platform === 'darwin' && !testInstall ? 'nod' : appName);
+app.setName(process.platform === 'darwin' && app.isPackaged && !testInstall ? 'nod' : appName);
 const developmentDataRoot =
   !app.isPackaged || testInstall ? process.env.NOD_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))

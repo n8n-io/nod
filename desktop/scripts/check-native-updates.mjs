@@ -765,7 +765,7 @@ async function main() {
       report.checks.push({ id: 'UPD-CLEANUP', pass: false, error: error.message });
     }
     report.finishedAt = new Date().toISOString();
-    report.pass = !failure && report.cases.length === 3;
+    report.pass = !failure && report.cases.length === 4;
     await writeFile(join(output, `${Date.now()}.json`), JSON.stringify(report, null, 2));
   }
   if (failure) throw failure;

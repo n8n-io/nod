@@ -2336,6 +2336,7 @@ test('runtime retries reuse only the same owned PostgreSQL container with unchan
 });
 
 test('native runtime can stop after the streaming runtime pack is removed', async (t) => {
+  if (process.platform === 'win32') return t.skip('This fixture uses a Mac shell program.');
   const root = await mkdtemp(join(tmpdir(), 'nod-stop-runtime-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dataRoot = join(root, 'profile');

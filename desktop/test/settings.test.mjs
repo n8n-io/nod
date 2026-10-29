@@ -3728,7 +3728,7 @@ test('server token recovery distinguishes a locked store from unreadable ciphert
       await assert.rejects(storedProfile.store.connection(), (error) => {
         assert.equal(
           error.code,
-          failure === 'ciphertext' ? 'NOD_SERVER_TOKEN_UNAVAILABLE' : undefined,
+          failure === 'ciphertext' ? 'NOD_SERVER_TOKEN_UNAVAILABLE' : 'NOD_KEY_STORE_UNAVAILABLE',
         );
         if (failure === 'locked') assert.match(error.message, /Unlock your Mac keychain/);
         return true;
@@ -4095,7 +4095,10 @@ test('macOS settings migrate each key from the previous app name without changin
         readPreviousPassword: async (name) => {
           assert.equal(name, 'Nod');
           reads++;
-          if (failure === 'denied') throw new Error('Synthetic denial');
+          if (failure === 'denied')
+            throw Object.assign(new Error('Synthetic denial'), {
+              code: 'NOD_KEY_STORE_UNAVAILABLE',
+            });
           return Buffer.from(`${failure === 'wrong-key' ? 'wrong' : password}\n`);
         },
       });
@@ -4104,6 +4107,15 @@ test('macOS settings migrate each key from the previous app name without changin
         await assert.rejects(store.environment());
         assert.equal(await readFile(f.path, 'utf8'), before);
         assert.deepEqual(await store.connection(), { url: 'https://server.example', token });
+        if (failure === 'denied') {
+          original.secrets.serverToken = legacy(token);
+          await writeFile(f.path, JSON.stringify(original));
+          const denied = createSettingsStore(f.path, encryption, 'darwin');
+          await assert.rejects(denied.connection(), { code: 'NOD_KEY_STORE_UNAVAILABLE' });
+          assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')), original);
+          await assert.rejects(denied.connection(), { code: 'NOD_KEY_STORE_UNAVAILABLE' });
+          assert.ok(reads >= 2);
+        }
         return;
       }
       assert.deepEqual(await store.environment(), environment);
@@ -4221,7 +4233,7 @@ test('unavailable or plaintext key stores refuse secret persistence and decrypti
         await assert.rejects(store.environment());
         await assert.rejects(fresh.saveConnection(connection));
         await assert.rejects(store.connection(), (error) => {
-          assert.equal(error.code, undefined);
+          assert.equal(error.code, 'NOD_KEY_STORE_UNAVAILABLE');
           assert.match(error.message, /Unlock/);
           return true;
         });

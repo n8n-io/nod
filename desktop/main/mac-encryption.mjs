@@ -18,8 +18,15 @@ async function readPassword(name) {
       },
     );
     return stdout;
-  } catch {
-    throw new Error('Nod could not read its previous saved key.');
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        error.code === 44
+          ? 'Nod could not find its previous saved key.'
+          : 'Allow Nod to read its Mac Keychain, then try again.',
+      ),
+      { code: error.code === 44 ? 'NOD_PREVIOUS_KEY_MISSING' : 'NOD_KEY_STORE_UNAVAILABLE' },
+    );
   }
 }
 
