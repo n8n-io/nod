@@ -1773,12 +1773,13 @@ export function createAgentBrowserComputer(options: {
       try {
         const document = await checkout(state, devtools);
         const controls = new Map<string, BoundSignInControl>();
-        const observed: { id: string; label: string; page: BrowserPage }[] = [];
+        const choices: { id: string; label: string; page: BrowserPage }[] = [];
         for (const method of methods) {
           signal?.throwIfAborted();
           const target = selector(method.selector);
           const ref = referenceOf(target);
-          if (ref && !state.refs.has(ref)) throw new BrowserActionError('browser_target_changed');
+          const observed = ref ? state.refs.get(ref) : undefined;
+          if (ref && !observed) throw new BrowserActionError('browser_target_changed');
           const control = await devtools.signInControl(
             ref ? await pointOf(state, ref) : { selector: target },
           );
@@ -1807,12 +1808,15 @@ export function createAgentBrowserComputer(options: {
                 }
               : {}),
           };
-          observed.push({ id: methodId, label: page.controls![0]!.name, page });
+          const bound = page.controls![0]!;
+          if (observed && (observed.role !== bound.role || observed.name !== bound.name))
+            throw new BrowserActionError('browser_target_changed');
+          choices.push({ id: methodId, label: bound.name, page });
         }
         if ((await devtools.document()) !== document)
           throw new BrowserActionError('browser_target_changed');
         state.signInMethods = { document, origin, controls };
-        return { document, methods: observed };
+        return { document, methods: choices };
       } finally {
         devtools.close();
       }

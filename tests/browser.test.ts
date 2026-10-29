@@ -4642,6 +4642,15 @@ test(
       await assert.rejects(
         client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '@e9999' }]),
       );
+      await act({ action: 'open', url: origin + '/covered' });
+      await act({ action: 'click', selector: '#change' });
+      const covered = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
+        (await act({ action: 'snapshot' })).text,
+      )?.[1];
+      assert.ok(covered);
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '@' + covered }]),
+      );
       await assert.rejects(
         client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: 'button' }]),
       );
