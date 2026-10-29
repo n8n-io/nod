@@ -2,6 +2,25 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.4.0 - 2026-10-29
+
+### Fixes
+
+- **harness:** Keep background work relevant and record model costs. [commit](https://github.com/n8n-io/nod/commit/edf2ab9d956a2e776c69f0f6cb2fe3cad8f868d5) (edf2ab9)
+- Open Chat after app sign-in and retain onboarding deep links. [#540](https://github.com/n8n-io/nod/pull/540) (b722edb)
+- Show full chat activity titles and steps. [#543](https://github.com/n8n-io/nod/pull/543) (a7a3ba8)
+- Keep desktop error banners below the toolbar. [#547](https://github.com/n8n-io/nod/pull/547) (7c56926)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.3.9...edf2ab9d956a2e776c69f0f6cb2fe3cad8f868d5)
+
+<details>
+<summary>Build details</summary>
+
+Source: `edf2ab9d956a2e776c69f0f6cb2fe3cad8f868d5`
+Previous release: `nod-v0.3.9`
+
+</details>
+
 ## 0.3.5 - 2026-10-27
 
 ### Fixes
