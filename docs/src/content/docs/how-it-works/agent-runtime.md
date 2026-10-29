@@ -58,6 +58,7 @@ Repeated reports with the same ID create no extra charge record. Parent runs nev
 All totals come from these ledger rows. Missing prices stay unknown. Shutdown waits for pending usage writes after the model sessions close. A failed write makes shutdown fail.
 Usage that arrives after a conversation reset stays on the owner's ledger without a turn link. A reference to another owner's turn is refused.
 Checks linked to a turn count toward that session's task check-in, even when the agent is not running.
+A stopped turn does not wait for a source check that ignores cancellation. A late result cannot mark the turn complete.
 
 ## Keeping the context small
 

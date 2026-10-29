@@ -456,9 +456,14 @@ export function createAgentRuntime(dependencies: {
           () => !overBudget(),
         );
       if (
-        await (dependencies.withExecution
-          ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
-          : screenSources())
+        await untilAborted(
+          Promise.resolve(
+            dependencies.withExecution
+              ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
+              : screenSources(),
+          ),
+          signal,
+        )
       ) {
         await context.emit('source_screened', '', { execution });
         completed = screened = true;

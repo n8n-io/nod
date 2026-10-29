@@ -217,6 +217,61 @@ test('compact owner context retains the memory saving switch without the note in
   );
 });
 
+test('Stop ends a source check that ignores cancellation', async () => {
+  let entered!: () => void;
+  let release!: (value: boolean) => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<boolean>((resolve) => {
+    release = resolve;
+  });
+  const controller = new AbortController();
+  const events: string[] = [];
+  let ended = false;
+  const work = fixture(
+    async () => {
+      assert.fail('A stopped screen must not start the agent.');
+    },
+    {
+      signal: controller.signal,
+      emit: async (type) => {
+        events.push(type);
+      },
+      proactivity: {
+        instructions: 'Read synthetic sources.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+        screen: async () => {
+          entered();
+          return held;
+        },
+      },
+    },
+  ).then(
+    (result) => {
+      ended = true;
+      return result;
+    },
+    (error: unknown) => {
+      ended = true;
+      return error;
+    },
+  );
+  await ready;
+  controller.abort(new Error('Synthetic stop'));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const stopped = ended;
+  release(true);
+  const result = await work;
+  assert.equal(stopped, true);
+  assert.ok(result instanceof Error);
+  assert.equal(result.message, 'Synthetic stop');
+  assert.ok(!events.includes('source_screened'));
+});
+
 test('a quiet source screen records its result without opening the agent', async () => {
   const events: string[] = [];
   const result = await fixture(
