@@ -11,7 +11,7 @@ import { createKeychainKeyStore } from '../src/providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../src/providers/filesystem/key-store.ts';
 import { openCredential, sealCredential } from '../src/server/vault.ts';
 import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
@@ -430,6 +430,7 @@ describe('account routes', () => {
         headers: { origin },
         ...(payload ? { payload } : {}),
       });
+    const turnId = '3f2a9c4e-8b1d-4f6a-9e2b-7c5d1a0f4e83';
     const trace = (content: string): ModelTrace => ({
       id: randomUUID(),
       name: 'fixture-model',
@@ -464,7 +465,7 @@ describe('account routes', () => {
         cacheWriteTokens: 0,
         costUsd: null,
       },
-      metadata: { session_id: 'fixture-session', turn_id: 'fixture-turn' },
+      metadata: { session_id: 'fixture-session', turn_id: turnId },
     });
     const settle = async (count: number) => {
       for (let attempt = 0; attempt < 40 && delivered.length < count; attempt++)
@@ -480,7 +481,7 @@ describe('account routes', () => {
     assert.equal(f.record().traces, true);
     traces.record(
       trace(
-        'I am Marta Vidal <marta.vidal@example.com>, cc alice smith <alice@example.com>, card 4111 1111 1111 1111, IBAN ES91 2100 0418 4502 0005 1332, call 612 345 678, DNI 12345678Z, server 2001:db8::1 and 203.0.113.42. Host 192.168.1.1.example stays. Key fixture-model-key-8c41f2, order 123456 on 2026-10-19',
+        `I am Marta Vidal <marta.vidal@example.com>, cc alice smith <alice@example.com>, card 4111 1111 1111 1111, IBAN ES91 2100 0418 4502 0005 1332, call 612 345 678, DNI 12345678Z, server 2001:db8::1 and 203.0.113.42. Host 192.168.1.1.example stays. Key fixture-model-key-8c41f2, order 123456 on 2026-10-19, task ${turnId.toUpperCase()}, file ${homedir()}/Library/nod.json`,
       ),
     );
     await settle(1);
@@ -510,7 +511,9 @@ describe('account routes', () => {
     assert.match(sent, /192\.168\.1\.1\.example/);
     assert.deepEqual(Object.keys(delivered[0].metadata), ['session_id', 'turn_id']);
     assert.match(delivered[0].metadata.session_id, /^[0-9a-f]{32}$/);
-    assert.ok(!sent.includes('fixture-session') && !sent.includes('fixture-turn'));
+    assert.ok(!sent.includes('fixture-session') && !sent.toLowerCase().includes(turnId));
+    assert.ok(sent.includes(`task ${delivered[0].metadata.turn_id}`));
+    assert.ok(!sent.includes(homedir()) && sent.includes('~/Library/nod.json'));
     traces.record(trace('A second request in the same conversation'));
     await settle(2);
     assert.equal(delivered[1].metadata.session_id, delivered[0].metadata.session_id);

@@ -1287,9 +1287,19 @@ async function initializeApplication(
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
   const ownerProfile = async () => {
-    const [names, preferences] = await Promise.all([ownerNames(), getPreferences()]);
+    const [connections, preferences] = await Promise.all([
+      integrations.list(ownerId, { refresh: false }),
+      getPreferences(),
+    ]);
     return {
-      names,
+      names: connections.flatMap((connection) =>
+        connection.status === 'connected' &&
+        connection.accountId &&
+        connection.accountName &&
+        !connection.accessPaths?.length
+          ? [connection.accountName]
+          : [],
+      ),
       region: preferences.locale
         ? new Intl.Locale(preferences.locale).maximize().region
         : undefined,

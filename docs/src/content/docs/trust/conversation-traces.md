@@ -24,14 +24,15 @@ The switch is separate from **Share usage data**, and you can turn either on wit
 
 While the switch is on, each request Nod makes to your model becomes one trace, from chats, tasks, helpers and background checks.
 
-| Sent, after scrubbing                                                     | Never sent                                                     |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| The messages and tool results the model saw for that request              | Your account, installation or device identifier                |
-| Nod's instructions, without your saved memory, learned skills and formats | Images, which become `[image]`                                 |
-| The names of the tools the model could use                                | Saved passwords, codes and cards, which Nod's model never sees |
-| The model's reply                                                         | Checks of emails that may give access to an account            |
-| The model name, token counts and cost                                     | Requests to decision services                                  |
-| Whether it came from chat, a task, a helper or a background check         | Your usage analytics, which have their own switch              |
+| Sent, after scrubbing                                                     | Never sent                                                        |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| The messages and tool results the model saw for that request              | Your account, installation or device identifier                   |
+| Nod's instructions, without your saved memory, learned skills and formats | Images, which become `[image]`                                    |
+| The names of the tools the model could use                                | Saved passwords, codes and cards, which Nod's model never sees    |
+| The model's reply                                                         | Checks of emails that may give access to an account               |
+| The model name, token counts and cost                                     | Requests to decision services                                     |
+|                                                                           | Requests that update your memory, writing style or learned skills |
+| Whether it came from chat, a task, a helper or a background check         | Your usage analytics, which have their own switch                 |
 
 n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
 
@@ -39,19 +40,21 @@ n8n's service sees the sending machine's IP address when it receives a trace. Fo
 
 Every trace passes through these layers on the machine running your assistant before it's sent.
 
-| Layer                       | What it removes                                                                                     | How it decides                                               |
-| --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Known secrets               | Keys you saved, model and app keys, Nod's own tokens, and text shaped like a key, token or password | The exact values Nod knows, plus known key formats           |
-| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data         | The field name                                               |
-| Your name                   | The name on each Gmail account you connected, in full or in part                                    | An exact match                                               |
-| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                 | The address format                                           |
-| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats           | Google's libphonenumber rules                                |
-| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                              | The issuer prefix and the Luhn checksum                      |
-| Bank accounts               | IBANs                                                                                               | The country's length and the IBAN checksum                   |
-| Crypto wallets              | Bitcoin and Ethereum addresses                                                                      | The Bitcoin address checksum, or the Ethereum address format |
-| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar    | Each format's check digit or rules                           |
-| Network addresses           | IPv4, IPv6 and MAC addresses                                                                        | Address validation                                           |
-| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`           | The field name, whatever the value's type                    |
+| Layer                       | What it removes                                                                                     | How it decides                                                      |
+| --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Known secrets               | Keys you saved, model and app keys, Nod's own tokens, and text shaped like a key, token or password | The exact values Nod knows, plus known key formats                  |
+| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data         | The field name                                                      |
+| Your name                   | The name on each app account you connected, such as Gmail or Slack, in full or in part              | An exact match                                                      |
+| Your home folder            | The path of your user folder, which often contains your name, becomes `~`                           | An exact match                                                      |
+| Nod's IDs                   | Task, message, connection and file IDs in messages and tool results                                 | The ID format; each gets the same keyed hash as the conversation ID |
+| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                 | The address format                                                  |
+| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats           | Google's libphonenumber rules                                       |
+| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                              | The issuer prefix and the Luhn checksum                             |
+| Bank accounts               | IBANs                                                                                               | The country's length and the IBAN checksum                          |
+| Crypto wallets              | Bitcoin and Ethereum addresses                                                                      | The Bitcoin address checksum, or the Ethereum address format        |
+| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar    | Each format's check digit or rules                                  |
+| Network addresses           | IPv4, IPv6 and MAC addresses                                                                        | Address validation                                                  |
+| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`           | The field name, whatever the value's type                           |
 
 Here's a synthetic request before and after scrubbing, for an owner called Marta in Spain:
 
@@ -68,14 +71,14 @@ He can call me on [phone] or at the office, [ip]. Thanks, [owner]
 The invoice number stays, because it isn't personal. Checks that need a valid number, such as the card checksum, keep ordinary numbers like order IDs and dates.
 
 :::caution[Removal is automatic]
-Nod removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence or a street address in plain text. Turn traces on only if you're comfortable with that.
+Nod removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence, a delivery address on a shopping page or other people's messages in an app such as Slack. Turn traces on only if you're comfortable with that.
 :::
 
 ## How traces are pseudonymised
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other Nod data such as feedback reports.
-- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other Nod data such as feedback reports. Nod's own IDs inside messages and tool results get the same keyed hash. Other content can still connect traces, such as a website address, a document link or an account handle.
+- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool.
 - **No images.** Images are replaced with `[image]`.
 
 These steps remove the direct links to you. Traces are still pseudonymised, not anonymous: what a conversation says can identify you, for example a detail the scrubber doesn't recognize.
@@ -88,7 +91,7 @@ flowchart LR
   broker -- write-only key --> langsmith[LangSmith, EU<br/>deleted after 14 days]
 ```
 
-1. Nod sends each scrubbed trace to n8n's **Nod Traces** service. The service refuses requests without the token in official Nod builds. It checks the trace's shape and size, files it in the `nod` project, and keeps no copy of the request. It forwards about 600 traces per clock minute from all senders combined, a best-effort cap that limits the cost of misuse.
+1. Nod sends each scrubbed trace to n8n's **Nod Traces** service. The service refuses requests without the token in official Nod builds. It checks the trace's shape and size, files it in Nod's trace project, and keeps no copy of the request. It forwards about 600 traces per clock minute from all senders combined, a best-effort cap that limits the cost of misuse.
 2. The service writes the trace to n8n's LangSmith workspace in the EU with a tracing key that can write traces but can't read them. Nod itself never holds a LangSmith key.
 3. LangSmith deletes each trace 14 days after it arrives. People at n8n with access to that workspace can read traces until then.
 

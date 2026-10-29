@@ -1,7 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import type { Api, AssistantMessage, Context, Message, Model } from '@earendil-works/pi-ai';
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  Message,
+  Model,
+  ToolResultMessage,
+} from '@earendil-works/pi-ai';
 import type { ModelTrace } from '../../ports/traces.ts';
 import { piUsageMetrics } from './usage.ts';
+import { untrustedParts } from '../../shared/untrusted.ts';
+
+const omitted = '[owner context omitted]';
+const learnedSkill = untrustedParts('learned skill').open;
 
 export interface PiModelCall {
   model: Model<Api>;
@@ -71,6 +82,19 @@ export function piModelTrace(
   const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
   const inputTokens = (usage.inputTokens ?? 0) + cacheReadTokens + cacheWriteTokens;
   const outputTokens = usage.outputTokens ?? 0;
+  const calls = new Map(
+    call.context.messages.flatMap((message) =>
+      message.role === 'assistant'
+        ? message.content.flatMap((block) =>
+            block.type === 'toolCall' ? [[block.id, block.arguments] as const] : [],
+          )
+        : [],
+    ),
+  );
+  const owned = (message: ToolResultMessage) =>
+    (message.toolName === 'manage_personal_context' &&
+      String(calls.get(message.toolCallId)?.action).startsWith('memory_')) ||
+    (message.toolName === 'skills' && text(message.content).startsWith(learnedSkill));
   return {
     id: randomUUID(),
     name: call.model.id,
@@ -81,10 +105,14 @@ export function piModelTrace(
       ...(call.context.systemPrompt
         ? [{ role: 'system', content: call.context.systemPrompt }]
         : []),
-      ...call.context.messages.map(chat),
+      ...call.context.messages.map((message) =>
+        message.role === 'toolResult' && owned(message)
+          ? { role: 'tool', tool_call_id: message.toolCallId, content: omitted }
+          : chat(message),
+      ),
     ].map((message) =>
       header && message.role === 'user' && message.content.startsWith(header)
-        ? { ...message, content: '[owner context omitted]' }
+        ? { ...message, content: omitted }
         : message,
     ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),
