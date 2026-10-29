@@ -13,6 +13,14 @@ export function connectedGmail(connection: Connection) {
     !connection.disconnectPending
   );
 }
+export function reconnectable(connection: Connection) {
+  return (
+    Boolean(connection.connectionId && connection.accountId) &&
+    !connection.disconnectPending &&
+    Boolean(connection.canReconnect) &&
+    (connection.status === 'disconnected' || Boolean(connection.reconnectRequired))
+  );
+}
 export const interviewQuestions = 3;
 export const interviewAnswerChars = 1200;
 export type OnboardingInterview = {

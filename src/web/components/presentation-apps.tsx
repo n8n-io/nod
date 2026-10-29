@@ -1,5 +1,6 @@
 import type { Connection } from '../../shared/contracts';
 import { integrationMetadata } from '../../shared/integrations';
+import { reconnectable } from '../../shared/onboarding';
 import type { Presentation } from '../../shared/presentation';
 import { useAppSignIn } from '../hooks/use-app-sign-in';
 import { usePageData } from '../hooks/use-page-data';
@@ -24,15 +25,7 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
     onSetup: (url) => navigate(url),
   });
   const reconnect = (slug: string) =>
-    apps.data?.find(
-      (item) =>
-        item.slug === slug &&
-        item.connectionId &&
-        item.accountId &&
-        !item.disconnectPending &&
-        item.canReconnect &&
-        (item.status === 'disconnected' || item.reconnectRequired),
-    )?.connectionId;
+    apps.data?.find((item) => item.slug === slug && reconnectable(item))?.connectionId;
   const start = (slug: string) =>
     void signIn.connect({ service: slug, connectionId: reconnect(slug) });
   const shown = visual.services.filter((slug) => entry(slug));

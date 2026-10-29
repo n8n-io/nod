@@ -3,6 +3,7 @@ import type { Configuration, Connection } from '../../../../shared/contracts';
 import {
   onboardingCalendarProviders,
   onboardingEmailProviders,
+  reconnectable,
 } from '../../../../shared/onboarding';
 import { ConnectRow, SignInActions, signInIssue } from '../../../components/connect-row';
 import { ServiceLogo } from '../../../components/service-logo';
@@ -91,14 +92,7 @@ export function PersonalConnection({
       slug,
       service,
       account: accounts.find(ownedAccount),
-      reconnect: accounts.find(
-        (connection) =>
-          connection.connectionId &&
-          connection.accountId &&
-          !connection.disconnectPending &&
-          connection.canReconnect &&
-          (connection.status === 'disconnected' || connection.reconnectRequired),
-      ),
+      reconnect: accounts.find(reconnectable),
       disconnections: accounts.filter((connection) => connection.disconnectPending),
     };
   });
