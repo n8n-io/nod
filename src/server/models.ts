@@ -12,6 +12,7 @@ import { ModelAuthError, ModelWorkspaceSelectionError } from '../ports/models.ts
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type {
   ModelMethod,
+  ModelChoice,
   ModelProvider,
   ModelSelection,
   ModelsResponse,
@@ -59,6 +60,15 @@ export const modelSelectionInput = z
   })
   .strict();
 class ConnectionError extends Error {}
+
+function modelPricing(model: ModelDefinition): ModelChoice['pricing'] {
+  if (model.choice.id === 'openrouter/auto') return 'variable';
+  const cost = z
+    .object({ input: z.number().finite(), output: z.number().finite() })
+    .safeParse(model.spec.cost).data;
+  if (!cost) return undefined;
+  return cost.input < 0 || cost.output < 0 ? 'variable' : cost;
+}
 
 export function endpointAddress(address: string) {
   let url: URL;
@@ -757,6 +767,7 @@ export function createModelService(options: {
             managed,
             models: models.map((model) => ({
               ...model.choice,
+              ...(provider === 'openrouter' ? { pricing: modelPricing(model) } : {}),
               ...(model.choice.audio
                 ? { textModelName: textCompanion({ provider, method, models })?.choice.name }
                 : {}),

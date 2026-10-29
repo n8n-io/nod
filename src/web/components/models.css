@@ -326,6 +326,13 @@
   gap: 5px;
   white-space: nowrap;
 }
+.model-option-price {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .model-option svg {
   flex-shrink: 0;
 }
@@ -392,6 +399,10 @@
   }
   .model-option {
     gap: 12px;
+  }
+  .model-option-price {
+    margin-left: 0;
+    text-align: left;
   }
   .model-service-heading {
     align-items: flex-start;
