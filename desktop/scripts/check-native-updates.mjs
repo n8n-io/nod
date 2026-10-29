@@ -45,7 +45,8 @@ async function packageFixtures(planPath) {
   for (const fixture of plan) {
     const directory = join(dirname(planPath), `source-${fixture.name}-${fixture.version}`);
     await mkdir(directory);
-    await copyFile(join(repository, 'desktop/main/settings.mjs'), join(directory, 'settings.mjs'));
+    for (const name of ['settings.mjs', 'artifact-files.mjs', 'artifact-file-handlers.mjs'])
+      await copyFile(join(repository, 'desktop/main', name), join(directory, name));
     const identityPath = join(repository, 'src/providers/composio/identity.ts');
     await writeFile(
       join(directory, 'identity.mjs'),
@@ -62,7 +63,7 @@ async function packageFixtures(planPath) {
     await writeFile(
       join(directory, 'main.cjs'),
       `
-const { app, autoUpdater, safeStorage } = require('electron');
+const { app, autoUpdater, BrowserWindow, safeStorage } = require('electron');
 const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { createHash, sign } = require('node:crypto');
 const fixture = ${JSON.stringify(fixture)};
@@ -72,6 +73,12 @@ const receipt = (event, fields = {}) => appendFileSync(fixture.events,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
 app.whenReady().then(async () => {
   const { createSettingsStore } = await import('./settings.mjs');
+  const { registerArtifactFileHandlers } = await import('./artifact-file-handlers.mjs');
+  const window = new BrowserWindow({ show: false });
+  const disposeArtifactFiles = registerArtifactFileHandlers({
+    isEngine: () => false, origin: () => '', headers: () => ({}), window: () => window,
+  });
+  app.on('will-quit', (event) => receipt('quit-accepted', { cancelled: Boolean(event.defaultPrevented) }));
   const initialLaunch = !existsSync(fixture.remoteSettings);
   const remoteSettings = createSettingsStore(fixture.remoteSettings, safeStorage);
   if (initialLaunch) await remoteSettings.saveConnection({ url: fixture.serverUrl, token: fixture.serverToken });
@@ -134,8 +141,10 @@ app.whenReady().then(async () => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
     app.quit();
   });
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', async () => {
     receipt('downloaded');
+    await disposeArtifactFiles();
+    receipt('files-closed');
     autoUpdater.quitAndInstall();
   });
   autoUpdater.on('update-not-available', () => { receipt('unavailable'); app.quit(); });
@@ -442,6 +451,16 @@ async function main() {
         join(fixture.application, 'Contents/Info.plist'),
       ]);
       if (fixture.kind === 'install') {
+        const filesClosed = events.findIndex((event) => event.event === 'files-closed');
+        const quitAccepted = events.findIndex((event) => event.event === 'quit-accepted');
+        check(
+          'UPD-QUIT',
+          filesClosed >= 0 &&
+            quitAccepted > filesClosed &&
+            events
+              .filter((event) => event.event === 'quit-accepted')
+              .every((event) => !event.cancelled),
+        );
         check(
           'UPD-INSTALL',
           version === '1.0.1' &&

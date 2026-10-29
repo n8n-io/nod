@@ -132,6 +132,7 @@ let updateProgress;
 let updateFailed = false;
 let pendingPreload;
 let stopUpdateChecks;
+let disposeArtifactFiles;
 let closingEngine = false;
 let tray;
 let engineOrigin = '';
@@ -1546,6 +1547,7 @@ async function quit(complete, failure = 'Nod could not finish shutting down.') {
   for (const notification of displayedNotifications) notification.close();
   await stoppingUpdates;
   await chatReadCursors.flush().catch(() => {});
+  await disposeArtifactFiles?.().catch(() => {});
   await finishQuit(complete, failure);
 }
 
@@ -2025,7 +2027,7 @@ else {
         ]),
       );
       refreshUpdateMenu();
-      registerArtifactFileHandlers({
+      disposeArtifactFiles = registerArtifactFileHandlers({
         isEngine,
         origin: () => engineOrigin,
         headers: authenticationHeaders,

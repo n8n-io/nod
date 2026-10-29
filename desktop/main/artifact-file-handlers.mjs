@@ -46,19 +46,6 @@ export function registerArtifactFileHandlers({ isEngine, origin, headers, window
       });
     },
   });
-  let disposed = false;
-  let disposal;
-  app.on('will-quit', (event) => {
-    if (disposed) return;
-    event.preventDefault();
-    disposal ??= artifactFiles
-      .dispose()
-      .catch(() => {})
-      .finally(() => {
-        disposed = true;
-        app.quit();
-      });
-  });
   ipcMain.handle('nod:file:action', async (event, id, action) => {
     if (!isEngine(event) || !['prepare', 'drag', 'save', 'open', 'show'].includes(action))
       throw new Error('This action is unavailable.');
@@ -123,4 +110,5 @@ export function registerArtifactFileHandlers({ isEngine, origin, headers, window
       });
     });
   });
+  return () => artifactFiles.dispose();
 }

@@ -34,6 +34,7 @@ import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createReadinessNotice, createUnreadBadge, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
+import { createArtifactFiles } from '../main/artifact-files.mjs';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
@@ -552,6 +553,7 @@ async function runningDesktop(
       get: async () => ({ preferences: webPreferences }),
     }),
     createChatReadCursorStore,
+    createArtifactFiles,
     saveArtifactDownload,
     createReadinessNotice,
     createUnreadBadge,
@@ -736,8 +738,14 @@ async function runningDesktop(
       'import.meta.url',
       JSON.stringify(new URL('../main/main.mjs', import.meta.url).href),
     );
+  const artifactHandlers = (
+    await readFile(new URL('../main/artifact-file-handlers.mjs', import.meta.url), 'utf8')
+  )
+    .replace(/^import[\s\S]*?;\n/gm, '')
+    .replace('export function', 'function');
   await runInNewContext(
     `(async () => {
+    ${artifactHandlers}
     ${source}
     appLinksReady = true;
     engine = {};
@@ -778,6 +786,8 @@ async function runningDesktop(
       status: () => status,
       notifyReady: updateReadinessNotice,
       checkUpdates: (updater, manual = true) => { updates = updater; return checkForUpdates(manual); },
+      registerFiles: () => { ${source.slice(source.indexOf('      disposeArtifactFiles = registerArtifactFileHandlers('), source.indexOf("      ipcMain.handle('nod:renderer-ready'"))} },
+      quit,
       crash: () => { engine = undefined; enginePreferencesReady = false; },
     };
     })()`,
@@ -795,6 +805,7 @@ async function runningDesktop(
     externalURLs,
     rendererReady,
     updateMenu,
+    willQuit: (event) => appEvents.emit('will-quit', event),
     appSessions,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
     checkPermission: (...args) => permissionCheck?.(...args) ?? true,
@@ -2497,6 +2508,57 @@ test('native quit aborts storage startup without creating a late engine', async 
     f.children.map((child) => child.kind),
     [],
   );
+});
+
+test('quit removes temporary files and stops downloads before the updater can quit', async (t) => {
+  const readyId = randomUUID();
+  const pendingId = randomUUID();
+  let downloadSignal;
+  let preparedPath;
+  const f = await runningDesktop(
+    t,
+    async (url, options) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/metadata')) return Response.json({});
+      if (path === `/api/artifacts/${readyId}`) return new Response('Synthetic file');
+      assert.equal(path, `/api/artifacts/${pendingId}`);
+      downloadSignal = options.signal;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('Partial file'));
+            options.signal.addEventListener('abort', () => controller.error(options.signal.reason));
+          },
+        }),
+      );
+    },
+    { reveal: (path) => (preparedPath = path) },
+  );
+  t.after(() => f.close());
+  f.showEngine();
+  f.registerFiles();
+  const window = f.windows.at(-1);
+  const event = {
+    sender: window.webContents,
+    senderFrame: window.webContents.mainFrame,
+  };
+  const action = f.handlers.get('nod:file:action');
+  await action(event, readyId, 'show');
+  assert.equal(await readFile(preparedPath, 'utf8'), 'Synthetic file');
+  const pending = assert.rejects(action(event, pendingId, 'prepare'), { name: 'AbortError' });
+  for (let attempt = 0; !downloadSignal && attempt < 100; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(downloadSignal);
+  f.crash();
+  let installed = false;
+  await f.quit(async () => {
+    assert.equal(downloadSignal.aborted, true);
+    await assert.rejects(readFile(preparedPath), { code: 'ENOENT' });
+    f.willQuit({ preventDefault: () => assert.fail('File cleanup must not cancel quit.') });
+    installed = true;
+  });
+  await pending;
+  assert.equal(installed, true);
 });
 
 test('desktop proxy overrides reach only isolated source engines and retain origin validation', async (t) => {

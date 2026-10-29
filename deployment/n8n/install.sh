@@ -62,6 +62,16 @@ check_stopped() {
   if pgrep -x nod >/dev/null 2>&1; then fail 'Quit Nod, then run the installer again.'; fi
 }
 
+stop_updater() {
+  update_job="gui/$(id -u)/dev.nod.desktop.ShipIt"
+  if launchctl print "$update_job" >/dev/null 2>&1; then
+    launchctl bootout "$update_job" >/dev/null 2>&1 || fail 'The previous Nod updater could not be stopped. Your app was kept.'
+  fi
+  if launchctl print "$update_job" >/dev/null 2>&1; then
+    fail 'The previous Nod updater is still running. Your app was kept.'
+  fi
+}
+
 valid_version() {
   printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
 }
@@ -140,6 +150,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 temporary=$(mktemp -d "$applications/.nod-install.XXXXXXXX")
+stop_updater
 current_version=''
 current_identity=''
 current_metadata=''
@@ -198,6 +209,8 @@ check_app "$temporary/nod.app"
 hdiutil detach "$temporary/mount" -quiet || fail 'The Nod disk image could not be closed.'
 mounted=false
 check_stopped
+stop_updater
+rm -rf "$HOME/Library/Caches/dev.nod.desktop.ShipIt" || fail 'The previous Nod update cache could not be removed. Your app was kept.'
 [ ! -L "$target" ] || fail 'The installation destination changed during installation.'
 if [ -e "$target" ]; then
   [ -d "$target" ] || fail 'The installation destination changed during installation.'
@@ -207,8 +220,8 @@ elif [ -n "$current_identity" ]; then
   fail 'Your Nod app moved during installation. Run the installer again.'
 fi
 mv "$temporary/nod.app" "$target" || fail 'The new Nod app could not be installed.'
-installed=true
 printf '\nNod %s is installed at %s\n' "$version" "$target"
 printf 'Your keys, conversations and workspace are kept. Updates are available inside Nod.\n'
 printf 'Opening Nod…\n'
 open "$target" || fail 'Nod is installed, but could not open. Open Nod from Applications.'
+installed=true

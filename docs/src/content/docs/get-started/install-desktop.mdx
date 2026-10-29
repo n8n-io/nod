@@ -62,6 +62,8 @@ You can install the latest release on Apple silicon or Intel with one command. Q
 
 Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/Nod.app`, and opens Nod. An existing installation keeps its current path. Your existing data stays in place. You don't need a GitHub account.
 
+Before it replaces Nod, the installer stops any old ShipIt update job and removes its cache. If it cannot stop the job, it keeps your app. If the new app cannot open, it keeps the previous copy and shows its location.
+
 </details>
 
 </TabItem>
@@ -159,6 +161,24 @@ If you deleted Nod's folders by hand, Nod removes the private computer they leav
 | Nod asks for a runtime file        | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                                |
 | Windows can't download the runtime | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again.      |
 | A scheduled task didn't run        | Check that the machine running your assistant was awake and Nod was running. For a remote assistant, check the server. |
+
+### A failed Mac update blocks a new install
+
+After a failed update, the ShipIt update job can stay loaded. A new copy of Nod can then fail to open. If macOS shows **“Nod” is damaged and can't be opened** after an update failed, remove the old update job before you install Nod again.
+
+1. Quit Nod. If it stays open, use **Activity Monitor** to stop it.
+2. Open **Terminal** and run these commands as your normal user:
+
+   ```sh title="Terminal"
+   launchctl bootout "gui/$(id -u)/dev.nod.desktop.ShipIt"
+   rm -rf "$HOME/Library/Caches/dev.nod.desktop.ShipIt"
+   ```
+
+   If no ShipIt job is loaded, the first command can report an error. Continue with the second command.
+
+3. Download the newest DMG from the [releases page](https://github.com/n8n-io/nod/releases). Replace the copy in **Applications**, then open it.
+
+These commands remove only the update job and its cache. They keep your profile, conversations, saved keys and private computer. If Nod still does not open, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.
