@@ -2964,9 +2964,24 @@ test(
               ['Reply about the venue shortlist', 'gmail', 'now'],
               ['Watch for venue replies every morning', 'gmail', 'ongoing'],
               ['Track synthetic newsletter sponsors every week', 'web', 'ongoing'],
+              ['Brief me on my day every morning', 'web', 'ongoing'],
+              ['Send me a recap every Friday', 'web', 'ongoing'],
+              ['Scan news in my field every Monday', 'web', 'ongoing'],
             ],
           );
-          assert.equal(new Set(tasks.map((task: { id: string }) => task.id)).size, 3);
+          assert.deepEqual(
+            tasks.map((task: { origin?: string }) => task.origin),
+            ['learned', 'learned', 'learned', 'common', 'common', 'common'],
+          );
+          assert.equal(new Set(tasks.map((task: { id: string }) => task.id)).size, 6);
+          assert.equal(
+            (
+              await db.pool.query("SELECT 1 FROM messages WHERE owner_id=$1 AND role='user'", [
+                ownerId,
+              ])
+            ).rowCount,
+            0,
+          );
           for (const row of posted.rows) assert.equal(row.threadId, firstThreadId);
           assert.equal(
             (await db.pool.query("SELECT 1 FROM turns WHERE source_id LIKE 'onboarding:%'"))
@@ -3029,6 +3044,7 @@ test(
               binding: `binding-${index}`,
               slug: slugs[index % slugs.length]!,
               name: slugs[index % slugs.length]!,
+              ...(index === 0 ? { email: 'owner@n8n.io' } : {}),
             }));
             const active = new Map<string, string>(
               accounts.map((account) => [account.connectionId, account.binding]),
@@ -3165,10 +3181,33 @@ test(
                   if (mode === 'cancelled') plans.cancel();
                   return [
                     {
-                      from: 'sender@example.test',
+                      from: 'no-reply@notion.so',
                       subject: 'Verification code',
                       body: 'Code 482913',
                     },
+                    {
+                      from: 'notifications@linear.app',
+                      subject: 'Synthetic issue assigned',
+                      body: 'Pick up the synthetic issue',
+                    },
+                    {
+                      from: 'Sam <sam@github.com>',
+                      subject: 'Lunch',
+                      body: 'Written by a person, not GitHub',
+                    },
+                    {
+                      payload: {
+                        headers: [
+                          { name: 'From', value: 'Synthetic Bot <no-reply@n8n.io>' },
+                          { name: 'Subject', value: 'Team digest' },
+                        ],
+                      },
+                    },
+                    {
+                      sender: 'calendar-notification@google.com',
+                      subject: 'Invitation: synthetic review',
+                    },
+                    { text: 'Reply to notifications@figma.com in the body is not a sender' },
                     {
                       text:
                         mode === 'large'
@@ -3226,7 +3265,7 @@ test(
             if (mode === 'cancelled_repair') assert.equal(times.at(-1)?.stage, 'repair');
             const posted = (
               await db.pool.query(
-                'SELECT suggestions FROM messages WHERE owner_id=$1 AND suggestions IS NOT NULL',
+                'SELECT text,suggestions FROM messages WHERE owner_id=$1 AND suggestions IS NOT NULL',
                 [owner],
               )
             ).rows;
@@ -3286,6 +3325,16 @@ test(
               assert.ok(plannerBriefs.every((brief) => brief.source !== 'gmail'));
               assert.match(JSON.stringify(posted), /Juniper/);
               assert.doesNotMatch(JSON.stringify(posted), /binding-|connectionId|observations/);
+              assert.deepEqual(posted[0]!.suggestions.apps, ['linear', 'googlecalendar']);
+              assert.match(
+                posted[0]!.text,
+                /\nIf you want more ideas, just ask me\. You also get email from Linear and Google Calendar, so connecting them would help me find more\.$/,
+              );
+              assert.match(
+                posted[0]!.suggestions.intro,
+                /^I looked at your recent (?:slack and fixture-mcp|fixture-mcp and slack) and picked the first three ideas/,
+              );
+              assert.doesNotMatch(JSON.stringify(posted), /notifications@|Synthetic issue/);
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
               if (['unknown', 'invalid', 'refused', 'revoked_read', 'cancelled'].includes(mode))

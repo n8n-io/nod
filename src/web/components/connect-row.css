@@ -1,0 +1,63 @@
+.connect-rows {
+  display: grid;
+  gap: 12px;
+}
+.connect-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+}
+.connect-row > .service-logo {
+  flex-shrink: 0;
+}
+.connect-row-identity {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--text-control);
+}
+.connect-row-identity > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-row-name {
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.connect-row-detail {
+  color: var(--muted-foreground);
+}
+.connect-row-error {
+  color: var(--error);
+  font-size: var(--text-control);
+}
+.connect-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.connect-row-done {
+  padding-inline: 16px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+@media (max-width: 640px) {
+  .connect-row {
+    padding: 16px;
+  }
+  .connect-row-actions[data-recovery] {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+}

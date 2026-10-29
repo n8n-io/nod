@@ -160,7 +160,7 @@ export function VoicePicker({
           </span>
           {selected && <small id={`${id}-detail`}>{selected.description}</small>}
         </span>
-        <ChevronDown size={16} />
+        <ChevronDown size={12} />
       </DialogTrigger>
       <DialogContent
         className="voice-picker-panel"

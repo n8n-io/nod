@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   saveSettings: (input) => invoke('nod:settings:save', input),
   getPreferences: () => invoke('nod:preferences:get'),
   prepare: (options) => invoke('nod:prepare', options),
+  warmup: () => invoke('nod:warmup'),
   importRuntime: () => invoke('nod:runtime:import'),
   installWsl: () => invoke('nod:runtime:install-wsl'),
   showStartupLog: () => invoke('nod:startup-log:show'),

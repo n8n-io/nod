@@ -24,31 +24,33 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
 import { clearStored, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
-import { Introduction } from './steps/intro';
 import { Brain } from './steps/brain';
 import { Email } from './steps/email';
-import { Calendar } from './steps/calendar';
-import { Apps } from './steps/apps';
-import { desktopOnboardingSteps, OnboardingFrame } from './frame';
+import { Privacy } from './steps/privacy';
+import { OnboardingFrame } from './frame';
 
 export type StepProps = {
   arrived: 'forward' | 'back';
+  quiet?: boolean;
   onNext(): void;
   onBack(): void;
   onSkip?(): void;
   nextLabel?: string;
   onReady?(): void;
-  usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
+  usageShared?: boolean;
+  traces?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
 };
 
 const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   welcome: Welcome,
-  intro: Introduction,
-  brain: Brain,
   email: Email,
-  calendar: Calendar,
-  apps: Apps,
+  brain: Brain,
+  privacy: Privacy,
 };
+
+function mineEmail() {
+  void api('/api/onboarding/suggestions', { method: 'POST', body: '{}' }).catch(() => {});
+}
 
 type SetupStep = OnboardingStep | 'preferences';
 
@@ -56,18 +58,24 @@ export function Onboarding({
   user,
   onComplete,
   onFeedback,
-  usageData = false,
-  onUsageData,
+  usageShared = false,
+  traces,
+  onTraces,
 }: {
   user: AccountUser;
   onComplete(): Promise<void>;
   onFeedback?(): void;
-  usageData?: boolean;
-  onUsageData?(enabled: boolean): Promise<void>;
+  usageShared?: boolean;
+  traces?: boolean;
+  onTraces?(enabled: boolean): Promise<void>;
 }) {
   useBrowserTimeZone();
   const desktop = desktopRuntimeAvailable();
-  const [position, setPosition] = useState(() => {
+  const [position, setPosition] = useState<{
+    step: SetupStep;
+    arrived: StepProps['arrived'];
+    quiet?: boolean;
+  }>(() => {
     const url = new URL(window.location.href);
     const replay = url.searchParams.get('replay') === '1';
     const nativePreferences =
@@ -82,9 +90,7 @@ export function Onboarding({
     if (replay || welcomed || nativePreferences)
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     const stored = readStep<{ owner: string; step: string; version?: number }>();
-    const savedStep = ['about', 'telegram', 'messaging'].includes(stored?.step ?? '')
-      ? 'apps'
-      : stored?.step;
+    const savedStep = stored?.step;
     const step: SetupStep = nativePreferences
       ? 'preferences'
       : stored?.owner === user.id &&
@@ -97,7 +103,11 @@ export function Onboarding({
           ? 'email'
           : 'welcome';
     if (step === 'welcome') clearStored();
-    return { step, arrived: 'forward' as StepProps['arrived'] };
+    return {
+      step,
+      arrived: 'forward',
+      quiet: welcomed && step === 'email',
+    };
   });
   const { step, arrived } = position;
   const index = step === 'preferences' ? onboardingSteps.length : onboardingSteps.indexOf(step);
@@ -110,6 +120,10 @@ export function Onboarding({
   const [runtimeStatus, setRuntimeStatus] = useState<DesktopStatus | null>(null);
   const [error, setError] = useState('');
   const [missing, setMissing] = useState<'brain' | 'email' | null>(null);
+  const [modelOk, setModelOk] = useState<boolean | null>(null);
+  const [mining, setMining] = useState(false);
+  const emailSkipped = useRef(false);
+  const started = useRef(false);
   const preparationRequest = useRef<AbortController | null>(null);
   const active = useRef(false);
   const retrying = useRef(false);
@@ -121,7 +135,7 @@ export function Onboarding({
   } | null>(null);
 
   useEffect(() => {
-    if (step !== 'email' && step !== 'calendar') desktopRendererReady();
+    if (step !== 'email') desktopRendererReady();
   }, [step]);
 
   useEffect(() => {
@@ -148,14 +162,18 @@ export function Onboarding({
   }, [step, user.id]);
 
   useEffect(() => {
-    if (index <= onboardingSteps.indexOf('brain')) return;
     let current = true;
     void api<ModelsResponse>('/api/models')
       .then((models) => {
-        if (!current || modelReady(models)) return;
-        setPosition({ step: 'brain', arrived: 'forward' });
+        if (!current) return;
+        const ready = modelReady(models);
+        setModelOk(ready);
+        if (!ready && index > onboardingSteps.indexOf('brain'))
+          setPosition({ step: 'brain', arrived: 'forward' });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (current) setModelOk(false);
+      });
     return () => {
       current = false;
     };
@@ -163,12 +181,18 @@ export function Onboarding({
 
   useEffect(() => {
     active.current = true;
-    void prepare();
     return () => {
       active.current = false;
+      started.current = false;
       preparationRequest.current?.abort();
     };
   }, [user.id]);
+
+  useEffect(() => {
+    if (step === 'welcome' || started.current) return;
+    started.current = true;
+    void prepare();
+  }, [step, user.id]);
 
   useEffect(() => {
     if (!finishing || preparation !== 'ready') return;
@@ -272,7 +296,8 @@ export function Onboarding({
   }
 
   function go(offset: 1 | -1) {
-    const next = onboardingSteps[index + offset];
+    let next = onboardingSteps[index + offset];
+    if (next === 'brain' && modelOk === true) next = onboardingSteps[index + offset * 2];
     if (next) {
       setError('');
       setCompletionFailed(false);
@@ -281,13 +306,22 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'email' || step === 'calendar')
+    if (step === 'email') {
+      emailSkipped.current = true;
       captureAnalytics('nod_onboarding_step_skipped', { step });
+    }
   }
 
   function next() {
-    if (step !== 'apps' && step !== 'preferences') return void go(1);
-    if (desktop && step === 'apps') return setPosition({ step: 'preferences', arrived: 'forward' });
+    if (step === 'email') {
+      setMining(!emailSkipped.current);
+      if (!emailSkipped.current) mineEmail();
+      emailSkipped.current = false;
+    }
+    if (step === 'brain' && mining) mineEmail();
+    if (step !== 'privacy' && step !== 'preferences') return void go(1);
+    if (desktop && step === 'privacy')
+      return setPosition({ step: 'preferences', arrived: 'forward' });
     if (finishing) return;
     setWaitingForServices(preparation !== 'ready' || Boolean(runtimeError));
     setError('');
@@ -312,7 +346,13 @@ export function Onboarding({
       <SetupProgress
         title={failure ? 'Setup needs another try.' : title}
         progress={preparation === 'pending' ? activeRuntime?.progress : undefined}
-        description={failure ? 'Your progress is saved.' : undefined}
+        description={
+          failure
+            ? 'Your progress is saved.'
+            : mining
+              ? 'Meanwhile, I’m reading your recent email to find things I can take off your plate.'
+              : 'Your workspace and browser are getting ready. This only happens once.'
+        }
         error={failure || undefined}
       >
         {failure && missing && (
@@ -349,14 +389,13 @@ export function Onboarding({
     </div>
   );
 
-  if (step === 'preferences')
-    return <DesktopPreferencesSetup notice={recovery} onReady={next} onBack={() => go(-1)} />;
+  if (step === 'preferences') return <DesktopPreferencesSetup notice={recovery} onReady={next} />;
 
   const Screen = screens[step];
   return (
     <OnboardingFrame
       step={step}
-      steps={desktop ? desktopOnboardingSteps : onboardingSteps}
+      steps={onboardingSteps.filter((item) => item !== 'brain' || modelOk !== true)}
       onFeedback={onFeedback}
       mainRef={main}
     >
@@ -364,14 +403,16 @@ export function Onboarding({
         <Screen
           key={step}
           arrived={arrived}
+          quiet={position.quiet}
           onReady={desktopRendererReady}
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}
-          nextLabel={!desktop && step === 'apps' ? 'Start chatting' : undefined}
-          usage={
-            step === 'intro' && onUsageData
-              ? { enabled: usageData, onChange: onUsageData }
+          nextLabel={!desktop && step === 'privacy' ? 'Start chatting' : undefined}
+          usageShared={usageShared}
+          traces={
+            step === 'privacy' && traces !== undefined && onTraces
+              ? { enabled: traces, onChange: onTraces }
               : undefined
           }
         />

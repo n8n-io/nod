@@ -262,6 +262,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     get() {
       return exclusive(async () => redacted(await read()));
     },
+    hasSavedKeys() {
+      return exclusive(async () => Object.keys((await read()).secrets).length > 0);
+    },
     connection() {
       return exclusive(async () => {
         const value = await read();

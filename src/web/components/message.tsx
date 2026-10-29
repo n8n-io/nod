@@ -618,9 +618,12 @@ export function MessageBubble({
                   handoffTurnId={message.turnId ?? undefined}
                 />
               )}
-              {message.role === 'assistant' && !streaming && message.presentation && (
-                <MessagePresentation value={message.presentation} />
-              )}
+              {message.role === 'assistant' &&
+                !streaming &&
+                message.presentation &&
+                message.presentation.type !== 'apps' && (
+                  <MessagePresentation value={message.presentation} />
+                )}
               {message.role === 'assistant' && message.attachments.length > 0 && (
                 <MessageAttachments
                   attachments={message.attachments.filter(
@@ -746,6 +749,9 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {message.role === 'assistant' && !streaming && message.presentation?.type === 'apps' && (
+          <MessagePresentation value={message.presentation} />
+        )}
         {quote &&
           onReply &&
           createPortal(

@@ -1,13 +1,40 @@
-import { useEffect } from 'react';
+import { useEffect, type CSSProperties } from 'react';
+import { LockKeyhole, MousePointerClick, ShieldCheck, Sparkles } from '../../../components/icons';
 import { NodGlyph } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { desktopRuntimeAvailable } from '../../../lib/desktop';
 import type { StepProps } from '..';
 
+function differentiators(local: boolean) {
+  return [
+    {
+      icon: MousePointerClick,
+      title: 'Gets tasks done',
+      text: 'Nod uses your apps and its own browser to complete tasks.',
+    },
+    {
+      icon: Sparkles,
+      title: 'Works proactively',
+      text: 'Nod keeps up with the apps you connect and only notifies you when it matters.',
+    },
+    {
+      icon: LockKeyhole,
+      title: `Runs on your ${local ? 'computer' : 'server'}`,
+      text: 'Nod works in a private workspace. Sign in with your AI provider or use your own key.',
+    },
+    {
+      icon: ShieldCheck,
+      title: 'Keeps you in control',
+      text: 'Nod asks you before taking potentially dangerous actions.',
+    },
+  ];
+}
+
 export function Welcome({
   onNext,
   actionLabel = 'Get started',
-  local = desktopRuntimeAvailable(),
+  local = desktopRuntimeAvailable() ||
+    ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname),
 }: StepProps & { actionLabel?: string; local?: boolean }) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
@@ -24,13 +51,27 @@ export function Welcome({
     <section className="ob-step ob-welcome" data-analytics-public>
       <div className="ob-welcome-content">
         <h1 className="ob-welcome-wordmark" aria-label="Nod">
-          <NodGlyph size={80} mode="bounce" className="ob-welcome-mark" />
+          <NodGlyph size={48} mode="bounce" className="ob-welcome-mark" />
           <span aria-hidden="true">Nod</span>
         </h1>
-        <p className="ob-welcome-copy">
-          Real tasks, done for you, on your
-          <br className="ob-welcome-break" /> {local ? 'computer' : 'server'}, with your permission.
-        </p>
+        <p className="ob-welcome-copy">An assistant that takes work off your plate.</p>
+        <ul className="ob-welcome-points">
+          {differentiators(local).map(({ icon: Icon, title, text }, index) => (
+            <li
+              key={title}
+              className="ob-welcome-point"
+              style={{ '--point-delay': `${200 + index * 90}ms` } as CSSProperties}
+            >
+              <span className="ob-welcome-point-icon" aria-hidden="true">
+                <Icon size={18} />
+              </span>
+              <span>
+                <strong>{title}</strong>
+                <span>{text}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
         <Button onClick={onNext}>{actionLabel}</Button>
       </div>
       <p className="ob-welcome-note">This is a preview version of Nod, developed by n8n</p>

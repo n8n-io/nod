@@ -12,18 +12,22 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 36px;
+  gap: 28px;
   text-align: center;
 }
 
 .ob-welcome-wordmark {
   display: flex;
   align-items: center;
-  gap: 20px;
-  font-size: 60px;
+  gap: 14px;
+  font-size: 40px;
   font-weight: 500;
   line-height: 1;
-  letter-spacing: -2.5px;
+  letter-spacing: -1.8px;
+}
+
+.ob-welcome-wordmark + .ob-welcome-copy {
+  margin-top: -12px;
 }
 
 .ob-welcome-mark {
@@ -37,7 +41,7 @@
 }
 
 .ob-welcome-copy {
-  max-width: 520px;
+  max-width: 600px;
   font-size: 24px;
   font-weight: 400;
   line-height: 1.43;
@@ -60,22 +64,83 @@
     gap: 28px;
   }
   .ob-welcome-wordmark {
-    gap: 16px;
-    font-size: 52px;
-    letter-spacing: -2px;
+    gap: 12px;
+    font-size: 36px;
+    letter-spacing: -1.5px;
   }
   .ob-welcome-mark {
-    width: 68px;
-    height: 68px;
+    width: 44px;
+    height: 44px;
   }
   .ob-welcome-copy {
     font-size: 20px;
     letter-spacing: -0.3px;
   }
-  .ob-welcome-break {
-    display: none;
-  }
   .ob-welcome-note {
     max-width: 280px;
+  }
+}
+
+.ob-welcome-points {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  max-width: 480px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.ob-welcome-point {
+  display: flex;
+  gap: 12px;
+  animation: ob-welcome-point 420ms var(--ease-travel, ease-out) both;
+  animation-delay: var(--point-delay, 0ms);
+}
+
+.ob-welcome-point > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.ob-welcome-point strong {
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 550;
+}
+
+.ob-welcome-point-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 22px;
+  color: var(--foreground);
+}
+
+@keyframes ob-welcome-point {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-welcome-point {
+    animation: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .ob-welcome-points {
+    gap: 16px;
+  }
+  .ob-welcome-point > span:last-child {
+    font-size: 13px;
   }
 }

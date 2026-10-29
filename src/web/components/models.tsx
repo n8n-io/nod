@@ -957,7 +957,7 @@ export function ModelPicker({
         {model ? (
           <>
             <span className="model-picker-name">{model.name}</span>
-            <ChevronDown size={16} />
+            <ChevronDown size={12} />
           </>
         ) : (
           <>

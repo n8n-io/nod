@@ -215,7 +215,7 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result or necessary decision now. Background final text is private. Do not repeat delivered text. Read visual-replies for the presentation schema when comparisons, locations, layouts or trends benefit from a native view. Text gives the conclusion, caveats and sources without repeating every value. Completion requires confirmed, inspectable output.',
+    'Deliver a checked result or necessary decision now. Background final text is private. Do not repeat delivered text. Read visual-replies for the presentation schema when comparisons, locations, layouts or trends benefit from a native view, or to offer Connect buttons for apps. Text gives the conclusion, caveats and sources without repeating every value. Completion requires confirmed, inspectable output.',
     Type.Object({
       text: Type.String({ minLength: 1 }),
       presentation: Type.Optional(presentation),

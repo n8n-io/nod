@@ -13,6 +13,7 @@ export type AppAccount = {
   binding: string;
   slug: string;
   name: string;
+  email?: string;
 };
 export type AppTool = {
   name: string;

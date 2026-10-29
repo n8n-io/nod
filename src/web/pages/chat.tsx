@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, LoaderCircle, Trash2, User } from '../components/icons';
+import { ArrowDown, Check, LoaderCircle, Repeat, Trash2 } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -14,6 +14,7 @@ import type {
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { integrationMetadata, integrationServices } from '../../shared/integrations';
+import { moreIdeasLine } from '../../shared/sender-apps';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
@@ -37,6 +38,7 @@ import {
   Skeleton,
 } from '../components/ui';
 import { desktopSettingsAvailable } from '../lib/desktop';
+import { navigate } from '../lib/navigation';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {
@@ -113,6 +115,7 @@ function Working({ items = [], label = 'Nod is working' }: { items?: Activity[];
 
 function TaskCards({
   id,
+  grouped,
   suggestions,
   connections,
   status,
@@ -120,6 +123,7 @@ function TaskCards({
   onStart,
 }: {
   id: string;
+  grouped: boolean;
   suggestions: TaskSuggestions;
   connections: Connection[];
   status(task: SuggestedTask): 'idle' | 'working' | 'needs_you' | 'waiting' | 'sent' | 'done';
@@ -131,93 +135,114 @@ function TaskCards({
     const frame = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+  const learned = suggestions.tasks.filter((task) => task.origin !== 'common');
+  const common = suggestions.tasks.filter((task) => task.origin === 'common');
+  const seen = (suggestions.apps ?? []).filter(
+    (slug) => !connections.some((entry) => entry.slug === slug && entry.status === 'connected'),
+  );
+  const card = (task: SuggestedTask, index: number) => {
+    const state = status(task);
+    const connection = connections.find((entry) => entry.slug === task.source);
+    return (
+      <Rise key={task.id} show={shown} index={index} className="task-card-rise">
+        <button
+          type="button"
+          className="task-card"
+          data-state={state}
+          data-analytics-private
+          disabled={disabled || state !== 'idle'}
+          onClick={() => onStart(task, suggestions.tasks.indexOf(task))}
+        >
+          <span className="task-title">{task.title}</span>
+          {(task.source !== 'web' || task.kind === 'ongoing' || state !== 'idle') && (
+            <span className="task-meta">
+              {task.source !== 'web' && (
+                <span
+                  className="task-card-logo"
+                  title={
+                    task.source === 'telegram'
+                      ? 'Telegram'
+                      : integrationMetadata(task.source, connection).name
+                  }
+                >
+                  <ServiceLogo
+                    slug={task.source}
+                    logoUrl={
+                      task.source === 'telegram' ? '/logos/telegram.svg' : connection?.logoUrl
+                    }
+                    connectionId={connection?.connectionId}
+                    size={16}
+                  />
+                  <span className="sr-only">
+                    {task.source === 'telegram'
+                      ? 'Telegram'
+                      : integrationMetadata(task.source, connection).name}
+                  </span>
+                </span>
+              )}
+              {task.source !== 'web' && task.kind === 'ongoing' && (
+                <span className="task-dot" aria-hidden="true" />
+              )}
+              {task.kind === 'ongoing' && (
+                <>
+                  <Repeat size={12} aria-hidden="true" />
+                  Repeats
+                </>
+              )}
+              {state !== 'idle' && (
+                <>
+                  {(task.source !== 'web' || task.kind === 'ongoing') && (
+                    <span className="task-dot" aria-hidden="true" />
+                  )}
+                  <span className="task-state" role="status">
+                    {state === 'working' ? (
+                      <LoaderCircle size={12} className="spin" aria-hidden="true" />
+                    ) : state === 'done' || state === 'sent' ? (
+                      <Check size={12} aria-hidden="true" />
+                    ) : null}
+                    {state === 'working'
+                      ? 'On it…'
+                      : state === 'needs_you'
+                        ? 'Waiting for you'
+                        : state === 'waiting'
+                          ? 'Waiting'
+                          : state === 'sent'
+                            ? 'Request sent'
+                            : task.kind === 'ongoing'
+                              ? 'Set up'
+                              : 'Done'}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+        </button>
+      </Rise>
+    );
+  };
   return (
     <article
-      className="message message-assistant"
+      className={`message message-assistant${grouped ? ' message-grouped' : ''}`}
       aria-label="Nod"
       data-message-id={id}
       tabIndex={-1}
     >
-      <div className="assistant-mark" aria-hidden="true">
+      <div className={`assistant-mark${grouped ? ' grouped-mark' : ''}`} aria-hidden="true">
         <BrandMark small />
       </div>
       <div className="task-suggestions">
         <p className="task-bubble" data-analytics-private>
           {suggestions.intro}
         </p>
-        <div className="task-cards">
-          {suggestions.tasks.map((task, index) => {
-            const state = status(task);
-            const connection = connections.find((entry) => entry.slug === task.source);
-            return (
-              <Rise
-                key={task.id}
-                show={shown}
-                index={index}
-                className="task-card"
-                data-analytics-private
-              >
-                <span className="task-source">
-                  {task.source === 'web' ? (
-                    <User size={14} aria-hidden="true" />
-                  ) : (
-                    <ServiceLogo
-                      slug={task.source}
-                      logoUrl={
-                        task.source === 'telegram' ? '/logos/telegram.svg' : connection?.logoUrl
-                      }
-                      connectionId={connection?.connectionId}
-                      size={16}
-                    />
-                  )}
-                  {task.source === 'web'
-                    ? 'For you'
-                    : task.source === 'telegram'
-                      ? 'Telegram'
-                      : integrationMetadata(task.source, connection).name}
-                  {task.kind && (
-                    <span className="task-kind">
-                      {task.kind === 'ongoing' ? 'Ongoing' : 'Right now'}
-                    </span>
-                  )}
-                </span>
-                <p className="task-title">{task.title}</p>
-                <div className="task-action" aria-live="polite">
-                  {state === 'idle' ? (
-                    <button
-                      type="button"
-                      className="task-start"
-                      disabled={disabled}
-                      onClick={() => onStart(task, index)}
-                    >
-                      {task.kind === 'ongoing' ? 'Set it up' : 'Do it'}
-                    </button>
-                  ) : state === 'working' ? (
-                    <span className="task-state">
-                      <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                      On it…
-                    </span>
-                  ) : state === 'waiting' || state === 'needs_you' ? (
-                    <span className="task-state">
-                      {state === 'needs_you' ? 'Waiting for you' : 'Waiting'}
-                    </span>
-                  ) : (
-                    <span className="task-state">
-                      <span className="task-check" aria-hidden="true">
-                        <Check size={14} strokeWidth={3} />
-                      </span>
-                      {state === 'done'
-                        ? task.kind === 'ongoing'
-                          ? 'Set up'
-                          : 'Done'
-                        : 'Request sent'}
-                    </span>
-                  )}
-                </div>
-              </Rise>
-            );
-          })}
-        </div>
+        <div className="task-cards">{learned.map(card)}</div>
+        {common.length > 0 && (
+          <div className="task-cards task-cards-common">
+            {common.map((task, index) => card(task, learned.length + index))}
+          </div>
+        )}
+        <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
+          <p className="task-bubble">{moreIdeasLine(seen)}</p>
+        </Rise>
       </div>
     </article>
   );
@@ -1175,6 +1200,14 @@ export function Chat({
                   {message.suggestions ? (
                     <TaskCards
                       id={message.id}
+                      grouped={
+                        visibleMessages[index - 1]?.role === 'assistant' &&
+                        isSameDay(
+                          visibleMessages[index - 1].createdAt,
+                          message.createdAt,
+                          dateFormat,
+                        )
+                      }
                       suggestions={message.suggestions}
                       connections={connections ?? []}
                       status={(task) =>

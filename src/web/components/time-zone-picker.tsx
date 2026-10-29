@@ -150,7 +150,7 @@ export function SearchPicker({
         }}
       >
         <span id={`${id}-value`}>{label}</span>
-        <ChevronDown size={16} aria-hidden="true" />
+        <ChevronDown size={12} aria-hidden="true" />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content

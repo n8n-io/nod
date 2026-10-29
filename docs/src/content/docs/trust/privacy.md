@@ -95,7 +95,7 @@ This export is separate from the sharing switches in Settings. Your collector co
 
 ## Usage analytics
 
-Usage analytics are off until you turn on **Share usage data** in the first onboarding step or in **Settings → General**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
+Usage analytics are on by default. Turn off **Share usage data** in **Settings → General** to stop them. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
 The recipient is the Nod team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
 
@@ -133,7 +133,7 @@ Feedback does not change your usage analytics or conversation trace settings. Op
 
 Memory notes come only from your own messages and the notes you add or import in **Settings → Memory**, never from Nod's replies, tool results or web pages. Nod also writes learned skills, the steps of a flow it did, from what it did and read; your model is told to replace names, contact details, account and order numbers, amounts and message content with placeholders, and Nod removes known secrets and refuses card numbers, keys and links with logins before it saves one. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. The model is told to leave out facts, names, and quotes. Nod drops a style note with an email address or link. This waits for a connected model and respects your memory setting. See [Memory](/use/memory/).
 
-During setup, Nod can read small samples from your connected tools to suggest first tasks. These reads respect your rules and cannot send messages, create drafts, change settings, or start monitoring. Nod excludes email that gives account access and removes secret fields before the card generator reads the small samples. There is no separate summary model call for each account. These samples are never saved to memory. The resulting task cards remain in your conversation.
+During setup, Nod can read small samples from your connected tools to suggest first tasks. These reads respect your rules and cannot send messages, create drafts, change settings, or start monitoring. Nod excludes email that gives account access and removes secret fields before the card generator reads the small samples. There is no separate summary model call for each account. These samples are never saved to memory. Nod also checks the sender addresses of sampled email for notifications from apps it can connect, such as Slack or GitHub, skips senders from your own email domain, and keeps only those app names to mention under the first ideas, never the email itself. The resulting task cards remain in your conversation.
 
 ## Delete your data
 

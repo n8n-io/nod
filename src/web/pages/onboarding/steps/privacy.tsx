@@ -1,0 +1,93 @@
+import { useState } from 'react';
+import { posthogConfig } from '../../../../shared/analytics';
+import { Rise } from '../../../components/motion';
+import { Button } from '../../../components/ui';
+import { errorMessage } from '../../../lib/api';
+import type { StepProps } from '..';
+import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
+
+const sequence: RevealStep[] = [{ typing: 450 }, { wait: 220 }, { wait: 200 }];
+const withUsage: RevealStep[] = [{ typing: 450 }, { wait: 220 }, { wait: 160 }, { wait: 200 }];
+
+export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShared }: StepProps) {
+  const { revealed, typing, done, skip } = useReveal(usageShared ? withUsage : sequence, {
+    enabled: arrived === 'forward',
+  });
+  const [saving, setSaving] = useState<boolean | null>(null);
+  const [error, setError] = useState('');
+  async function choose(value: boolean) {
+    if (!traces || saving !== null) return;
+    setSaving(value);
+    setError('');
+    try {
+      await traces.onChange(value);
+      onNext();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(null);
+    }
+  }
+  return (
+    <section className="ob-step ob-privacy" data-analytics-public onClick={done ? undefined : skip}>
+      <Messages
+        revealed={revealed}
+        typing={typing}
+        items={[
+          <Bubble>One last thing. Will you help the Nod team make me better?</Bubble>,
+          <Bubble>
+            I can send our conversations, including what I read and do, to the Nod team at n8n so
+            they can see where I go wrong. Personal details are removed first. Kept 14 days, never
+            used to train AI.
+          </Bubble>,
+          ...(usageShared
+            ? [
+                <Bubble>
+                  I also share{' '}
+                  <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                    basic usage data
+                  </a>
+                  , like which screens you open, but never your messages. You can turn it off in
+                  Settings.
+                </Bubble>,
+              ]
+            : []),
+        ]}
+      />
+      <Rise show={done} className="ob-choices">
+        {traces ? (
+          <>
+            <Button
+              variant="secondary"
+              disabled={saving !== null}
+              aria-busy={saving === false}
+              onClick={() => void choose(false)}
+            >
+              Not now
+            </Button>
+            <Button
+              disabled={saving !== null}
+              aria-busy={saving === true}
+              onClick={() => void choose(true)}
+            >
+              Share traces
+            </Button>
+          </>
+        ) : (
+          <>
+            <p className="ob-personal-muted">
+              Conversation traces aren’t available in this version of Nod.
+            </p>
+            <Button onClick={onNext}>{nextLabel ?? 'Continue'}</Button>
+          </>
+        )}
+        {error && (
+          <p className="ob-choices-error" role="alert">
+            {error}
+          </p>
+        )}
+      </Rise>
+      <Footer onBack={onBack} busy={saving !== null} />
+    </section>
+  );
+}

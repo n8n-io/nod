@@ -17,7 +17,7 @@ export function createAccountStore(database: Pool): AccountStore & {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<AccountSettings>(
       `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision,traces)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,false),CASE WHEN $4 THEN 1 ELSE 0 END,COALESCE($5,false))
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,true),CASE WHEN COALESCE($4,true) THEN 1 ELSE 0 END,COALESCE($5,false))
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),
@@ -56,7 +56,7 @@ export function createAccountStore(database: Pool): AccountStore & {
          FROM account_settings WHERE owner_id=$1`,
         [ownerId],
       );
-      return result.rows[0] ?? { enabled: false, revision: '0' };
+      return result.rows[0] ?? { enabled: true, revision: '1' };
     },
     async read(ownerId) {
       const result = await database.query<AccountSettings>(
@@ -68,7 +68,7 @@ export function createAccountStore(database: Pool): AccountStore & {
         result.rows[0] ?? {
           theme: 'system',
           onboardingCompleted: false,
-          usageData: false,
+          usageData: true,
           traces: false,
         }
       );
@@ -77,7 +77,7 @@ export function createAccountStore(database: Pool): AccountStore & {
       if (!input.onboardingCompleted) return save(database, ownerId, input);
       return transaction(async (connection) => {
         await connection.query(
-          'INSERT INTO account_settings (owner_id) VALUES ($1) ON CONFLICT (owner_id) DO NOTHING',
+          'INSERT INTO account_settings (owner_id,usage_data,usage_data_revision) VALUES ($1,true,1) ON CONFLICT (owner_id) DO NOTHING',
           [ownerId],
         );
         const previous = await connection.query<{ onboardingCompleted: boolean }>(

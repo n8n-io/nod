@@ -58,6 +58,10 @@ const providers = modelProviders.map((provider) => ({
 
 const common = providers.filter((item) => item.common);
 
+const hints: Partial<Record<ModelProvider, string>> = {
+  openai: 'Sign in with your ChatGPT Plus or Pro plan, no extra cost',
+};
+
 const placeholders: Partial<Record<ModelProvider, string>> = {
   openai: 'sk-…',
   anthropic: 'sk-ant-…',
@@ -662,7 +666,12 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
                 }}
               >
                 <Logo provider={item.provider} />
-                <span className="ob-brain-provider-name">{item.name}</span>
+                <span className="ob-brain-provider-name">
+                  {item.name}
+                  {!existing && hints[item.provider] && (
+                    <span className="ob-brain-provider-hint">{hints[item.provider]}</span>
+                  )}
+                </span>
                 {existing && (
                   <span
                     className="ob-brain-check"
@@ -717,7 +726,11 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         revealed={revealed}
         typing={typing}
         className="ob-brain-messages"
-        items={[<Bubble>Let’s connect an AI provider. Which one do you want me to use?</Bubble>]}
+        items={[
+          <Bubble>
+            I work with most AI providers. Which one do you want me to use? You can change it later.
+          </Bubble>,
+        ]}
       />
       <Rise show={revealed >= 2} className="ob-brain-content">
         {!c.data && c.models.error ? (

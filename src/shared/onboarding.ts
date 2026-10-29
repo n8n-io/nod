@@ -1,9 +1,9 @@
 import type { Connection } from './contracts.ts';
 
-export const onboardingSteps = ['welcome', 'intro', 'email', 'calendar', 'brain', 'apps'] as const;
+export const onboardingSteps = ['welcome', 'email', 'brain', 'privacy'] as const;
 export const onboardingEmailProviders = ['gmail', 'outlook'] as const;
 export const onboardingCalendarProviders = ['googlecalendar', 'outlook'] as const;
-export const onboardingVersion = 2;
+export const onboardingVersion = 3;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 export function connectedGmail(connection: Connection) {
   return (
@@ -28,5 +28,10 @@ export type SuggestedTask = {
   title: string;
   source: string;
   kind?: 'now' | 'ongoing';
+  origin?: 'learned' | 'common';
 };
-export type TaskSuggestions = { intro: string; tasks: SuggestedTask[] };
+export type TaskSuggestions = {
+  intro: string;
+  tasks: SuggestedTask[];
+  apps?: string[];
+};

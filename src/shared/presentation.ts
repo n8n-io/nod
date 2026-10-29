@@ -207,6 +207,14 @@ export const presentationSchema = z
     }),
     z.strictObject({
       ...common,
+      type: z.literal('apps'),
+      services: z
+        .array(text(60).regex(/^[a-z0-9_]+$/))
+        .min(1)
+        .max(3),
+    }),
+    z.strictObject({
+      ...common,
       type: z.literal('diagram'),
       nodes: z
         .array(z.strictObject({ id, label: text(120), detail: text(300).optional() }))
@@ -220,6 +228,7 @@ export const presentationSchema = z
     const unique = (values: string[]) => new Set(values).size === values.length;
     if (new TextEncoder().encode(JSON.stringify(value)).length > 24 * 1024)
       invalid('A presentation must fit within 24 KB.');
+    if (value.type === 'apps' && !unique(value.services)) invalid('Apps must be unique.');
     if (value.type === 'map' && !unique(value.places.map((place) => place.id)))
       invalid('Place IDs must be unique.');
     if (value.type === 'flights') {
@@ -352,6 +361,7 @@ export function presentationText(value: Presentation) {
   if (value.caption) lines.push(value.caption);
   if (value.asOf) lines.push(value.asOf);
   if (value.type === 'image') lines.push(value.alt);
+  if (value.type === 'apps') lines.push(`Connect in Apps: ${value.services.join(', ')}`);
   if (value.type === 'map')
     for (const place of value.places)
       lines.push(

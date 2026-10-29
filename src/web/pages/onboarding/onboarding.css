@@ -134,26 +134,18 @@
 .ob-step:has(> .ob-footer) {
   padding-bottom: calc(var(--ob-navigation-height) + 24px);
 }
-.ob-preference-toggle {
+.ob-choices {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-  color: var(--text-secondary);
-  font-size: var(--text-control);
+  justify-content: flex-end;
+  gap: 8px;
 }
-.ob-preference-toggle label {
-  cursor: pointer;
+.ob-choices > p {
+  flex: 1 1 100%;
+  text-align: right;
 }
-.ob-preference-toggle > .switch:disabled + span > label {
-  cursor: default;
-}
-.ob .ob-preference-toggle a,
-.ob .ob-preference-toggle a:hover {
-  color: inherit;
-}
-.ob-preference-error {
-  margin-top: 4px;
+.ob-choices-error {
   color: var(--error);
   font-size: var(--text-control);
 }
@@ -426,21 +418,4 @@
   .ob .ob-grow > div > .ob-bubble {
     transform: none;
   }
-}
-
-.ob-preference-action {
-  display: flex;
-  align-items: center;
-  margin-top: 18px;
-  min-height: 38px;
-}
-.ob-preference-action > .button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: var(--radius-full);
-  font-size: var(--text-control);
-  font-weight: 500;
 }

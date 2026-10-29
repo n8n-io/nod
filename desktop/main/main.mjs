@@ -2176,6 +2176,13 @@ else {
           return status;
         return prepare(options);
       });
+      ipcMain.handle('nod:warmup', async (event) => {
+        allowSetup(event);
+        const saved = await settings.get();
+        if (onboardingCompleted || status.remote || quitting || saved.serverUrl) return;
+        if (!(await settings.hasSavedKeys())) lifecycle.allowEngine();
+        void lifecycle.warmup().catch(() => {});
+      });
       ipcMain.handle('nod:runtime:import', (event) => {
         allowSetup(event);
         return importRuntime();

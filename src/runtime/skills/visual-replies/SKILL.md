@@ -1,6 +1,6 @@
 ---
 name: visual-replies
-description: Present useful images, maps, flight comparisons, seat plans, booking summaries, diagrams and charts directly in chat. Use when seeing locations, options, layouts, relationships or trends makes an answer easier to understand.
+description: Present useful images, maps, flight comparisons, seat plans, booking summaries, diagrams, charts and apps to connect directly in chat. Use when seeing locations, options, layouts, relationships or trends makes an answer easier to understand.
 ---
 
 # Visual replies
@@ -21,6 +21,7 @@ Read the actual source before presenting its facts. Cite supporting evidence wit
 | seats   | Show the sourced layout for one flight or aircraft configuration, grouped by cabin and deck. Preserve each row's actual seat groups and gaps. Use unknown when availability was not checked. Use the original image when a schematic cannot convey the geometry faithfully. |
 | booking | Summarize a reservation or compare venues with labelled facts, owned photos, useful notes and attributed review evidence. Use option, pending, confirmed or cancelled only as the evidence supports. Payment submission alone does not establish confirmation.              |
 | diagram | Explain a small process or relationship using nodes and edges with valid IDs. Keep labels short and provide the explanation in text.                                                                                                                                        |
+| apps    | Offer up to three unconnected apps the user could connect, as services: their slugs from manage_apps discover. Each gets a Connect button below your message. Use sources: [] and explain in text why connecting them helps.                                                |
 
 For a new image, obtain and inspect the actual file before sharing it. Download a remote original with browser download using its observed URL or download selector; opening an image tab alone does not enable a download with neither. A foreground raster image download stages the image for the next reply: use its returned id in the next send_message presentation without calling share_file again. Call share_file for other unshared workspace images, then use its returned id. For a page screenshot, use browser share_screenshot: it captures and stages an owned image for your next reply or turn completion. Use the returned id in an image presentation or booking photos so the image and explanation arrive together. browser screenshot alone is only for your own inspection. Do not share the staged file again. Never invent an artifact ID. Keep source attribution in sources and any limits in the caption or answer.
 

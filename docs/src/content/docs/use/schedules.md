@@ -81,7 +81,7 @@ During quiet hours, Nod keeps preparing from new mail and app activity. Its nudg
 A local desktop assistant runs schedules and background work only while Nod is open and your computer is awake. A [self-hosted server](/deploy/self-host/) keeps running after you close its web or desktop client, provided the server stays awake and connected.
 :::
 
-For a local assistant, closing the window keeps Nod running in the menu bar or tray. **Quit Nod** stops it. Turn on **Open at login** in **Settings → General** if you rely on schedules.
+For a local assistant, closing the window keeps Nod running in the menu bar or tray. **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules.
 
 If a run comes due while the assistant is stopped, it runs once when Nod is running again.
 

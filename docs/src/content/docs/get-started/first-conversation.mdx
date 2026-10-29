@@ -11,45 +11,37 @@ This page walks you through Nod's onboarding, your first tasks and what to do wh
 
 ## Onboarding at a glance
 
-Nod opens onboarding the first time you set up an assistant. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. Nod gets to know you in chat after setup.
+Nod opens onboarding the first time you set up an assistant. After the welcome screen, Nod starts preparing its private computer in the background while you optionally connect email, choose an AI provider if none is set up yet, and decide whether to share conversation traces. If you connected email, Nod reads a small sample of it in the meantime to suggest first ideas in chat.
 
-For a local desktop assistant, you can connect accounts while Nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
+For a local desktop assistant, you connect accounts while Nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
 
 ```mermaid
 flowchart TD
-  start[Welcome] --> hi[Say hi and<br/>usage data]
-  hi --> email[Email or skip]:::muted
-  email --> calendar[Calendar or skip]:::muted
-  calendar --> model[Connect<br/>a model]:::accent
-  model --> apps[Other tools]:::muted
-  apps --> chat([Get to know Nod<br/>in chat]):::go
+  start[Welcome] --> email[Email or skip]:::muted
+  email --> model[Connect a model<br/>if needed]:::accent
+  model --> privacy[Conversation<br/>traces]:::muted
+  privacy --> chat([Why Nod and<br/>first ideas in chat]):::go
 ```
 
 ## Go through onboarding
 
 <Steps>
 
-1. **Choose your assistant.** In the desktop app, select **Use this computer** for a local assistant or **Connect to a server**. In the web app, select **Get started**. Local setup prepares its services in the background after your choice. If storage is still preparing, Nod waits and continues automatically when it's ready.
+1. **Choose your assistant.** The welcome screen shows what sets Nod apart. Select **Get started**. In the desktop app, select **Connect to a server** instead to use an existing assistant. The desktop app starts preparing its private computer as soon as the welcome screen opens, and the web app as soon as you continue. It keeps preparing in the background while you go through onboarding; there's nothing to watch.
 
-2. **Say hi.** Nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. For a local desktop assistant, the introduction stays visible until email setup is ready to open.
+2. **Connect email (optional).** Select **Connect via Composio** next to **Gmail** or **Outlook**, then sign in and review the permissions, or select **Skip for now**. Google or Microsoft asks you to allow [Composio](/connect/apps/), the service Nod uses to connect apps, as the note under the buttons says. Setup continues after the connection is confirmed. Once it is, Nod starts reading a small sample of recent email in the background to learn what you work on and suggest first ideas. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps.
 
-3. **Connect email (optional).** Choose **Gmail** or **Outlook** to get help with replies and follow-ups. Sign in and review the permissions, or select **Skip for now**. Setup continues after the connection is confirmed. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps to add another account or confirm removal. Select **Continue** when you’re ready.
+3. **Connect a model (only if none is set up).** Choose a provider, or select **More providers** to search all supported services. The **OpenAI** row notes that you can sign in with a ChatGPT Plus or Pro plan at no extra cost. See [Connect a model](/connect/models/) for required credentials and cloud settings. Nod skips this step when a model connection already works, including one configured through server environment variables.
 
-4. **Connect a calendar (optional).** Choose **Google Calendar** or **Outlook Calendar** to get help planning around your schedule and finding time for meetings. If you already connected Outlook, that account is available here. **Manage** offers the same account controls as email and keeps you on this step. Select **Continue** or **Skip for now**.
+   To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from Nod's server. Choose a model if prompted, then select **Continue**.
 
-5. **Connect a model.** Choose a provider, or select **More providers** to search all supported services. Follow its sign-in or API-key form. See [Connect a model](/connect/models/) for required credentials and cloud settings. Existing connections, including those configured through server environment variables, are available here.
+   While setting up a provider, **Back** returns to the provider list. From that list, **Back** returns to email setup.
 
-   To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from Nod's server. If Nod shows **Key saved for**, access will be checked on first use. Choose a model if prompted, then select **Continue**. You can change the model here or later in **Models**.
-
-   While setting up a provider, **Back** returns to the provider list. From that list, **Back** returns to calendar setup.
-
-6. **Connect other apps (optional).** Browse the categories or search by name, then select **Connect** and review the access requested by each app. Connected apps keep their place in the list. **Manage** opens the same account manager as Apps, where you can add another account or disconnect one. A count shows connected tools, excluding email. Each app counts once, even with multiple accounts. Finish this step whenever you’re ready, including with no apps connected. You can add apps anytime from **Apps**.
-
-7. **Open at login for a local assistant.** Enable **Open at login**, then select **Start chatting** to open Chat, including after an app sign-in. After the first chat introduction, choose whether to enable notifications. You can change both preferences in **Settings → General**.
+4. **Help improve Nod.** Nod explains conversation traces and asks whether you'll share them. Select **Share traces** or **Not now**; either one saves your choice and continues. Traces stay off unless you choose to share them. Nod also says that it shares basic usage data, which is on by default. You can change both later in **Settings → General**. Traces appear only where they're available; see [Conversation traces](/trust/conversation-traces/).
 
 </Steps>
 
-Setup finishes after the apps step in the web app or a desktop client connected to a server. A local assistant also requires desktop preferences. If its computer is still preparing, Nod shows progress and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
+Setup finishes after the privacy step in the web app or a desktop client connected to a server. For a local assistant, Nod also turns on **Open at login** so it's ready when you sign in to your computer. You can turn it off in **Settings → General**. If its computer is still preparing, Nod shows a loading screen and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
@@ -59,15 +51,17 @@ In the desktop app, **Replay onboarding** opens setup again without deleting sav
 
 ## Start your first task
 
-Nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no separate setup interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep your local assistant or server running so it can reply.
+Nod opens the conversation with a short hello: tell it what you'd like off your plate or start with an idea, and it checks with you before it sends, buys or deletes anything you didn't ask for. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings.
 
 After the first chat introduction, choose **Enable notifications** to hear from Nod while you’re away, or **Not now** to dismiss the offer. Nod does not enable notifications just because you open chat. In the web app, your browser asks for permission after you select Enable. Your browser and system settings control delivery. You can change the choice in **Settings → General**. Enabling alerts does not authorize app monitoring or scheduled work.
 
-Nod also prepares three starting task cards: one **Right now** and two **Ongoing** ideas. It reads a small sample from your connected tools to find work it could take off your plate. That might be an upcoming meeting to prepare for, a conversation waiting on you, or a recurring report. Meeting suggestions use the current time and, when known, your time zone to avoid preparation for events that have already started, ended, or been cancelled. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
+Nod then shows idea cards. The first three are one to do once and two that repeat, based on what it learned from a small sample of your connected tools, such as email. Nod's message above them says where it looked. The cards after them add common ideas, such as a morning brief on your day or a Friday recap. A picked idea might be an upcoming meeting to prepare for, a conversation waiting on you, or a recurring report. Meeting suggestions use the current time and, when known, your time zone to avoid preparation for events that have already started, ended, or been cancelled. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
 
 If a tool can't be read or has nothing useful to surface, Nod suggests work without claiming it found something. You can ignore the cards and type any request.
 
-Each card shows its connected tool, or **For you** for general suggestions. Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to Nod as your message. The card shows **On it…** while its turn or saved task works. It shows **Waiting for you** when that work needs your attention. **Waiting** means a saved task waits for someone or something else. **Done** or **Set up** means its saved tasks are complete. **Request sent** means the chat turn ended without a saved task. Read the delivered result to check what Nod completed.
+Under the cards, Nod says you can ask it for more ideas. If you get notification email from apps you haven't connected, such as Slack, GitHub or Linear, it names up to three of them, since connecting them helps it find more. To get more ideas, just ask in the chat. If apps that would show Nod more of your work aren't connected yet, Nod first lists up to three of them, each with a **Connect** button below its message. Connect any of them, then ask again: Nod looks through the newly connected apps and suggests ideas from what it finds. With nothing useful left to connect, Nod suggests ideas right away.
+
+The whole card is the button. A card that works in one of your tools shows that tool's logo under its title, and a card that repeats shows **Repeats**. Select a card to send its title to Nod as your message. The card shows **On it…** while its turn or saved task works. It shows **Waiting for you** when that work needs your attention. **Waiting** means a saved task waits for someone or something else. **Done** or **Set up** means its saved tasks are complete. **Request sent** means the chat turn ended without a saved task. Read the delivered result to check what Nod completed.
 
 Nod keeps the saved tasks started from these cards available with recent tasks, so a card can still show completion when you return to the first conversation later.
 

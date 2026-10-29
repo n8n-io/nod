@@ -197,7 +197,14 @@
   outline-offset: -2px;
 }
 .ob-brain-provider-name {
+  display: grid;
   flex: 1;
+}
+.ob-brain-provider-hint {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 400;
+  line-height: 1.35;
 }
 .ob-brain-provider > svg,
 .ob-brain-lead {

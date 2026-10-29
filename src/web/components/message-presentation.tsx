@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import { mapLocationUrl, presentationSchema, type Presentation } from '../../shared/presentation';
 import { ArrowRight, ExternalLink, MapPin } from './icons';
 import { useArtifactDrawer } from './artifact-context';
+import { ConnectApps } from './presentation-apps';
 import { Booking } from './presentation-booking';
 import { PresentationChart } from './presentation-chart';
 import { Flights, Seats } from './presentation-travel';
@@ -30,13 +31,17 @@ export function MessagePresentation({ value }: { value: unknown }) {
   return (
     <section
       className={`message-presentation presentation-${visual.type}`}
-      aria-labelledby={titleId}
+      aria-labelledby={visual.type === 'apps' ? undefined : titleId}
+      aria-label={visual.type === 'apps' ? visual.title : undefined}
     >
-      <header className="presentation-heading">
-        <h3 id={titleId}>{visual.title}</h3>
-        {visual.caption && <p>{visual.caption}</p>}
-        {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
-      </header>
+      {visual.type !== 'apps' && (
+        <header className="presentation-heading">
+          <h3 id={titleId}>{visual.title}</h3>
+          {visual.caption && <p>{visual.caption}</p>}
+          {visual.asOf && <p className="presentation-footnote">As of {visual.asOf}</p>}
+        </header>
+      )}
+      {visual.type === 'apps' && <ConnectApps visual={visual} />}
       {visual.type === 'image' && <PresentedImage key={visual.artifactId} visual={visual} />}
       {visual.type === 'flights' && <Flights key={JSON.stringify(visual)} visual={visual} />}
       {visual.type === 'seats' && <Seats key={JSON.stringify(visual)} visual={visual} />}

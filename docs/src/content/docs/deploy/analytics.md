@@ -1,27 +1,25 @@
 ---
 title: Analytics and recordings
-description: What usage data Nod collects when you opt in, how to turn it off, and the rules for masked session recordings.
+description: What usage data Nod collects, how to turn it off, and the rules for masked session recordings.
 sidebar:
   order: 4
 ---
 
 This page explains what usage data Nod collects, how to turn it on or off, and what session recordings never show.
 
-Usage data is opt-in for each owner and off by default. Nod sends product events and masked session recordings to the Nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
+Usage data is on by default for each new owner, and you can turn it off at any time. Nod sends product events and masked session recordings to the Nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
 
 Nod never sends what you write, what Nod replies, what your apps return, or what you type into a form. Events describe what kind of thing happened, using fixed lists of values, counts and durations.
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the introduction, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
-
-Next to the switch, Nod says: "Help us make Nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
+**Share usage data** is on for a new owner. Turn it off, or back on, in **Settings → General**. Onboarding doesn't ask; its privacy step says that usage data is shared and links to this page, which lists everything that is sent. Owners who already saved a choice keep it. Usage events and recordings start only in the app; the native Welcome window sends neither.
 
 The deployment has a switch too. Nod collects only when both are on, and `NOD_ANALYTICS_ENABLED=false` always wins.
 
 ```mermaid
 flowchart LR
-  deploy{{Deployment<br/>allows it?}} -- yes --> owner{{You turned on<br/>Share usage data?}}
+  deploy{{Deployment<br/>allows it?}} -- yes --> owner{{Share usage data<br/>still on?}}
   deploy -- no --> off[Nothing sent]:::stop
   owner -- no --> off
   owner -- yes --> on[Events and<br/>masked recordings]:::go
@@ -92,8 +90,8 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | ------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                    | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/prepared`, `/usage`, `/vault`, `/settings`, `/browser`, `/credentials`, `/payments` or `/not-found`                                  |
 | `$snapshot`                    | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
-| `nod_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `intro`, `email`, `calendar`, `brain`, `apps`, `launch_at_login`; `direction`: `forward`, `back`                                                                                 |
-| `nod_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `email`, `calendar`                                                                                                                                                                         |
+| `nod_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `email`, `brain`, `privacy`; `direction`: `forward`, `back`                                                                                                                      |
+| `nod_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `email`                                                                                                                                                                                     |
 | `nod_settings_viewed`          | A settings tab appears                             | `tab`: `general`, `models`, `app_connections`, `memory`                                                                                                                                             |
 | `nod_tab_viewed`               | A tab inside a page appears or you switch to it    | `page`: `tasks`, `apps`; `tab`: `current`, `scheduled`, `previous`, `all`, `connected`                                                                                                              |
 | `nod_chat_message_sent`        | The server accepts a message you sent from the app | `has_attachments`, `is_reply`; `source`: `composer`, `task_card`, `ask_nod`, `task_reply`                                                                                                           |
@@ -110,7 +108,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `nod_model_selected`           | A model choice you made is saved                   | `provider`: a supported provider ID or `other`; `entry`: `settings`, `onboarding`; `recommended`. Never the model name                                                                              |
 | `nod_ui_error`                 | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself           |
 
-Onboarding asks about **Share usage data** in the introduction. Step events are sent only after you turn it on, so the welcome screen and introduction are usually not recorded. The native welcome is not recorded. The introduction is recorded if sharing was already enabled when it appears; enabling sharing there does not backfill earlier events. The Open at login question is reported when it appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Email and calendar can be skipped. The apps step always lets you continue without connecting a tool.
+Usage data is on by default, so onboarding step events are sent from the welcome screen on. The native welcome is not recorded. Setup finishes after the last required step. If you turned usage sharing off, onboarding sends nothing. Email can be skipped.
 
 ### What Nod does
 

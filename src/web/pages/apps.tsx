@@ -471,6 +471,7 @@ export function Apps({
       service: connection.slug,
       name: connection.name,
       logoUrl: connection.logoUrl,
+      broker: !connection.direct && !connection.accessPaths?.length,
       accountLabel: !addAccount && connection.connectionId ? accountLabel(connection) : undefined,
       connection,
       entry,
@@ -760,7 +761,7 @@ export function Apps({
                 {selectedCategories.length > 0 && (
                   <span className="app-category-count">{selectedCategories.length}</span>
                 )}
-                <ChevronDown size={16} aria-hidden="true" />
+                <ChevronDown size={12} aria-hidden="true" />
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content

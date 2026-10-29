@@ -513,6 +513,17 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   }));
   assert.ok(presentationSchema.safeParse(diagram).success);
   assert.ok(presentationSchema.safeParse(seats).success);
+  const apps = { ...common, type: 'apps', services: ['slack', 'google_drive'] };
+  assert.ok(presentationSchema.safeParse(apps).success);
+  for (const services of [
+    ['../apps'],
+    ['slack/connect'],
+    ['Slack'],
+    ['slack', 'slack'],
+    ['a', 'b', 'c', 'd'],
+    [],
+  ])
+    assert.equal(presentationSchema.safeParse({ ...apps, services }).success, false);
   const booking = {
     ...common,
     type: 'booking',

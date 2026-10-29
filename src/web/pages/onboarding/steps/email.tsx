@@ -1,5 +1,6 @@
 import { onboardingEmailProviders } from '../../../../shared/onboarding';
 import type { StepProps } from '..';
+import { emailCopy } from './connection-preview';
 import { PersonalConnection } from './personal-connection';
 
 export function Email(props: StepProps) {
@@ -8,8 +9,9 @@ export function Email(props: StepProps) {
       {...props}
       kind="email"
       providerSlugs={onboardingEmailProviders}
-      introduction="I can help you spend less time in your inbox."
-      benefit="Connect your email so I can catch you up on what matters and draft replies for you to review."
+      introduction={emailCopy.introduction}
+      action={emailCopy.action}
+      note={emailCopy.note}
     />
   );
 }

@@ -33,10 +33,8 @@ import './pages/browser.css';
 import './pages/privacy.css';
 import './pages/onboarding/onboarding.css';
 import './pages/onboarding/steps/welcome.css';
-import './pages/onboarding/steps/intro.css';
 import './pages/onboarding/steps/brain.css';
 import './pages/onboarding/steps/personal-connection.css';
-import './pages/onboarding/steps/apps.css';
 import './components/app-account-manager.css';
 import './components/whatsapp-setup.css';
 import './components/account-settings.css';
@@ -46,6 +44,7 @@ import './components/feedback-attachments.css';
 import './components/feedback-diagnostics.css';
 import './components/telegram-setup.css';
 import './components/models.css';
+import './components/connect-row.css';
 import './components/time-zone-picker.css';
 import './components/sidebar-unread.css';
 

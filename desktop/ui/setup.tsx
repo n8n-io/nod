@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
 import { PasswordInput } from '../../src/web/components/password-input';
 import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
-import { Introduction } from '../../src/web/pages/onboarding/steps/intro';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
+import { EmailPreview } from '../../src/web/pages/onboarding/steps/connection-preview';
+import composioLogo from '../../public/logos/composio.svg?url';
+import gmailLogo from '../../public/logos/gmail.svg?url';
+import outlookLogo from '../../public/logos/outlook.svg?url';
 import { startupMessage, type StartupStage } from '../../src/shared/desktop-startup';
 import { initializeFocusVisibility } from '../../src/web/lib/focus';
 import '../../src/web/theme.css';
@@ -13,7 +16,8 @@ import '../../src/web/components/setup-progress.css';
 import '../../src/web/components/controls.css';
 import '../../src/web/pages/onboarding/onboarding.css';
 import '../../src/web/pages/onboarding/steps/welcome.css';
-import '../../src/web/pages/onboarding/steps/intro.css';
+import '../../src/web/components/connect-row.css';
+import '../../src/web/pages/onboarding/steps/personal-connection.css';
 
 type RuntimeStatus = {
   phase?: string;
@@ -54,6 +58,7 @@ type Desktop = {
   openConnectionSettings(): Promise<void>;
   closeConnectionSettings(): Promise<void>;
   prepare(options?: { retry: boolean }): Promise<Status>;
+  warmup?(): Promise<void>;
   installWsl(): Promise<Status>;
   showStartupLog(): Promise<void>;
   importRuntime(): Promise<Status | undefined>;
@@ -204,7 +209,7 @@ function Startup() {
   const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
   const currentWelcome = useRef<WelcomeChoice | null>(null);
   const localChoiceSaved = useRef(false);
-  const [welcomeStep, setWelcomeStep] = useState<'welcome' | 'waiting' | 'intro'>('welcome');
+  const [welcomeStep, setWelcomeStep] = useState<'welcome' | 'waiting'>('welcome');
   const [handingOff, setHandingOff] = useState(false);
   const [welcomeError, setWelcomeError] = useState('');
   const pending = useRef(false);
@@ -239,7 +244,8 @@ function Startup() {
         applyPreferences(preferences);
         if (firstSetup) {
           localChoiceSaved.current = Boolean(settings.welcome);
-          acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+          acceptWelcome(settings.welcome ?? { usageData: true, continued: false });
+          void desktop.warmup?.().catch(() => {});
         }
       })
       .catch(() => {
@@ -253,7 +259,8 @@ function Startup() {
   }, []);
 
   useEffect(() => {
-    if (welcomeStep === 'waiting' && status.engineReady) setWelcomeStep('intro');
+    if (welcomeStep !== 'waiting' || !status.engineReady || !currentWelcome.current) return;
+    void saveWelcome({ ...currentWelcome.current, continued: true }).catch(() => {});
   }, [welcomeStep, status.engineReady]);
 
   async function run(action: () => Promise<Status | void>) {
@@ -339,39 +346,19 @@ function Startup() {
           }
         >
           <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
-            {welcomeStep === 'welcome' ? (
-              <Welcome
-                local
-                arrived="forward"
-                onBack={() => {}}
-                actionLabel="Use this computer"
-                onNext={() =>
-                  void run(async () => {
-                    if (!currentWelcome.current) return;
-                    await saveWelcome({ ...currentWelcome.current, continued: false });
-                    setWelcomeStep(status.engineReady ? 'intro' : 'waiting');
-                    return desktop?.prepare();
-                  })
-                }
-              />
-            ) : (
-              <Introduction
-                local
-                arrived="forward"
-                continuing={handingOff}
-                onBack={() => setWelcomeStep('welcome')}
-                onNext={() => {
-                  if (currentWelcome.current)
-                    void saveWelcome({ ...currentWelcome.current, continued: true }).catch(
-                      () => {},
-                    );
-                }}
-                usage={{
-                  enabled: welcome.usageData,
-                  onChange: (usageData) => saveWelcome({ usageData, continued: false }),
-                }}
-              />
-            )}
+            <Welcome
+              local
+              arrived="forward"
+              onBack={() => {}}
+              onNext={() =>
+                void run(async () => {
+                  if (!currentWelcome.current) return;
+                  await saveWelcome({ ...currentWelcome.current, continued: false });
+                  setWelcomeStep('waiting');
+                  return desktop?.prepare();
+                })
+              }
+            />
           </div>
           {welcomeError && (
             <p className="ob-native-error" role="alert">
@@ -423,6 +410,20 @@ function Startup() {
         : active.message ||
           (firstSetup ? 'Preparing your workspace and browser.' : 'Opening your saved workspace.');
 
+  if (firstSetup && welcomeStep === 'waiting' && !failure && !status.remote && !unlocking)
+    return (
+      <>
+        <div className="titlebar" aria-hidden="true" />
+        <OnboardingFrame step="email">
+          <div className="ob-screen">
+            <EmailPreview
+              logos={{ gmail: gmailLogo, outlook: outlookLogo, composio: composioLogo }}
+            />
+          </div>
+        </OnboardingFrame>
+      </>
+    );
+
   return (
     <>
       <div className="titlebar" aria-hidden="true" />
@@ -468,7 +469,7 @@ function Startup() {
                     applyPreferences(preferences);
                     if (firstSetup) {
                       localChoiceSaved.current = Boolean(settings.welcome);
-                      acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+                      acceptWelcome(settings.welcome ?? { usageData: true, continued: false });
                     }
                     setSettingsError('');
                   }

@@ -530,8 +530,9 @@ function AuthenticatedApp({
         <Onboarding
           user={session.user!}
           onFeedback={openFeedback}
-          usageData={account.usageData}
-          onUsageData={account.onUsageData}
+          usageShared={Boolean(session.analytics?.enabled)}
+          traces={account.traces}
+          onTraces={account.onTraces}
           onComplete={async () => {
             setFinishingOnboarding(true);
             if (!session.settings!.onboardingCompleted)

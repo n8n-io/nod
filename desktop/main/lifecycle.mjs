@@ -15,6 +15,10 @@ export function createDesktopLifecycle({
   let closed = false;
   let failure;
   let cleanupRequired = false;
+  let choose;
+  const chosen = new Promise((resolve) => {
+    choose = resolve;
+  });
   const controllers = new Set();
 
   function checkOpen(signal) {
@@ -60,6 +64,16 @@ export function createDesktopLifecycle({
         const prepared = await prepareRuntime({
           signal: controller.signal,
           onStorageReady: async (preparedStorage) => {
+            await Promise.race([
+              chosen,
+              new Promise((_, reject) =>
+                controller.signal.addEventListener(
+                  'abort',
+                  () => reject(new Error('Nod is closing.')),
+                  { once: true },
+                ),
+              ),
+            ]);
             checkOpen(controller.signal);
             await validateStart();
             checkOpen(controller.signal);
@@ -96,6 +110,7 @@ export function createDesktopLifecycle({
 
   function start(options) {
     checkOpen();
+    choose();
     if (starting) return starting;
     const controller = new AbortController();
     controllers.add(controller);
@@ -167,6 +182,7 @@ export function createDesktopLifecycle({
   return {
     warmup,
     start,
+    allowEngine: () => choose(),
     install,
     close,
     get busy() {

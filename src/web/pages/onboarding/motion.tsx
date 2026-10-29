@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useId,
   useRef,
   useState,
   type HTMLAttributes,
@@ -9,7 +8,7 @@ import {
 } from 'react';
 import { ChevronDown } from '../../components/icons';
 import { NodGlyph, prefersReducedMotion } from '../../components/motion';
-import { Button, Switch } from '../../components/ui';
+import { Button } from '../../components/ui';
 import { cn } from '../../lib/utils';
 
 export type RevealStep = { wait?: number; typing?: number };
@@ -77,52 +76,6 @@ export function useReveal(
 
 export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('ob-bubble', className)} {...props} />;
-}
-
-export function PreferenceBubble({
-  children,
-  label,
-  link,
-  checked,
-  saving,
-  disabled,
-  error,
-  onChange,
-}: {
-  children: ReactNode;
-  label: string;
-  link?: ReactNode;
-  checked: boolean;
-  saving: boolean;
-  disabled?: boolean;
-  error: string;
-  onChange(value: boolean): void;
-}) {
-  const id = useId();
-  return (
-    <Bubble onClick={(event) => event.stopPropagation()}>
-      <p id={`${id}-reason`}>{children}</p>
-      <div className="ob-preference-toggle">
-        <Switch
-          id={id}
-          checked={checked}
-          disabled={disabled}
-          aria-busy={saving}
-          aria-describedby={`${id}-reason`}
-          onCheckedChange={onChange}
-        />
-        <span>
-          <label htmlFor={id}>{label}</label>
-          {link && <> · {link}</>}
-        </span>
-      </div>
-      {error && (
-        <p className="ob-preference-error" role="alert">
-          {error}
-        </p>
-      )}
-    </Bubble>
-  );
 }
 
 export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -246,7 +199,7 @@ export function Footer({
   backLabel?: string;
   onSkip?(): void;
   skipLabel?: string;
-  onNext(): void;
+  onNext?(): void;
   nextLabel?: ReactNode;
   nextDisabled?: boolean;
   busy?: boolean;
@@ -266,9 +219,11 @@ export function Footer({
             {skipLabel}
           </Button>
         )}
-        <Button className="ob-next" onClick={onNext} disabled={!show || nextDisabled || busy}>
-          {nextLabel}
-        </Button>
+        {onNext && (
+          <Button className="ob-next" onClick={onNext} disabled={!show || nextDisabled || busy}>
+            {nextLabel}
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -278,7 +233,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <span className={cn('ob-select', className)}>
       <select className="input" {...props} />
-      <ChevronDown size={16} aria-hidden="true" />
+      <ChevronDown size={12} aria-hidden="true" />
     </span>
   );
 }

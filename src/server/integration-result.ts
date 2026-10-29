@@ -95,6 +95,18 @@ function fieldValue(record: Record<string, unknown>, names: string[]) {
   return typeof entry === 'string' ? entry : entry === undefined ? '' : JSON.stringify(entry);
 }
 
+const verificationHidden =
+  'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.';
+const uncheckedHidden =
+  'Nod could not check whether this email is for signing in, so its content is private.';
+
+export function hiddenEmail(value: unknown) {
+  const message = (value as { message?: unknown } | null)?.message;
+  return (
+    typeof value === 'object' && (message === verificationHidden || message === uncheckedHidden)
+  );
+}
+
 export async function privateEmailResult(
   value: unknown,
   check: MailCheck,
@@ -174,10 +186,7 @@ export async function privateEmailResult(
         return {
           ...safe,
           ...(metadata.length && { headers: metadata }),
-          message:
-            checks[index] === true
-              ? 'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.'
-              : 'Nod could not check whether this email is for signing in, so its content is private.',
+          message: checks[index] === true ? verificationHidden : uncheckedHidden,
         };
       }
       return Object.fromEntries(children.map(([key, render]) => [key, render(checks)]));

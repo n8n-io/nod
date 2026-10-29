@@ -1209,6 +1209,7 @@ async function initializeApplication(
                 binding,
                 slug: account.slug,
                 name: account.name,
+                ...(account.accountEmail ? { email: account.accountEmail } : {}),
               }
             : undefined;
         }),

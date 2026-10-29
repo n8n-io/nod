@@ -382,6 +382,33 @@ test('failed computer shutdown retains the runtime and permits an explicit retry
   assert.equal(stops, 2);
 });
 
+test('runtime warmup holds the engine until local setup is chosen', async () => {
+  for (const allowed of [false, true]) {
+    let engineStarts = 0;
+    const lifecycle = createDesktopLifecycle({
+      prepareRuntime: async ({ onStorageReady }) => {
+        const runtime = { close: async () => {} };
+        await onStorageReady(runtime);
+        return runtime;
+      },
+      validateStart: async () => {},
+      startEngine: async () => {
+        engineStarts++;
+      },
+      stopEngine: async () => {},
+      onRuntimeStatus: () => {},
+    });
+    if (allowed) lifecycle.allowEngine();
+    const warming = lifecycle.warmup();
+    for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+    assert.equal(engineStarts, allowed ? 1 : 0);
+    await lifecycle.start();
+    await warming;
+    assert.equal(engineStarts, 2);
+    await lifecycle.close();
+  }
+});
+
 async function runningDesktop(
   t,
   request,
@@ -1008,7 +1035,7 @@ test('native Welcome waits for local selection and storage before system-key acc
   }
 });
 
-test('local selection starts preparation and preserves consent through introduction and recovery', async (t) => {
+test('local selection starts preparation and hands off to app onboarding once the engine is ready', async (t) => {
   const output = await mkdtemp(join(tmpdir(), 'nod-native-storage-gate-'));
   t.after(() => rm(output, { recursive: true, force: true }));
   await buildDesktopUI(output);
@@ -1027,8 +1054,9 @@ test('local selection starts preparation and preserves consent through introduct
       const calls = [];
       const choices = [];
       let connections = 0;
+      let warmups = 0;
       let publish;
-      let saved = { usageData: false, continued: false };
+      let saved = { usageData: true, continued: false };
       page.window.nodDesktop = {
         onStatus(listener) {
           publish = listener;
@@ -1038,6 +1066,9 @@ test('local selection starts preparation and preserves consent through introduct
         getSettings: async () => (scenario === 'ready' ? { welcome: saved } : {}),
         openConnectionSettings: async () => {
           connections++;
+        },
+        warmup: async () => {
+          warmups++;
         },
         status: async () => ({
           phase: 'preparing',
@@ -1065,12 +1096,13 @@ test('local selection starts preparation and preserves consent through introduct
       await settle(() => page.window.document.querySelector('[data-step="welcome"] button'));
       let waited = false;
       const observer = new page.window.MutationObserver(() => {
-        waited ||= Boolean(page.window.document.querySelector('.setup-progress'));
+        waited ||= Boolean(page.window.document.querySelector('[data-step="email"]'));
       });
       observer.observe(page.window.document, { childList: true, subtree: true });
       t.after(() => observer.disconnect());
       assert.equal(calls.length, 0);
       assert.equal(choices.length, 0);
+      await settle(() => warmups === 1);
       if (scenario === 'remote') {
         page.window.document.querySelector('.server-entry').click();
         await settle(() => connections === 1);
@@ -1079,63 +1111,50 @@ test('local selection starts preparation and preserves consent through introduct
         return;
       }
       page.window.document.querySelector('[data-step="welcome"] button').click();
-      await settle(() => choices.length === 1 && calls.length === 1);
-      assert.deepEqual(JSON.parse(JSON.stringify(choices)), [
-        { usageData: false, continued: false },
-      ]);
-      if (scenario === 'ready') {
-        await settle(() => page.window.document.querySelector('[role="switch"]'));
-        assert.equal(waited, false);
-      } else {
-        await settle(() => page.window.document.querySelector('.setup-progress'));
-        assert.equal(page.window.document.querySelector('[role="switch"]'), null);
+      await settle(() => choices.length >= 1 && calls.length >= 1);
+      assert.deepEqual(JSON.parse(JSON.stringify(choices[0])), {
+        usageData: true,
+        continued: false,
+      });
+      await settle(() => page.window.document.querySelector('[data-step="email"]'));
+      assert.equal(page.window.document.querySelector('[role="switch"]'), null);
+      assert.ok(
+        [...page.window.document.querySelectorAll('[data-step="email"] button')].every(
+          (button) => button.disabled,
+        ),
+      );
+      if (scenario === 'retry') {
+        const failure = {
+          phase: 'error',
+          engineReady: false,
+          error: 'Synthetic storage unavailable',
+        };
+        publish(failure);
+        initialRuntime.resolve(failure);
+        await settle(() => page.window.document.querySelector('[role="alert"]'));
+        page.window.document.querySelector('.recovery-actions button').click();
+        page.window.document.querySelector('.recovery-actions button').click();
+        await settle(() => calls.length === 2);
+        assert.equal(calls[0], undefined);
+        assert.deepEqual(JSON.parse(JSON.stringify(calls[1])), { retry: true });
+      }
+      if (scenario !== 'ready') {
         assert.equal(choices.length, 1);
-        assert.equal(calls.length, 1);
-        if (scenario === 'retry') {
-          const failure = {
-            phase: 'error',
-            engineReady: false,
-            error: 'Synthetic storage unavailable',
-          };
-          publish(failure);
-          initialRuntime.resolve(failure);
-          await settle(() => page.window.document.querySelector('[role="alert"]'));
-          page.window.document.querySelector('.recovery-actions button').click();
-          page.window.document.querySelector('.recovery-actions button').click();
-          await settle(() => calls.length === 2);
-          assert.equal(calls[0], undefined);
-          assert.deepEqual(JSON.parse(JSON.stringify(calls[1])), { retry: true });
-        }
         publish({
           phase: 'preparing',
           engineReady: true,
           runtime: { phase: 'preparing', stage: 'workspace' },
         });
-        await settle(() => page.window.document.querySelector('[role="switch"]'));
-        assert.equal(page.window.document.querySelector('.setup-progress'), null);
       }
-      page.window.document.querySelector('[role="switch"]').click();
       await settle(() => choices.length === 2);
-      assert.deepEqual(JSON.parse(JSON.stringify(choices)), [
-        { usageData: false, continued: false },
-        { usageData: true, continued: false },
-      ]);
-      waited = false;
-      page.window.document.querySelector('.ob-introduction-cta button').click();
-      await settle(() => choices.length === 3);
-      assert.deepEqual(JSON.parse(JSON.stringify(choices[2])), {
+      assert.deepEqual(JSON.parse(JSON.stringify(choices[1])), {
         usageData: true,
         continued: true,
       });
       await settle(() => calls.length === (scenario === 'retry' ? 3 : 2));
-      assert.ok(page.window.document.querySelector('.ob-introduction'));
-      assert.equal(page.window.document.querySelector('.setup-progress'), null);
-      assert.equal(waited, false);
       runtime.resolve({ phase: 'ready', engineReady: true, runtime: { phase: 'ready' } });
       await new Promise((accept) => setTimeout(accept, 20));
-      assert.ok(page.window.document.querySelector('.ob-introduction'));
-      assert.equal(page.window.document.querySelector('.setup-progress'), null);
-      assert.equal(waited, false);
+      assert.equal(choices.length, 2);
     });
   }
 });

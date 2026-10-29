@@ -302,7 +302,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                   <>
                     <VoiceProviderIcon provider={providerSelection} />
                     <span className="voice-provider-name">{providerNames[providerSelection]}</span>
-                    <ChevronDown size={16} aria-hidden="true" />
+                    <ChevronDown size={12} aria-hidden="true" />
                   </>
                 }
               >
