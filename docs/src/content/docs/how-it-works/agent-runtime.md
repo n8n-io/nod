@@ -55,7 +55,10 @@ Tools and model usage keep this scope. `turn_events` records execution and tool 
 
 `model_usage` is the only cost ledger. Each model request reports one usage ID, including subagent, compaction, review, and memory requests.
 Repeated reports with the same ID create no extra charge record. Parent runs never add child costs again.
-All totals come from these ledger rows. Missing prices stay unknown.
+All totals come from these ledger rows. Missing prices stay unknown. Shutdown waits for pending usage writes after the model sessions close. A failed write makes shutdown fail.
+Usage that arrives after a conversation reset stays on the owner's ledger without a turn link. A reference to another owner's turn is refused.
+Checks linked to a turn count toward that session's task check-in, even when the agent is not running.
+A stopped turn does not wait for a source check that ignores cancellation. A late result cannot mark the turn complete.
 
 ## Keeping the context small
 
@@ -187,7 +190,7 @@ For Anthropic API models, Nod moves the system text's cache marker to that same 
 
 ChatGPT subscriptions and other model APIs keep their existing cache settings.
 
-When a model's cache lifetime is known, as for Anthropic, the chat's Pi session stays open after a turn so Pi can keep a large conversation's cache warm for up to 30 minutes. Each refresh is recorded in Usage.
+When a model's cache lifetime is known, as for Anthropic, the chat's Pi session stays open after a turn so Pi can keep a large conversation's cache warm for up to 30 minutes. Each refresh gets one Usage record, even if it fails or is cancelled. A cancelled refresh stays unknown if its usage has not arrived. Stop does not wait for a later reply.
 
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 

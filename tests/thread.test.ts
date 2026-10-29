@@ -4909,26 +4909,70 @@ test(
                 await reset();
                 let verdict = false;
                 let tools = false;
+                let sourceRevision: string | undefined;
+                let checks = 0;
+                let owner = {};
+                let curatorId = 'fixture';
+                let fail = false;
+                let rotateSource = false;
+                let allowed = true;
+                let stopAfterCheck = false;
+                const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
-                  sources: async () =>
-                    (await options.sources()).map((source) => ({ ...source, tools })),
+                  sources: async () => {
+                    const result = (await options.sources()).map((source) => ({
+                      ...source,
+                      ...(sourceRevision ? { revision: sourceRevision } : {}),
+                      tools,
+                    }));
+                    if (rotateSource) {
+                      sourceRevision = 'screening-raced-revision';
+                      rotateSource = false;
+                    }
+                    return result;
+                  },
                   curator: {
-                    id: 'fixture',
+                    get id() {
+                      return curatorId;
+                    },
                     configured: true,
-                    curate: async () => ({ attention: verdict }),
+                    curate: async () => {
+                      checks++;
+                      if (fail) throw new Error('Synthetic failed check');
+                      if (stopAfterCheck) allowed = false;
+                      return { attention: verdict };
+                    },
                   },
                 });
-                const screen = async () => {
-                  version = randomUUID();
-                  screening.release(turnId);
+                let issueDue = false;
+                let saveMode: 'same' | 'changed' | undefined;
+                const screen = async (
+                  changeVersion = true,
+                  rotate = false,
+                  fullStatus?: 'succeeded' | 'failed' | 'cancelled',
+                ) => {
+                  const checkTurn = { ...ref, turnId: randomUUID() };
+                  await db.pool.query(
+                    "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic source check','running',true,true,now())",
+                    [checkTurn.turnId, ownerId, currentThread],
+                  );
+                  if (changeVersion) version = randomUUID();
                   await db.pool.query(
                     'UPDATE proactive_sources SET claimed_turn=$3,signal_version=signal_version+1 WHERE owner_id=$1 AND source_id=$2',
-                    [ownerId, sourceId, turnId],
+                    [ownerId, sourceId, checkTurn.turnId],
                   );
-                  const quiet = await (await screening.context(ref))!.screen!(
-                    {},
+                  if (issueDue)
+                    await db.pool.query(
+                      'UPDATE proactive_issues SET claimed_turn=$2 WHERE owner_id=$1',
+                      [ownerId, checkTurn.turnId],
+                    );
+                  const context = (await screening.context(checkTurn))!;
+                  rotateSource = rotate;
+                  const quiet = await context.screen!(
+                    owner,
                     new AbortController().signal,
+                    () => allowed,
                   );
                   const { dirty } = (
                     await db.pool.query(
@@ -4936,9 +4980,125 @@ test(
                       [ownerId, sourceId],
                     )
                   ).rows[0];
+                  let status = fullStatus ?? (quiet ? 'succeeded' : 'failed');
+                  try {
+                    if (fullStatus)
+                      await context.read(
+                        { sourceId, ...(tools ? { tool: 'fixture_read', args: {} } : {}) },
+                        new AbortController().signal,
+                      );
+                    if (fullStatus && saveMode) {
+                      const draft = proposal({ matterKey: 'screened-native-cache' });
+                      if (saveMode === 'changed') {
+                        version = randomUUID();
+                        assert.equal(
+                          (
+                            (await context.update(draft, new AbortController().signal)) as {
+                              status: string;
+                            }
+                          ).status,
+                          'source_changed',
+                        );
+                      } else await context.update(draft, new AbortController().signal);
+                    }
+                  } catch (error) {
+                    status = 'failed';
+                    throw error;
+                  } finally {
+                    await db.pool.query(
+                      'UPDATE turns SET status=$2,finished_at=now() WHERE id=$1',
+                      [checkTurn.turnId, status],
+                    );
+                    await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [
+                      checkTurn.turnId,
+                    ]);
+                    screening.release(checkTurn.turnId);
+                  }
                   return [quiet, dirty];
                 };
                 await transaction((client) => engine.signal(sourceId, client), db.pool);
+                assert.deepEqual(await screen(), [true, false]);
+                const firstChecks = checks;
+                verdict = true;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, firstChecks);
+                await preferences.update({
+                  notificationRule: 'Prepare current synthetic commitments.',
+                });
+                assert.deepEqual(await screen(false), [false, true]);
+                assert.equal(checks, firstChecks + 1);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, firstChecks + 2);
+                owner = { memory: 'The owner needs a synthetic draft for each current item.' };
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                curatorId = 'fixture-replaced';
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                const beforeRace = checks;
+                assert.deepEqual(await screen(false, true), [false, true]);
+                assert.equal(checks, beforeRace);
+                assert.deepEqual(await screen(false), [true, false]);
+                fail = true;
+                assert.deepEqual(await screen(), [false, true]);
+                const beforeRetry = checks;
+                fail = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, beforeRetry + 1);
+                verdict = true;
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                const afterFull = checks;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, afterFull);
+                saveMode = 'same';
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [true, false]);
+                await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
+                saveMode = 'changed';
+                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [false, true]);
+                saveMode = undefined;
+                for (const status of ['failed', 'cancelled'] as const) {
+                  assert.deepEqual(await screen(true, false, status), [false, true]);
+                  const afterFailure = checks;
+                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.equal(checks, afterFailure + 1);
+                }
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                for (const available of [null, false]) {
+                  await db.pool.query(
+                    'UPDATE proactive_evidence SET available=$3 WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId, available],
+                  );
+                  verdict = true;
+                  const beforeRecovery = checks;
+                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.equal(checks, beforeRecovery + 1);
+                  verdict = false;
+                  assert.deepEqual(await screen(false), [true, false]);
+                }
+                sourceRevision = 'screening-new-revision';
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                sourceRevision = undefined;
+                await preferences.update({ notificationRule });
+                verdict = false;
+                allowed = false;
+                const beforeBudget = checks;
+                assert.deepEqual(await screen(), [false, true]);
+                assert.equal(checks, beforeBudget);
+                allowed = true;
+                stopAfterCheck = true;
+                assert.deepEqual(await screen(), [false, true]);
+                assert.equal(checks, beforeBudget + 1);
+                allowed = true;
+                stopAfterCheck = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
                 assert.deepEqual(await screen(), [false, true]);
@@ -4954,6 +5114,10 @@ test(
                 verdict = false;
                 await save({ matterKey: 'screened-matter' });
                 assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(false, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(false), [true, false]);
+                issueDue = true;
+                assert.deepEqual(await screen(false), [false, true]);
                 screening.release(turnId);
               },
             );

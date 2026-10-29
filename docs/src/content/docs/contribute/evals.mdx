@@ -80,6 +80,8 @@ pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
+Each attempt reads the cost ledger again after the application closes and before its test schema is removed. The result includes model work that ran during grading and shutdown, including work in a failed attempt. A failed shutdown or missing final read leaves the total cost unknown. Task latency still ends before grading. Judge and simulated owner costs share one total, separate from product model cost.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.
@@ -649,6 +651,8 @@ pnpm run eval:capability run --scenario proactivity-stress-late-page-engine,proa
 See [Proactivity evidence](/how-it-works/proactivity-evidence/) for the method and claim limits. A pass requires correct quiet behaviour as well as useful prepared work. Consolidation is valid when one enquiry keeps all required account details.
 
 The `proactivity-stress-endurance-*` cases add an 18-page scan across bounded wakes and 12 event phases for repeated signals, dismissal or snooze. Each has a changed-context variant. Keep the single-message long-scan check: saving routine work must not consume the attention needed for a later deadline.
+
+Late-page background probes check all source pages, the required prepared work, and its notification. A ready state from an unrelated source does not establish those results. The probes keep this page and outcome evidence even if a later scan has started.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-engine,proactivity-stress-endurance-holdout-late-page-engine --repeat 2 --label proactive-endurance

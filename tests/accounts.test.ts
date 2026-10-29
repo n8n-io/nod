@@ -18,7 +18,7 @@ import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/s
 import { createLedger } from '../src/server/ledger.ts';
 import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
-import type { DecisionBatchRequest, DecisionQuestion } from '../src/ports/decisions.ts';
+import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
@@ -74,8 +74,8 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
       configured: true,
       async curate({ input }) {
         curatorRequests++;
-        const { emails } = input as { emails: Array<{ id: number }> };
-        return { results: emails.map(({ id }) => ({ id, access: false })) };
+        assert.deepEqual(Object.keys(input), ['email']);
+        return { access: false };
       },
     },
   });
@@ -105,14 +105,14 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
   const emails = Array.from({ length: 100 }, () => request.input.email);
   assert.deepEqual(await checkMail(emails), Array<boolean>(100).fill(false));
   assert.equal(availabilityReads - beforeAvailability, 1);
-  assert.equal(curatorRequests, 10);
+  assert.equal(curatorRequests, 100);
   assert.deepEqual(
     { reads, writes, resolutions, requests },
     { reads: 0, writes: 0, resolutions: 0, requests: 0 },
   );
   assert.deepEqual(await checkMail(emails, AbortSignal.abort()), Array.from({ length: 100 }));
   assert.equal(availabilityReads - beforeAvailability, 1);
-  assert.equal(curatorRequests, 10);
+  assert.equal(curatorRequests, 100);
 
   configured = true;
   assert.equal(decision.configured, true);
@@ -123,7 +123,7 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
   );
   spent = 1;
   assert.deepEqual(await checkMail([request.input.email]), [undefined]);
-  assert.equal(curatorRequests, 10);
+  assert.equal(curatorRequests, 100);
   assert.deepEqual(
     { reads, writes, resolutions, requests },
     { reads: 2, writes: 1, resolutions: 1, requests: 1 },
@@ -147,339 +147,10 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
   assert.equal(requests, 1);
 });
 
-test('native decision batches preserve identities, caller accounting and scalar provider contracts', async () => {
-  let provider: DecisionConnection['provider'] = 'openai';
-  let limitChecks = 0;
-  let active = 0;
-  let maximum = 0;
-  const writes: unknown[][] = [];
-  const requests: Array<{ provider: string; body: any }> = [];
-  const ledger = createLedger({
-    pool: {
-      async query(sql: string, values: unknown[]) {
-        if (sql.startsWith('SELECT monthly_usd')) {
-          limitChecks++;
-          return { rows: [{ monthly_usd: 10, task_usd: null, spent: 0 }] };
-        }
-        assert.match(sql, /INSERT INTO model_usage/);
-        writes.push(values);
-        return { rows: [] };
-      },
-    } as never,
-    ownerId: 'synthetic-native-decisions',
-  });
-  const decision = ledger.decisions(
-    createDecisionModel({
-      canBatch: () => provider === 'openai',
-      resolve: async () => ({ provider, key: 'synthetic-decision-key' }),
-      fetch: async (_url, options) => {
-        const body = JSON.parse(String(options?.body));
-        requests.push({ provider, body });
-        active++;
-        maximum = Math.max(maximum, active);
-        await new Promise((resolve) => setImmediate(resolve));
-        active--;
-        if (provider !== 'openai') {
-          assert.deepEqual(body.questions, {
-            access: {
-              type: 'choice',
-              instructions: 'Synthetic policy',
-              criteria: { false: 'Ordinary', true: 'Private' },
-            },
-          });
-          assert.deepEqual(body.state, { fixture: 'scalar' });
-          return Response.json({
-            answers: { access: { type: 'choice', choice: 'false' } },
-            usage: { input_tokens: 5 },
-          });
-        }
-        if (body.questions[0].name === 'answer') {
-          assert.equal(body.questions.length, 1);
-          assert.equal(body.questions[0].instructions, 'Synthetic priority\nSynthetic policy');
-          assert.deepEqual(JSON.parse(body.input), { fixture: 'approval' });
-          return Response.json({
-            answers: [{ name: 'answer', type: 'choice', choice: 'yes' }],
-            usage: { input_tokens: 5 },
-          });
-        }
-        assert.ok(body.questions.length <= 10);
-        assert.ok(body.input.length <= 32_000);
-        const input = JSON.parse(body.input);
-        assert.deepEqual(
-          body.questions.map((question: any) => question.name),
-          input.emails.map((email: any) => `access_${email.id}`),
-        );
-        return Response.json({
-          answers: body.questions.toReversed().map((question: any) => ({
-            name: question.name,
-            type: 'choice',
-            choice: Number(question.name.slice(7)) % 7 === 0,
-          })),
-          usage: { input_tokens: 5, output_tokens: 1 },
-        });
-      },
-    }),
-  );
-  let fallback = 0;
-  const check = createMailCheck({
-    decisions: decision,
-    curator: {
-      id: 'synthetic-fallback',
-      configured: true,
-      async curate() {
-        fallback++;
-        throw new Error('Unexpected fallback');
-      },
-    },
-  });
-  const emails = Array.from({ length: 100 }, (_, id) => ({
-    from: 'first@example.test',
-    subject: `Receipt ${id}`,
-    text: 'Synthetic private-body marker',
-  }));
-  const firstTurn = randomUUID();
-  const secondTurn = randomUUID();
-  const [first, second] = await Promise.all([
-    ledger.withTurn(firstTurn, () => check(emails)),
-    ledger.withTurn(secondTurn, () =>
-      check(emails.slice(0, 10).map((email) => ({ ...email, from: 'second@example.test' }))),
-    ),
-  ]);
-  assert.deepEqual(
-    first,
-    emails.map((_, id) => id % 7 === 0),
-  );
-  assert.deepEqual(
-    second,
-    emails.slice(0, 10).map((_, id) => id % 7 === 0),
-  );
-  assert.equal(
-    requests.filter(({ body }) => JSON.parse(body.input).emails[0].from === 'first@example.test')
-      .length,
-    10,
-  );
-  assert.equal(requests.length, 11);
-  assert.equal(limitChecks, 11);
-  assert.equal(writes.length, 11);
-  assert.equal(writes.filter((values) => values[2] === firstTurn).length, 10);
-  assert.equal(writes.filter((values) => values[2] === secondTurn).length, 1);
-  assert.ok(writes.every((values) => JSON.parse(String(values[9])).operation === 'access'));
-  assert.ok(!JSON.stringify(writes).includes('private-body marker'));
-  assert.equal(maximum, 6);
-  assert.equal(active, 0);
-  assert.equal(fallback, 0);
-
-  const oversized = [
-    ...emails.slice(0, 3).map((email) => ({ ...email, text: '\\'.repeat(8000) })),
-    { ...emails[0]!, text: 'x'.repeat(32_001) },
-  ];
-  assert.deepEqual(await check(oversized), [true, false, false, undefined]);
-  assert.equal(requests.length, 14);
-
-  assert.deepEqual(
-    await decision.check({
-      instructions: 'Synthetic policy',
-      input: { fixture: 'approval' },
-      question: {
-        name: 'answer',
-        instructions: 'Synthetic priority',
-        choices: [
-          { value: 'yes', description: 'Proceed' },
-          { value: 'no', description: 'Stop' },
-        ],
-      },
-    }),
-    { answer: 'yes' },
-  );
-  assert.equal(JSON.parse(String(writes.at(-1)![9])).operation, 'approval_reply');
-  const captured = decision.checkBatch!;
-  const batch: DecisionBatchRequest = {
-    instructions: 'Synthetic policy',
-    input: { fixture: 'batch' },
-    operation: 'access',
-    questions: [
-      {
-        name: 'access_0',
-        choices: [
-          { value: false, description: 'Ordinary' },
-          { value: true, description: 'Private' },
-        ],
-      },
-    ],
-  };
-  provider = 'typesafe';
-  assert.equal(decision.checkBatch, undefined);
-  const before = requests.length;
-  await assert.rejects(captured(batch), /changed before/);
-  assert.equal(requests.length, before);
-  for (const selected of ['typesafe', 'openrouter'] as const) {
-    provider = selected;
-    assert.equal(decision.checkBatch, undefined);
-    assert.deepEqual(
-      await decision.check({
-        instructions: 'Synthetic policy',
-        input: { fixture: 'scalar' },
-        question: {
-          name: 'access',
-          choices: [
-            { value: false, description: 'Ordinary' },
-            { value: true, description: 'Private' },
-          ],
-        },
-      }),
-      { access: false },
-    );
-  }
-  assert.equal(fallback, 0);
-});
-
-test('native decision batches reject incomplete or malformed answers without curator fallback', async (t) => {
-  const valid = [
-    { name: 'access_0', type: 'choice', choice: false },
-    { name: 'access_1', type: 'choice', choice: true },
-  ];
-  const malformed = [
-    valid.slice(0, 1),
-    [valid[0], valid[0]],
-    [valid[0], { ...valid[1], name: 'access_9' }],
-    [valid[0], { ...valid[1], choice: 'false' }],
-    [valid[0], { ...valid[1], type: 'text' }],
-    [...valid, { ...valid[1], name: 'access_2' }],
-  ];
-  for (const [index, answers] of malformed.entries())
-    await t.test(`invalid batch ${index + 1}`, async () => {
-      let fallback = 0;
-      const usage: ProviderUsageEvent[] = [];
-      const base = createDecisionModel({
-        canBatch: () => true,
-        resolve: async () => ({ provider: 'openai', key: 'synthetic-key' }),
-        fetch: async () => Response.json({ answers, usage: { input_tokens: 5 } }),
-      });
-      const check = createMailCheck({
-        decisions: {
-          check: base.check,
-          checkBatch: (request, signal) =>
-            base.checkBatch!(request, signal, (event) => usage.push(event)),
-        },
-        curator: {
-          id: 'synthetic',
-          configured: true,
-          curate: async () => {
-            fallback++;
-            return { access: false };
-          },
-        },
-      });
-      assert.deepEqual(
-        await check([
-          { from: 'ordinary@example.test', subject: 'Receipt', text: 'Order dispatched.' },
-          {
-            from: 'security@example.test',
-            subject: 'Sign in',
-            text: 'Synthetic verification code 381749.',
-          },
-        ]),
-        [undefined, undefined],
-      );
-      assert.equal(fallback, 0);
-      assert.equal(usage.length, 1);
-      assert.equal(usage[0]!.status, 'failed');
-      assert.equal(usage[0]!.operation, 'access');
-      assert.equal(usage[0]!.inputTokens, 5);
-    });
-});
-
-test('queued native decision batches recheck spending limits, provider changes and cancellation', async (t) => {
-  for (const stop of ['limit', 'provider', 'configuration', 'cancel'] as const)
-    await t.test(stop, async () => {
-      let spent = 0;
-      let configured = true;
-      let limitChecks = 0;
-      let provider: DecisionConnection['provider'] = 'openai';
-      let calls = 0;
-      let fallback = 0;
-      const pending: Array<() => void> = [];
-      const ledger = createLedger({
-        ownerId: 'synthetic-queued-decisions',
-        pool: {
-          query: async (sql: string) => {
-            if (!sql.startsWith('SELECT monthly_usd')) return { rows: [] };
-            limitChecks++;
-            return { rows: [{ monthly_usd: 1, spent }] };
-          },
-        } as never,
-      });
-      const check = createMailCheck({
-        decisions: ledger.decisions(
-          createDecisionModel({
-            configured: () => configured,
-            canBatch: () => provider === 'openai',
-            resolve: async () => ({ provider, key: 'synthetic-key' }),
-            fetch: async (_url, options) => {
-              calls++;
-              const body = JSON.parse(String(options?.body));
-              return new Promise<Response>((resolve) =>
-                pending.push(() =>
-                  resolve(
-                    Response.json({
-                      answers: body.questions.map((question: any) => ({
-                        name: question.name,
-                        type: 'choice',
-                        choice: false,
-                      })),
-                      usage: { input_tokens: 5 },
-                    }),
-                  ),
-                ),
-              );
-            },
-          }),
-        ),
-        curator: {
-          id: 'synthetic',
-          configured: true,
-          curate: async () => {
-            fallback++;
-            return { access: false };
-          },
-        },
-      });
-      const controller = new AbortController();
-      const result = check(
-        Array.from({ length: 70 }, () => ({
-          from: 'fixture@example.test',
-          subject: 'Receipt',
-          text: 'Order dispatched.',
-        })),
-        controller.signal,
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(calls, 6);
-      if (stop === 'limit') spent = 1;
-      if (stop === 'provider') provider = 'typesafe';
-      if (stop === 'configuration') configured = false;
-      if (stop === 'cancel') {
-        controller.abort();
-        assert.deepEqual(await result, Array.from({ length: 70 }));
-      }
-      pending.splice(0).forEach((finish) => finish());
-      const checked = await result;
-      if (stop !== 'cancel')
-        assert.deepEqual(checked, [
-          ...Array<boolean>(60).fill(false),
-          ...Array.from({ length: 10 }),
-        ]);
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(calls, 6);
-      assert.equal(fallback, 0);
-      if (stop === 'configuration') assert.equal(limitChecks, 6);
-    });
-});
-
 test('decision requests revalidate capability and cancellation after resolving credentials', async (t) => {
-  for (const stop of ['provider', 'configuration', 'cancel', 'scalar-cancel'] as const)
+  for (const stop of ['configuration', 'cancel'] as const)
     await t.test(stop, async () => {
-      let provider: DecisionConnection['provider'] = 'openai';
+      const provider: DecisionConnection['provider'] = 'openai';
       let configured = true;
       let calls = 0;
       let fallback = 0;
@@ -493,7 +164,6 @@ test('decision requests revalidate capability and cancellation after resolving c
       });
       const model = createDecisionModel({
         configured: () => configured,
-        canBatch: () => provider === 'openai',
         resolve: async () => {
           const selected = provider;
           entered();
@@ -508,11 +178,9 @@ test('decision requests revalidate capability and cancellation after resolving c
           });
         },
       });
-      const captured = model.checkBatch;
       const check = createMailCheck({
         decisions: {
           check: model.check,
-          ...(stop !== 'scalar-cancel' && { checkBatch: captured }),
         },
         curator: {
           id: 'synthetic',
@@ -529,9 +197,8 @@ test('decision requests revalidate capability and cancellation after resolving c
         controller.signal,
       );
       await resolving;
-      if (stop === 'provider') provider = 'typesafe';
       if (stop === 'configuration') configured = false;
-      if (stop === 'cancel' || stop === 'scalar-cancel') controller.abort();
+      if (stop === 'cancel') controller.abort();
       release();
       assert.deepEqual(await result, [undefined]);
       await new Promise((resolve) => setImmediate(resolve));

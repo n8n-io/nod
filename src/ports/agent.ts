@@ -104,7 +104,11 @@ export interface RuntimeContext {
     sources: Array<Omit<import('./proactivity.ts').ObservationSource, 'revision'>>;
     read(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
     update(input: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
-    screen?(owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean>;
+    screen?(
+      owner: Record<string, unknown>,
+      signal: AbortSignal,
+      canContinue?: () => boolean,
+    ): Promise<boolean>;
   };
   threadId: string;
   turnId: string;

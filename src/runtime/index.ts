@@ -83,6 +83,7 @@ const delimitedTools = new Set([
   'apps',
   'delegate',
   'browser',
+  'browser_session',
   'web_search',
   'fetch_content',
   'get_search_content',
@@ -131,6 +132,10 @@ export function createAgentRuntime(dependencies: {
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
   keepWarm?(threadId: string): Promise<boolean>;
+  withExecution?<T>(
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+    work: () => T,
+  ): T;
   analyzeImages?(
     images: AgentImage[],
     request: string,
@@ -439,14 +444,24 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
-      if (
-        await context.proactivity?.screen?.(
+      const screenSources = () =>
+        context.proactivity?.screen?.(
           {
             notificationRule: context.notificationRule ?? null,
             rules: context.rules ?? null,
             memory: context.memory ?? '',
             timeZone: context.timeZone ?? null,
           },
+          signal,
+          () => !overBudget(),
+        );
+      if (
+        await untilAborted(
+          Promise.resolve(
+            dependencies.withExecution
+              ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
+              : screenSources(),
+          ),
           signal,
         )
       ) {

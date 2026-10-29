@@ -112,11 +112,29 @@ test(
     await models.initialize();
     await models.addKey('openai', 'synthetic-model-key');
     t.after(() => models.close());
+    const closingUsageId = randomUUID();
+    let recordClosingUsage = false;
+    let reportClosingUsage = () => {};
     const application = await createApplication(
       {
         models,
         agent: {
           async open(options) {
+            reportClosingUsage = () =>
+              options.onEvent({
+                type: 'provider_usage',
+                usage: {
+                  id: closingUsageId,
+                  provider: 'fixture',
+                  model: 'fixture',
+                  category: 'agent',
+                  operation: 'cache_warm',
+                  status: 'cancelled',
+                  durationMs: 1,
+                  costUsd: 0.125,
+                  pricing: 'sdk_estimate',
+                },
+              });
             const phase = phases.get(options.turnId) ?? 0;
             phases.set(options.turnId, phase + 1);
             const held = steering;
@@ -203,7 +221,9 @@ test(
               },
             };
           },
-          dispose() {},
+          dispose() {
+            if (recordClosingUsage) reportClosingUsage();
+          },
         },
         computer: fakeComputer({
           signInMethods: async (_browser, origin, methods) => {
@@ -1730,6 +1750,26 @@ test(
           assert.equal(await pending(), 1);
         },
       );
+      await t.test('shutdown saves usage from the last provider before it returns', async () => {
+        await pool.query(`
+          CREATE FUNCTION delay_closing_usage() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN PERFORM pg_sleep(1); RETURN NEW; END;
+          $$;
+          CREATE TRIGGER delay_closing_usage BEFORE INSERT ON model_usage
+            FOR EACH ROW WHEN (NEW.id='${closingUsageId}') EXECUTE FUNCTION delay_closing_usage()`);
+        recordClosingUsage = true;
+        try {
+          await application.app.close();
+          assert.deepEqual(
+            (await pool.query('SELECT cost_usd FROM model_usage WHERE id=$1', [closingUsageId]))
+              .rows,
+            [{ cost_usd: 0.125 }],
+          );
+        } finally {
+          recordClosingUsage = false;
+          await pool.query('DROP FUNCTION delay_closing_usage() CASCADE');
+        }
+      });
     } finally {
       await application.app.close();
       await pool.end();

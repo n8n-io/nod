@@ -7,7 +7,7 @@ sidebar:
 
 The proactivity engine reads your connected apps on its own and helps with concrete open needs. It prepares work for an unhandled request, an unresolved commitment, a problem, financial risk or recoverable payment that affects you, or work your notification rule asks for. For you it's just [nudges](/use/nudges/): messages when a concrete consequence needs your attention.
 
-Ideas, backlog entries, general opportunities and routine updates alone start no plan, assessment, draft, task or nudge, including private work. A possible improvement or missing information in a backlog is not evidence of a present problem or obligation. Saving an idea is not a commitment. Nod does not turn it into an impact review because that review might be useful.
+Ideas, backlog entries, general opportunities and routine updates alone start no plan, draft, task or nudge, including private work. Nod can still use a model to check for an open need. A possible improvement or missing information in a backlog is not evidence of a present problem or obligation. Saving an idea is not a commitment. Nod does not turn it into an impact review because that review might be useful.
 
 Saved work starts observation when at least one saved task exists. An empty local task list needs no model read. Task changes still use the existing change token and normal observation checks.
 
@@ -96,6 +96,10 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 ## Cost
 
 Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it.
+
+Source checks also count toward the observer's task check-in, before the full observer starts. At the limit, Nod stops new source reads and checks and asks whether to continue. A quiet result cannot skip this check-in.
+
+Nod reuses an assessment only after its turn succeeds. The owner context, rules, check instructions, source revision, record version and availability must match. A failed, cancelled or waiting turn gives no result to reuse. A due matter still gets its full check.
 
 ## Research behind the behavior
 

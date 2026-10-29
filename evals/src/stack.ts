@@ -17,6 +17,7 @@ import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
 import { accessCookie, accessKey } from '../../src/server/access.ts';
 import { createCapture, type Observation } from './capture.ts';
+import { collectUsage, type Run } from './trace.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
@@ -105,6 +106,7 @@ export interface Stack {
   resetConversation(): Promise<void>;
   event(summary: string, sources?: string[]): Promise<string>;
   stop(): Promise<void>;
+  finalUsage?: Run['usage'];
 }
 
 export function createStackRequest(baseUrl: string, cookie: string): Stack['request'] {
@@ -160,13 +162,23 @@ export async function startStack(options: {
     | Awaited<ReturnType<(typeof import('../../src/server/composition.ts'))['createApplication']>>
     | undefined;
   let databasePool: pg.Pool | undefined;
+  let finalUsage: Run['usage'] | undefined;
   async function stop() {
+    let closed = false;
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([
-      application?.app.close().catch(() => {}),
+      application?.app
+        .close()
+        .then(() => (closed = true))
+        .catch(() => {}),
       new Promise((resolve) => (deadline = setTimeout(resolve, 15_000))),
     ]);
     clearTimeout(deadline);
+    const closedBeforeRead = closed;
+    if (databasePool) {
+      finalUsage = await collectUsage(databasePool).catch(() => undefined);
+      if (finalUsage && !closedBeforeRead) finalUsage.costUsd = null;
+    }
     if (browserStarted) {
       const logs = await runProcess('docker', ['logs', '--tail', '200', browserContainer]).catch(
         () => undefined,
@@ -398,7 +410,6 @@ export async function startStack(options: {
                   'src/providers/decisions.ts',
                 )
               ).createDecisionModel({
-                canBatch: () => !typesafe && model.provider === 'openai',
                 resolve: async () =>
                   typesafe
                     ? { provider: 'typesafe', key: typesafe }
@@ -426,6 +437,9 @@ export async function startStack(options: {
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     const engine = application.proactivity;
     return {
+      get finalUsage() {
+        return finalUsage;
+      },
       proactivity: {
         view: () => engine.view(),
         control: (input) => engine.control(input),

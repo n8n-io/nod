@@ -140,8 +140,9 @@ export function createLedger({
   }
 
   const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,created_at,run_id,parent_run_id,session_id,browser_id,details)
-    SELECT $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb
-    WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+    SELECT $1,$2,t.id,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb
+    FROM (VALUES($3::uuid)) u(id) LEFT JOIN turns t ON t.id=u.id
+    WHERE t.id IS NULL OR t.owner_id=$2
     ON CONFLICT(id) DO NOTHING`;
   const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
   async function flushUsage() {
@@ -282,17 +283,6 @@ export function createLedger({
       get configured() {
         return base.configured;
       },
-      get checkBatch(): DecisionModel['checkBatch'] {
-        const check = base.checkBatch;
-        return check
-          ? async (request, signal, report) => {
-              signal?.throwIfAborted();
-              if (base.configured === false)
-                throw new Error('The decision service changed before the batch check.');
-              return run((usage) => check.call(base, request, signal, usage), signal, report);
-            }
-          : undefined;
-      },
       async check(request, signal, report) {
         signal?.throwIfAborted();
         if (base.configured === false) return undefined;
@@ -394,9 +384,10 @@ export function createLedger({
                AND (t.created_at,t.id)<=(c.created_at,c.id)
            ORDER BY t.created_at DESC,t.id DESC LIMIT 1
          ) SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
-         FROM model_usage WHERE owner_id=$1 AND session_id=$2
-           AND (created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
-             OR turn_id=(SELECT id FROM boundary))`,
+         FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id
+         WHERE m.owner_id=$1 AND COALESCE(m.session_id,t.session_id)=$2
+           AND (m.created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
+             OR m.turn_id=(SELECT id FROM boundary))`,
         [ownerId, sessionId, turnId],
       ),
     ]);
@@ -585,6 +576,7 @@ export function createLedger({
 
   return {
     initialize,
+    flush: flushUsage,
     agent,
     curator,
     decisions,

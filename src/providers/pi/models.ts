@@ -1,10 +1,11 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import {
   getSupportedThinkingLevels,
   getSystemMessageText,
   hasApi,
   type Api,
+  type AssistantMessage,
   type Model,
   type CredentialStore,
 } from '@earendil-works/pi-ai';
@@ -30,6 +31,8 @@ import {
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
 import type { AgentSessionOptions } from '../../ports/agent.ts';
+import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
+import { piUsageMetrics } from './usage.ts';
 import { audioUsage, nativeAudioRequest, readsNativeAudio } from './audio.ts';
 import {
   antLingModel,
@@ -1023,6 +1026,7 @@ export async function createPiModelRuntime(
   access: ModelAccess,
   trace?: (call: PiModelCall) => void,
   readAudio?: AgentSessionOptions['readAudio'],
+  reportCacheUsage?: (usage: ProviderUsageEvent) => void,
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
@@ -1292,6 +1296,40 @@ export async function createPiModelRuntime(
         );
       push(event);
     };
+    if (reportCacheUsage && options?.maxTokens === 1 && options.maxRetries === 0) {
+      const id = randomUUID();
+      const started = performance.now();
+      let reported = false;
+      const report = (message?: AssistantMessage) => {
+        if (reported) return;
+        reported = true;
+        options.signal?.removeEventListener('abort', cancel);
+        reportCacheUsage({
+          id,
+          provider: message?.provider ?? target.provider,
+          model: message?.responseModel ?? message?.model ?? target.id,
+          category: 'agent',
+          operation: 'cache_warm',
+          status:
+            message?.stopReason === 'aborted' || options.signal?.aborted
+              ? 'cancelled'
+              : !message || message.stopReason === 'error'
+                ? 'failed'
+                : 'succeeded',
+          durationMs: performance.now() - started,
+          costUsd: null,
+          pricing: 'unavailable',
+          ...piUsageMetrics(message?.usage),
+        });
+      };
+      const cancel = () => report();
+      options.signal?.addEventListener('abort', cancel, { once: true });
+      if (options.signal?.aborted) cancel();
+      void events
+        .result()
+        .then(report, () => report())
+        .catch(() => {});
+    }
     if (trace) {
       const startedAt = new Date().toISOString();
       void events

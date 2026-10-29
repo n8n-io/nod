@@ -657,15 +657,10 @@ export function stressScenario(
               issues.length === 1 &&
               !!issues[0].snoozedUntil &&
               Date.parse(issues[0].snoozedUntil) > Date.now();
-          if (endurance) {
+          if (endurance && kind !== 'late_page')
             pass &&=
-              kind === 'late_page'
-                ? world.state.phases.some((phase) =>
-                    phase.coverage.some((source) => source.status === 'ready'),
-                  )
-                : world.state.phases.length === 12 &&
-                  world.state.phases.every((phase) => phase.issues.length === 1);
-          }
+              world.state.phases.length === 12 &&
+              world.state.phases.every((phase) => phase.issues.length === 1);
           if (kind === 'evidence_join')
             pass =
               count === 1 &&

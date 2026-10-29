@@ -182,6 +182,36 @@ function capturedTools(stack: Stack) {
   return tools;
 }
 
+export async function collectUsage(pool: Stack['pool']): Promise<Run['usage']> {
+  const usage = (
+    await pool.query(`SELECT m.cost_usd,m.details,
+    CASE WHEN (to_jsonb(t)->>'proactive')::boolean THEN 'observer' WHEN t.background THEN 'background'
+      WHEN t.id IS NOT NULL THEN 'foreground' ELSE 'housekeeping' END AS role
+    FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id`)
+  ).rows;
+  const tokens = usage.reduce(
+    (total, row) =>
+      total +
+      ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'].reduce(
+        (sum, key) => sum + (row.details[key] ?? 0),
+        0,
+      ),
+    0,
+  );
+  const cost = usage.reduce((total, row) => total + (row.cost_usd ?? 0), 0);
+  const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
+  return {
+    tokens,
+    modelCalls: usage.length,
+    costUsd: costKnown ? cost : null,
+    requests: usage.map((row) => ({
+      ...row.details,
+      costUsd: row.cost_usd,
+      ...(row.role ? { role: row.role } : {}),
+    })),
+  };
+}
+
 export async function collect(options: {
   task: string;
   stack: Stack;
@@ -285,23 +315,7 @@ export async function collect(options: {
       }
     }
   }
-  const usage = (
-    await stack.pool.query(`SELECT m.cost_usd,m.details,
-    CASE WHEN (to_jsonb(t)->>'proactive')::boolean THEN 'observer' WHEN t.background THEN 'background'
-      WHEN t.id IS NOT NULL THEN 'foreground' ELSE 'housekeeping' END AS role
-    FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id`)
-  ).rows;
-  const tokens = usage.reduce(
-    (total, row) =>
-      total +
-      ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'].reduce(
-        (sum, key) => sum + (row.details[key] ?? 0),
-        0,
-      ),
-    0,
-  );
-  const cost = usage.reduce((total, row) => total + (row.cost_usd ?? 0), 0);
-  const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
+  const usage = await collectUsage(stack.pool);
   const messages = (
     await stack.pool.query(
       "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
@@ -435,16 +449,7 @@ export async function collect(options: {
     modelErrors,
     approvals,
     visits: options.visits,
-    usage: {
-      tokens,
-      modelCalls: usage.length,
-      costUsd: costKnown ? cost : null,
-      requests: usage.map((row) => ({
-        ...row.details,
-        costUsd: row.cost_usd,
-        ...(row.role ? { role: row.role } : {}),
-      })),
-    },
+    usage,
     compactions,
     firstReplySeconds,
     acknowledgement: { turnsWithTools, acknowledged },
