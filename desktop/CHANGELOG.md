@@ -2,6 +2,26 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.4.1 - 2026-10-29
+
+### Features
+
+- **models:** Show OpenRouter prices in the model picker. [commit](https://github.com/n8n-io/nod/commit/24147ee4b5f4bfe146ceba26b8eb0f7d351131b0) (24147ee)
+
+### Fixes
+
+- **desktop:** Preserve Mac keys and recover failed updates. [#557](https://github.com/n8n-io/nod/pull/557) (fa98cc8)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.4.0...fa98cc8fb619e02c83fb194ac968542db54d5f2b)
+
+<details>
+<summary>Build details</summary>
+
+Source: `fa98cc8fb619e02c83fb194ac968542db54d5f2b`
+Previous release: `nod-v0.4.0`
+
+</details>
+
 ## 0.4.0 - 2026-10-29
 
 ### Fixes
