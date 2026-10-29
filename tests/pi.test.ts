@@ -2694,6 +2694,246 @@ test('each model call yields one chat-format trace without image data', async ()
   assert.ok(!JSON.stringify(trace).includes(image));
 });
 
+test('a long tool call does not send model requests without usage records', async (t) => {
+  for (const [outcome, changeContext] of [
+    ['failed', false],
+    ['succeeded', false],
+    ['succeeded', true],
+  ] as const)
+    await t.test(changeContext ? 'changed context' : outcome, async (t) => {
+      const { createServer } = await import('node:http');
+      const { createPiModelBackend, createPiModelRuntime } =
+        await import('../src/providers/pi/models.ts');
+      const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+      let requests = 0;
+      let realRequests = 0;
+      let tools = 0;
+      let current: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
+      let persistedRefreshes = 0;
+      const usage: Array<{
+        id: string;
+        operation?: string;
+        status?: string;
+        costUsd?: number | null;
+      }> = [];
+      let holdRefresh = false;
+      let refreshStarted: (() => void) | undefined;
+      let releaseRefresh: (() => void) | undefined;
+      const server = createServer((request, response) => {
+        const parts: Buffer[] = [];
+        request.on('data', (part) => parts.push(part));
+        request.on('end', () => {
+          const send = (value: unknown) => {
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end(JSON.stringify(value));
+          };
+          if (request.url === '/v1/models') return send({ data: [{ id: 'fixture-cache' }] });
+          if (request.url === '/api/version') return send({ version: '0.0.0' });
+          if (request.url === '/api/show')
+            return send({
+              capabilities: ['completion', 'tools'],
+              model_info: { 'llama.context_length': 200000 },
+            });
+          requests++;
+          const body = JSON.parse(Buffer.concat(parts).toString());
+          if (body.max_tokens === 1 || body.max_completion_tokens === 1) {
+            if (outcome === 'failed') {
+              response.writeHead(500, { 'content-type': 'application/json' });
+              return response.end(
+                JSON.stringify({ error: { message: 'Synthetic refresh failure' } }),
+              );
+            }
+            const finish = () => {
+              if (changeContext && current)
+                current.agent.state.messages = current.agent.state.messages.map((message) => ({
+                  ...message,
+                }));
+              response.writeHead(200, { 'content-type': 'text/event-stream' });
+              response.end(
+                chunk({
+                  id: 'fixture-warm-' + requests,
+                  choices: [{ index: 0, delta: { role: 'assistant', content: 'x' } }],
+                }) +
+                  chunk({
+                    id: 'fixture-warm-' + requests,
+                    choices: [{ index: 0, delta: {}, finish_reason: 'length' }],
+                    usage: {
+                      prompt_tokens: 100000,
+                      prompt_tokens_details: { cached_tokens: 100000 },
+                      completion_tokens: 1,
+                      total_tokens: 100001,
+                    },
+                  }) +
+                  'data: [DONE]\n\n',
+              );
+            };
+            if (holdRefresh) {
+              releaseRefresh = finish;
+              refreshStarted?.();
+            } else finish();
+            return;
+          }
+          const first = ++realRequests === 1;
+          response.writeHead(200, { 'content-type': 'text/event-stream' });
+          response.end(
+            chunk({
+              id: 'fixture-' + realRequests,
+              choices: [
+                {
+                  index: 0,
+                  delta: first
+                    ? {
+                        role: 'assistant',
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: 'fixture-wait',
+                            type: 'function',
+                            function: { name: 'fixture_wait', arguments: '{}' },
+                          },
+                        ],
+                      }
+                    : { role: 'assistant', content: 'Finished the synthetic wait.' },
+                },
+              ],
+            }) +
+              chunk({
+                id: 'fixture-' + realRequests,
+                choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }],
+                usage: { prompt_tokens: 100000, completion_tokens: 20, total_tokens: 100020 },
+              }) +
+              'data: [DONE]\n\n',
+          );
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+      const address = server.address() as import('node:net').AddressInfo;
+      const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${address.port}/v1` };
+      const [catalog] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+      const definition = {
+        ...catalog,
+        spec: {
+          ...catalog.spec,
+          cost: { input: 20, output: 20, cacheRead: 1, cacheWrite: 20 },
+          promptCache: { short: 11 },
+        },
+      };
+      const sessionRoot = await mkdtemp(join(tmpdir(), 'nod-pi-cost-'));
+      const access = {
+        provider: 'compatible' as const,
+        method: 'api_key' as const,
+        definition,
+        effort: 'off' as const,
+        read: async () => credential,
+      };
+      const agent = createPiAgent({
+        provider: 'compatible',
+        sessionRoot,
+        resolve: async () => access,
+        createSession: async (options) => {
+          const result = await createAgentSession(options);
+          current = result.session;
+          current.subscribe((event) => {
+            if (
+              event.type === 'entry_appended' &&
+              event.entry.type === 'usage' &&
+              event.entry.kind === 'cache_warm'
+            )
+              persistedRefreshes++;
+          });
+          return result;
+        },
+      });
+      t.after(async () => {
+        await agent.dispose();
+        await rm(sessionRoot, { recursive: true, force: true });
+      });
+      const session = await agent.open({
+        ...fakeExecution(randomUUID(), randomUUID()),
+        ...sandbox,
+        systemPrompt: 'Complete the synthetic wait once.',
+        shouldStop: () => false,
+        onEvent: (event) => {
+          if (event.type === 'model_usage') usage.push(event);
+          if (event.type === 'provider_usage') usage.push(event.usage);
+        },
+        tools: [
+          {
+            name: 'fixture_wait',
+            description: 'Wait for the synthetic result.',
+            parameters: { type: 'object', properties: {} },
+            eager: true,
+            execute: async () => {
+              tools++;
+              await setTimeout(2200);
+              return { content: [{ type: 'text', text: 'The synthetic wait finished.' }] };
+            },
+          },
+        ],
+      });
+      await session.prompt('Run the synthetic wait.', []);
+      await session.dispose();
+      assert.equal(tools, 1);
+      assert.equal(realRequests, 2);
+      assert.ok(requests > realRequests);
+      assert.equal(usage.length, requests);
+      assert.equal(new Set(usage.map((row) => row.id)).size, requests);
+      const refreshes = usage.filter((row) => row.operation === 'cache_warm');
+      assert.equal(refreshes.length, requests - realRequests);
+      assert.equal(
+        persistedRefreshes,
+        outcome === 'succeeded' && !changeContext ? refreshes.length : 0,
+      );
+      assert.ok(refreshes.every((row) => row.status === outcome));
+      assert.ok(
+        refreshes.every((row) =>
+          outcome === 'failed'
+            ? row.costUsd === null
+            : typeof row.costUsd === 'number' && row.costUsd > 0,
+        ),
+      );
+      if (outcome === 'succeeded' && !changeContext) {
+        const cancelled: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+        const { runtime, model } = await createPiModelRuntime(access, undefined, undefined, (row) =>
+          cancelled.push(row),
+        );
+        holdRefresh = true;
+        const received = new Promise<void>((resolve) => {
+          refreshStarted = resolve;
+        });
+        const controller = new AbortController();
+        const pending = runtime.streamSimple(
+          model,
+          {
+            messages: [
+              {
+                role: 'user',
+                content: [{ type: 'text', text: 'Synthetic cache refresh' }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          {
+            maxTokens: 1,
+            maxRetries: 0,
+            signal: controller.signal,
+            fetch: (input, init) => fetch(input, { ...init, signal: undefined }),
+          },
+        );
+        await received;
+        controller.abort();
+        assert.equal(cancelled.length, 1);
+        assert.equal(cancelled[0].status, 'cancelled');
+        assert.equal(cancelled[0].costUsd, null);
+        releaseRefresh!();
+        await pending.result();
+        assert.equal(cancelled.length, 1);
+        assert.equal(requests, usage.length + cancelled.length);
+      }
+    });
+});
+
 test('owner context stays out of the system prompt and compaction summaries and is added only when it changes', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');

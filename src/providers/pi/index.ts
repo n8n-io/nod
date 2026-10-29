@@ -323,6 +323,11 @@ export function createPiAgent(options: {
                   );
               }),
             input.readAudio,
+            (usage) =>
+              input.onEvent({
+                type: 'provider_usage',
+                usage: { ...usage, turnId: input.turnId },
+              }),
           )
         : undefined;
       const runtime = connection
@@ -775,6 +780,7 @@ export function createPiAgent(options: {
         if (
           event.type === 'entry_appended' &&
           event.entry.type === 'usage' &&
+          (!connection || event.entry.kind !== 'cache_warm') &&
           !auxiliarySeen.has(event.entry.id)
         ) {
           auxiliarySeen.add(event.entry.id);
