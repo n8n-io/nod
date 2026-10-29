@@ -574,6 +574,7 @@ export function createLedger({
 
   return {
     initialize,
+    flush: flushUsage,
     agent,
     curator,
     decisions,

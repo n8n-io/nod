@@ -2167,6 +2167,7 @@ async function initializeApplication(
       () => stopThreadWorkers(),
       finishWork,
       () => runtime.dispose(),
+      () => ledger.flush(),
       () => artifacts.close(),
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
