@@ -1053,7 +1053,13 @@ export function createProactivity(options: {
     policy: string,
     canContinue: () => boolean,
   ) {
-    type Seen = { sourceId: string; id: string; version: string; error?: string };
+    type Seen = {
+      sourceId: string;
+      id: string;
+      version: string;
+      available: boolean;
+      error?: string;
+    };
     let quiet = true;
     try {
       const [catalog, sources, evidence, saved] = await Promise.all([
@@ -1067,8 +1073,9 @@ export function createProactivity(options: {
           resource_id: string;
           version: string;
           source_revision: string;
+          available: boolean | null;
         }>(
-          `SELECT e.source_id,e.resource_id,e.version,e.source_revision FROM proactive_evidence e
+          `SELECT e.source_id,e.resource_id,e.version,e.source_revision,e.available FROM proactive_evidence e
            JOIN turns u ON u.id=e.turn_id AND u.owner_id=e.owner_id WHERE e.owner_id=$1 AND e.source_id=ANY($2::text[])
            AND e.screen_policy=$3 AND u.status='succeeded'`,
           [ownerId, sourceIds, policy],
@@ -1110,6 +1117,7 @@ export function createProactivity(options: {
             return (
               record.error ||
               previous?.version !== record.version ||
+              previous.available !== record.available ||
               previous.source_revision !== source?.revision
             );
           });

@@ -5069,6 +5069,20 @@ test(
                   assert.deepEqual(await screen(false), [false, true]);
                   assert.equal(checks, afterFailure + 1);
                 }
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                for (const available of [null, false]) {
+                  await db.pool.query(
+                    'UPDATE proactive_evidence SET available=$3 WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId, available],
+                  );
+                  verdict = true;
+                  const beforeRecovery = checks;
+                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.equal(checks, beforeRecovery + 1);
+                  verdict = false;
+                  assert.deepEqual(await screen(false), [true, false]);
+                }
                 sourceRevision = 'screening-new-revision';
                 verdict = true;
                 assert.deepEqual(await screen(false), [false, true]);

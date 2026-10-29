@@ -99,7 +99,7 @@ Preparation has no budget of its own. Its model use counts toward your monthly s
 
 Source checks also count toward the observer's task check-in, before the full observer starts. At the limit, Nod stops new source reads and checks and asks whether to continue. A quiet result cannot skip this check-in.
 
-Nod reuses an assessment only after its turn succeeds. The owner context, rules, check instructions, source revision and record version must match. A failed, cancelled or waiting turn gives no result to reuse. A due matter still gets its full check.
+Nod reuses an assessment only after its turn succeeds. The owner context, rules, check instructions, source revision, record version and availability must match. A failed, cancelled or waiting turn gives no result to reuse. A due matter still gets its full check.
 
 ## Research behind the behavior
 

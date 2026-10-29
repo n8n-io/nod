@@ -80,7 +80,7 @@ pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
-Each attempt reads the cost ledger again after the application closes and before its test schema is removed. The result includes model work that ran during grading and shutdown, including work in a failed attempt. A failed shutdown or missing final read leaves the total cost unknown. Task latency still ends before grading. Judge and simulated owner costs stay separate.
+Each attempt reads the cost ledger again after the application closes and before its test schema is removed. The result includes model work that ran during grading and shutdown, including work in a failed attempt. A failed shutdown or missing final read leaves the total cost unknown. Task latency still ends before grading. Judge and simulated owner costs share one total, separate from product model cost.
 
 ### Commands
 

@@ -174,9 +174,10 @@ export async function startStack(options: {
       new Promise((resolve) => (deadline = setTimeout(resolve, 15_000))),
     ]);
     clearTimeout(deadline);
+    const closedBeforeRead = closed;
     if (databasePool) {
       finalUsage = await collectUsage(databasePool).catch(() => undefined);
-      if (finalUsage && !closed) finalUsage.costUsd = null;
+      if (finalUsage && !closedBeforeRead) finalUsage.costUsd = null;
     }
     if (browserStarted) {
       const logs = await runProcess('docker', ['logs', '--tail', '200', browserContainer]).catch(
