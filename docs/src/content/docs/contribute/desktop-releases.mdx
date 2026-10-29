@@ -136,6 +136,8 @@ There's no daily release. Only a merged release pull request, which changes `des
 
 Pull requests and normal merges to `main` run source checks and isolated native update fixtures on Windows and both Mac architectures when desktop files change. These fixtures check secure storage, installer failures and saved-profile preservation without publishing a release. Packaging the complete desktop apps and verifying their release assets runs in **Build desktop release**.
 
+The required **Checks, tests and build** result waits for both Mac update checks. If either Mac check fails, that required result fails too.
+
 ## Inspect or recover a build
 
 The **Build desktop release** workflow runs on `main` by hand for a draft or a recovery run.

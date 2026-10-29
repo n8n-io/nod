@@ -866,7 +866,21 @@ export function prepareRuntime(options) {
         },
       )
         .catch(async (error) => {
-          if (computerMayBeRunning && !storageReady.has(key)) await stopRuntime(options);
+          if (computerMayBeRunning && !storageReady.has(key)) {
+            try {
+              await stopRuntime(options);
+            } catch (cleanupError) {
+              cleanupError.cause = error;
+              cleanupError.details = [
+                error.stack || error.message,
+                error.details,
+                cleanupError.details,
+              ]
+                .filter(Boolean)
+                .join('\n');
+              throw cleanupError;
+            }
+          }
           throw error;
         })
         .finally(() => preparing.delete(key)),
@@ -957,12 +971,16 @@ async function stopComputer(options) {
       },
       { attempts: 3, interval: 250 },
     );
-  } catch {
+  } catch (cause) {
     throw Object.assign(
       new Error(
         'Nod could not confirm that its private computer stopped. Try again before quitting.',
+        { cause },
       ),
-      { code: 'NOD_RUNTIME_STOP_FAILED' },
+      {
+        code: 'NOD_RUNTIME_STOP_FAILED',
+        details: [cause.stack || cause.message, cause.details].filter(Boolean).join('\n'),
+      },
     );
   }
 }

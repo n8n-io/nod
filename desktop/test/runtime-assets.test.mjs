@@ -2342,11 +2342,18 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       source.indexOf('async function stopComputer('),
     )
     .replaceAll('export ', '');
-  for (const terminal of ['retry', 'quit', 'abort']) {
+  for (const terminal of ['retry', 'quit', 'abort', 'cleanup-failed']) {
     let attempts = 0;
     let stops = 0;
     let engineStops = 0;
     let retired = false;
+    const startupError = Object.assign(new Error('Synthetic startup failure'), {
+      details: 'Synthetic startup command details',
+    });
+    const cleanupError = Object.assign(new Error('Synthetic stop failure'), {
+      code: 'NOD_RUNTIME_STOP_FAILED',
+      details: 'Synthetic stop command details',
+    });
     const pending = [];
     let handed;
     const storageHanded = new Promise((accept) => {
@@ -2363,6 +2370,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       prepare: async (options, started) => {
         started();
         attempts++;
+        if (terminal === 'cleanup-failed') throw startupError;
         if (retired) throw new Error('Synthetic new attempt before storage');
         if (attempts === 2) throw new Error('Synthetic retry before storage handshake');
         await options.onStorageReady(storage);
@@ -2378,6 +2386,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       },
       stopComputer: async () => {
         stops++;
+        if (terminal === 'cleanup-failed' && stops === 1) throw cleanupError;
       },
     });
     const lifecycle = createDesktopLifecycle({
@@ -2388,8 +2397,24 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       stopEngine: async () => {
         engineStops++;
       },
+      stopRuntime: () => runtime.stopRuntime({ dataRoot: resolve('synthetic-profile') }),
       onRuntimeStatus() {},
     });
+    if (terminal === 'cleanup-failed') {
+      await assert.rejects(lifecycle.start(), (error) => {
+        assert.equal(error, cleanupError);
+        assert.equal(error.cause, startupError);
+        assert.ok(error.details.includes(startupError.details));
+        assert.ok(error.details.includes('Synthetic stop command details'));
+        return true;
+      });
+      assert.equal(stops, 1);
+      assert.deepEqual(pending, []);
+      await lifecycle.close();
+      assert.equal(stops, 2);
+      assert.equal(engineStops, 1);
+      continue;
+    }
     if (terminal === 'abort') {
       const starting = assert.rejects(lifecycle.start(), /Synthetic abort/);
       await storageHanded;

@@ -61,8 +61,8 @@ jobs:
 
   checks:
     name: Checks, tests and build
-    needs: scope
-    if: ${{ !cancelled() }}
+    needs: [scope, macos-native]
+    if: ${{ always() }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     services:
@@ -83,10 +83,19 @@ jobs:
       CI: 'true'
       TEST_DATABASE_URL: postgresql://nod:nod-ci@127.0.0.1:5432/nod_ci
     steps:
+      - name: Fail canceled checks
+        if: ${{ cancelled() }}
+        run: exit 1
       - name: Require a valid change scope
         env:
           CI_SCOPE_RESULT: ${{ needs.scope.result }}
-        run: test "$CI_SCOPE_RESULT" = success
+          CI_NATIVE_REQUIRED: ${{ needs.scope.outputs.desktop }}
+          CI_NATIVE_RESULT: ${{ needs.macos-native.result }}
+        run: |
+          test "$CI_SCOPE_RESULT" = success
+          if [ "$CI_NATIVE_REQUIRED" = true ]; then
+            test "$CI_NATIVE_RESULT" = success
+          fi
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -189,9 +198,18 @@ jobs:
           scripts/test-integration.mjs --run
 
   macos-native:
-    name: macOS native identity and updates
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    name: macOS native identity and updates (${{ matrix.arch }})
+    needs: scope
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.scope.outputs.desktop == 'true') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
       CI: 'true'
@@ -220,7 +238,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: macos-native-acceptance
+          name: macos-native-acceptance-${{ matrix.arch }}
           path: .local/native-update-acceptance/*.json
           include-hidden-files: true
           if-no-files-found: ignore
