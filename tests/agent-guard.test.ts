@@ -237,6 +237,7 @@ test('Stop ends a source check that ignores cancellation', async () => {
       signal: controller.signal,
       emit: async (type) => {
         events.push(type);
+        if (type === 'agent_failed') ended = true;
       },
       proactivity: {
         instructions: 'Read synthetic sources.',
@@ -250,16 +251,7 @@ test('Stop ends a source check that ignores cancellation', async () => {
         },
       },
     },
-  ).then(
-    (result) => {
-      ended = true;
-      return result;
-    },
-    (error: unknown) => {
-      ended = true;
-      return error;
-    },
-  );
+  ).catch((error: unknown) => error);
   await ready;
   controller.abort(new Error('Synthetic stop'));
   await new Promise((resolve) => setTimeout(resolve, 100));
