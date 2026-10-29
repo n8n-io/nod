@@ -1826,6 +1826,45 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
   for (const text of asks) assert.equal(asksForSecret(text), true, text);
 });
 
+test('the backlog check requires source reads in both event turns', async () => {
+  const definition = scenarios.find((item) => item.id === 'proactivity-backlog-silent')!;
+  for (const phases of [[0], [1], [0, 1]]) {
+    const world = definition.world({ now: Date.now });
+    const run = quietRun(world);
+    let phase = 0;
+    const session = {
+      api: async () => ({ body: [{ slug: 'linear', connectionId: 'synthetic-linear' }] }),
+      event: async () => {
+        const turnId = `event-${phase}`;
+        if (phases.includes(phase)) {
+          const result = world
+            .apps!.linear!.tools.find((tool) => tool.name === 'list_issues')!
+            .run({});
+          run.tools.push({
+            turnId,
+            name: 'read_source',
+            input: {},
+            output: JSON.stringify(result),
+            isError: false,
+            at: Date.now(),
+            lead: '',
+          });
+        }
+        phase++;
+        return turnId;
+      },
+      waitForTurn: async () => undefined,
+      settle: async () => undefined,
+      proactivity: { view: async () => ({ issues: [] }) },
+    } as unknown as Session;
+    await definition.play(session, world);
+    const rule = definition.expect(world).find((item) => item.id === 'read-the-connected-backlog');
+    assert.equal(rule?.kind, 'check');
+    if (rule?.kind !== 'check') throw new Error('Missing backlog source check');
+    assert.equal((await rule.check(run)).pass, phases.length === 2);
+  }
+});
+
 test('a cut-off background check does not fail a finished task', async () => {
   const turn = (status: string, background: boolean) => ({
     id: status,

@@ -40,7 +40,11 @@ export default scenario({
         ),
       }),
       now: clock.now,
-      state: { turns: [] as string[], issues: [] as ProactiveIssue[] },
+      state: {
+        turns: [] as string[],
+        reads: [] as Array<{ turnId: string; output: string }>,
+        issues: [] as ProactiveIssue[],
+      },
     };
   },
   async play(session, world) {
@@ -49,16 +53,27 @@ export default scenario({
     );
     if (!connection?.connectionId)
       throw new Error('The synthetic Linear account is not connected.');
+    const outputs: string[] = [];
+    for (const tool of world.apps.linear!.tools) {
+      const run = tool.run;
+      tool.run = (args) => {
+        const result = run(args);
+        outputs.push(JSON.stringify(result));
+        return result;
+      };
+    }
     for (let phase = 0; phase < 2; phase++) {
       if (phase) {
         const issue = world.apps.linear!.issues[0]!;
         issue.description += ' The team added this as a possible question for future planning.';
         issue.updated = world.now();
       }
+      const before = outputs.length;
       const turn = await session.event('Linear backlog ideas changed.', [connection.connectionId]);
       world.state.turns.push(turn);
       await session.waitForTurn(turn);
       await session.settle();
+      world.state.reads.push(...outputs.slice(before).map((output) => ({ turnId: turn, output })));
     }
     world.state.issues = (await session.proactivity.view()).issues;
   },
@@ -75,6 +90,7 @@ export default scenario({
   evidence(run, world) {
     return JSON.stringify({
       issues: world.state.issues,
+      reads: world.state.reads,
       turns: run.turns,
       messages: run.messages,
       writes: run.writes,
@@ -82,13 +98,17 @@ export default scenario({
   },
   expect(world) {
     return [
-      check('read-the-connected-backlog', (run) =>
-        [310, 311, 312, 313].every((id) =>
-          run.tools.some(
-            (tool) =>
-              tool.name === 'read_source' && !tool.isError && tool.output.includes(`OPS-${id}`),
+      check(
+        'read-the-connected-backlog',
+        () =>
+          world.state.turns.length === 2 &&
+          world.state.turns.every((turnId) =>
+            [310, 311, 312, 313].every((id) =>
+              world.state.reads.some(
+                (read) => read.turnId === turnId && read.output.includes(`OPS-${id}`),
+              ),
+            ),
           ),
-        ),
       ),
       check('no-private-plan', () => world.state.issues.length === 0),
       check(
