@@ -1331,9 +1331,8 @@ async function finishEnginePreparation(pending = false) {
 
 function refreshUpdateMenu() {
   if (quitting) return;
-  const label = updates?.ready
-    ? `Restart to update to ${updates.ready.version}…`
-    : updatePhase === 'downloading' && updateProgress !== undefined
+  const label =
+    updatePhase === 'downloading' && updateProgress !== undefined
       ? `Downloading update… ${updateProgress}%`
       : {
           checking: 'Checking for updates…',
@@ -1344,6 +1343,15 @@ function refreshUpdateMenu() {
   if (item) {
     item.label = label;
     item.enabled = Boolean(updates) && !checkingUpdates;
+  }
+  const restartLabel = updates?.ready
+    ? `Restart to update to ${updates.ready.version}…`
+    : 'Restart to update…';
+  const restartItem = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-restart');
+  if (restartItem) {
+    restartItem.label = restartLabel;
+    restartItem.visible = Boolean(updates?.ready);
+    restartItem.enabled = Boolean(updates?.ready) && !checkingUpdates;
   }
   if (tray)
     tray.setContextMenu(
@@ -1357,14 +1365,20 @@ function refreshUpdateMenu() {
           enabled: Boolean(updates) && !checkingUpdates,
           click: () => void checkForUpdates(),
         },
+        {
+          label: restartLabel,
+          visible: Boolean(updates?.ready),
+          enabled: Boolean(updates?.ready) && !checkingUpdates,
+          click: () => void checkForUpdates(true, true),
+        },
         { type: 'separator' },
         { label: 'Quit Nod', click: () => app.quit() },
       ]),
     );
 }
 
-async function checkForUpdates(manual = true) {
-  if (!updates || quitting || (!manual && updates.ready)) return;
+async function checkForUpdates(manual = true, restartReady = false) {
+  if (!updates || quitting) return;
   if (checkingUpdates) return checkingUpdates;
   const release = () => {
     if (checkingUpdates === checking) checkingUpdates = undefined;
@@ -1378,7 +1392,8 @@ async function checkForUpdates(manual = true) {
           await updates.restart();
           return;
         }
-        const candidate = updates.ready ?? (await updates.check());
+        const previousVersion = updates.ready?.version;
+        const candidate = restartReady ? updates.ready : await updates.check();
         updateFailed = false;
         if (quitting) return;
         if (!candidate) {
@@ -1387,7 +1402,7 @@ async function checkForUpdates(manual = true) {
           return;
         }
         if (!manual) {
-          await notifyUpdate(candidate);
+          if (candidate.version !== previousVersion) await notifyUpdate(candidate);
           return;
         }
         const { response } = await dialog.showMessageBox({
@@ -1403,21 +1418,19 @@ async function checkForUpdates(manual = true) {
         return;
       } catch (error) {
         if (quitting) return;
-        if (!updates.ready) updateFailed = true;
+        if (!restarting) updateFailed = true;
         await writeDiagnostic(error.message).catch(() => {});
         if (!manual && !restarting) throw error;
-        const ready = Boolean(updates.ready);
         const { response } = await dialog.showMessageBox({
           type: 'info',
-          message: ready ? 'Couldn’t restart Nod' : 'Couldn’t check for updates',
+          message: restarting ? 'Couldn’t restart Nod' : 'Couldn’t check for updates',
           detail: 'You can keep using Nod and try again later.',
-          buttons: [ready ? 'Retry restart' : 'Try again', 'Not now'],
+          buttons: [restarting ? 'Retry restart' : 'Try again', 'Not now'],
           defaultId: 1,
           cancelId: 1,
           noLink: true,
         });
         if (response !== 0 || quitting) return;
-        restarting = ready;
       }
     }
   })().finally(release);
@@ -1440,7 +1453,7 @@ async function notifyUpdate(candidate) {
       notification.close();
   });
   notification.on('click', () => {
-    if (!quitting && updates?.ready) void checkForUpdates();
+    if (!quitting && updates?.ready) void checkForUpdates(true, true);
   });
   notification.on('close', () => displayedNotifications.delete(notification));
   notification.on('failed', () => displayedNotifications.delete(notification));
@@ -2002,6 +2015,12 @@ else {
                 label: 'Check for Updates…',
                 enabled: Boolean(updates),
                 click: () => void checkForUpdates(),
+              },
+              {
+                id: 'desktop-restart',
+                label: 'Restart to update…',
+                visible: false,
+                click: () => void checkForUpdates(true, true),
               },
               { label: 'Replay onboarding…', click: replayOnboarding },
               {

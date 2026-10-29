@@ -129,7 +129,7 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 
 ## Updates
 
-Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. **Check for Updates…** in the Nod menu, menu bar or tray checks now.
+Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. Checks continue while a downloaded update waits for restart. **Check for Updates…** stays available in the Nod menu, menu bar, or tray alongside **Restart to update**.
 
 ```mermaid
 flowchart TD
@@ -145,6 +145,8 @@ flowchart TD
 Restarting stops a running reply, scheduled task or background check, and you can ask Nod to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
 Nod downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. While the runtime pack or Windows installer downloads, the update item in the menu shows how far it has got. On a Mac, it also loads the new container images into the running computer, so Nod is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on and quiet hours allow it. The menu offers **Restart to update**, and background checks never open a dialog. On a Mac, an update must be signed by n8n, and Nod refuses one with a lower version number, so an update feed can't roll Nod back to an older build. On Windows, the restart runs the installer in the background and opens Nod again. While Nod shuts down to install the update, its window shows **Updating Nod…** until it reopens.
+
+When a newer release appears, Nod prepares it before offering restart. It reuses an already downloaded version when a check finds nothing newer. A failed release lookup keeps the downloaded update available. Once replacement staging begins, restart is available only after the new installer or app is verified. Checks and restarts cannot run together.
 
 Nod keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 

@@ -436,6 +436,7 @@ async function runningDesktop(
   const appEvents = new EventEmitter();
   const externalURLs = [];
   const updateMenu = {};
+  const restartMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
   });
@@ -515,7 +516,11 @@ async function runningDesktop(
     session: { fromPartition },
     protocol: { registerSchemesAsPrivileged() {} },
     dialog: { showMessageBox: async (options) => prompt(options) },
-    Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
+    Menu: {
+      getApplicationMenu: () => ({
+        getMenuItemById: (id) => (id === 'desktop-restart' ? restartMenu : updateMenu),
+      }),
+    },
     shell: {
       showItemInFolder: reveal,
       openExternal: async (url) => {
@@ -795,7 +800,7 @@ async function runningDesktop(
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
       notifyReady: updateReadinessNotice,
-      checkUpdates: (updater, manual = true) => { updates = updater; return checkForUpdates(manual); },
+      checkUpdates: (updater, manual = true, restartReady = false) => { updates = updater; return checkForUpdates(manual, restartReady); },
       registerFiles: () => { ${source.slice(source.indexOf('      disposeArtifactFiles = registerArtifactFileHandlers('), source.indexOf("      ipcMain.handle('nod:renderer-ready'"))} },
       quit,
       crash: () => { engine = undefined; enginePreferencesReady = false; },
@@ -815,6 +820,7 @@ async function runningDesktop(
     externalURLs,
     rendererReady,
     updateMenu,
+    restartMenu,
     willQuit: (event) => appEvents.emit('will-quit', event),
     appSessions,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
@@ -4982,7 +4988,7 @@ test(
       assert.equal(updater.ready, candidate);
       assert.equal(JSON.stringify(prompts).includes('Synthetic native restart failure'), false);
       if (!retry) {
-        await f.checkUpdates(updater);
+        await f.checkUpdates(updater, true, true);
         assert.equal(restarts, 2);
       }
       assert.equal(selections, 1);
@@ -5044,10 +5050,75 @@ test('background update readiness respects notification permission and quiet tim
     assert.equal(updater.ready, candidate);
     assert.equal(f.updateMenu.enabled, true);
     if (scenario.expected) updateNotifications[0].emit('click');
-    await f.checkUpdates(updater);
+    await f.checkUpdates(updater, true, true);
     assert.equal(prompts.length, 1);
-    assert.equal(selections, 1);
+    assert.equal(selections, 2);
   }
+});
+
+test('background and manual checks still discover releases when an older update is ready', async (t) => {
+  let latest = '0.3.9';
+  const prepared = [];
+  const updater = createDesktopUpdater({
+    currentVersion: '0.3.7',
+    source: { latest: async () => ({ version: latest }) },
+    prepareRuntime: async (candidate) => prepared.push(candidate.version),
+    restart: async () => assert.fail('Checking cannot restart Nod without a choice.'),
+  });
+  t.after(() => updater.dispose());
+  let prompts = 0;
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    prompt: () => {
+      prompts++;
+      return { response: 1 };
+    },
+  });
+  await f.checkUpdates(updater, false);
+  latest = '0.4.1';
+  await f.checkUpdates(updater, false);
+  assert.equal(updater.ready.version, '0.4.1');
+  assert.equal(prompts, 0);
+  latest = '0.4.2';
+  await f.checkUpdates(updater);
+  assert.equal(updater.ready.version, '0.4.2');
+  assert.equal(prompts, 1);
+  assert.deepEqual(prepared, ['0.3.9', '0.4.1', '0.4.2']);
+  assert.equal(f.updateMenu.enabled, true);
+  assert.equal(f.restartMenu.enabled, true);
+});
+
+test('retrying a failed manual refresh checks again instead of restarting an older staged update', async (t) => {
+  let selections = 0;
+  const native = new EventEmitter();
+  let selected;
+  native.setFeedURL = () => {};
+  native.checkForUpdates = () =>
+    queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+  const updater = createDesktopUpdater({
+    currentVersion: '0.3.7',
+    source: {
+      latest: async () => {
+        selections++;
+        if (selections === 2) throw new Error('Synthetic source failure');
+        const version = selections === 1 ? '0.3.9' : '0.4.1';
+        selected = { version, feedUrl: `https://updates.example.invalid/${version}` };
+        return selected;
+      },
+    },
+    native,
+    prepareRuntime: async () => {},
+    restart: async () => assert.fail('A check retry cannot restart the staged update.'),
+  });
+  t.after(() => updater.dispose());
+  await updater.check();
+  let prompts = 0;
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    prompt: () => ({ response: prompts++ === 0 ? 0 : 1 }),
+  });
+  await f.checkUpdates(updater);
+  assert.equal(selections, 3);
+  assert.equal(updater.ready.version, '0.4.1');
+  assert.equal(prompts, 2);
 });
 
 test('automatic update checks retry failures sooner and return to the normal interval', async (t) => {
@@ -5185,6 +5256,187 @@ test('desktop staging waits for runtime preparation and a native downloaded even
   next.dispose();
 });
 
+test('a staged desktop update refreshes to a newer release without downloading the same or an older version again', async (t) => {
+  let latest = '0.3.9';
+  let selected;
+  let selections = 0;
+  const prepared = [];
+  const feeds = [];
+  const native = new EventEmitter();
+  native.setFeedURL = ({ url }) => feeds.push(url);
+  native.checkForUpdates = () =>
+    queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+  const updater = createDesktopUpdater({
+    currentVersion: '0.3.7',
+    source: {
+      latest: async () => {
+        selections++;
+        selected = latest
+          ? { version: latest, feedUrl: `https://updates.example.invalid/${latest}` }
+          : undefined;
+        return selected;
+      },
+    },
+    native,
+    prepareRuntime: async (candidate) => prepared.push(candidate.version),
+    restart: async () => assert.fail('Checking cannot restart Nod.'),
+  });
+  t.after(() => updater.dispose());
+  assert.equal((await updater.check()).version, '0.3.9');
+  for (latest of ['0.3.9', '0.3.8', undefined]) {
+    assert.equal((await updater.check()).version, '0.3.9');
+    assert.equal(updater.ready.version, '0.3.9');
+  }
+  latest = '0.4.1';
+  assert.equal((await updater.check()).version, '0.4.1');
+  assert.equal(updater.ready.version, '0.4.1');
+  assert.equal(selections, 5);
+  assert.deepEqual(prepared, ['0.3.9', '0.4.1']);
+  assert.deepEqual(feeds, [
+    'https://updates.example.invalid/0.3.9',
+    'https://updates.example.invalid/0.4.1',
+  ]);
+});
+
+test('failed refreshes retain a staged Mac update only while its native installer has not been replaced', async (t) => {
+  for (const failure of ['source', 'runtime', 'native']) {
+    let latest = '0.3.9';
+    let selected;
+    const restarted = [];
+    const native = new EventEmitter();
+    native.setFeedURL = () => {};
+    native.checkForUpdates = () => {
+      if (latest === '0.4.1' && failure === 'native')
+        queueMicrotask(() => native.emit('error', new Error('Synthetic native failure')));
+      else
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+    };
+    const updater = createDesktopUpdater({
+      currentVersion: '0.3.7',
+      source: {
+        latest: async () => {
+          if (latest === '0.4.1' && failure === 'source')
+            throw new Error('Synthetic source failure');
+          selected = { version: latest, feedUrl: `https://updates.example.invalid/${latest}` };
+          return selected;
+        },
+      },
+      native,
+      prepareRuntime: async () => {
+        if (latest === '0.4.1' && failure === 'runtime')
+          throw new Error('Synthetic runtime failure');
+      },
+      restart: async (candidate) => restarted.push(candidate.version),
+    });
+    t.after(() => updater.dispose());
+    await updater.check();
+    latest = '0.4.1';
+    await assert.rejects(updater.check(), new RegExp(`Synthetic ${failure} failure`));
+    if (failure === 'native') {
+      assert.equal(updater.ready, undefined);
+      await assert.rejects(updater.restart());
+      assert.deepEqual(restarted, []);
+    } else {
+      assert.equal(updater.ready.version, '0.3.9');
+      await updater.restart();
+      assert.deepEqual(restarted, ['0.3.9']);
+    }
+  }
+});
+
+test('replacing a Windows installer invalidates readiness if preparation fails', async (t) => {
+  let latest = '0.3.9';
+  const updater = createDesktopUpdater({
+    currentVersion: '0.3.7',
+    source: { latest: async () => ({ version: latest }) },
+    prepareRuntime: async () => {
+      if (latest === '0.4.1') throw new Error('Synthetic installer replacement failure');
+    },
+    restart: async () => assert.fail('An unverified installer cannot restart Nod.'),
+  });
+  t.after(() => updater.dispose());
+  await updater.check();
+  latest = '0.4.1';
+  await assert.rejects(updater.check(), /Synthetic installer replacement failure/);
+  assert.equal(updater.ready, undefined);
+  await assert.rejects(updater.restart());
+});
+
+test(
+  'refresh and restart never overlap while replacing a staged desktop update',
+  { timeout: 10_000 },
+  async (t) => {
+    let latest = '0.3.9';
+    let selected;
+    let selections = 0;
+    const selecting = deferred();
+    const selection = deferred();
+    const preparing = deferred();
+    const preparation = deferred();
+    const downloading = deferred();
+    const restarting = deferred();
+    const restart = deferred();
+    const installed = [];
+    const native = new EventEmitter();
+    native.setFeedURL = () => {};
+    native.checkForUpdates = () => {
+      if (latest === '0.4.1') downloading.resolve();
+      else
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', `nod ${selected.version}`));
+    };
+    const updater = createDesktopUpdater({
+      currentVersion: '0.3.7',
+      source: {
+        latest: async () => {
+          selections++;
+          if (latest === '0.4.1') {
+            selecting.resolve();
+            await selection.promise;
+          }
+          selected = { version: latest, feedUrl: `https://updates.example.invalid/${latest}` };
+          return selected;
+        },
+      },
+      native,
+      prepareRuntime: async () => {
+        if (latest === '0.4.1') {
+          preparing.resolve();
+          await preparation.promise;
+        }
+      },
+      restart: async (candidate) => {
+        installed.push(candidate.version);
+        restarting.resolve();
+        await restart.promise;
+      },
+    });
+    t.after(() => updater.dispose());
+    await updater.check();
+    latest = '0.4.1';
+    const checking = updater.check();
+    await selecting.promise;
+    assert.equal(updater.check(), checking);
+    await assert.rejects(updater.restart());
+    selection.resolve();
+    await preparing.promise;
+    await assert.rejects(updater.restart());
+    preparation.resolve();
+    await downloading.promise;
+    await assert.rejects(updater.restart());
+    assert.deepEqual(installed, []);
+    native.emit('update-downloaded', {}, '', 'nod 0.4.1');
+    await checking;
+    const firstRestart = updater.restart();
+    await restarting.promise;
+    assert.equal(updater.restart(), firstRestart);
+    await assert.rejects(updater.check());
+    assert.equal(selections, 2);
+    assert.deepEqual(installed, ['0.4.1']);
+    restart.resolve();
+    await firstRestart;
+  },
+);
+
 test('native download attempts remain exclusive until their terminal event and reject a different release', async () => {
   let selections = 0;
   const native = new EventEmitter();
@@ -5212,8 +5464,11 @@ test('native download attempts remain exclusive until their terminal event and r
   assert.equal(selections, 1);
   native.emit('update-downloaded', {}, '', 'nod 0.2.0');
   assert.equal((await first).version, '0.2.0');
-  assert.equal((await updater.check()).version, '0.2.0');
-  assert.equal(selections, 1);
+  const second = updater.check();
+  await new Promise(setImmediate);
+  assert.equal(selections, 2);
+  native.emit('update-downloaded', {}, '', 'nod 0.3.0');
+  assert.equal((await second).version, '0.3.0');
   updater.dispose();
   const wrongNative = new EventEmitter();
   wrongNative.setFeedURL = () => {};
