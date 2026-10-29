@@ -4915,6 +4915,8 @@ test(
                 let curatorId = 'fixture';
                 let fail = false;
                 let rotateSource = false;
+                let allowed = true;
+                let stopAfterCheck = false;
                 const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
@@ -4938,6 +4940,7 @@ test(
                     curate: async () => {
                       checks++;
                       if (fail) throw new Error('Synthetic failed check');
+                      if (stopAfterCheck) allowed = false;
                       return { attention: verdict };
                     },
                   },
@@ -4966,7 +4969,11 @@ test(
                     );
                   const context = (await screening.context(checkTurn))!;
                   rotateSource = rotate;
-                  const quiet = await context.screen!(owner, new AbortController().signal);
+                  const quiet = await context.screen!(
+                    owner,
+                    new AbortController().signal,
+                    () => allowed,
+                  );
                   const { dirty } = (
                     await db.pool.query(
                       'SELECT signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
@@ -5068,6 +5075,16 @@ test(
                 sourceRevision = undefined;
                 await preferences.update({ notificationRule });
                 verdict = false;
+                allowed = false;
+                const beforeBudget = checks;
+                assert.deepEqual(await screen(), [false, true]);
+                assert.equal(checks, beforeBudget);
+                allowed = true;
+                stopAfterCheck = true;
+                assert.deepEqual(await screen(), [false, true]);
+                assert.equal(checks, beforeBudget + 1);
+                allowed = true;
+                stopAfterCheck = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
                 assert.deepEqual(await screen(), [false, true]);

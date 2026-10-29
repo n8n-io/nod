@@ -1509,6 +1509,8 @@ test('proactive work has no write routes and cannot send model text', async () =
 
 test('a spending check-in stops the observer from starting more tasks', async () => {
   let started = 0;
+  let screened = 0;
+  let report: ((event: AgentEvent) => void) | undefined;
   const result = await fixture(
     async (tools) => {
       await assert.rejects(
@@ -1526,7 +1528,7 @@ test('a spending check-in stops the observer from starting more tasks', async ()
     },
     {
       background: true,
-      checkIn: { budgetUsd: 5, spentUsd: 5 },
+      checkIn: { budgetUsd: 5, spentUsd: 4 },
       task: async () => {
         started++;
         return {};
@@ -1535,12 +1537,38 @@ test('a spending check-in stops the observer from starting more tasks', async ()
         instructions: 'Read synthetic sources.',
         issues: [],
         sources: [],
+        screen: async (_owner, _signal, canContinue) => {
+          screened++;
+          assert.equal(canContinue?.(), true);
+          report?.({
+            type: 'provider_usage',
+            usage: {
+              id: randomUUID(),
+              provider: 'fixture',
+              model: 'fixture',
+              category: 'review',
+              operation: 'attention',
+              status: 'succeeded',
+              durationMs: 1,
+              costUsd: 1,
+            },
+          });
+          assert.equal(canContinue?.(), false);
+          return false;
+        },
         read: async () => ({}),
         update: async () => ({}),
       },
     },
+    {
+      withExecution: (execution, work) => {
+        report = execution.onEvent;
+        return work();
+      },
+    },
   );
   assert.equal(started, 0);
+  assert.equal(screened, 1);
   assert.equal(result.result.status, 'waiting_user');
 });
 

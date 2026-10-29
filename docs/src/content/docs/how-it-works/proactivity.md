@@ -97,6 +97,8 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it.
 
+Source checks also count toward the observer's task check-in, before the full observer starts. At the limit, Nod stops new source reads and checks and asks whether to continue. A quiet result cannot skip this check-in.
+
 Nod reuses an assessment only after its turn succeeds. The owner context, rules, check instructions, source revision and record version must match. A failed, cancelled or waiting turn gives no result to reuse. A due matter still gets its full check.
 
 ## Research behind the behavior

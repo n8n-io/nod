@@ -743,6 +743,7 @@ async function initializeApplication(
     adapters.imageCurator && createImageAnalysis(ledger.curator(adapters.imageCurator));
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
+    withExecution: ledger.withExecution,
     analyzeImages:
       analyzeImages &&
       ((images, request, signal, execution) =>

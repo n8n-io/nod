@@ -132,6 +132,10 @@ export function createAgentRuntime(dependencies: {
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
   keepWarm?(threadId: string): Promise<boolean>;
+  withExecution?<T>(
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+    work: () => T,
+  ): T;
   analyzeImages?(
     images: AgentImage[],
     request: string,
@@ -440,8 +444,8 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
-      if (
-        await context.proactivity?.screen?.(
+      const screenSources = () =>
+        context.proactivity?.screen?.(
           {
             notificationRule: context.notificationRule ?? null,
             rules: context.rules ?? null,
@@ -449,7 +453,12 @@ export function createAgentRuntime(dependencies: {
             timeZone: context.timeZone ?? null,
           },
           signal,
-        )
+          () => !overBudget(),
+        );
+      if (
+        await (dependencies.withExecution
+          ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
+          : screenSources())
       ) {
         await context.emit('source_screened', '', { execution });
         completed = screened = true;

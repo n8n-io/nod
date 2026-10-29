@@ -1030,7 +1030,7 @@ export function createProactivity(options: {
       ),
       read: (input, signal) => read(turn, input, signal, scope, false, assessmentPolicy),
       update: (input, signal) => save(turn, input, scope, signal),
-      screen: async (owner, signal) => {
+      screen: async (owner, signal, canContinue = () => true) => {
         assessmentPolicy = fingerprint([
           attentionInstructions,
           proactivityInstructions,
@@ -1039,7 +1039,7 @@ export function createProactivity(options: {
           owner,
         ]);
         return batch.length && !row.issues_due
-          ? screen(turn, batch, owner, scope, signal, assessmentPolicy)
+          ? screen(turn, batch, owner, scope, signal, assessmentPolicy, canContinue)
           : false;
       },
     };
@@ -1051,6 +1051,7 @@ export function createProactivity(options: {
     scope: string,
     signal: AbortSignal,
     policy: string,
+    canContinue: () => boolean,
   ) {
     type Seen = { sourceId: string; id: string; version: string; error?: string };
     let quiet = true;
@@ -1096,7 +1097,10 @@ export function createProactivity(options: {
           : [{}];
         quiet &&= steps.length > 0;
         for (const step of steps) {
-          if (!quiet) break;
+          if (!quiet || !canContinue()) {
+            quiet = false;
+            break;
+          }
           const result = (await read(turn, { ...step, sourceId }, signal, scope)) as {
             records: Seen[];
             nextCursor?: string;
@@ -1110,6 +1114,7 @@ export function createProactivity(options: {
             );
           });
           quiet =
+            canContinue() &&
             !result.nextCursor &&
             !fresh.some(
               (record) => record.error || matters.has(JSON.stringify([record.sourceId, record.id])),
@@ -1126,7 +1131,11 @@ export function createProactivity(options: {
         );
       }
       quiet &&= !changed.length || Boolean(options.curator?.configured);
-      for (let at = 0; quiet && at < changed.length; at += 6)
+      for (let at = 0; quiet && at < changed.length; at += 6) {
+        if (!canContinue()) {
+          quiet = false;
+          break;
+        }
         quiet = !(
           await Promise.all(
             changed.slice(at, at + 6).map(async (record) => {
@@ -1145,6 +1154,8 @@ export function createProactivity(options: {
             }),
           )
         ).includes(true);
+      }
+      quiet &&= canContinue();
     } catch {
       signal.throwIfAborted();
       quiet = false;
