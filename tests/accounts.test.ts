@@ -921,6 +921,54 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
   }
 
+  test('OpenRouter lists token rates from the saved catalog without exposing its model configuration', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const ownerId = 'fixture-router-prices';
+    const backend = createPiModelBackend({
+      fetch: async (input) => {
+        if (String(input) === 'https://openrouter.ai/api/v1/key')
+          return Response.json({ data: { is_management_key: false } });
+        assert.equal(String(input), 'https://openrouter.ai/api/v1/models');
+        return Response.json({
+          data: [
+            ['fixture/paid', '0.00000125', '0.000005'],
+            ['fixture/small', '0.00000000001', '0.00000000002'],
+            ['fixture/free', '0', '0'],
+            ['openrouter/auto', '0', '0'],
+            ['fixture/variable', '-1', '-1'],
+          ].map(([id, prompt, completion]) => ({
+            id,
+            name: id,
+            context_length: 128000,
+            supported_parameters: ['tools'],
+            architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+            pricing: { prompt, completion },
+          })),
+        });
+      },
+    });
+    const owner = await f.create(ownerId, backend);
+    const id = await owner.addKey('openrouter', 'fixture-router-price-key');
+    const saved = await f.create(ownerId, backend);
+    const models = saved.view().connections[0].models;
+    assert.deepEqual(
+      models.filter((model) => model.id !== 'fixture/small').map((model) => model.pricing),
+      [{ input: 1.25, output: 5 }, { input: 0, output: 0 }, 'variable', 'variable'],
+    );
+    const small = models[1].pricing;
+    assert.ok(small && small !== 'variable');
+    assert.ok(Math.abs(small.input - 0.00001) < 1e-12);
+    assert.ok(Math.abs(small.output - 0.00002) < 1e-12);
+    assert.ok(models.every((model) => !('spec' in model)));
+    await f.database.query(
+      `UPDATE model_connections SET models=jsonb_set(models,'{0,spec,cost,input}','"invalid"') WHERE id=$1 AND owner_id=$2`,
+      [id, ownerId],
+    );
+    const invalid = await f.create(ownerId, backend);
+    assert.equal(invalid.view().connections[0].models[0].pricing, undefined);
+  });
+
   test('ElevenLabs keys stay encrypted and owned without becoming a selectable chat model', async (t) => {
     const f = await fixture(t);
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');

@@ -58,6 +58,7 @@ export interface ModelChoice {
   audio?: boolean;
   textModelName?: string;
   contextWindow: number;
+  pricing?: { input: number; output: number } | 'variable';
 }
 
 export interface ModelSelection {

@@ -90,6 +90,13 @@ const modelProviderLogos: Partial<Record<ModelProvider, string>> = {
   compatible: 'server',
 };
 
+const modelPrice = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 0,
+  maximumSignificantDigits: 4,
+});
+
 export function ModelProviderLogo({
   provider,
   size = 16,
@@ -884,6 +891,7 @@ export function ModelPicker({
   const connections = (models.data?.connections ?? []).filter(
     (source) => source.status === 'connected',
   );
+  const showPrices = connections.some((source) => source.provider === 'openrouter');
   const available = connections.flatMap((source) => {
     const recommended = recommendedModel(source)?.id;
     return source.models.map((item) => ({
@@ -975,6 +983,7 @@ export function ModelPicker({
           <DialogTitle>Choose a model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
             Choose the model for your next message.
+            {showPrices && ' OpenRouter token prices are in USD. Rates can vary.'}
           </p>
           <SearchField
             inputRef={searchInput}
@@ -1015,6 +1024,17 @@ export function ModelPicker({
                     <span className="model-option-heading">
                       <strong>{item.name}</strong>
                       {recommended && <span className="model-option-recommended">Recommended</span>}
+                      {source.provider === 'openrouter' && (
+                        <span className="model-option-price">
+                          {item.pricing === 'variable'
+                            ? 'Price varies'
+                            : !item.pricing
+                              ? 'Price unavailable'
+                              : item.pricing.input === 0 && item.pricing.output === 0
+                                ? 'Free tokens'
+                                : `${modelPrice.format(item.pricing.input)} input · ${modelPrice.format(item.pricing.output)} output / 1M tokens`}
+                        </span>
+                      )}
                     </span>
                     <span className="model-option-details">
                       <span>
