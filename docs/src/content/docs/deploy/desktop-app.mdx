@@ -152,7 +152,7 @@ On a Mac, Nod removes temporary file copies before it asks the native updater to
 
 The [Terminal installer](/get-started/install-desktop/#install-nod) stops an old ShipIt update job before it replaces the app. It removes that job's cache only after the new app passes its checks. It keeps the previous app copy if the new app cannot open. For a manual DMG install after an update failure, see [update recovery](/get-started/install-desktop/#a-failed-mac-update-blocks-a-new-install).
 
-If startup fails and the private computer cannot stop, the technical details keep both failures. Nod still requires a successful stop before it can finish quitting.
+If startup fails and the private computer cannot stop, the technical details keep both failures. The quit prompt offers **Try again** and **Quit anyway**. **Quit anyway** closes Nod even if its private computer has not stopped.
 
 If a manual update check fails, choose **Try again** or **Not now** and keep using Nod. Background check failures stay quiet. If restarting fails before shutdown begins, **Retry restart** uses the update already downloaded. Once shutdown begins, Nod keeps its separate shutdown recovery prompt.
 

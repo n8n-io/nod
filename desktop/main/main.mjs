@@ -1547,7 +1547,6 @@ async function quit(complete, failure = 'Nod could not finish shutting down.') {
   for (const notification of displayedNotifications) notification.close();
   await stoppingUpdates;
   await chatReadCursors.flush().catch(() => {});
-  await disposeArtifactFiles?.().catch(() => {});
   await finishQuit(complete, failure);
 }
 
@@ -1582,6 +1581,7 @@ async function removeAllData() {
 async function finishQuit(complete, failure) {
   while (true) {
     try {
+      await disposeArtifactFiles?.();
       await lifecycle.close();
       await complete();
       return;

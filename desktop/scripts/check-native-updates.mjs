@@ -61,24 +61,41 @@ async function packageFixtures(planPath) {
       }),
     );
     await writeFile(
+      join(directory, 'preload.cjs'),
+      `const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('nativeFixture', {
+  prepare: () => ipcRenderer.invoke('nod:file:action', ${JSON.stringify(fixture.artifactId)}, 'prepare'),
+});`,
+    );
+    await writeFile(
       join(directory, 'main.cjs'),
       `
 const { app, autoUpdater, BrowserWindow, safeStorage } = require('electron');
-const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
 const { createHash, sign } = require('node:crypto');
+const { join } = require('node:path');
 const fixture = ${JSON.stringify(fixture)};
 app.setPath('userData', fixture.profile);
+app.setPath('temp', fixture.temporary);
 const receipt = (event, fields = {}) => appendFileSync(fixture.events,
   JSON.stringify({ event, version: app.getVersion(), at: Date.now(), pid: process.pid, executable: process.execPath,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
 app.whenReady().then(async () => {
   const { createSettingsStore } = await import('./settings.mjs');
   const { registerArtifactFileHandlers } = await import('./artifact-file-handlers.mjs');
-  const window = new BrowserWindow({ show: false });
-  const disposeArtifactFiles = registerArtifactFileHandlers({
-    isEngine: () => false, origin: () => '', headers: () => ({}), window: () => window,
+  const page = 'data:text/html;base64,' + Buffer.from('<title>Native update fixture</title>').toString('base64');
+  const window = new BrowserWindow({
+    show: false,
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  app.on('will-quit', (event) => receipt('quit-accepted', { cancelled: Boolean(event.defaultPrevented) }));
+  let artifactRoot;
+  const disposeArtifactFiles = registerArtifactFileHandlers({
+    isEngine: ({ sender, senderFrame }) => sender === window.webContents && senderFrame === window.webContents.mainFrame && senderFrame.url === page,
+    origin: () => fixture.artifactOrigin, headers: () => ({}), window: () => window,
+  });
+  app.on('will-quit', (event) => receipt('quit-accepted', {
+    cancelled: Boolean(event.defaultPrevented), artifactRemoved: !artifactRoot || !existsSync(artifactRoot),
+  }));
   const initialLaunch = !existsSync(fixture.remoteSettings);
   const remoteSettings = createSettingsStore(fixture.remoteSettings, safeStorage);
   if (initialLaunch) await remoteSettings.saveConnection({ url: fixture.serverUrl, token: fixture.serverToken });
@@ -137,6 +154,16 @@ app.whenReady().then(async () => {
     return app.exit(0);
   }
   if (app.getVersion() !== fixture.installed) return setTimeout(() => app.quit(), 500);
+  if (fixture.kind === 'install') {
+    await window.loadURL(page);
+    await window.webContents.executeJavaScript('nativeFixture.prepare()');
+    const directories = readdirSync(fixture.temporary).filter((name) => name.startsWith('nod-files-'));
+    if (directories.length !== 1) throw new Error('The temporary artifact root is missing.');
+    artifactRoot = join(fixture.temporary, directories[0]);
+    const bytes = readFileSync(join(artifactRoot, fixture.artifactId, 'download'));
+    if (bytes.toString() !== fixture.artifactContent) throw new Error('The prepared artifact bytes do not match.');
+    receipt('artifact-prepared', { hash: createHash('sha256').update(bytes).digest('hex') });
+  }
   autoUpdater.on('error', (error) => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
     app.quit();
@@ -144,7 +171,7 @@ app.whenReady().then(async () => {
   autoUpdater.on('update-downloaded', async () => {
     receipt('downloaded');
     await disposeArtifactFiles();
-    receipt('files-closed');
+    receipt('files-closed', { artifactRemoved: !artifactRoot || !existsSync(artifactRoot) });
     autoUpdater.quitAndInstall();
   });
   autoUpdater.on('update-not-available', () => { receipt('unavailable'); app.quit(); });
@@ -272,6 +299,9 @@ async function main() {
     if (route.file) {
       response.writeHead(200, { 'content-type': 'application/zip', 'content-length': route.bytes });
       createReadStream(route.file).pipe(response);
+    } else if (typeof route.text === 'string') {
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.end(route.text);
     } else {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(route));
@@ -292,6 +322,10 @@ async function main() {
         name: `NodFixture-${kind}`,
         identifier: `dev.nod.updatefixture.${randomUUID()}.${kind}`,
         profile: join(root, `${kind}-profile`),
+        temporary: join(root, `${kind}-temporary`),
+        artifactId: randomUUID(),
+        artifactOrigin: `${origin}/${kind}`,
+        artifactContent: 'Synthetic native update artifact',
         events: join(root, `${kind}.jsonl`),
         data: join(root, `${kind}-profile`, 'saved.json'),
         encrypted: join(root, `${kind}-profile`, 'encrypted.bin'),
@@ -318,6 +352,7 @@ async function main() {
       for (const cache of fixture.caches)
         assert.equal(existsSync(cache), false, `Fixture cache already exists: ${cache}`);
       await mkdir(fixture.profile);
+      await mkdir(fixture.temporary);
       await mkdir(identityDirectory, { recursive: true, mode: 0o700 });
       await writeFile(fixture.ownerFile, JSON.stringify({ ownerId: owner }), { mode: 0o600 });
       await writeFile(
@@ -403,6 +438,10 @@ async function main() {
         name: '1.0.1',
         pub_date: '2026-10-04T00:00:00Z',
       });
+      routes.set(`/${fixture.kind}/api/artifacts/${fixture.artifactId}/metadata`, {});
+      routes.set(`/${fixture.kind}/api/artifacts/${fixture.artifactId}`, {
+        text: fixture.artifactContent,
+      });
       const executable = join(fixture.application, 'Contents/MacOS', fixture.name);
       const child = spawn(executable, [], { stdio: 'ignore' });
       child.on('error', (error) => {
@@ -451,15 +490,19 @@ async function main() {
         join(fixture.application, 'Contents/Info.plist'),
       ]);
       if (fixture.kind === 'install') {
+        const artifactPrepared = events.findIndex((event) => event.event === 'artifact-prepared');
         const filesClosed = events.findIndex((event) => event.event === 'files-closed');
         const quitAccepted = events.findIndex((event) => event.event === 'quit-accepted');
         check(
           'UPD-QUIT',
-          filesClosed >= 0 &&
+          artifactPrepared >= 0 &&
+            events[artifactPrepared].hash === sha256(fixture.artifactContent) &&
+            filesClosed > artifactPrepared &&
+            events[filesClosed].artifactRemoved === true &&
             quitAccepted > filesClosed &&
             events
               .filter((event) => event.event === 'quit-accepted')
-              .every((event) => !event.cancelled),
+              .every((event) => !event.cancelled && event.artifactRemoved),
         );
         check(
           'UPD-INSTALL',

@@ -390,6 +390,7 @@ async function runningDesktop(
     updateLoginItems = () => true,
     loginItemStatus = () => ({}),
     webPreferences = { quietHoursEnabled: false },
+    createFiles = createArtifactFiles,
     openFile = open,
     environment = {},
     platform = process.platform === 'win32' ? 'win32' : 'darwin',
@@ -553,7 +554,7 @@ async function runningDesktop(
       get: async () => ({ preferences: webPreferences }),
     }),
     createChatReadCursorStore,
-    createArtifactFiles,
+    createArtifactFiles: createFiles,
     saveArtifactDownload,
     createReadinessNotice,
     createUnreadBadge,
@@ -2511,54 +2512,85 @@ test('native quit aborts storage startup without creating a late engine', async 
 });
 
 test('quit removes temporary files and stops downloads before the updater can quit', async (t) => {
-  const readyId = randomUUID();
-  const pendingId = randomUUID();
-  let downloadSignal;
-  let preparedPath;
-  const f = await runningDesktop(
-    t,
-    async (url, options) => {
-      const path = new URL(url).pathname;
-      if (path.endsWith('/metadata')) return Response.json({});
-      if (path === `/api/artifacts/${readyId}`) return new Response('Synthetic file');
-      assert.equal(path, `/api/artifacts/${pendingId}`);
-      downloadSignal = options.signal;
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('Partial file'));
-            options.signal.addEventListener('abort', () => controller.error(options.signal.reason));
+  for (const retry of [false, true])
+    await t.test(retry ? 'cleanup retry' : 'cleanup success', async (t) => {
+      const readyId = randomUUID();
+      const pendingId = randomUUID();
+      let downloadSignal;
+      let preparedPath;
+      let cleanupAttempts = 0;
+      let prompts = 0;
+      let installed = false;
+      const f = await runningDesktop(
+        t,
+        async (url, options) => {
+          const path = new URL(url).pathname;
+          if (path.endsWith('/metadata')) return Response.json({});
+          if (path === `/api/artifacts/${readyId}`) return new Response('Synthetic file');
+          assert.equal(path, `/api/artifacts/${pendingId}`);
+          downloadSignal = options.signal;
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('Partial file'));
+                options.signal.addEventListener('abort', () =>
+                  controller.error(options.signal.reason),
+                );
+              },
+            }),
+          );
+        },
+        {
+          reveal: (path) => (preparedPath = path),
+          createFiles: (options) => {
+            const files = createArtifactFiles(options);
+            return {
+              ...files,
+              async dispose() {
+                cleanupAttempts++;
+                if (retry && cleanupAttempts === 1)
+                  throw new Error('Synthetic file cleanup failure');
+                await files.dispose();
+              },
+            };
           },
-        }),
+          prompt: async () => {
+            prompts++;
+            assert.equal(retry, true);
+            assert.equal(cleanupAttempts, 1);
+            assert.equal(installed, false);
+            assert.equal(await readFile(preparedPath, 'utf8'), 'Synthetic file');
+            return { response: 0 };
+          },
+        },
       );
-    },
-    { reveal: (path) => (preparedPath = path) },
-  );
-  t.after(() => f.close());
-  f.showEngine();
-  f.registerFiles();
-  const window = f.windows.at(-1);
-  const event = {
-    sender: window.webContents,
-    senderFrame: window.webContents.mainFrame,
-  };
-  const action = f.handlers.get('nod:file:action');
-  await action(event, readyId, 'show');
-  assert.equal(await readFile(preparedPath, 'utf8'), 'Synthetic file');
-  const pending = assert.rejects(action(event, pendingId, 'prepare'), { name: 'AbortError' });
-  for (let attempt = 0; !downloadSignal && attempt < 100; attempt++)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(downloadSignal);
-  f.crash();
-  let installed = false;
-  await f.quit(async () => {
-    assert.equal(downloadSignal.aborted, true);
-    await assert.rejects(readFile(preparedPath), { code: 'ENOENT' });
-    f.willQuit({ preventDefault: () => assert.fail('File cleanup must not cancel quit.') });
-    installed = true;
-  });
-  await pending;
-  assert.equal(installed, true);
+      t.after(() => f.close());
+      f.showEngine();
+      f.registerFiles();
+      const window = f.windows.at(-1);
+      const event = {
+        sender: window.webContents,
+        senderFrame: window.webContents.mainFrame,
+      };
+      const action = f.handlers.get('nod:file:action');
+      await action(event, readyId, 'show');
+      assert.equal(await readFile(preparedPath, 'utf8'), 'Synthetic file');
+      const pending = assert.rejects(action(event, pendingId, 'prepare'), { name: 'AbortError' });
+      for (let attempt = 0; !downloadSignal && attempt < 100; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.ok(downloadSignal);
+      f.crash();
+      await f.quit(async () => {
+        assert.equal(downloadSignal.aborted, true);
+        await assert.rejects(readFile(preparedPath), { code: 'ENOENT' });
+        f.willQuit({ preventDefault: () => assert.fail('File cleanup must not cancel quit.') });
+        installed = true;
+      });
+      await pending;
+      assert.equal(installed, true);
+      assert.equal(cleanupAttempts, retry ? 2 : 1);
+      assert.equal(prompts, retry ? 1 : 0);
+    });
 });
 
 test('desktop proxy overrides reach only isolated source engines and retain origin validation', async (t) => {

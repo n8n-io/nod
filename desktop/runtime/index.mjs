@@ -870,15 +870,22 @@ export function prepareRuntime(options) {
             try {
               await stopRuntime(options);
             } catch (cleanupError) {
-              cleanupError.cause = error;
-              cleanupError.details = [
-                error.stack || error.message,
-                error.details,
-                cleanupError.details,
-              ]
-                .filter(Boolean)
-                .join('\n');
-              throw cleanupError;
+              throw Object.assign(
+                new AggregateError([error, cleanupError], cleanupError.message, {
+                  cause: cleanupError,
+                }),
+                {
+                  code: cleanupError.code,
+                  details: [
+                    error.stack || error.message,
+                    error.details,
+                    cleanupError.stack || cleanupError.message,
+                    cleanupError.details,
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                },
+              );
             }
           }
           throw error;

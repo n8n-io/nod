@@ -2350,7 +2350,8 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     const startupError = Object.assign(new Error('Synthetic startup failure'), {
       details: 'Synthetic startup command details',
     });
-    const cleanupError = Object.assign(new Error('Synthetic stop failure'), {
+    const stopError = new Error('Synthetic stop command failure');
+    const cleanupError = Object.assign(new Error('Synthetic stop failure', { cause: stopError }), {
       code: 'NOD_RUNTIME_STOP_FAILED',
       details: 'Synthetic stop command details',
     });
@@ -2402,8 +2403,11 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     });
     if (terminal === 'cleanup-failed') {
       await assert.rejects(lifecycle.start(), (error) => {
-        assert.equal(error, cleanupError);
-        assert.equal(error.cause, startupError);
+        assert.equal(error.code, cleanupError.code);
+        assert.equal(error.errors[0], startupError);
+        assert.equal(error.errors[1], cleanupError);
+        assert.equal(error.cause, cleanupError);
+        assert.equal(error.cause.cause, stopError);
         assert.ok(error.details.includes(startupError.details));
         assert.ok(error.details.includes('Synthetic stop command details'));
         return true;
