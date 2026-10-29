@@ -7,7 +7,7 @@ sidebar:
 
 Nod prepares useful work from your connected sources on its own and messages you when it's worth an interruption. That message is a nudge: what changed, what's ready and, when there's a next step, one short question that offers it, such as "Want me to send it?". The first nudge about a kind of thing also says, once, that Nod will keep flagging things like it. You answer in words, in Nod, Telegram or WhatsApp.
 
-Nod first checks for a concrete open need, such as an unanswered request, a commitment, a problem, financial risk or recoverable payment that affects you, or work you asked it to watch. Ideas, backlog entries and routine updates alone start no plan or assessment, even in private. A possible improvement or missing detail does not make the idea urgent. Saving an idea does not ask Nod to develop it.
+Nod first checks for a concrete open need, such as an unanswered request, a commitment, a problem, financial risk or recoverable payment that affects you, or work you asked it to watch. Ideas, backlog entries and routine updates alone start no plan, draft or task, even in private. Nod can still use a model to check for an open need. A possible improvement or missing detail does not make the idea urgent. Saving an idea does not ask Nod to develop it.
 
 ## What a nudge looks like
 
