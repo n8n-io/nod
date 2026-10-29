@@ -40,6 +40,8 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and a bubble at the bottom of the chat show its current activity and, while it browses, the website it is on. Useful, verified milestones also arrive as chat messages, with what is complete and what remains. Inside the details, select **Show activity** to read Nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
 
+The activity bubble shows the task title above its current step. Both wrap so you can read the full text.
+
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 
 ## Reply or stop one task

@@ -415,7 +415,21 @@ function AuthenticatedApp({
       ),
     [],
   );
-  useEffect(() => (onboarding ? undefined : subscribeDesktopNavigation(openPage)), [onboarding]);
+  const pendingDesktopPage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onboarding && pendingDesktopPage.current) {
+      const destination = pendingDesktopPage.current;
+      pendingDesktopPage.current = null;
+      openPage(destination);
+    }
+    return subscribeDesktopNavigation((path) => {
+      const destination = appPagePath(path);
+      if (!destination) return;
+      if (onboarding) {
+        if (destination !== '/apps') pendingDesktopPage.current = destination;
+      } else openPage(destination);
+    });
+  }, [onboarding]);
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', '/settings/memory');
