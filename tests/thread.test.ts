@@ -4912,35 +4912,46 @@ test(
                 let sourceRevision: string | undefined;
                 let checks = 0;
                 let owner = {};
+                let curatorId = 'fixture';
+                let fail = false;
+                let rotateSource = false;
                 const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
-                  sources: async () =>
-                    (await options.sources()).map((source) => ({
+                  sources: async () => {
+                    const result = (await options.sources()).map((source) => ({
                       ...source,
                       ...(sourceRevision ? { revision: sourceRevision } : {}),
                       tools,
-                    })),
+                    }));
+                    if (rotateSource) {
+                      sourceRevision = 'screening-raced-revision';
+                      rotateSource = false;
+                    }
+                    return result;
+                  },
                   curator: {
-                    id: 'fixture',
+                    get id() {
+                      return curatorId;
+                    },
                     configured: true,
                     curate: async () => {
                       checks++;
+                      if (fail) throw new Error('Synthetic failed check');
                       return { attention: verdict };
                     },
                   },
                 });
-                const screen = async (changeVersion = true) => {
+                const screen = async (changeVersion = true, rotate = false) => {
                   if (changeVersion) version = randomUUID();
                   screening.release(turnId);
                   await db.pool.query(
                     'UPDATE proactive_sources SET claimed_turn=$3,signal_version=signal_version+1 WHERE owner_id=$1 AND source_id=$2',
                     [ownerId, sourceId, turnId],
                   );
-                  const quiet = await (await screening.context(ref))!.screen!(
-                    owner,
-                    new AbortController().signal,
-                  );
+                  const context = (await screening.context(ref))!;
+                  rotateSource = rotate;
+                  const quiet = await context.screen!(owner, new AbortController().signal);
                   const { dirty } = (
                     await db.pool.query(
                       'SELECT signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
@@ -4968,6 +4979,21 @@ test(
                 assert.deepEqual(await screen(false), [false, true]);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
+                curatorId = 'fixture-replaced';
+                verdict = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                verdict = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                const beforeRace = checks;
+                assert.deepEqual(await screen(false, true), [false, true]);
+                assert.equal(checks, beforeRace);
+                assert.deepEqual(await screen(false), [true, false]);
+                fail = true;
+                assert.deepEqual(await screen(), [false, true]);
+                const beforeRetry = checks;
+                fail = false;
+                assert.deepEqual(await screen(false), [true, false]);
+                assert.equal(checks, beforeRetry + 1);
                 sourceRevision = 'screening-new-revision';
                 verdict = true;
                 assert.deepEqual(await screen(false), [false, true]);

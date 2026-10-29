@@ -1040,7 +1040,7 @@ export function createProactivity(options: {
     signal: AbortSignal,
   ) {
     type Seen = { sourceId: string; id: string; version: string; error?: string };
-    const policy = fingerprint([scope, owner]);
+    const policy = fingerprint([attentionInstructions, options.curator?.id, scope, owner]);
     let quiet = true;
     try {
       const [catalog, sources, evidence, saved] = await Promise.all([
