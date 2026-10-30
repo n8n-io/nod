@@ -6109,6 +6109,8 @@ test('desktop preference steps and completion require the owned normal app and d
           assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
         }
         loginStatus = {};
+        await save(event, { launchAtLogin: false });
+        assert.equal(registered, false);
         const originalSave = f.storage.store.save.bind(f.storage.store);
         f.storage.store.save = async () => {
           throw new Error('Synthetic settings storage failed.');
@@ -6118,6 +6120,7 @@ test('desktop preference steps and completion require the owned normal app and d
           /Synthetic settings storage failed/,
         );
         assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+        assert.equal(registered, false);
         f.storage.store.save = originalSave;
         await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
         await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
