@@ -64,12 +64,9 @@ export async function createVaultAccess(
       payment_id uuid, amount_minor bigint, currency text
     );
     CREATE INDEX IF NOT EXISTS vault_activity_owner_time ON vault_activity(owner_id,at DESC,id DESC);
-    DROP INDEX IF EXISTS vault_activity_once;
-    UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     ALTER TABLE vault_activity ADD COLUMN IF NOT EXISTS basis jsonb;
     ALTER TABLE vault_activity DROP COLUMN IF EXISTS turn_id, DROP COLUMN IF EXISTS root_turn_id;
-    DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {

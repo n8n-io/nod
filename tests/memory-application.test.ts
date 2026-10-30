@@ -13,14 +13,7 @@ import { memoryObjectStore } from './fixtures/object-store.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
 import { applyOps } from '../src/server/memory-ops.ts';
-import {
-  emptyTree,
-  fits,
-  parse,
-  render,
-  type Entry,
-  type Tree,
-} from '../src/server/memory-tree.ts';
+import { emptyTree, parse, render, type Entry, type Tree } from '../src/server/memory-tree.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
@@ -34,7 +27,7 @@ type Step = {
 };
 
 test(
-  'memory keeps only the owner’s own words, silently, and moves a saved profile or a pasted import into notes',
+  'memory keeps only the owner’s own words, silently, and moves a pasted import into notes',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
@@ -58,24 +51,6 @@ test(
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
-    await pool.query(
-      "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
-    );
-    const profile = {
-      name: 'Memory Fixture',
-      location: 'Lisbon',
-      phone: '4111 1111 1111 1111',
-      preferences: [
-        'Short synthetic replies.',
-        'Metric units and euros. Always send the synthetic weekly digest on Monday mornings before the first meeting starts, with the three most important items at the top and a link to every source next to the claim it supports.',
-        ...Array.from(
-          { length: 12 },
-          (_, index) =>
-            `Synthetic preference number ${index + 1} keeps travel, meetings and invoices in their usual order.`,
-        ),
-      ].join('\n'),
-    };
-    await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
     const skillSecret = 'skill-fixture-secret-9f2c41';
     process.env.NOD_SKILL_FIXTURE_API_KEY = skillSecret;
     t.after(() => {
@@ -336,23 +311,6 @@ test(
         );
         assert.deepEqual(await notices(), []);
       };
-      const migrated = (await view()).notes;
-      assert.deepEqual(
-        migrated
-          .filter((note) => note.area === 'preferences')
-          .flatMap((note) => note.text.split(' '))
-          .sort(),
-        profile.preferences.split(/\s+/).sort(),
-      );
-      assert.deepEqual(
-        migrated
-          .filter((note) => note.area === 'about')
-          .map((note) => note.text)
-          .sort(),
-        ['Location: Lisbon', 'Name: Memory Fixture'],
-      );
-      assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
-
       rememberAnswer = () => ({
         ops: [
           {
@@ -366,15 +324,17 @@ test(
           },
         ],
       });
+      const before = await memoryFile();
       const unsupported = await ask('Review my synthetic project notes.', [
         { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
         learn(),
         learn([randomUUID()], true),
       ]);
-      assert.equal(JSON.parse(await memoryFile()).entries.length, migrated.length);
+      assert.equal(await memoryFile(), before);
       assert.equal(rememberInputs.length, 1);
       assert.doesNotMatch(rememberInputs[0], /refunds/i);
       await assertSilent(unsupported);
+      await application.memory.add({ area: 'about', text: 'Location: Lisbon' });
       const imported = await application.app.inject({
         method: 'POST',
         url: '/api/memory/import',
@@ -535,52 +495,9 @@ test(
       assert.deepEqual([guess.status, guess.sources[0].text], ['tentative', null]);
       assert.deepEqual(await notices(), []);
 
-      const full = emptyTree();
-      let filled = 0;
-      const filler = (words: number) => ({
-        area: 'lessons' as const,
-        slug: `filler-${filled}`,
-        text: `Synthetic filler ${filled++} ${'lesson '.repeat(words)}`.trim(),
-        origin: 'stated' as const,
-        updated: new Date().toISOString(),
-        edited: new Date().toISOString(),
-        sources: [],
-      });
-      for (let words = 500; words > 0; words = Math.floor(words / 2))
-        for (;;) {
-          full.entries.push(filler(words));
-          if (fits(full)) continue;
-          full.entries.pop();
-          break;
-        }
-      const kept = full.entries.length;
-      await writeMemory(render(full));
-      const legacy = async () => {
-        await pool.query(
-          "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
-        );
-        await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
-        await application.personal.initialize({ workers: false });
-      };
-      const profileTable = async () =>
-        (await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name;
-      const remembered = async () =>
-        (await view()).notes.some((note) => note.text === 'Name: Memory Fixture');
-      await legacy();
-      assert.equal(
-        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data
-          .name,
-        'Memory Fixture',
-      );
-      assert.equal(JSON.parse(await memoryFile()).entries.length, kept);
       const clear = 'Clear everything you saved about me.';
       await ask(clear, [personal('memory_control', { clear: true, quote: clear })]);
-      assert.equal(await profileTable(), null);
-      await application.personal.initialize({ workers: false });
-      assert.equal(await remembered(), false);
-      await legacy();
-      assert.equal(await profileTable(), null);
-      assert.equal(await remembered(), true);
+      assert.deepEqual((await view()).notes, []);
       await t.test('setup requires a model and finishes without a connected inbox', async () => {
         await pool.query('DELETE FROM messages WHERE owner_id=$1', [ownerId]);
         const session = async () =>

@@ -204,7 +204,7 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
     registerLocalAccess(app, 4310, { key });
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
-    const settingsPages = ['/settings', '/settings/models', '/settings/apps', '/settings/memory'];
+    const settingsPages = ['/settings', '/settings/models', '/settings/memory'];
     for (const path of settingsPages) app.get(path, async () => 'nod');
     app.get('/api/settings', async () => ({ private: true }));
     const navigation = {

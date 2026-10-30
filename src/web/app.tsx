@@ -151,7 +151,6 @@ function Workspace({
     window.addEventListener('nod:focus-message', focusMessage);
     return () => window.removeEventListener('nod:focus-message', focusMessage);
   }, [state]);
-  const currentPath = path === '/you' ? '/' : path;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
     if (hasMessages !== null)
@@ -196,7 +195,7 @@ function Workspace({
         />
       )}
       <Sidebar
-        path={currentPath}
+        path={path}
         unreadCount={unread.count}
         unreadPending={unread.pending}
         onToggle={() => toggleSidebar(false)}
@@ -209,7 +208,7 @@ function Workspace({
         )}
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
-            <div className="chat-route" hidden={currentPath !== '/'}>
+            <div className="chat-route" hidden={path !== '/'}>
               {state ? (
                 <Chat
                   ownerId={session.user!.id}
@@ -218,8 +217,8 @@ function Workspace({
                   refresh={refresh}
                   resetConversation={resetConversation}
                   initialFocusMessageId={pendingMessageFocus}
-                  toolbarActions={currentPath === '/' ? toolbarActions : null}
-                  visible={currentPath === '/'}
+                  toolbarActions={path === '/' ? toolbarActions : null}
+                  visible={path === '/'}
                   onReadLatest={unread.markRead}
                   onFeedback={onFeedback}
                   onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
@@ -239,24 +238,20 @@ function Workspace({
                 <ChatSkeleton />
               )}
             </div>
-            {(currentPath === '/usage' || currentPath === '/vault') && (
+            {(path === '/usage' || path === '/vault') && (
               <>
-                <Usage hidden={currentPath !== '/usage'} />
-                <Vault hidden={currentPath !== '/vault'} onAsk={askInChat} />
+                <Usage hidden={path !== '/usage'} />
+                <Vault hidden={path !== '/vault'} onAsk={askInChat} />
               </>
             )}
-            {currentPath === '/apps' && (
-              <Apps configuration={state?.configuration} onAsk={askInChat} />
-            )}
-            {currentPath === '/channels' && <Channels />}
-            {currentPath === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
-            {preparedWorkId(currentPath) && (
-              <PreparedWork key={currentPath} id={preparedWorkId(currentPath)!} />
-            )}
+            {path === '/apps' && <Apps configuration={state?.configuration} onAsk={askInChat} />}
+            {path === '/channels' && <Channels />}
+            {path === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
+            {preparedWorkId(path) && <PreparedWork key={path} id={preparedWorkId(path)!} />}
             {settings}
-            {!settingsPage(currentPath) &&
-              !preparedWorkId(currentPath) &&
-              !sidebarItems.some((item) => item.path === currentPath) && (
+            {!settingsPage(path) &&
+              !preparedWorkId(path) &&
+              !sidebarItems.some((item) => item.path === path) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>
                   <Button variant="outline" onClick={() => navigate('/')}>
@@ -635,7 +630,6 @@ function AccountApp({
   useEffect(() => {
     if (!sessionState.loading && (!session?.user || !session.settings)) desktopRendererReady();
   }, [sessionState.loading, session?.user, session?.settings]);
-  const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
@@ -643,38 +637,28 @@ function AccountApp({
     capturePageview(
       !session.settings?.onboardingCompleted && !secure
         ? '/onboarding'
-        : legacyBrowserLink
-          ? '/apps'
-          : path === '/onboarding'
-            ? '/'
-            : (path === '/browser' && !session.capabilities.developer) ||
-                /^\/(?:vault|credentials|payments)\/?$/.test(path)
-              ? '/not-found'
-              : path,
+        : path === '/onboarding'
+          ? '/'
+          : (path === '/browser' && !session.capabilities.developer) ||
+              /^\/(?:vault|credentials|payments)\/?$/.test(path)
+            ? '/not-found'
+            : path,
     );
-  }, [path, sessionState.loading, session, legacyBrowserLink]);
+  }, [path, sessionState.loading, session]);
   useEffect(() => {
     if (sessionState.loading || !session?.user || !session.settings) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
     const next =
       !session.settings.onboardingCompleted && !secure
         ? '/onboarding'
-        : legacyBrowserLink
-          ? '/apps'
-          : path === '/onboarding' && !replayingOnboarding(path)
-            ? '/'
-            : null;
+        : path === '/onboarding' && !replayingOnboarding(path)
+          ? '/'
+          : null;
     if (next && next !== path) {
       window.history.replaceState(null, '', next);
       setPath(next);
     }
-  }, [
-    sessionState.loading,
-    session?.user?.id,
-    session?.settings?.onboardingCompleted,
-    path,
-    legacyBrowserLink,
-  ]);
+  }, [sessionState.loading, session?.user?.id, session?.settings?.onboardingCompleted, path]);
   if (sessionState.locked)
     if (!desktopSettingsAvailable()) return <ServerAccess onConnected={sessionState.refresh} />;
     else
@@ -697,13 +681,7 @@ function AccountApp({
   return (
     <AuthenticatedApp
       key={key}
-      path={
-        legacyBrowserLink
-          ? '/apps'
-          : path === '/onboarding' && !replayingOnboarding(path)
-            ? '/'
-            : path
-      }
+      path={path === '/onboarding' && !replayingOnboarding(path) ? '/' : path}
       session={session}
       saving={sessionState.mutating}
       onAccountUpdate={sessionState.update}

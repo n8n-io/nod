@@ -22,8 +22,6 @@ export function analyticsRoute(value: string) {
     if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (preparedWorkId(path)) return '/prepared';
-    if (path.startsWith('/browser-connect/')) return '/apps';
-    if (path === '/you') return '/';
     if (['/settings/models', '/settings/memory'].includes(path)) return '/settings';
     return routes.has(path) ? path : '/not-found';
   } catch {

@@ -61,8 +61,6 @@ export async function createVaultUses(pool: Pool, ownerId: string, analytics?: C
     created_at timestamptz NOT NULL DEFAULT now()
   );
   ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS root_turn_id uuid;
-  ALTER TABLE vault_uses DROP COLUMN IF EXISTS attempt_key, DROP COLUMN IF EXISTS thread_id,
-    DROP COLUMN IF EXISTS turn_id, DROP COLUMN IF EXISTS finished_at;
   CREATE INDEX IF NOT EXISTS vault_uses_owner ON vault_uses(owner_id,created_at DESC);`);
   await pool.query(
     'CREATE INDEX IF NOT EXISTS vault_uses_root ON vault_uses(owner_id,root_turn_id,origin,kind,item_id)',

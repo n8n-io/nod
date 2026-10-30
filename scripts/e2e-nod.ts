@@ -32,6 +32,35 @@ import { workspaceNetwork } from './e2e-workspace.ts';
 import { integrationDatabaseUrl } from './local-database.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
+function profileNotes(profile: Record<string, unknown>) {
+  return Object.entries(profile).flatMap(([field, value]) => {
+    if (typeof value !== 'string') return [];
+    const area = field === 'preferences' ? ('preferences' as const) : ('about' as const);
+    const label = area === 'about' ? `${field[0]!.toUpperCase()}${field.slice(1)}: ` : '';
+    const budget = 120 - label.length;
+    const notes: string[] = [];
+    let current = '';
+    const push = (unit: string) => {
+      if (current && current.length + unit.length + 1 > budget) {
+        notes.push(current);
+        current = '';
+      }
+      current = current ? `${current} ${unit}` : unit;
+    };
+    for (const sentence of value.split(/\n+|(?<=[.!?])\s+/)) {
+      const flat = sentence.replace(/[\s\p{Cc}]+/gu, ' ').trim();
+      if (flat.length <= budget) {
+        if (flat) push(flat);
+      } else
+        for (const word of flat.split(' '))
+          for (let start = 0; start < word.length; start += budget)
+            push(word.slice(start, start + budget));
+    }
+    if (current) notes.push(current);
+    return notes.map((text) => ({ area, text: label + text }));
+  });
+}
+
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const environment = {
   ...parse(await readFile(join(repository, '.env'), 'utf8').catch(() => '')),
@@ -343,7 +372,6 @@ try {
     { createDockerWorkspace },
     { createPublicLinkPreviewProvider },
     { events },
-    { profileNotes },
   ] = await Promise.all([
     import('../src/server/composition.ts'),
     import('../src/server/db.ts'),
@@ -352,7 +380,6 @@ try {
     import('../src/providers/docker/index.ts'),
     import('../src/providers/public-web/link-preview.ts'),
     import('../src/server/events.ts'),
-    import('../src/server/personal.ts'),
   ]);
   databasePool = pool;
   const vaultKey = randomBytes(32);

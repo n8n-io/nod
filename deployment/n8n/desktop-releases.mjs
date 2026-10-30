@@ -36,13 +36,11 @@ export function checkRequest(input) {
       platform: query.platform || 'darwin-arm64',
       apiUrl: `${api}?per_page=100`,
     };
-  if (keys === 'tag' && !queryKeys && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
-    return { operation: 'runtime', tag: params.tag, apiUrl: `${api}/tags/${params.tag}` };
   if (
     keys === 'tag' &&
     !queryKeys &&
-    ((params.tag.startsWith('nod-v') && version.test(params.tag.slice(5))) ||
-      /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
+    params.tag.startsWith('nod-v') &&
+    version.test(params.tag.slice(5))
   )
     return { operation: 'metadata', tag: params.tag, apiUrl: `${api}/tags/${params.tag}` };
   if (!id(params.releaseId)) return invalid();
@@ -85,35 +83,30 @@ export function releaseResponse(pages, request, baseUrl) {
     tag.length < 140 &&
     tag.startsWith('nod-v') &&
     versionPattern.test(tag.slice(5));
-  const runtimeTag = (tag) =>
-    typeof tag === 'string' && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(tag);
   const positive = (value) => Number.isSafeInteger(value) && value > 0;
-  const allowed = (name, desktop) =>
-    desktop
-      ? [
-          'release.json',
-          'runtime-release.json',
-          'update.json',
-          'nod-arm64.dmg',
-          'nod-arm64.zip',
-          'nod-x64.dmg',
-          'nod-x64.zip',
-          'nod-Setup-x64.exe',
-          'nod-Runtime-win32-x64.tar.gz',
-          'release-darwin-x64.json',
-          'runtime-release-darwin-x64.json',
-          'update-darwin-x64.json',
-          'release-win32-x64.json',
-          'SHA256SUMS-darwin-x64',
-          'SHA256SUMS-win32-x64',
-          'SHA256SUMS',
-          'signing.cer',
-          'CHANGELOG.md',
-        ].includes(name) ||
-        /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}\.json$/.test(name) ||
-        /^nod-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name)
-      : ['runtime-release.json', 'SHA256SUMS', 'signing.cer'].includes(name) ||
-        /^nod-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name);
+  const allowed = (name) =>
+    [
+      'release.json',
+      'runtime-release.json',
+      'update.json',
+      'nod-arm64.dmg',
+      'nod-arm64.zip',
+      'nod-x64.dmg',
+      'nod-x64.zip',
+      'nod-Setup-x64.exe',
+      'nod-Runtime-win32-x64.tar.gz',
+      'release-darwin-x64.json',
+      'runtime-release-darwin-x64.json',
+      'update-darwin-x64.json',
+      'release-win32-x64.json',
+      'SHA256SUMS-darwin-x64',
+      'SHA256SUMS-win32-x64',
+      'SHA256SUMS',
+      'signing.cer',
+      'CHANGELOG.md',
+    ].includes(name) ||
+    /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}\.json$/.test(name) ||
+    /^nod-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name);
   const normalize = (release) => {
     if (
       !release ||
@@ -122,14 +115,13 @@ export function releaseResponse(pages, request, baseUrl) {
       !Number.isFinite(Date.parse(release.published_at))
     )
       return null;
-    const desktop = desktopTag(release.tag_name);
-    if (!desktop && !runtimeTag(release.tag_name)) return null;
+    if (!desktopTag(release.tag_name)) return null;
     if (!positive(release.id) || !Array.isArray(release.assets) || release.assets.length > 100)
       throw new Error('Invalid release.');
     const names = new Set();
     const ids = new Set();
     const assets = release.assets
-      .filter((asset) => asset && allowed(asset.name, desktop))
+      .filter((asset) => asset && allowed(asset.name))
       .map((asset) => {
         if (
           !positive(asset.id) ||
@@ -190,23 +182,13 @@ export function releaseResponse(pages, request, baseUrl) {
   };
   try {
     if (!Array.isArray(pages) || !pages.length || pages.length > 5) return unavailable();
-    if (request.operation === 'runtime' && !request.alias && pages.length === 1) {
-      if (pages[0].statusCode === 404)
-        return {
-          aliasApiUrl: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
-        };
-      if (pages[0].statusCode === 200 && !Array.isArray(pages[0].body)) {
-        const legacy = normalize(pages[0].body);
-        return legacy?.tag_name === request.tag ? { status: 200, body: legacy } : missing();
-      }
-    }
     if (pages.some((page) => page.statusCode !== 200))
       return pages.length === 1 &&
         pages[0].statusCode === 404 &&
-        !['list', 'installer', 'runtime'].includes(request.operation)
+        !['list', 'installer'].includes(request.operation)
         ? missing()
         : unavailable();
-    if (['list', 'installer', 'runtime'].includes(request.operation)) {
+    if (['list', 'installer'].includes(request.operation)) {
       if (
         pages.some((page) => !Array.isArray(page.body) || page.body.length > 100) ||
         (pages.length === 5 && pages[4].body.length === 100)
@@ -216,21 +198,6 @@ export function releaseResponse(pages, request, baseUrl) {
         .flatMap((page) => page.body)
         .map(normalize)
         .filter(Boolean);
-      if (request.operation === 'runtime') {
-        const platform = request.tag.startsWith('runtime-darwin-x64-')
-          ? 'darwin-x64'
-          : 'darwin-arm64';
-        const found =
-          releases.find(
-            (entry) =>
-              desktopTag(entry.tag_name) &&
-              entry.assets.some((asset) => asset.name === `${request.tag}.json`) &&
-              entry.assets.some((asset) =>
-                new RegExp(`^nod-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
-              ),
-          ) || releases.find((entry) => entry.tag_name === request.tag);
-        return found ? { status: 200, body: { ...found, tag_name: request.tag } } : missing();
-      }
       if (request.operation === 'list') return { status: 200, body: releases };
       const latest = releases
         .filter((release) => desktopTag(release.tag_name))
@@ -473,7 +440,7 @@ export function workflowNodes() {
               },
               paginationCompleteWhen: 'other',
               completeExpression:
-                "={{ !['list','installer','runtime'].includes($('Check desktop request').first().json.operation) || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
+                "={{ !['list','installer'].includes($('Check desktop request').first().json.operation) || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
               limitPagesFetched: true,
               maxRequests: 5,
             },
@@ -491,7 +458,7 @@ export function workflowNodes() {
         language: 'javaScript',
         jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),$('Check desktop request').first().json,${JSON.stringify(base)})}];`,
       },
-      output: [{ json: { status: 200, body: [], assetUrl: '', aliasApiUrl: '', metadata: null } }],
+      output: [{ json: { status: 200, body: [], assetUrl: '', metadata: null } }],
     },
     {
       name: 'Resolve asset redirect',
@@ -581,56 +548,6 @@ export function workflowNodes() {
       },
       output: [{ json: {} }],
     },
-    {
-      name: 'Find runtime alias',
-      type: 'n8n-nodes-base.if',
-      typeVersion: 2.3,
-      parameters: condition('={{ !!$json.aliasApiUrl }}'),
-      output: [{ json: { status: 200, body: {}, assetUrl: '', metadata: null } }],
-    },
-    {
-      name: 'Read runtime aliases',
-      type: 'n8n-nodes-base.httpRequest',
-      typeVersion: 4.5,
-      credentials,
-      onError: 'continueRegularOutput',
-      parameters: {
-        method: 'GET',
-        url: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
-        authentication: 'predefinedCredentialType',
-        nodeCredentialType: 'githubApi',
-        sendHeaders: true,
-        headerParameters: headers,
-        options: {
-          ...options,
-          pagination: {
-            pagination: {
-              paginationMode: 'updateAParameterInEachRequest',
-              parameters: {
-                parameters: [{ type: 'qs', name: 'page', value: '={{ $pageCount + 1 }}' }],
-              },
-              paginationCompleteWhen: 'other',
-              completeExpression:
-                '={{ $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}',
-              limitPagesFetched: true,
-              maxRequests: 5,
-            },
-          },
-        },
-      },
-      output: [{ json: { statusCode: 200, body: [] } }],
-    },
-    {
-      name: 'Build runtime alias response',
-      type: 'n8n-nodes-base.code',
-      typeVersion: 2,
-      parameters: {
-        mode: 'runOnceForAllItems',
-        language: 'javaScript',
-        jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),{...$('Check desktop request').first().json,alias:true},${JSON.stringify(base)})}];`,
-      },
-      output: [{ json: { status: 200, body: {}, assetUrl: '', metadata: null } }],
-    },
   ];
 }
 
@@ -652,6 +569,6 @@ export function workflowCode() {
         `const n${index} = ${index < 5 ? 'trigger' : type === 'n8n-nodes-base.if' ? 'ifElse' : 'node'}(${literal({ ...(type === 'n8n-nodes-base.if' ? {} : { type }), version: typeVersion, config, output })});`,
     )
     .join('\n');
-  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','Nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
-.add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
+  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','Nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n9)).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
+.add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
 }

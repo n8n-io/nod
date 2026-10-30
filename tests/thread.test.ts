@@ -53,27 +53,6 @@ test(
     const root = await mkdtemp(join(tmpdir(), 'thread-test-'));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
-    await admin.query(
-      `CREATE TABLE ${schema}.turns (
-        id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL,
-        source text NOT NULL, source_id text, message_id uuid, prompt text NOT NULL,
-        channel text NOT NULL DEFAULT 'web', status text NOT NULL DEFAULT 'queued', waiting_reason text,
-        background boolean NOT NULL DEFAULT false, read_only boolean NOT NULL DEFAULT false,
-        error text,
-        created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
-      )`,
-    );
-    await admin.query(`
-      CREATE TABLE ${schema}.preferences (
-        owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
-        quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
-        quiet_hours_enabled boolean NOT NULL DEFAULT true, locale text,
-        hour_cycle text NOT NULL DEFAULT 'auto',
-        speech_reply text NOT NULL DEFAULT 'voice' CHECK (speech_reply IN ('voice','always','never'))
-      );
-      INSERT INTO ${schema}.preferences(owner_id,speech_reply)
-        VALUES ('speech-existing-voice','voice'),('speech-existing-always','always'),('speech-existing-never','never');
-    `);
     const environment = {
       DATABASE_URL: process.env.DATABASE_URL,
       PGBOSS_SCHEMA: process.env.PGBOSS_SCHEMA,
@@ -107,118 +86,7 @@ test(
     const { createOnboardingSuggestions } = await import('../src/server/onboarding-suggestions.ts');
     assert.equal(dataRoot, root);
 
-    await t.test(
-      'legacy upload retention is migrated once with a fresh owned grace period',
-      async () => {
-        const legacyThread = randomUUID();
-        const ids = Array.from({ length: 4 }, () => randomUUID());
-        await db.pool.query(`
-        CREATE TABLE threads (
-          id uuid PRIMARY KEY, owner_id text NOT NULL,
-          created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-          archived_at timestamptz
-        );
-        CREATE TABLE messages (
-          id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
-          thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),
-          attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now(),
-          stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
-          reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
-        );
-        CREATE TABLE artifacts (
-          id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,
-          mime_type text NOT NULL, size integer NOT NULL, storage_path text NOT NULL,
-          created_at timestamptz NOT NULL DEFAULT now()
-        )
-      `);
-        await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
-          legacyThread,
-          ownerId,
-        ]);
-        for (const [index, id] of ids.entries())
-          await db.pool.query(
-            `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,created_at)
-           VALUES($1,$2,$3,'legacy.txt','text/plain',1,$4,now()-interval '60 days')`,
-            [
-              id,
-              index === 3 ? 'foreign-owner' : ownerId,
-              index === 2 ? legacyThread : null,
-              join(root, 'artifacts', id),
-            ],
-          );
-        await db.pool.query(
-          "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'user','Legacy sent file',$3,$4)",
-          [randomUUID(), ownerId, legacyThread, JSON.stringify([{ id: ids[1] }])],
-        );
-        const started = (await db.pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
-        await db.initializeDatabase();
-        const migrated = (
-          await db.pool.query(
-            'SELECT id,expires_at,deleting_at,clock_timestamp() AS checked_at FROM artifacts',
-          )
-        ).rows;
-        const pending = migrated.find((row) => row.id === ids[0]);
-        assert.ok(pending.expires_at.getTime() >= started.getTime() + 24 * 60 * 60_000);
-        assert.ok(pending.expires_at.getTime() <= pending.checked_at.getTime() + 24 * 60 * 60_000);
-        for (const row of migrated) {
-          assert.equal(row.deleting_at, null);
-          if (row.id !== ids[0]) assert.equal(row.expires_at, null);
-        }
-        const retained = await storeArtifact(Buffer.from('retained'), 'retained.txt', 'text/plain');
-        await db.pool.query("UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1", [
-          ids[0],
-        ]);
-        const expired = (
-          await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])
-        ).rows[0].expires_at;
-        await db.initializeDatabase();
-        assert.deepEqual(
-          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])).rows[0]
-            .expires_at,
-          expired,
-        );
-        assert.equal(
-          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [retained.id]))
-            .rows[0].expires_at,
-          null,
-        );
-        assert.equal((await localArtifacts.readArtifact(retained.id)).toString(), 'retained');
-        await db.pool.query('DELETE FROM artifacts WHERE id=ANY($1::uuid[])', [ids]);
-        await db.pool.query('DELETE FROM messages WHERE thread_id=$1', [legacyThread]);
-        await db.pool.query('DELETE FROM threads WHERE id=$1', [legacyThread]);
-      },
-    );
-    await t.test(
-      'upgrade cancels old account checks without cancelling other queued work',
-      async () => {
-        const currentThread = (await thread.activeThread()).id;
-        const ids = Array.from({ length: 3 }, () => randomUUID());
-        try {
-          for (const [index, id] of ids.entries())
-            await db.pool.query(
-              `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt)
-             VALUES($1,$2,$3,'event',$4,'Synthetic queued work')`,
-              [
-                id,
-                index === 2 ? 'synthetic-other-owner' : ownerId,
-                currentThread,
-                index === 1 ? `event:${id}` : `activity-check:${id}`,
-              ],
-            );
-          await db.initializeDatabase();
-          const states = await db.pool.query(
-            'SELECT id,status FROM turns WHERE id=ANY($1::uuid[])',
-            [ids],
-          );
-          assert.deepEqual(
-            ids.map((id) => states.rows.find((row) => row.id === id)?.status),
-            ['cancelled', 'queued', 'queued'],
-          );
-        } finally {
-          await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
-        }
-      },
-    );
+    await db.initializeDatabase();
     await thread.initializeThreads();
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -1104,12 +972,6 @@ test(
             assert.equal((await foreign.get()).speechReply, 'auto');
             assert.equal((await foreign.get()).proactivePaused, false);
             assert.equal((await foreign.update({ quietHoursEnabled: false })).speechReply, 'auto');
-            for (const mode of ['voice', 'always', 'never'] as const)
-              assert.equal(
-                (await createPreferencesStore(db.pool, `speech-existing-${mode}`).get())
-                  .speechReply,
-                mode,
-              );
             await preferences.update({ speechReply: 'auto' });
             assert.equal((await preferences.get()).speechReply, 'auto');
             assert.equal((await preferences.get()).proactivePaused, true);
@@ -4076,9 +3938,9 @@ test(
           const message = [...seen][0];
           const react = (id: string, reaction: string) =>
             request('POST', `/api/messages/${id}/reaction`, { reaction });
-          assert.equal((await react(message, 'heart')).statusCode, 200);
+          assert.equal((await react(message, '❤️')).statusCode, 200);
           for (const id of [foreign, archived.id])
-            assert.equal((await react(id, 'heart')).statusCode, 404);
+            assert.equal((await react(id, '❤️')).statusCode, 404);
         },
       );
       await t.test(

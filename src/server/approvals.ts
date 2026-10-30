@@ -201,8 +201,7 @@ export async function createApprovals(
     result jsonb
   );
     ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
-      ADD COLUMN IF NOT EXISTS expected_revision integer,
-      DROP COLUMN IF EXISTS expires_at, DROP COLUMN IF EXISTS confirmation_reply_id;
+      ADD COLUMN IF NOT EXISTS expected_revision integer;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);

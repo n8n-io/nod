@@ -131,15 +131,10 @@ export function createUpdateSource({
       throw new Error('The desktop runtime metadata is incompatible.');
     if (
       runtime.platform !== platform ||
-      (runtime.releaseTag !== undefined &&
-        !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag))
+      !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag)
     )
       throw new Error('The desktop runtime target is incompatible.');
-    return releaseAssetUrl(
-      runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`,
-      runtime.archive,
-      signal,
-    );
+    return releaseAssetUrl(runtime.releaseTag, runtime.archive, signal);
   };
   const newest = async (currentVersion, signal, resolve) => {
     versionParts(currentVersion);

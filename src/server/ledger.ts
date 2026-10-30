@@ -54,8 +54,6 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
     };
   if (id.startsWith('proactivity:'))
     return { source: 'check', title: 'Checked sources and prepared work' };
-  if (id.startsWith('activity-check:'))
-    return { source: 'check', title: 'Checked a connected app' };
   if (id.startsWith('reaction:')) return { source: 'chat', title: 'Your reaction' };
   return { source: 'event', title: 'Woke for an email or app event' };
 }
@@ -120,14 +118,12 @@ export function createLedger({
       turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
       action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
-    ALTER TABLE app_actions DROP COLUMN IF EXISTS effect;
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
       owner_id text PRIMARY KEY, monthly_usd double precision CHECK (monthly_usd > 0)
     );
-    ALTER TABLE spending_limits ALTER COLUMN monthly_usd DROP NOT NULL;
     ALTER TABLE spending_limits ADD COLUMN IF NOT EXISTS task_usd double precision
       DEFAULT ${defaultTaskUsd} CHECK (task_usd > 0);`);
   }

@@ -19,9 +19,7 @@ import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
 import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { ownerAddress } from '../src/providers/discovered/remote.ts';
-import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 
-const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
 
 const addresses = async () => [{ address: '93.184.216.34', family: 4 }];
@@ -293,18 +291,6 @@ test('reply excerpts cannot load media or expose nested actions', () => {
   );
   assert.match(selected, /&lt;button data-x=&quot;1&quot;&gt; \*literal\*/);
   assert.equal((selected.match(/<button\b/g) ?? []).length, 1);
-});
-
-test('plain browser connection paths hide their token behind one fixed action', () => {
-  const path = `/browser-connect/${'x'.repeat(43)}`;
-  const text = `Continue at ${path}?token=hidden#fragment. Again ${path}.`;
-  assert.deepEqual(messageSetupLinks(text, origin), [
-    { href: path, setup: 'website', label: 'Connect website' },
-  ]);
-  const [body] = render(text).split('<div class="setup-group">');
-  assert.doesNotMatch(body, /xxxx|token=hidden|fragment/);
-  for (const token of ['x'.repeat(42), 'x'.repeat(44)])
-    assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
 
 test('the browser proxy refuses private network destinations, including names that resolve to them', async () => {

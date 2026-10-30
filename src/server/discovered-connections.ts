@@ -266,12 +266,11 @@ export async function createDiscoveredConnections(
       account_name text,oauth_state_hash text,
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
-    ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext,
-      ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    ALTER TABLE discovered_connections ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid(),
       ADD COLUMN IF NOT EXISTS reconnect_required boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS replaced_at timestamptz;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
-      ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id,
+      ADD COLUMN IF NOT EXISTS link_hash text,
       ADD COLUMN IF NOT EXISTS callback_return_to text,
       ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
   `);

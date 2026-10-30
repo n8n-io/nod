@@ -47,8 +47,7 @@ export function createAccountStore(database: Pool): AccountStore & {
       );
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0;
-      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS traces boolean NOT NULL DEFAULT false;
-      ALTER TABLE account_settings DROP COLUMN IF EXISTS display_name`);
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS traces boolean NOT NULL DEFAULT false`);
     },
     async readConsent(ownerId) {
       const result = await database.query<{ enabled: boolean; revision: string }>(

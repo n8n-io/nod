@@ -4003,8 +4003,6 @@ test(
       [earlier.hash, later.hash].sort(),
     );
     assert.equal(pairingChecks.mock.callCount(), 1);
-    await f.pool.query('DROP TABLE app_setup_links');
-    await initializeIntegrationSchema(f.pool);
     await f.pool.query(
       "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
       [earlier.id],
@@ -6895,7 +6893,7 @@ test(
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
-          turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,effect text NOT NULL,
+          turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now())`);
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES

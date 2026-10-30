@@ -3532,10 +3532,8 @@ test('channel presentation isolates private links from the model and rejects uns
   const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
-  for (const page of ['/vault', '/trust']) {
-    await channelReply(`Save it in Nod: ${page}?add=login`, { threadId: 'owned-thread', present });
-    assert.doesNotMatch(JSON.stringify(presentation), /(?:vault|trust)\?add/);
-  }
+  await channelReply('Save it in Nod: /vault?add=login', { threadId: 'owned-thread', present });
+  assert.doesNotMatch(JSON.stringify(presentation), /vault\?add/);
   for (const generated of [
     '',
     'http://localhost:4310/credentials/secret-id',

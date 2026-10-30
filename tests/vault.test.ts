@@ -3474,7 +3474,6 @@ test('analytics routes collapse private paths to known pages', async () => {
     await import('../src/web/lib/analytics-privacy.ts');
   for (const [path, route] of [
     ['/', '/'],
-    ['/you', '/'],
     ['/tasks/', '/tasks'],
     ['/prepared/00000000-0000-4000-8000-000000000705?private=synthetic', '/prepared'],
     ['/prepared/synthetic-private-id', '/not-found'],
@@ -3488,7 +3487,6 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/usage?private=synthetic#private', '/usage'],
     ['/vault?item=synthetic-private-id', '/vault'],
     ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
-    ['/browser-connect/synthetic-private-token', '/apps'],
     ['/vault/synthetic-private-id', '/credentials'],
     ['/credentials/synthetic-private-id?token=synthetic-private', '/credentials'],
     ['/payments/synthetic-private-id', '/payments'],

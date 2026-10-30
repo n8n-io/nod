@@ -678,9 +678,7 @@ export function createPiAgent(options: {
           'Codemode can call workspace, web, app and Nod tools. Every call keeps its normal validation, owner authority, approval and stop checks. Read schemas with searchTools or describeTool when needed. Await every call and inspect its result. Use direct tool calls when you need images.',
         );
       if (input.tools.some((tool) => tool.name === 'browser'))
-        guidelines.push(
-          'Use nod_browser for browser calls. In older procedures, browser means this tool.',
-        );
+        guidelines.push('Use nod_browser for browser calls.');
       if (deferred) guidelines.push('Use nod_tool_search to load deferred tools.');
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`

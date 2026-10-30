@@ -326,7 +326,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         baseline_observation jsonb, observation jsonb, observed_at timestamptz,
         UNIQUE(schedule_id,schedule_revision,scheduled_for)
       );
-      ALTER TABLE schedule_runs DROP COLUMN IF EXISTS action_prompt;
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS baseline_observation jsonb;
       ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS baseline_observation jsonb,
         ADD COLUMN IF NOT EXISTS observation jsonb, ADD COLUMN IF NOT EXISTS observed_at timestamptz;

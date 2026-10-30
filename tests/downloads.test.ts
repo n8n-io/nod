@@ -336,7 +336,7 @@ test(
     try {
       await f.database.query(`CREATE TABLE private_objects (
         owner_id text NOT NULL, object_key text NOT NULL, version text NOT NULL,
-        bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
+        bytes bytea NOT NULL,
         PRIMARY KEY(owner_id,object_key)
       )`);
       await Promise.all(

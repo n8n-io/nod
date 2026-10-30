@@ -11,35 +11,6 @@ import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 import type { MemoryChange } from './analytics.ts';
 import { modelSelectionInput, type createModelService } from './models.ts';
 
-export function profileNotes(profile: Record<string, unknown>) {
-  return Object.entries(profile).flatMap(([field, value]) => {
-    if (typeof value !== 'string') return [];
-    const area = field === 'preferences' ? ('preferences' as const) : ('about' as const);
-    const label = area === 'about' ? `${field[0]!.toUpperCase()}${field.slice(1)}: ` : '';
-    const budget = 120 - label.length;
-    const notes: string[] = [];
-    let current = '';
-    const push = (unit: string) => {
-      if (current && current.length + unit.length + 1 > budget) {
-        notes.push(current);
-        current = '';
-      }
-      current = current ? `${current} ${unit}` : unit;
-    };
-    for (const sentence of value.split(/\n+|(?<=[.!?])\s+/)) {
-      const flat = sentence.replace(/[\s\p{Cc}]+/gu, ' ').trim();
-      if (flat.length <= budget) {
-        if (flat) push(flat);
-      } else
-        for (const word of flat.split(' '))
-          for (let start = 0; start < word.length; start += budget)
-            push(word.slice(start, start + budget));
-    }
-    if (current) notes.push(current);
-    return notes.map((text) => ({ area, text: label + text }));
-  });
-}
-
 type PersonalDependencies = ScheduleDependencies & {
   memory?: MemoryService;
   learnedSkills?: LearnedSkills;
@@ -63,11 +34,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     });
 
   async function initialize(options: { workers?: boolean } = {}) {
-    if (memory && (await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name) {
-      const { rows } = await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]);
-      if (await memory.adopt(profileNotes(rows[0]?.data ?? {})).catch(() => false))
-        await pool.query('DROP TABLE IF EXISTS profiles');
-    }
     await schedules.initialize(options);
   }
 
@@ -204,10 +170,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'memory_control') {
       if (!memory) throw new Error('Memory is unavailable.');
       const result = await memory.control(args);
-      if (result.cleared) {
-        await pool.query('DROP TABLE IF EXISTS profiles');
-        remembered('clear', 'agent');
-      }
+      if (result.cleared) remembered('clear', 'agent');
       refresh();
       return result;
     }

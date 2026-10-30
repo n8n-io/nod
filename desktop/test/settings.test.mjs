@@ -4663,7 +4663,7 @@ test('native preferences reject unsupported fields and invalid values before per
   assert.equal((await f.store.get()).preferences.locale, 'en-GB');
 });
 
-function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
+function updateReleaseFixture(sourceUrl, arch = 'arm64') {
   const platform = `darwin-${arch}`;
   const name = (kind) => (arch === 'arm64' ? `${kind}.json` : `${kind}-darwin-x64.json`);
   const archive = {
@@ -4673,7 +4673,7 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   };
   const runtime = {
     platform,
-    ...(official ? { releaseTag: 'nod-v0.1.9' } : {}),
+    releaseTag: 'nod-v0.1.9',
     id: 'b'.repeat(64),
     fingerprint: 'd'.repeat(64),
     archive,
@@ -4699,7 +4699,7 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   };
   const pack = {
     id: 18,
-    tag_name: runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`,
+    tag_name: runtime.releaseTag,
     draft: false,
     assets: [item(201, archive.file, archive.bytes)],
   };
@@ -5913,7 +5913,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
 });
 
 test('Intel updates use their own app assets and an official Nod runtime release', async () => {
-  const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop', 'x64', true);
+  const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop', 'x64');
   const candidate = await f.source.latest('0.1.0');
   assert.equal(candidate.runtime.platform, 'darwin-x64');
   assert(candidate.feedUrl.endsWith('platform=darwin-x64'));

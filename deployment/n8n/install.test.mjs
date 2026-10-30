@@ -24,7 +24,7 @@ async function fixture(options = {}) {
   );
   const directory = await mkdtemp(join(tmpdir(), 'nod-install-fixture-'));
   const home = join(directory, 'home');
-  const target = join(directory, 'Applications', options.legacyInstall ? 'nod.app' : 'Nod.app');
+  const target = join(directory, 'Applications', 'Nod.app');
   const bin = join(directory, 'bin');
   await mkdir(bin);
   await mkdir(dirname(target), { recursive: true });
@@ -114,7 +114,7 @@ else if(command==='file')print('Mach-O 64-bit executable '+(options.intel&&!opti
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
 else if(command==='curl'){const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(${JSON.stringify(target)},'Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
 else if(command==='codesign'){if(options.badSignature&&args.at(-1).includes('mount/'))stop();const extract=args.find(value=>value.startsWith('--extract-certificates='));if(extract)copyFileSync(join(root,options.earlierCertificate&&args.at(-1).endsWith('/Applications/nod.app')?'earlier-certificate':'certificate'),extract.split('=')[1]+'0')}
-else if(command==='hdiutil'){if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],options.legacyDisk?'nod.app':'Nod.app'),{recursive:true})}
+else if(command==='hdiutil'){if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'Nod.app'),{recursive:true})}
 else if(command==='ditto'){if(options.copyFailure){mkdirSync(args[1],{recursive:true});writeFileSync(join(args[1],'partial'),'partial copy');stop()}cpSync(args[0],args[1],{recursive:true})}
 else if(command==='open'){if(existsSync(join(root,'shipit-job'))||existsSync(join(process.env.HOME,'Library/Caches/dev.nod.desktop.ShipIt')))stop();const installed=JSON.parse(readFileSync(join(args[0],'Contents/Resources/app/package.json'),'utf8'));const log=join(root,'launches.json');writeFileSync(log,JSON.stringify([...JSON.parse(readFileSync(log,'utf8')),{args,source:installed.nodBuild.source}]));if(options.launchFailure)stop()}
 else if(command==='mv'){if(existsSync(join(root,'shipit-job')))stop();if(options.swapFailure&&args[0].endsWith('/nod.app')&&args[0].includes('/.nod-install.'))stop();renameSync(args[0],args[1])}
@@ -177,7 +177,7 @@ else stop();
 test('CLI-INSTALL: hosted script installs verified bytes and preserves the existing profile', async () => {
   const embedded = new Function(installNodes()[1].parameters.jsCode)()[0].json.body;
   assert.equal(embedded, installer);
-  for (const options of [{}, { fresh: true }, { legacyInstall: true }, { legacyDisk: true }]) {
+  for (const options of [{}, { fresh: true }]) {
     const state = await fixture(options);
     try {
       const result = state.run();

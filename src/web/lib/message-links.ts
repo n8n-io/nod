@@ -10,23 +10,16 @@ import { rehypeLocalLinks, remarkLinkDestinations } from './markdown';
 import { isConnectionBridge } from './connection-url';
 import { appPagePath } from '../../shared/app-links';
 
-export type SetupKind = 'vault' | 'website' | 'app';
+export type SetupKind = 'vault' | 'app';
 type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
 
-const renamedPaths = new Map([
-  ['/trust', '/usage'],
-  ['/trust?add=login', '/vault?add=login'],
-  ['/trust?add=card', '/vault?add=card'],
-]);
 const connectionPath =
   /^\/apps\?connect=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-const localPath =
-  /^\/(?:api\/artifacts|vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
-const defaultLabels = { vault: 'Open Vault', website: 'Connect website' };
+const localPath = /^\/(?:api\/artifacts|vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$/;
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
 export function setupLink(
@@ -48,13 +41,12 @@ export function setupLink(
   return {
     href: link.href,
     setup: link.setup,
-    label: label && !label.includes(link.href) ? label : defaultLabels[link.setup],
+    label: label && !label.includes(link.href) ? label : 'Open Vault',
   };
 }
 
 export function safeMessageLink(link: string, origin: string): SafeLink | null {
-  const path = link.startsWith(`${origin}/`) ? link.slice(origin.length) : link;
-  const value = renamedPaths.get(path) ?? link;
+  const value = link;
   if (!value || /[\u0000-\u0020\u007f<>"'\\]/.test(value)) return null;
   const absolute = /^https?:\/\//i.test(value);
   if (
@@ -107,11 +99,7 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
         return null;
       if (url.pathname.startsWith('/api/artifacts/'))
         return { href: url.pathname, kind: 'artifact' };
-      return {
-        href: url.pathname,
-        kind: 'setup',
-        setup: url.pathname.startsWith('/browser-connect/') ? 'website' : 'vault',
-      };
+      return { href: url.pathname, kind: 'setup', setup: 'vault' };
     }
     return { href: url.href, kind: 'external' };
   } catch {

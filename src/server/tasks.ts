@@ -510,16 +510,6 @@ export function createTasks(options: {
         result text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz
       );
-      DO $$ BEGIN
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
-          AND table_name='tasks' AND column_name='auto') THEN
-          UPDATE turns SET task_id=NULL WHERE task_id IN (SELECT t.id FROM tasks t WHERE t.auto AND t.state<>'open'
-            AND NOT EXISTS (SELECT 1 FROM turns x WHERE x.task_id=t.id AND x.source='user'));
-          DELETE FROM tasks t WHERE t.auto AND t.state<>'open'
-            AND NOT EXISTS (SELECT 1 FROM turns x WHERE x.task_id=t.id AND x.source='user');
-          ALTER TABLE tasks DROP COLUMN auto;
-        END IF;
-      END $$;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS session_id uuid;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source_message_id uuid REFERENCES messages(id);
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS message_id uuid REFERENCES messages(id);
@@ -530,7 +520,6 @@ export function createTasks(options: {
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS applied_revision integer NOT NULL DEFAULT 0;
-      UPDATE tasks t SET session_id=CASE WHEN u.session_id=u.thread_id THEN t.id ELSE u.session_id END,source_message_id=u.message_id FROM turns u WHERE u.id=t.turn_id AND t.session_id IS NULL;
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_revision integer NOT NULL DEFAULT 1;
       CREATE INDEX IF NOT EXISTS tasks_session ON tasks(owner_id,session_id);
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);

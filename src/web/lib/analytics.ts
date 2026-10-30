@@ -21,7 +21,7 @@ type AnalyticsEvents = {
   };
   nod_chat_stop_requested: undefined;
   nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
-  nod_setup_link_clicked: { setup: 'app' | 'vault' | 'website' | 'browser' };
+  nod_setup_link_clicked: { setup: 'app' | 'vault' | 'browser' };
   nod_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
   nod_message_reaction_changed: {
     operation: 'add' | 'remove' | 'change';
@@ -79,7 +79,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_chat_stop_requested: {},
   nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
-  nod_setup_link_clicked: { setup: ['app', 'vault', 'website', 'browser'] },
+  nod_setup_link_clicked: { setup: ['app', 'vault', 'browser'] },
   nod_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
   nod_message_reaction_changed: {
     operation: ['add', 'remove', 'change'],

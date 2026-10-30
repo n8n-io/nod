@@ -36,19 +36,6 @@ const read = (body, input = { params: { releaseId: '42' } }) =>
   releaseResponse([{ statusCode: 200, body }], checkRequest(input), base);
 
 test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request shapes are accepted', () => {
-  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
-  assert.equal(
-    read(
-      [
-        release({
-          tag_name: tag,
-          assets: [asset(104, `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
-        }),
-      ],
-      { params: { tag } },
-    ).status,
-    200,
-  );
   for (const input of [
     { query: { url: 'https://attacker.invalid' } },
     { query: { installer: 'false' } },
@@ -60,6 +47,7 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
     { params: { releaseId: '9007199254740993' } },
     { params: { tag: 'v0.2.0' } },
     { params: { tag: 'nod-v01.2.0' } },
+    { params: { tag: `runtime-darwin-arm64-${'b'.repeat(64)}` } },
     {
       params: { releaseId: '42', assetId: '102' },
       query: { version: '0.1.0', platform: 'linux-x64' },
@@ -369,14 +357,20 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
   }
 });
 
-test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an older runtime tag', async () => {
+test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an earlier release runtime', async () => {
   const fingerprint = 'b'.repeat(64);
   const archive = {
     file: `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`,
     bytes: 1234,
     sha256: 'a'.repeat(64),
   };
-  const runtime = { platform: 'darwin-arm64', id: 'c'.repeat(64), fingerprint, archive };
+  const runtime = {
+    platform: 'darwin-arm64',
+    id: 'c'.repeat(64),
+    fingerprint,
+    archive,
+    releaseTag: 'nod-v0.1.9',
+  };
   const appRelease = release({
     assets: [
       asset(101, 'release.json'),
@@ -387,7 +381,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   });
   const runtimeRelease = release({
     id: 70,
-    tag_name: `runtime-darwin-arm64-${fingerprint}`,
+    tag_name: 'nod-v0.1.9',
     assets: [asset(105, archive.file)],
   });
   const manifest = {
@@ -436,7 +430,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     const pages =
       checked.operation === 'list'
         ? [list.slice(0, 100), list.slice(100)].map((body) => ({ statusCode: 200, body }))
-        : [{ statusCode: 200, body: checked.tag ? [runtimeRelease] : appRelease }];
+        : [{ statusCode: 200, body: checked.tag ? runtimeRelease : appRelease }];
     const result = releaseResponse(pages, checked, base);
     if (result.assetUrl) {
       const redirect = checkRedirect({
@@ -482,7 +476,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   const candidate = await updater.check();
   await updater.dispose();
   assert.equal(requests[0], `${base}/releases`);
-  assert.ok(requests.includes(`${base}/tags/runtime-darwin-arm64-${fingerprint}`));
+  assert.ok(requests.includes(`${base}/tags/nod-v0.1.9`));
   assert.equal(candidate.version, '0.2.0');
   assert.equal(
     candidate.feedUrl,
@@ -490,33 +484,4 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   );
   assert.equal(candidate.downloadUrl, `${base}/releases/70/assets/105/${archive.file}`);
   assert.equal(candidate.runtime.id, runtime.id);
-});
-
-test('legacy runtime tag lookup stays exact and only a missing release starts alias lookup', () => {
-  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
-  const request = checkRequest({ params: { tag } });
-  assert(request.apiUrl.endsWith(`/tags/${tag}`));
-  const legacy = release({ tag_name: tag });
-  assert.equal(
-    releaseResponse([{ statusCode: 200, body: legacy }], request, base).body.tag_name,
-    tag,
-  );
-  assert.deepEqual(releaseResponse([{ statusCode: 404 }], request, base), {
-    aliasApiUrl: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
-  });
-  assert.equal(releaseResponse([{ statusCode: 403 }], request, base).status, 503);
-  const node = workflowNodes().find((entry) => entry.name === 'Build runtime alias response');
-  const migrated = release({
-    assets: [
-      asset(110, `${tag}.json`),
-      asset(111, `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
-    ],
-  });
-  const result = new Function('$input', '$', node.parameters.jsCode)(
-    { all: () => [{ json: { statusCode: 200, body: [migrated] } }] },
-    () => ({ first: () => ({ json: request }) }),
-  )[0].json;
-  assert.equal(result.status, 200);
-  assert.equal(result.body.tag_name, tag);
-  assert.equal(result.body.id, migrated.id);
 });
