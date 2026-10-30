@@ -79,7 +79,8 @@ const entryFields = z.object({
   edited: timestamp.optional(),
   sources: z.array(id).max(5),
   expires: z.iso.date().optional(),
-  fact: factSchema.optional(),
+  fact: factSchema.optional().catch(undefined),
+  quote: line(400).optional().catch(undefined),
 });
 const evidenced = (entry: z.infer<typeof entryFields>) =>
   entry.sources.length > 0 || !!entry.edited || entry.origin === 'email';
@@ -193,7 +194,7 @@ export function parse(bytes?: Uint8Array): Tree {
   const seen = new Set<string>();
   const keep = (entry: Entry) => {
     if (
-      unsafe(entry.text, entry.abstract, ...(entry.fact?.entities ?? [])) ||
+      unsafe(entry.text, entry.abstract, entry.quote, ...(entry.fact?.entities ?? [])) ||
       seen.has(pathOf(entry))
     )
       return;
@@ -219,7 +220,12 @@ export function parse(bytes?: Uint8Array): Tree {
     const entry = archivedSchema.safeParse(raw);
     if (
       entry.success &&
-      !unsafe(entry.data.text, entry.data.abstract, ...(entry.data.fact?.entities ?? []))
+      !unsafe(
+        entry.data.text,
+        entry.data.abstract,
+        entry.data.quote,
+        ...(entry.data.fact?.entities ?? []),
+      )
     )
       tree.archive.push(entry.data);
   }
@@ -355,6 +361,13 @@ export function view(
   source: (id: string) => MemorySource,
   task: (turn: string | undefined) => string | null = () => null,
 ): MemoryView {
+  const sources = (entry: Entry) =>
+    entry.sources.map((id) => {
+      const found = source(id);
+      return entry.quote && found.text && fold(found.text).includes(fold(entry.quote))
+        ? { ...found, quote: entry.quote }
+        : found;
+    });
   return {
     saving: tree.enabled,
     sensitive: tree.sensitive,
@@ -369,7 +382,7 @@ export function view(
         edited: entry.edited ?? null,
         expires: entry.expires ?? null,
         learnedFrom: entry.origin === 'email' ? ('email' as const) : null,
-        sources: entry.sources.map(source),
+        sources: sources(entry),
         ...(entry.fact ? { fact: entry.fact } : {}),
       })),
     archive: tree.archive.toReversed().map((entry) => ({
@@ -379,7 +392,7 @@ export function view(
       reason: entry.reason,
       by: entry.by ?? null,
       archived: entry.archived,
-      sources: entry.sources.map(source),
+      sources: sources(entry),
       ...(entry.fact ? { fact: entry.fact } : {}),
     })),
     skills: tree.skills

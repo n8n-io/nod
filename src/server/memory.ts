@@ -8,6 +8,7 @@ import {
   area,
   areaEntries,
   find,
+  fold,
   freeSlug,
   id,
   indexLayout,
@@ -164,7 +165,13 @@ export function createMemoryService(options: {
           fail('The note changed. Review it before asking again.', 409);
         const entry = locate(tree, target);
         const archived = tree.archive.length;
-        tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
+        const versions = new Set([target]);
+        for (let size = 0; size !== versions.size;) {
+          size = versions.size;
+          for (const item of tree.archive)
+            if (item.by && versions.has(item.by)) versions.add(pathOf(item));
+        }
+        tree.archive = tree.archive.filter((item) => !versions.has(pathOf(item)));
         if (!entry && tree.archive.length === archived)
           fail('This note is no longer in memory.', 404);
         tree.entries = tree.entries.filter((item) => item !== entry);
@@ -304,6 +311,7 @@ export function createMemoryService(options: {
           text,
           ...(!rewritten && entry.abstract ? { abstract: entry.abstract } : {}),
           ...(!rewritten && entry.fact ? { fact: entry.fact } : {}),
+          ...(!rewritten && entry.quote ? { quote: entry.quote } : {}),
           origin: rewritten || input.confirm ? 'stated' : entry.origin,
           updated: now,
           edited: now,
@@ -334,6 +342,7 @@ export function createMemoryService(options: {
         text: item.text,
         ...(item.abstract ? { abstract: item.abstract } : {}),
         ...(item.fact ? { fact: item.fact } : {}),
+        ...(item.quote ? { quote: item.quote } : {}),
         origin: 'stated',
         updated: now,
         edited: now,
@@ -348,11 +357,16 @@ export function createMemoryService(options: {
   async function forgetArchived(raw: unknown) {
     const input = archivedInput.parse(raw);
     await owned((tree) => {
+      const removed = tree.archive.find(
+        (entry) => pathOf(entry) === input.path && entry.archived === input.archived,
+      );
       const kept = tree.archive.filter(
         (entry) => !(pathOf(entry) === input.path && entry.archived === input.archived),
       );
       if (kept.length === tree.archive.length) fail('This note is no longer in the archive.', 404);
-      tree.archive = kept;
+      tree.archive = kept.map((entry) =>
+        entry.by === input.path && removed?.by ? { ...entry, by: removed.by } : entry,
+      );
     });
   }
 
@@ -429,14 +443,20 @@ export function createMemoryService(options: {
       return find((await load()).tree, input.query, input.area);
     },
     read: async (raw: unknown) => {
-      const result = open((await load()).tree, readInput.parse(raw).path);
+      const { tree } = await load();
+      const result = open(tree, readInput.parse(raw).path);
       if (!('sources' in result)) return result;
+      const quote = locate(tree, result.path)?.quote;
       const found = await sources(result.sources);
       return {
         ...result,
-        sources: result.sources.map(
-          (id) => found.get(id) ?? { id, text: null, at: null, channel: null },
-        ),
+        sources: result.sources.map((id) => {
+          const source = found.get(id) ?? { id, text: null, at: null, channel: null };
+          return {
+            ...source,
+            text: quote && source.text && fold(source.text).includes(fold(quote)) ? quote : null,
+          };
+        }),
       };
     },
     note: async (raw: unknown) => noteText((await load()).tree, path.parse(raw)),

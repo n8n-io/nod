@@ -42,7 +42,7 @@ flowchart TD
 
 - The **index** lists every entry's full text in the owner context, one line each as `area/slug: text`, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
-- An **entry** shows its full text, status, source messages and evidence count. A missing source stays marked as unavailable.
+- An **entry** shows its full text, status, source messages and evidence count. Pi receives only the saved support quote, not the whole source message. An older note without a saved quote keeps its source reference. The Memory tab still shows the full message to its owner.
 
 `memory_find` matches words in the slug, abstract and text. This direct tool uses no model or embeddings. Before an owner request, Nod also uses the memory model to select relevant facts and expand search terms.
 
@@ -70,7 +70,7 @@ The memory model selects existing notes. It can connect an indirect question to 
 
 The full note index stays available. The selected evidence appears next to the current request, with sources and dates. A note marked **Mentioned once** can still have an exact source. That label records repetition; it does not prove the note is false.
 
-For totals and comparisons, Nod can select up to 100 facts. Other requests use up to 12 selected facts. Automatic retrieval follows up to five pages per search. It uses up to five searches and keeps at most 100 messages. Each message or source excerpt has at most 1,200 characters. Each model input is bounded at 256,000 characters. The packet marks omitted records when retrieval reaches its limit. A shortened message remains marked so Pi can read the full source. Ranking can select fewer records. Pi receives a smaller packet when its model has a small context window. A shortened packet keeps source references and requires further reads for complete evidence.
+For totals and comparisons, Nod can select up to 100 facts. Other requests use up to 12 selected facts. Automatic retrieval follows up to five pages per search. It uses up to five searches and keeps at most 100 messages. A history excerpt has at most 1,200 characters. A saved support quote has at most 400 characters. Each model input is bounded at 256,000 characters. The packet marks omitted records when retrieval reaches its limit. A shortened message remains marked so Pi can read the full source. Ranking can select fewer records. Pi receives a smaller packet when its model has a small context window. A shortened packet keeps source references and requires further reads for complete evidence.
 
 `history_search` returns `totalMatches`, `nextCursor` and `complete`. Continue with `cursor: nextCursor`, keeping the same query, dates and order. `before` limits the message date; it is not a relevance-page cursor. `order` can be `relevance` or `newest`. Dates filter when messages were sent, not when their events happened. A reset conversation is not searched.
 
@@ -80,7 +80,7 @@ For totals and comparisons, Nod can select up to 100 facts. Other requests use u
 
 ### Check the answer
 
-When selected evidence is available, the memory model checks each text reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, the selected evidence and later memory or history reads. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. Visual presentations keep their existing delivery path.
+When selected evidence is available, the memory model checks each text reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. Visual presentations keep their existing delivery path.
 
 The check must keep plans separate from completed events and possessions separate from purchases. It must also keep an earlier assistant statement separate from a verified correction. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
 
@@ -104,7 +104,7 @@ flowchart LR
 
 1. The server reads the current owner message, the owner's last 10 messages in that conversation and any older owner messages Pi names by ID, such as one it found with `history_search`. It skips task-card titles the owner tapped, which are Nod's wording, messages over 4,000 characters and messages with a secret. A message Pi names that isn't one of the owner's own refuses the save.
 2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never Nod's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note can also hold its kind, source entities, event date and validity dates. Plans, completed events, possessions and preferences stay distinct. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
-3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. When the messages make a saved note untrue, the model can name the notes it replaces. Nod saves the new note before it archives those notes, and links them to the replacement. The old version stays in the archive.
+3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. It keeps a support quote of up to 400 characters. A longer quote is omitted without losing the fact. Invalid optional fact details are also omitted. A quote reaches Pi only while it still matches an owned source message. When the messages make a saved note untrue, the model can name the notes it replaces. Nod saves the new note before it archives those notes, and links them to the replacement. The old version stays in the archive.
 
 This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, made again once if its answer can't be read. If the model is unreachable or its answer still can't be read, nothing is saved and Pi gets the reason.
 

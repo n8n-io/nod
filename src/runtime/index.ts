@@ -249,7 +249,13 @@ export function createAgentRuntime(dependencies: {
     const reviewReply = async (text: string) => {
       const draft = text.trim();
       if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
-      if (!draft || !context.memoryBrief || !dependencies.reviewMemoryReply || overBudget())
+      if (
+        !draft ||
+        !context.memoryBrief ||
+        !dependencies.reviewMemoryReply ||
+        stopped ||
+        overBudget()
+      )
         return draft;
       if (!reviewedReplies.has(draft)) {
         const checked = await untilAborted(
@@ -647,6 +653,10 @@ export function createAgentRuntime(dependencies: {
           manage: async (action: string, args: Record<string, unknown>) => {
             const result = await context.manage(action, args, admissions.getStore()?.admit);
             signal.throwIfAborted();
+            if (action === 'memory_forget' || action === 'memory_control') {
+              context.memoryBrief = undefined;
+              reviewedReplies.clear();
+            }
             if (
               context.memoryBrief &&
               ['memory_read', 'memory_find', 'history_search'].includes(action)

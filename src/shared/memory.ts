@@ -27,7 +27,7 @@ export interface MemorySource {
   text: string | null;
   at: string | null;
   channel: string | null;
-  shortened?: boolean;
+  quote?: string;
 }
 
 export interface MemoryNote {

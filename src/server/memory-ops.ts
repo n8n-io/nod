@@ -30,7 +30,7 @@ const reflectOp = z.discriminatedUnion('op', [
     m: ordinals,
     quote: line(),
     sensitive: z.boolean(),
-    fact: factSchema.optional(),
+    fact: factSchema.optional().catch(undefined),
     replaces: z.array(path).max(8).optional(),
   }),
   z.object({
@@ -71,7 +71,7 @@ export function applyOps(
   ]) {
     const cited = op.m.flatMap((n) => messages[n - 1] ?? []);
     const quoted = cited.filter((m) => fold(m.text).includes(fold(op.quote)));
-    if (cited.length !== op.m.length || !quoted.length) continue;
+    if (cited.length !== op.m.length || !quoted.length || unsafe(op.quote)) continue;
     const sources = union(quoted.map((m) => m.id));
     if (op.op === 'archive') {
       const entry = locate(tree, op.path);
@@ -89,6 +89,8 @@ export function applyOps(
     if (match) {
       if (origin === 'inferred' && match.origin !== 'inferred') continue;
       match.sources = union(match.sources, sources);
+      if (op.quote.length <= 400) match.quote = op.quote;
+      else delete match.quote;
       match.updated = now;
       if (origin === 'stated') {
         match.origin = 'stated';
@@ -107,6 +109,7 @@ export function applyOps(
       origin,
       updated: now,
       sources,
+      ...(op.quote.length <= 400 ? { quote: op.quote } : {}),
       ...(op.expires ? { expires: op.expires } : {}),
       ...(op.fact ? { fact: op.fact } : {}),
     };

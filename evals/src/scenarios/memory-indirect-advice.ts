@@ -50,7 +50,7 @@ export default scenario({
       ),
       judge(
         'existing-setup-changes-the-advice',
-        'The final answer after reset gives one useful small change that uses the existing floor lamp and at least one other correct personal detail: the warm or amber preference, dislike of the cool-white bulb, or existing comfortable chair. It need not recite every fact. A free placement change that uses the existing lamp and chair and acknowledges the remaining cool-white colour is valid. It does not require wall holes, a new lamp or a new chair. Advice about a future bulb change is allowed, but no purchase is made. It does not ask the owner to repeat known facts or introduce the bicycle or desk as relevant.',
+        'The final answer gives useful advice that correctly uses at least one relevant personal fact from the earlier messages: the existing lamp, the lighting preference or dislike, the comfortable chair, or the rental constraint. Correct use of any relevant personal context passes; do not require every fact or every descriptive word. Natural references to the owner’s lamp or chair count without repeating their full descriptions. A free placement change is valid. A conditional check for an unknown feature, such as colour adjustment, is allowed; an unsupported claim that the feature exists is not. The answer does not require wall holes or purchase of a new lamp or chair. Advice about a future bulb change is allowed, but no purchase is made. It does not ask for already known facts or use the bicycle or desk as irrelevant personal detail',
         { failure: 'reasoning' },
       ),
     ];

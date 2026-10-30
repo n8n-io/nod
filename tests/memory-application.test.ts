@@ -945,7 +945,7 @@ test(
   },
 );
 
-test('memory corrections keep their evidence, type and dates and do not archive a fact before a valid replacement', () => {
+test('memory corrections keep their evidence, type and dates and do not archive a fact before a valid replacement', async () => {
   const tree = treeOf(
     entry({ slug: 'visit', origin: 'inferred', text: 'Plans to visit Cedar Fair.' }),
   );
@@ -967,12 +967,23 @@ test('memory corrections keep their evidence, type and dates and do not archive 
   applyOps(tree, [{ ...add, quote: 'I attended Cedar Fair.' }], [source], when);
   assert.equal(tree.entries[0].slug, 'visit');
   assert.equal(tree.archive.length, 0);
+  const metadata = treeOf(
+    entry({ slug: 'visit', origin: 'inferred', text: 'Plans to visit Cedar Fair.' }),
+  );
   applyOps(
-    tree,
-    [{ ...add, fact: { ...add.fact, validFrom: '2026-03-01', validTo: '2026-02-01' } }],
+    metadata,
+    [
+      {
+        ...add,
+        replaces: [],
+        fact: { ...add.fact, validFrom: '2026-03-01', validTo: '2026-02-01' },
+      },
+    ],
     [source],
     when,
   );
+  assert.equal(metadata.archive.length, 0);
+  assert.equal(metadata.entries.find((note) => note.slug === 'maple')!.fact, undefined);
   assert.equal(tree.archive.length, 0);
   applyOps(tree, [add], [source], when);
   const saved = parse(render(tree));
@@ -980,10 +991,47 @@ test('memory corrections keep their evidence, type and dates and do not archive 
     saved.entries.map((note) => [note.slug, note.sources, note.fact]),
     [['maple', [source.id], add.fact]],
   );
+  assert.equal(saved.entries[0].quote, add.quote);
   assert.equal(saved.archive[0].by, 'about/maple');
   assert.equal(saved.archive[0].reason, 'superseded');
   repair(saved, new Date('2026-06-01'));
   assert.equal(saved.entries.length, 1);
+  const next = { id: ids[2], text: 'I now prefer print workshops.' };
+  applyOps(
+    saved,
+    [
+      {
+        op: 'add',
+        area: 'preferences',
+        slug: 'workshops',
+        text: 'Prefers print workshops.',
+        m: [1],
+        quote: next.text,
+        sensitive: false,
+        replaces: ['about/maple'],
+      },
+    ],
+    [next],
+    when,
+  );
+  saved.archive.push({
+    ...entry({ slug: 'unrelated', text: 'An unrelated archived fact.' }),
+    archived: when,
+    reason: 'obsolete',
+  });
+  for (const removeMiddle of [false, true]) {
+    const store = memoryObjectStore();
+    await store.write('memory/MEMORY.md', render(saved), { expectedVersion: null });
+    const memory = createMemoryService({ pool: {} as pg.Pool, ownerId: 'chain-owner', store });
+    if (removeMiddle) await memory.forgetArchived({ path: 'about/maple', archived: when });
+    await memory.forget('preferences/workshops');
+    const forgotten = await memory.load();
+    assert.equal(forgotten.entries.length, 0);
+    assert.deepEqual(
+      forgotten.archive.map((entry) => entry.slug),
+      ['unrelated'],
+    );
+  }
 });
 
 test(
@@ -1086,6 +1134,7 @@ test(
         slug: 'maple',
         text: 'Maple fair.',
         sources: [records[0].id, other.id, assistant.id],
+        quote: 'Maple fair',
       }),
     );
     await store.write('memory/MEMORY.md', render(tree), { expectedVersion: null });
@@ -1093,8 +1142,33 @@ test(
     assert.ok('sources' in read);
     assert.deepEqual(
       read.sources.map((source) => source.text),
-      [records[0].text, null, null],
+      ['Maple fair', null, null],
     );
+    const privateDetail = 'A separate private detail that must stay outside recall.';
+    await pool.query('UPDATE messages SET text=$1 WHERE id=$2', [
+      `Prefers amber light. ${privateDetail}`,
+      old.id,
+    ]);
+    await memory.edit((tree) => {
+      tree.entries.push(
+        entry({
+          slug: 'amber',
+          text: 'Prefers amber light.',
+          quote: 'Prefers amber light.',
+          sources: [old.id],
+        }),
+      );
+    });
+    await memory.add({ area: 'about', text: 'A saved fact outside the selected packet.' });
+    const ownView = await memory.view();
+    assert.ok(
+      ownView.notes
+        .find((note) => note.path === 'about/amber')!
+        .sources[0].text!.includes(privateDetail),
+    );
+    const narrow = await memory.read({ path: 'about/amber' });
+    assert.ok('sources' in narrow);
+    assert.equal(narrow.sources[0].text, 'Prefers amber light.');
     const inputs: string[] = [];
     const recall = createMemoryRecall({
       pool,
@@ -1105,14 +1179,20 @@ test(
         configured: true,
         async curate({ task, input }) {
           inputs.push(JSON.stringify(input));
-          if (task === 'memory_check')
+          if (task === 'memory_check') {
+            assert.ok(JSON.stringify(input).includes('A saved fact outside the selected packet.'));
             return { supported: false, usedPaths: ['about/foreign'], answer: 'Foreign answer.' };
+          }
           return 'mode' in input
             ? {
-                paths: ['about/maple', 'about/foreign'],
+                paths: ['about/maple', 'about/amber', 'about/foreign'],
                 messages: [records[0].id, other.id, old.id],
               }
-            : { mode: 'aggregate', paths: ['about/maple', 'about/foreign'], queries: ['Maple'] };
+            : {
+                mode: 'aggregate',
+                paths: ['about/maple', 'about/amber', 'about/foreign'],
+                queries: ['Maple'],
+              };
         },
       },
     });
@@ -1127,12 +1207,13 @@ test(
     assert.ok(brief);
     assert.deepEqual(
       brief.facts.map((fact) => fact.path),
-      ['about/maple'],
+      ['about/maple', 'about/amber'],
     );
     assert.deepEqual(
       brief.messages.map((message) => message.id),
       [records[0].id],
     );
+    assert.ok(!inputs.join('\n').includes(privateDetail));
     assert.ok(!inputs.join('\n').includes('Foreign Maple detail.'));
     assert.ok(!inputs.join('\n').includes('Archived Maple detail.'));
     context.memoryBrief = brief;
@@ -1141,5 +1222,12 @@ test(
       'I do not have a complete count.',
     );
     assert.deepEqual(await memory.load(), before);
+    await pool.query('UPDATE messages SET text=$1 WHERE id=$2', [
+      'The source was changed.',
+      old.id,
+    ]);
+    const changed = await memory.read({ path: 'about/amber' });
+    assert.ok('sources' in changed);
+    assert.equal(changed.sources[0].text, null);
   },
 );
