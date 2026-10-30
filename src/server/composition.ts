@@ -153,7 +153,6 @@ import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts
 import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
 import { createPersonalService } from './personal.ts';
-import { createOnboardingInterview } from './onboarding-interview.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
@@ -1989,11 +1988,6 @@ async function initializeApplication(
   browserConnections.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
-  createOnboardingInterview({
-    ownerId,
-    pool,
-    keyStore: adapters.keyStore,
-  }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);

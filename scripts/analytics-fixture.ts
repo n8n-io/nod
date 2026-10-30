@@ -21,14 +21,6 @@ let completed = false;
 let usageData = false;
 let traces = false;
 let user = 'fixture-owner-one';
-const emptyInterview = () => ({
-  generation: crypto.randomUUID(),
-  completed: false,
-  answers: [] as string[],
-  turns: [] as string[][],
-  done: false,
-});
-let interview = emptyInterview();
 const configuration = {
   provider: 'fixture',
   model: 'Fixture model',
@@ -151,7 +143,6 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === '/__fixture__/switch') {
-    if (user !== 'fixture-owner-two') interview = emptyInterview();
     user = 'fixture-owner-two';
     usageData = false;
     traces = false;
@@ -179,45 +170,7 @@ const server = createServer(async (request, response) => {
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });
-  else if (url.pathname === '/api/onboarding/interview') {
-    if (request.method === 'GET') json(interview);
-    else if (
-      body.generation !== interview.generation ||
-      (request.method === 'POST' && interview.completed)
-    ) {
-      response.statusCode = 409;
-      json({ error: 'Your setup answers changed. Reload them before continuing.' });
-    } else if (request.method === 'POST') {
-      const answers: string[] = [];
-      const turns: string[][] = [];
-      let messages: string[] = [];
-      for (const message of body.talk) {
-        if (message.from === 'owner') {
-          answers.push(message.text);
-          turns.push(messages);
-          messages = [];
-        } else messages.push(message.text);
-      }
-      const reply = {
-        messages: [
-          privateText,
-          answers.length ? 'What can I take off your plate?' : 'What are you working on?',
-        ],
-        done: answers.length >= 2,
-      };
-      interview = { ...interview, answers, turns: [...turns, reply.messages], done: reply.done };
-      json(reply);
-    } else {
-      interview = {
-        generation: request.method === 'DELETE' ? crypto.randomUUID() : interview.generation,
-        completed: request.method !== 'DELETE',
-        answers: [],
-        turns: [],
-        done: request.method !== 'DELETE',
-      };
-      json(request.method === 'DELETE' ? interview : { ok: true });
-    }
-  } else if (url.pathname === '/api/onboarding/suggestions' && request.method === 'POST') {
+  else if (url.pathname === '/api/onboarding/suggestions' && request.method === 'POST') {
     response.statusCode = 202;
     json({ ok: true });
   } else if (url.pathname === '/api/configuration') json(configuration);

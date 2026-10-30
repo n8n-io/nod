@@ -24,8 +24,6 @@ The desktop app checks n8n's update service for new versions, which sees your IP
 
 A self-hosted server uses persistent Docker volumes and its private environment file; see [Storage and backups](/deploy/server-operations/). Connected desktop clients keep the server address and an OS-encrypted access token, plus preferences, drafts and temporary files. They do not create a separate assistant or Composio identity. Connecting does not move an existing local assistant to the server.
 
-Setup uses normal chat and has no separate interview model. Older unfinished interviews stay encrypted in your installation’s private storage. The existing private API can read, save or reset those records. Saving adds the answers to memory and replaces the draft with an encrypted completion marker. The marker prevents a second save. Drafts and markers expire after 30 days and are removed when next read. The API cannot generate another interview reply.
-
 For what Nod stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-nod-stores).
 
 Unsent chat drafts stay in app or browser storage on this device, for your account and conversation. They include text, reply targets, and uploaded file references. Private entry fields and recognized verification replies are excluded.

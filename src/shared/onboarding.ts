@@ -21,16 +21,6 @@ export function reconnectable(connection: Connection) {
     (connection.status === 'disconnected' || Boolean(connection.reconnectRequired))
   );
 }
-export const interviewQuestions = 3;
-export const interviewAnswerChars = 1200;
-export type OnboardingInterview = {
-  generation: string;
-  completed: boolean;
-  answers: string[];
-  turns: string[][];
-  done: boolean;
-};
-export type OnboardingInterviewState = OnboardingInterview | { resetVersion: string };
 export type SuggestedTask = {
   id: string;
   title: string;
