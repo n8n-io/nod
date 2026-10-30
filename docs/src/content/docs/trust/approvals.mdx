@@ -29,7 +29,7 @@ One model review checks permission and your explicit terms together. It compares
 
 The review uses the exact action and your original instructions. Changed or unclear terms require confirmation. After review, Nod checks that the instructions and action arguments are still the same. A change rejects the old proposal instead of asking you to approve it.
 
-For an action that makes a change, the model first compares each explicit term with the matching action value or message text. It compares meaning across languages before it decides whether the action may run. The server checks that the quoted permission appears in the original instructions. It cannot prove that the model found every term or interpreted it correctly.
+For an action that makes a change, the model first compares each explicit term with the matching action value or message text. It compares meaning across languages before it decides whether the action may run. The server checks that the quoted permission appears in the original instructions. It also rejects an invalid comparison list or any reported mismatch. It cannot prove that the model found every term or interpreted it correctly.
 
 Details needed to identify or carry out the requested action don't all need to appear in your message. They cannot add an obligation or expand what you asked for. This checks permission, not whether every detail is factually correct; the checker never sees the sources Nod read.
 

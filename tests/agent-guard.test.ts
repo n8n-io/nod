@@ -1038,11 +1038,16 @@ test('app time annotations reach Pi inside the data boundary while scripts and b
       const direct = text(await call(tools, 'apps', { action: 'READ_EVENTS', args: {} }));
       assert.match(direct, /^<untrusted_tool_result source="apps">/);
       assert.match(direct, /"2026-10-30T10:00:00Z":"2026-10-30T11:00:00\+01:00"/);
-      assert.ok(direct.indexOf('Local times') > direct.indexOf('Data from apps'));
+      assert.ok(direct.indexOf('Local times') > direct.indexOf('>'));
+      assert.ok(direct.indexOf('Local times') < direct.lastIndexOf('</untrusted_tool_result>'));
       assert.ok(direct.includes(raw));
       assert.equal(direct.match(/untrusted_tool_result/gi)?.length, 2);
       const output = async () => ({ content: [{ type: 'text' as const, text: raw }] });
       assert.equal(text(await options.runTool('apps', {}, output, { nested: true })), raw);
+      assert.match(
+        text(await options.runTool('proactive_issue', {}, output)),
+        /"2026-10-30T10:00:00Z":"2026-10-30T11:00:00\+01:00"/,
+      );
       assert.ok(!text(await options.runTool('browser', {}, output)).includes('Local times'));
       assert.match(
         text(await options.runTool('codemode', {}, output)),

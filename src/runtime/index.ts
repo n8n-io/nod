@@ -415,6 +415,7 @@ export function createAgentRuntime(dependencies: {
               result,
               name === 'apps' ||
                 name === 'read_source' ||
+                name === 'proactive_issue' ||
                 name === 'codemode' ||
                 name.startsWith('mcp__')
                 ? context.timeZone

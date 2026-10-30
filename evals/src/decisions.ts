@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { InMemoryCredentialStore, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
@@ -1944,17 +1945,33 @@ export function decisionAuthorization(
     (imports.has('./trust-terms.ts') && !terms)
   )
     throw new Error('Unsupported Trust review routing in this revision.');
-  for (const [name, used] of [
-    ['basis', basis],
-    ['terms', terms],
-  ] as const)
-    if (used && validators[name] !== loaded[name])
-      throw new Error(`Unsupported Trust ${name} validator revision.`);
+  let basisValidator: typeof trustBasis | undefined;
+  if (basis) {
+    const exports: { trustBasis?: typeof trustBasis } = {};
+    try {
+      if (!validators.basis) throw new Error('Missing basis source.');
+      const compiled = ts.transpileModule(validators.basis, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText;
+      runInNewContext(compiled, { exports }, { timeout: 1000 });
+      if (typeof exports.trustBasis !== 'function') throw new Error('Missing basis validator.');
+      const validate = exports.trustBasis;
+      basisValidator = (...args) => {
+        const value = validate(...args);
+        return value ? { ...value } : undefined;
+      };
+    } catch {
+      throw new Error('Unsupported Trust basis validator revision.');
+    }
+  }
+  if (terms && validators.terms !== loaded.terms)
+    throw new Error('Unsupported Trust terms validator revision.');
   const hash = (value: string) => createHash('sha256').update(value).digest('hex');
   return {
     mode: (terms ? 'basis-and-terms' : basis ? 'basis' : 'raw') as AuthorizationMode,
     sourceHash: hash(source),
-    basisHash: basis ? hash(loaded.basis) : undefined,
+    basisHash: basis ? hash(validators.basis!) : undefined,
+    basisValidator,
     termsHash: terms ? hash(loaded.terms) : undefined,
     termsInstructions: terms
       ? policy(validators.terms!, 'termsInstructions', 'run').instructions
@@ -2077,7 +2094,11 @@ export async function evaluateDecision(options: {
   item: Case;
   instructions: string;
   values: Array<string | boolean>;
-  authorization: { mode: AuthorizationMode; termsInstructions?: string };
+  authorization: {
+    mode: AuthorizationMode;
+    termsInstructions?: string;
+    basisValidator?: typeof trustBasis;
+  };
   review: (
     instructions: string,
     input: object,
@@ -2138,7 +2159,11 @@ export async function evaluateDecision(options: {
     if (options.authorization.mode !== 'raw') {
       result.route = 'denied';
       if (raw === true) {
-        result.basis = trustBasis(primary.output, input() as TrustWords, shown(input()));
+        result.basis = (options.authorization.basisValidator ?? trustBasis)(
+          primary.output,
+          input() as TrustWords,
+          shown(input()),
+        );
         result.effective = Boolean(result.basis);
         if (!result.basis) {
           result.route = 'invalid-basis';
@@ -2378,7 +2403,7 @@ export async function runDecisionEval(options: {
   await mkdir(join(options.root, 'decisions'), { recursive: true });
   await mkdir(directory);
   const manifest = {
-    version: 5,
+    version: 6,
     baseline,
     candidate,
     dirty: git('status', '--porcelain', '--', 'src', 'evals').trim().length > 0,

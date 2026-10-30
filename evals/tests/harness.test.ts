@@ -663,6 +663,23 @@ test('decision baselines bind only the validator revisions their source invokes'
   assert.equal(decisionAuthorization(raw, {}, loaded).mode, 'raw');
   assert.equal(decisionAuthorization(raw, loaded, loaded).mode, 'raw');
   assert.equal(decisionAuthorization(old, loaded, loaded).mode, 'basis');
+  const deny = decisionAuthorization(
+    old,
+    { basis: 'export function trustBasis() { return undefined; }' },
+    loaded,
+  );
+  assert.notEqual(deny.basisHash, decisionAuthorization(old, loaded, loaded).basisHash);
+  const denied = await evaluateDecision({
+    item: { id: 'revision-bound-read', kind: 'run', holdout: false, input: {}, expected: false },
+    instructions: 'Fixture policy',
+    values: [true, false],
+    authorization: deny,
+    review: async () => ({ run: true, because: 'read' }),
+    report: () => {},
+    canStart: () => undefined,
+  });
+  assert.equal(denied.effective, false);
+  assert.equal(denied.route, 'invalid-basis');
   assert.equal(
     decisionAuthorization(old, { basis, terms: 'older unused terms' }, loaded).termsHash,
     undefined,
@@ -673,7 +690,7 @@ test('decision baselines bind only the validator revisions their source invokes'
   assert.ok(composed.termsHash);
   for (const validators of [
     { terms },
-    { basis: basis + '\n', terms },
+    { basis: 'export const unrelated = true;', terms },
     { basis, terms: terms + '\n' },
   ])
     assert.throws(

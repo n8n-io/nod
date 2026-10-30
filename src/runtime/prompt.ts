@@ -17,7 +17,7 @@ export const coreSkills = ['connected-apps', 'schedules-and-watches', 'artifacts
 
 const formatExample = new Date('2026-03-07T15:30:00Z');
 const replyStyle =
-  'Give the result and needed decisions. Keep requested detail complete. Deliver here unless the owner names another destination. Do not repeat a delivered answer. Offer one useful next step only when the format permits; skip ignored or declined offers.';
+  'Give the result, needed decisions and requested detail. State material uncertainty and unfinished work. Deliver in the owner’s channel unless they name another destination. Do not repeat delivered answers. Offer one useful next step when the format permits; skip ignored or declined offers.';
 const firstConversationGuide =
   "Follow the owner's answer to the opening question. Start any work they request. Otherwise ask at most one useful question about their current work. Setup is complete; do not start an interview.";
 
