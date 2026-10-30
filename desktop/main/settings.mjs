@@ -251,9 +251,8 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       onboardingCompleted: value.onboardingCompleted,
       ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
-      onboardingPreferenceStep: value.onboardingCompleted
-        ? 'complete'
-        : value.onboardingPreferenceStep === 'complete' && value.launchAtLogin
+      onboardingPreferenceStep:
+        value.onboardingCompleted || value.onboardingPreferenceStep === 'complete'
           ? 'complete'
           : 'launchAtLogin',
     };
@@ -350,23 +349,17 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           value[field] = input[field];
         }
         if (input.onboardingPreferenceStep !== undefined) {
-          const step = redacted(previous).onboardingPreferenceStep;
-          const repeated =
-            !previous.onboardingCompleted &&
-            step === 'complete' &&
-            input.onboardingPreferenceStep === 'complete' &&
-            input.launchAtLogin === true;
-          if (
-            !repeated &&
-            (step === 'complete' ||
-              input.onboardingPreferenceStep !== 'complete' ||
-              input.launchAtLogin !== true)
-          )
+          if (previous.onboardingCompleted || input.onboardingPreferenceStep !== 'complete')
             throw new Error('Choose your desktop preference before continuing.');
           value.onboardingPreferenceStep = input.onboardingPreferenceStep;
         }
-        if (value.onboardingCompleted && !previous.onboardingCompleted && !value.launchAtLogin)
-          throw new Error('Turn on Open at login to finish setup.');
+        if (
+          value.onboardingCompleted &&
+          !previous.onboardingCompleted &&
+          value.onboardingPreferenceStep !== 'complete' &&
+          !value.launchAtLogin
+        )
+          throw new Error('Finish the desktop preference step before continuing.');
         if (value.onboardingCompleted) delete value.welcome;
         await write(value);
         return redacted(value);

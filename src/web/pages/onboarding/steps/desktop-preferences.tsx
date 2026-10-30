@@ -26,7 +26,10 @@ export function DesktopPreferencesSetup({
       .then((value) =>
         value.onboardingPreferenceStep === 'complete'
           ? value
-          : saveDesktopSettings({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+          : saveDesktopSettings({
+              launchAtLogin: true,
+              onboardingPreferenceStep: 'complete',
+            }).catch(() => saveDesktopSettings({ onboardingPreferenceStep: 'complete' })),
       )
       .then((value) => {
         if (!current) return;

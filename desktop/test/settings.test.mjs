@@ -6010,10 +6010,9 @@ test('desktop preference choices resume durably without requiring notifications 
   await assert.rejects(f.store.save({ onboardingCompleted: true }));
   await assert.rejects(f.store.save({ notifications: true, onboardingCompleted: true }));
   assert.equal((await f.store.get()).onboardingCompleted, false);
-  await assert.rejects(f.store.save({ onboardingPreferenceStep: 'complete' }));
-  await assert.rejects(
-    f.store.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
-  );
+  await f.store.save({ onboardingPreferenceStep: 'complete' });
+  assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  assert.equal((await f.reopen().get()).launchAtLogin, false);
   await f.store.save({ notifications: false });
   const legacy = JSON.parse(await readFile(f.path, 'utf8'));
   legacy.onboardingPreferenceStep = 'notifications';
@@ -6025,17 +6024,16 @@ test('desktop preference choices resume durably without requiring notifications 
   await assert.rejects(
     reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
   );
-  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
-  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ onboardingPreferenceStep: 'complete' });
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
   assert.equal((await f.reopen().get()).notifications, false);
-  await assert.rejects(
-    reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
-  );
+  assert.equal((await f.reopen().get()).launchAtLogin, false);
   await assert.rejects(reopened.save({ onboardingPreferenceStep: 'notifications' }));
   await reopened.save({ onboardingCompleted: true });
   assert.equal((await f.reopen().get()).onboardingCompleted, true);
   assert.equal((await f.reopen().get()).notifications, false);
+  await assert.rejects(reopened.save({ onboardingPreferenceStep: 'complete' }));
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   delete saved.onboardingPreferenceStep;
   saved.launchAtLogin = false;
@@ -6119,8 +6117,11 @@ test('desktop preference steps and completion require the owned normal app and d
         assert.equal((await f.storage.reopen().get()).notifications, false);
         await assert.rejects(save(event, { onboardingCompleted: true }));
         assert.equal((await f.storage.reopen().get()).onboardingCompleted, false);
+        await save(event, { launchAtLogin: false });
+        assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
         completed = true;
         await save(event, { onboardingCompleted: true });
+        assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
         assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
         assert.equal((await f.storage.reopen().get()).notifications, false);
         await assert.rejects(save(event, { onboardingCompleted: false }));

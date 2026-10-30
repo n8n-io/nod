@@ -1290,7 +1290,7 @@ async function finishEnginePreparation(pending = false) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
       const saved = await settings.get();
-      if (saved.launchAtLogin) {
+      if (saved.onboardingPreferenceStep === 'complete' || saved.launchAtLogin) {
         applyPreferences(await settings.save({ onboardingCompleted: true }));
         onboardingCompleted = true;
         nativePreferencesPending = false;
