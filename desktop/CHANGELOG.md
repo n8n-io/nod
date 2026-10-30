@@ -2,6 +2,48 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.4.2 - 2026-10-30
+
+### Features
+
+- **memory:** Select source facts and check personal answers. [#574](https://github.com/n8n-io/nod/pull/574) (84a0c1b)
+- **web:** Use n8n icons for navigation, search, mic and import. [commit](https://github.com/n8n-io/nod/commit/81443dab048e26a223ad0dc7536016e366aa2c81) (81443da)
+- **onboarding:** Redesign onboarding. [#562](https://github.com/n8n-io/nod/pull/562) (65aad82)
+- **docs:** Add the Nod landing page with a platform-aware download button. [#396](https://github.com/n8n-io/nod/pull/396) (8774a82)
+
+### Fixes
+
+- **runtime:** Preserve task facts, local times and action terms. [#565](https://github.com/n8n-io/nod/pull/565) (5c8e50e)
+- **traces:** Drop memory lookup arguments and clarify trace scope. [#564](https://github.com/n8n-io/nod/pull/564) (bf91d4b)
+- **traces:** Hash IDs in trace content and keep memory out of traces. [#563](https://github.com/n8n-io/nod/pull/563) (8c15f31)
+- **harness:** Stop observer check-in loops and accept refs for sign-in methods. [#561](https://github.com/n8n-io/nod/pull/561) (763afb4)
+- **desktop:** Keep staged updates current and allow manual checks. [#560](https://github.com/n8n-io/nod/pull/560) (c93abb9)
+
+### Documentation
+
+- **readme:** Point the Discord badge at the public invite. [#573](https://github.com/n8n-io/nod/pull/573) (6c947ba)
+- **readme:** Add Discord and forum badges. [#571](https://github.com/n8n-io/nod/pull/571) (83b24a8)
+- **n8n:** The release broker serves only nod-v\* releases. [#570](https://github.com/n8n-io/nod/pull/570) (16e1453)
+
+<details>
+<summary>Maintenance (3 changes)</summary>
+
+- Prune dead code, retired features and pre-Nod compatibility code. [#569](https://github.com/n8n-io/nod/pull/569) (2833ef6)
+- **desktop:** Drop the last Windows preview names. [#568](https://github.com/n8n-io/nod/pull/568) (2ba8c34)
+- **docs:** Deploy the landing page and docs to nod.n8n.io from main. [#566](https://github.com/n8n-io/nod/pull/566) (504d5fb)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.4.1...84a0c1b209c4627c98bbc51682259e2ea39c476c)
+
+<details>
+<summary>Build details</summary>
+
+Source: `84a0c1b209c4627c98bbc51682259e2ea39c476c`
+Previous release: `nod-v0.4.1`
+
+</details>
+
 ## 0.4.1 - 2026-10-29
 
 ### Features
