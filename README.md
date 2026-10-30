@@ -6,6 +6,8 @@
 <p align="center">
   <a href="docs/README.md"><img alt="Docs" src="https://img.shields.io/badge/docs-read_them-ff91ac?style=flat-square&labelColor=191919" /></a>
   <a href="https://github.com/n8n-io/nod/releases"><img alt="Download" src="https://img.shields.io/badge/download-macOS_·_Windows-ff91ac?style=flat-square&labelColor=191919" /></a>
+  <a href="https://discord.com/channels/832547762716278804/1562811265355743234"><img alt="Discord" src="https://img.shields.io/badge/discord-join_us-ff91ac?style=flat-square&labelColor=191919&logo=discord&logoColor=white" /></a>
+  <a href="https://community.n8n.io/c/n8n-labs/48"><img alt="Forum" src="https://img.shields.io/badge/forum-n8n_Labs-ff91ac?style=flat-square&labelColor=191919&logo=discourse&logoColor=white" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-ff91ac?style=flat-square&labelColor=191919" /></a>
   <img alt="Status" src="https://img.shields.io/badge/status-early_preview-ff91ac?style=flat-square&labelColor=191919" />
 </p>
