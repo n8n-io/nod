@@ -60,7 +60,7 @@ One observer reads connected apps and saves private work. It starts separate tas
 
 Guides tell Pi to list the full requested scope and time range before keyword filters in a broad review. A narrow search cannot establish full coverage.
 
-Structured app and saved-work data can include timestamps with UTC or numeric offsets. Before Pi reads a result, the runtime adds up to 32 local time equivalents in the owner's time zone. The source values stay unchanged. Nested script calls keep raw data; their JSON output can receive the same display annotation. Date-only values, times without an offset and browser observations are not converted. The annotation stays inside the same untrusted data block.
+Structured results from apps, connected MCP tools, `read_source` and `proactive_issue` can include timestamps with UTC or numeric offsets. Before Pi reads a result, the runtime adds up to 32 local time equivalents in the owner's time zone. The source values stay unchanged. Nested script calls keep raw data; their JSON output can receive the same display annotation. Date-only values, times without an offset and direct browser observations are not converted. Personal tools such as `prepared_list` do not get this annotation. The annotation stays inside the same untrusted data block.
 
 For calendar plans, Pi uses availability tools when available and code for durations, gaps and proposed moves. Time ranges that only share an endpoint do not overlap. Required travel or preparation buffers are checked separately. Each proposed alternative is checked against the relevant calendar window.
 
