@@ -7,7 +7,7 @@ import { usePageData } from '../hooks/use-page-data';
 import { navigate } from '../lib/navigation';
 import { ConnectRow, SignInActions, signInIssue } from './connect-row';
 import { ServiceLogo } from './service-logo';
-import { Button } from './ui';
+import { Button, Notice } from './ui';
 
 export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 'apps' }> }) {
   const apps = usePageData<Connection[]>('/api/apps');
@@ -29,7 +29,8 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
   const start = (slug: string) =>
     void signIn.connect({ service: slug, connectionId: reconnect(slug) });
   const shown = visual.services.filter((slug) => entry(slug));
-  if (!shown.length) return null;
+  const error = apps.error || catalog.error;
+  if (!shown.length && !error) return null;
   return (
     <section className="message-presentation presentation-apps" aria-label={visual.title}>
       <div className="connect-rows">
@@ -64,6 +65,21 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
           );
         })}
       </div>
+      {error && (
+        <Notice>
+          {error}{' '}
+          <Button
+            variant="ghost"
+            disabled={apps.refreshing || catalog.refreshing}
+            onClick={() => {
+              void apps.refresh();
+              void catalog.refresh();
+            }}
+          >
+            Try again
+          </Button>
+        </Notice>
+      )}
     </section>
   );
 }

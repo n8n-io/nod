@@ -64,7 +64,7 @@ When a visual makes an answer easier to understand, nod can include images, maps
 
 Each visual stays beside its explanation. References stay in the reply as links. Nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it in the file panel.
 
-When nod suggests apps to connect, it lists up to three below its message, each with a **Connect** button. Connect starts sign-in right there in the chat, the same as the email step in onboarding. In Telegram and WhatsApp, nod names the apps to connect in [Apps](/connect/apps/) instead.
+When nod suggests apps to connect, it lists up to three below its message, each with a **Connect** button. Connect starts sign-in right there in the chat, the same as the email step in onboarding. If the app list fails to load, select **Try again** below the message. In Telegram and WhatsApp, nod names the apps to connect in [Apps](/connect/apps/) instead.
 
 Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Source** link opens its supplied reference separately.
 
