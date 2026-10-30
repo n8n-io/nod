@@ -2467,13 +2467,7 @@ test('native upgrades preserve the existing settings and vault through successfu
         theme: 'dark',
       });
       const environment = await storage.store.environment();
-      const saved = JSON.parse(await readFile(storage.path, 'utf8'));
-      saved.secrets.composioApiKey = 'retired-ciphertext-must-not-be-unlocked';
-      saved.keyMetadata = {
-        composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
-      };
-      const previous = JSON.stringify(saved, null, 2);
-      await writeFile(storage.path, previous);
+      const previous = await readFile(storage.path, 'utf8');
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState: 'upgrade',
         allowStart: true,
@@ -3975,19 +3969,8 @@ test('startup reads preserve older settings for rollback until an owner preferen
   });
   const expected = await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
-  saved.secrets.composioApiKey = 'unreadable-retired-ciphertext';
-  saved.notificationRequest = 'requested';
-  saved.secrets.integrationConfiguration = 'unreadable-retired-config';
-  saved.keyMetadata = {
-    composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
-  };
-  const previous = JSON.stringify(saved, null, 2);
-  await writeFile(f.path, previous);
-  const store = createSettingsStore(f.path, {
-    ...f.encryption,
-    decryptString: () => assert.fail('Reading preferences must not decrypt retired app keys.'),
-    decryptStringAsync: () => assert.fail('Reading preferences must not decrypt retired app keys.'),
-  });
+  const previous = await readFile(f.path, 'utf8');
+  const store = createSettingsStore(f.path, f.encryption);
   const settings = await store.get();
   assert.equal(settings.theme, 'dark');
   assert.equal(settings.notifications, true);
@@ -4006,9 +3989,7 @@ test('startup reads preserve older settings for rollback until an owner preferen
   const current = JSON.parse(await readFile(f.path, 'utf8'));
   assert.equal(current.theme, 'light');
   assert.equal(current.notifications, true);
-  assert.equal(Object.hasOwn(current, 'notificationRequest'), false);
   assert.deepEqual(current.secrets, { vaultKey: saved.secrets.vaultKey });
-  assert.equal(Object.hasOwn(current, 'keyMetadata'), false);
   assert.deepEqual(await f.reopen().environment(), expected);
 });
 

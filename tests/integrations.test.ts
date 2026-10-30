@@ -6909,7 +6909,7 @@ test(
       await pool.query('UPDATE turns SET thread_id=id,session_id=id WHERE id=$1', [foreign]);
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
       await pool.query(
-        "INSERT INTO app_actions(owner_id,turn_id,action,effect,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE','change',now()-interval '90 minutes')",
+        "INSERT INTO app_actions(owner_id,turn_id,action,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE',now()-interval '90 minutes')",
         [scheduled],
       );
       await pool.query(

@@ -107,24 +107,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     if (current) return current;
     let value;
     try {
-      const saved = JSON.parse(await readFile(path, 'utf8'));
+      value = JSON.parse(await readFile(path, 'utf8'));
       const record = (input) => input && typeof input === 'object' && !Array.isArray(input);
-      if (!record(saved) || !record(saved.secrets)) throw new Error();
-      const fields = [
-        'version',
-        'theme',
-        ...preferenceFields,
-        'onboardingPreferenceStep',
-        'welcome',
-        'serverUrl',
-        'secrets',
-      ];
-      value = Object.fromEntries(Object.entries(saved).filter(([field]) => fields.includes(field)));
-      value.secrets = Object.fromEntries(
-        Object.entries(saved.secrets).filter(([field]) =>
-          ['vaultKey', 'serverToken'].includes(field),
-        ),
-      );
+      if (!record(value) || !record(value.secrets)) throw new Error();
       if (
         value.version !== 1 ||
         !['system', 'light', 'dark'].includes(value.theme) ||

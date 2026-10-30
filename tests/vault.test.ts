@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
 import test from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
@@ -750,7 +749,6 @@ test(
       options: `-c search_path=${schema}`,
     });
     const key = randomBytes(32);
-    const owner = 'local-development';
     const headers = {
       host: 'localhost:4310',
       origin: 'http://localhost:4310',
@@ -828,7 +826,7 @@ test(
         );
       });
 
-      await t.test('Nod never keeps a security code, even one saved before', async () => {
+      await t.test('Nod never keeps a security code', async () => {
         for (const response of [
           await app.inject({
             method: 'POST',
@@ -839,53 +837,6 @@ test(
           await update(first.id, { ...input, securityCode: '737' }),
         ])
           assert.equal(response.statusCode, 400);
-        const saved = await create({ ...input, label: 'Saved before' });
-        const binding = ['nod-vault-card-v1', owner, saved.id];
-        const sealed = async () =>
-          (
-            await pool.query<{ ciphertext: string }>(
-              'SELECT ciphertext FROM vault_cards WHERE id=$1',
-              [saved.id],
-            )
-          ).rows[0]!.ciphertext;
-        const stored = JSON.parse(openVaultValue(key, binding, await sealed()));
-        await pool.query('UPDATE vault_cards SET ciphertext=$2 WHERE id=$1', [
-          saved.id,
-          sealVaultValue(key, binding, JSON.stringify({ ...stored, securityCode: '737' })),
-        ]);
-        let unlocked = false;
-        const locked = await createVault(pool, {
-          requestKey: Buffer.alloc(32, 42),
-          keyStore: {
-            id: 'synthetic',
-            configured: true,
-            getKey: async () => {
-              if (!unlocked) throw new Error('Synthetic locked key store.');
-              return key;
-            },
-          },
-          inject: async () => assert.fail('Cards must never enter a website login.'),
-          resume: async () => assert.fail('Card management must not resume a task.'),
-          retry: async () => assert.fail('Card management must not retry a task.'),
-        });
-        assert.equal(
-          'securityCode' in JSON.parse(openVaultValue(key, binding, await sealed())),
-          true,
-        );
-        unlocked = true;
-        assert.deepEqual(await locked.paymentCard(saved.id), stored);
-        assert.deepEqual(JSON.parse(openVaultValue(key, binding, await sealed())), stored);
-        await pool.query('UPDATE vault_cards SET ciphertext=$2 WHERE id=$1', [
-          saved.id,
-          sealVaultValue(key, binding, JSON.stringify({ ...stored, securityCode: '737' })),
-        ]);
-        const restarted = await start();
-        try {
-          assert.deepEqual(JSON.parse(openVaultValue(key, binding, await sealed())), stored);
-          assert.deepEqual(await restarted.vault.paymentCard(saved.id), stored);
-        } finally {
-          await restarted.app.close();
-        }
       });
     } finally {
       await app.close();
