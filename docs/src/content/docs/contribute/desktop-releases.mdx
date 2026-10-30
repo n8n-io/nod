@@ -239,7 +239,7 @@ Updates check the new build against n8n's Apple team, or the Windows certificate
 
 GitHub-hosted Mac runners can't run nested virtualization. CI checks binaries and packaging, but it can't prove Nod's private computer boots on a real Mac.
 
-The native update checks run in a disposable Mac Keychain. An upgrade must keep the vault key, server token, and integration identity, and a second read must leave the saved settings unchanged.
+The native update checks cover both Mac key storage names in a disposable Keychain. They check an upgrade from the original name and migration of values saved by 0.4.0. Both paths must keep the vault key, server token, and integration identity. A second read must leave the saved settings unchanged.
 
 <details>
 

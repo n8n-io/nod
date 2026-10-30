@@ -113,8 +113,11 @@ export function createArtifactService(options: {
 }) {
   if (!options.ownerId) throw new Error('Private file storage is unavailable.');
   const root = resolve(options.localRoot);
-  const artifacts = join(root, 'artifacts');
-  const directory = join(artifacts, createHash('sha256').update(options.ownerId).digest('hex'));
+  const legacyDirectory = join(root, 'artifacts');
+  const directory = join(
+    legacyDirectory,
+    createHash('sha256').update(options.ownerId).digest('hex'),
+  );
   const location = (id: string) => join(directory, id);
   const unavailable = () =>
     Object.assign(new Error('An attachment is unavailable.'), { statusCode: 400 });
@@ -126,7 +129,7 @@ export function createArtifactService(options: {
   const transact = <T>(action: (client: Pick<PoolClient, 'query'>) => Promise<T>) =>
     transaction(action, options.database);
   async function checkDirectory(path: string, create = false) {
-    for (const parent of [root, artifacts, ...(path === directory ? [directory] : [])]) {
+    for (const parent of [root, legacyDirectory, ...(path === directory ? [directory] : [])]) {
       if (create) await mkdir(parent, { recursive: true, mode: 0o700 });
       if (!(await lstat(parent)).isDirectory()) throw unavailable();
     }
@@ -134,7 +137,8 @@ export function createArtifactService(options: {
   function storagePath(row: Record<string, any>) {
     if (
       !z.uuid().safeParse(row.id).success ||
-      row.storage_path !== location(row.id) ||
+      (row.storage_path !== location(row.id) &&
+        row.storage_path !== join(legacyDirectory, row.id)) ||
       !Number.isInteger(row.size) ||
       row.size < 1 ||
       row.size > fileBytes

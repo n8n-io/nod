@@ -11,6 +11,7 @@ export function preparedWorkId(path: string) {
 }
 
 export function appPagePath(path: string) {
+  if (path === '/trust') return '/usage';
   if (path === '/memory') return '/settings/memory';
   if (preparedWorkId(path)) return path as `/prepared/${string}`;
   return Object.hasOwn(appPages, path) ? (path as keyof typeof appPages) : null;

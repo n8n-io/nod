@@ -8,7 +8,10 @@ function DesktopNotificationPrompt({ ownerId, messageId }: { ownerId: string; me
   const key = `nod.notifications.dismissed.${ownerId}.${messageId}`;
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return localStorage.getItem(key) === 'true';
+      return (
+        localStorage.getItem(key) === 'true' ||
+        localStorage.getItem(`nod.notifications.dismissed.${messageId}`) === 'true'
+      );
     } catch {}
     return false;
   });

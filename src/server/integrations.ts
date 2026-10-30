@@ -262,6 +262,9 @@ export async function initializeIntegrationSchema(pool: Pool) {
       ADD COLUMN IF NOT EXISTS activity_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS activity_poll_at timestamptz,
       ADD COLUMN IF NOT EXISTS activity_claim_id text;
+    INSERT INTO app_setup_links(owner_id,link_hash,slug)
+      SELECT owner_id,setup_link_hash,slug FROM app_connections WHERE setup_link_hash IS NOT NULL
+      ON CONFLICT DO NOTHING;
     ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid;
   `);
 }

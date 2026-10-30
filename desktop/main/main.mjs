@@ -44,6 +44,7 @@ import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { registerArtifactFileHandlers } from './artifact-file-handlers.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle } from './lifecycle.mjs';
+import { createMacEncryption } from './mac-encryption.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 import { windowsInstallCommand } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
@@ -102,7 +103,12 @@ app.setPath(
 );
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'nod', 'updates');
-const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
+const settings = createSettingsStore(
+  join(profileRoot, 'settings.json'),
+  process.platform === 'darwin' && app.isPackaged && !testInstall
+    ? createMacEncryption(safeStorage)
+    : safeStorage,
+);
 const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
   packaged: app.isPackaged,
 });

@@ -519,79 +519,92 @@ test(
         created_at timestamptz NOT NULL DEFAULT now(),expires_at timestamptz,deleting_at timestamptz);
     `);
 
-    await t.test('expiry preserves sent, published, retained and renewed files', async () => {
-      const owner = 'lease-owner';
-      const service = create(owner);
-      const thread = randomUUID();
-      await database.query('INSERT INTO threads VALUES($1,$2)', [thread, owner]);
-      const abandoned = await service.storeUpload(
-        Buffer.from('abandoned'),
-        'abandoned',
-        'text/plain',
-      );
-      const sent = await service.storeUpload(Buffer.from('sent'), 'sent', 'text/plain');
-      const published = await service.storeArtifact(
-        Buffer.from('published'),
-        'published',
-        'text/plain',
-        thread,
-      );
-      const retained = await service.storeArtifact(
-        Buffer.from('retained'),
-        'retained',
-        'text/plain',
-      );
-      const recent = await service.storeUpload(Buffer.from('recent'), 'recent', 'text/plain');
-      const renewed = await service.storeUpload(Buffer.from('renewed'), 'renewed', 'text/plain');
-      await database.query('INSERT INTO messages VALUES($1,$2,$3)', [
-        randomUUID(),
-        owner,
-        JSON.stringify([sent]),
-      ]);
-      await age(owner, [abandoned.id, sent.id, published.id, renewed.id]);
-      const available = await service.renewUploads([
-        renewed.id,
-        retained.id,
-        renewed.id,
-        randomUUID(),
-      ]);
-      assert.deepEqual(available.map((file) => file.id).sort(), [renewed.id, retained.id].sort());
-      const renewedRow = (
-        await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+    await t.test(
+      'expiry preserves sent, published, retained and renewed files, including legacy rows',
+      async () => {
+        const owner = 'lease-owner';
+        const service = create(owner);
+        const thread = randomUUID();
+        await database.query('INSERT INTO threads VALUES($1,$2)', [thread, owner]);
+        const abandoned = await service.storeUpload(
+          Buffer.from('abandoned'),
+          'abandoned',
+          'text/plain',
+        );
+        const sent = await service.storeUpload(Buffer.from('sent'), 'sent', 'text/plain');
+        const published = await service.storeArtifact(
+          Buffer.from('published'),
+          'published',
+          'text/plain',
+          thread,
+        );
+        const retained = await service.storeArtifact(
+          Buffer.from('retained'),
+          'retained',
+          'text/plain',
+        );
+        const recent = await service.storeUpload(Buffer.from('recent'), 'recent', 'text/plain');
+        const renewed = await service.storeUpload(Buffer.from('renewed'), 'renewed', 'text/plain');
+        const legacy = await service.storeUpload(Buffer.from('legacy'), 'legacy', 'text/plain');
+        const legacyPath = join(root, 'artifacts', legacy.id);
+        await rename(path(owner, legacy.id), legacyPath);
+        await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
           owner,
+          legacy.id,
+          legacyPath,
+        ]);
+        assert.equal((await service.readArtifact(legacy.id)).toString(), 'legacy');
+        await database.query('INSERT INTO messages VALUES($1,$2,$3)', [
+          randomUUID(),
+          owner,
+          JSON.stringify([sent]),
+        ]);
+        await age(owner, [abandoned.id, sent.id, published.id, renewed.id, legacy.id]);
+        const available = await service.renewUploads([
           renewed.id,
-        ])
-      ).rows[0];
-      assert.ok(renewedRow.expires_at.getTime() > Date.now() + 23 * 60 * 60 * 1000);
-      assert.equal((await service.sweep()).removed, 1);
-      await absent(path(owner, abandoned.id));
-      for (const [file, content] of [
-        [sent, 'sent'],
-        [published, 'published'],
-        [retained, 'retained'],
-        [recent, 'recent'],
-        [renewed, 'renewed'],
-      ] as const)
-        assert.equal((await service.readArtifact(file.id)).toString(), content);
-      assert.equal(
-        (
-          await database.query('SELECT thread_id FROM artifacts WHERE owner_id=$1 AND id=$2', [
-            owner,
-            sent.id,
-          ])
-        ).rows[0].thread_id,
-        null,
-      );
-      assert.equal(
-        (
+          retained.id,
+          renewed.id,
+          randomUUID(),
+        ]);
+        assert.deepEqual(available.map((file) => file.id).sort(), [renewed.id, retained.id].sort());
+        const renewedRow = (
           await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
             owner,
-            retained.id,
+            renewed.id,
           ])
-        ).rows[0].expires_at,
-        null,
-      );
-    });
+        ).rows[0];
+        assert.ok(renewedRow.expires_at.getTime() > Date.now() + 23 * 60 * 60 * 1000);
+        assert.equal((await service.sweep()).removed, 2);
+        await absent(path(owner, abandoned.id));
+        await absent(legacyPath);
+        for (const [file, content] of [
+          [sent, 'sent'],
+          [published, 'published'],
+          [retained, 'retained'],
+          [recent, 'recent'],
+          [renewed, 'renewed'],
+        ] as const)
+          assert.equal((await service.readArtifact(file.id)).toString(), content);
+        assert.equal(
+          (
+            await database.query('SELECT thread_id FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              sent.id,
+            ])
+          ).rows[0].thread_id,
+          null,
+        );
+        assert.equal(
+          (
+            await database.query('SELECT expires_at FROM artifacts WHERE owner_id=$1 AND id=$2', [
+              owner,
+              retained.id,
+            ])
+          ).rows[0].expires_at,
+          null,
+        );
+      },
+    );
 
     await t.test('renewal and retention require available backing files', async (t) => {
       const owner = 'availability-owner';
@@ -606,6 +619,14 @@ test(
         'retained',
         'text/plain',
       );
+      const legacy = await service.storeUpload(Buffer.from('legacy bytes'), 'legacy', 'text/plain');
+      const legacyPath = join(root, 'artifacts', legacy.id);
+      await rename(path(owner, legacy.id), legacyPath);
+      await database.query('UPDATE artifacts SET storage_path=$3 WHERE owner_id=$1 AND id=$2', [
+        owner,
+        legacy.id,
+        legacyPath,
+      ]);
       const mutations: Record<string, (file: string) => Promise<unknown>> = {
         missing: unlink,
         truncated: (file) => writeFile(file, 'short'),
@@ -636,9 +657,12 @@ test(
       ).rows;
       await t.test('renewal omits unusable files without extending their leases', async () => {
         const result = await service.renewUploads(
-          [...rejected, available, retained].map((file) => file.id),
+          [...rejected, available, retained, legacy].map((file) => file.id),
         );
-        assert.deepEqual(result.map((file) => file.id).sort(), [available.id, retained.id].sort());
+        assert.deepEqual(
+          result.map((file) => file.id).sort(),
+          [available.id, retained.id, legacy.id].sort(),
+        );
         for (const file of rejected)
           assert.deepEqual(
             (
@@ -670,7 +694,9 @@ test(
       await rename(directory(owner), moved);
       await symlink(moved, directory(owner));
       try {
-        assert.deepEqual(await service.renewUploads([available.id, retained.id]), []);
+        assert.deepEqual(await service.renewUploads([available.id, retained.id, legacy.id]), [
+          legacy,
+        ]);
       } finally {
         await unlink(directory(owner));
         await rename(moved, directory(owner));

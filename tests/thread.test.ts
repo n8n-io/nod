@@ -87,6 +87,102 @@ test(
     assert.equal(dataRoot, root);
 
     await db.initializeDatabase();
+    await t.test(
+      'legacy upload retention is migrated once with a fresh owned grace period',
+      async () => {
+        const legacyThread = randomUUID();
+        const ids = Array.from({ length: 4 }, () => randomUUID());
+        await db.pool.query(
+          'ALTER TABLE artifacts DROP COLUMN expires_at, DROP COLUMN deleting_at',
+        );
+        await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+          legacyThread,
+          ownerId,
+        ]);
+        for (const [index, id] of ids.entries())
+          await db.pool.query(
+            `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,created_at)
+           VALUES($1,$2,$3,'legacy.txt','text/plain',1,$4,now()-interval '60 days')`,
+            [
+              id,
+              index === 3 ? 'foreign-owner' : ownerId,
+              index === 2 ? legacyThread : null,
+              join(root, 'artifacts', id),
+            ],
+          );
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'user','Legacy sent file',$3,$4)",
+          [randomUUID(), ownerId, legacyThread, JSON.stringify([{ id: ids[1] }])],
+        );
+        const started = (await db.pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
+        await db.initializeDatabase();
+        const migrated = (
+          await db.pool.query(
+            'SELECT id,expires_at,deleting_at,clock_timestamp() AS checked_at FROM artifacts',
+          )
+        ).rows;
+        const pending = migrated.find((row) => row.id === ids[0]);
+        assert.ok(pending.expires_at.getTime() >= started.getTime() + 24 * 60 * 60_000);
+        assert.ok(pending.expires_at.getTime() <= pending.checked_at.getTime() + 24 * 60 * 60_000);
+        for (const row of migrated) {
+          assert.equal(row.deleting_at, null);
+          if (row.id !== ids[0]) assert.equal(row.expires_at, null);
+        }
+        const retained = await storeArtifact(Buffer.from('retained'), 'retained.txt', 'text/plain');
+        await db.pool.query("UPDATE artifacts SET expires_at=now()-interval '1 hour' WHERE id=$1", [
+          ids[0],
+        ]);
+        const expired = (
+          await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])
+        ).rows[0].expires_at;
+        await db.initializeDatabase();
+        assert.deepEqual(
+          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [ids[0]])).rows[0]
+            .expires_at,
+          expired,
+        );
+        assert.equal(
+          (await db.pool.query('SELECT expires_at FROM artifacts WHERE id=$1', [retained.id]))
+            .rows[0].expires_at,
+          null,
+        );
+        assert.equal((await localArtifacts.readArtifact(retained.id)).toString(), 'retained');
+        await db.pool.query('DELETE FROM artifacts WHERE id=ANY($1::uuid[])', [ids]);
+        await db.pool.query('DELETE FROM messages WHERE thread_id=$1', [legacyThread]);
+        await db.pool.query('DELETE FROM threads WHERE id=$1', [legacyThread]);
+      },
+    );
+    await t.test(
+      'upgrade cancels old account checks without cancelling other queued work',
+      async () => {
+        const currentThread = (await thread.activeThread()).id;
+        const ids = Array.from({ length: 3 }, () => randomUUID());
+        try {
+          for (const [index, id] of ids.entries())
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt)
+             VALUES($1,$2,$3,'event',$4,'Synthetic queued work')`,
+              [
+                id,
+                index === 2 ? 'synthetic-other-owner' : ownerId,
+                currentThread,
+                index === 1 ? `event:${id}` : `activity-check:${id}`,
+              ],
+            );
+          await db.initializeDatabase();
+          const states = await db.pool.query(
+            'SELECT id,status FROM turns WHERE id=ANY($1::uuid[])',
+            [ids],
+          );
+          assert.deepEqual(
+            ids.map((id) => states.rows.find((row) => row.id === id)?.status),
+            ['cancelled', 'queued', 'queued'],
+          );
+        } finally {
+          await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
+        }
+      },
+    );
     await thread.initializeThreads();
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({

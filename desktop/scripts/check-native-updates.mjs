@@ -47,6 +47,7 @@ async function packageFixtures(planPath) {
     await mkdir(directory);
     for (const name of [
       'settings.mjs',
+      'mac-encryption.mjs',
       'artifact-files.mjs',
       'artifact-file-handlers.mjs',
       'updates.mjs',
@@ -62,7 +63,7 @@ async function packageFixtures(planPath) {
       JSON.stringify({
         name: fixture.name,
         productName:
-          fixture.version === fixture.installed ? fixture.storageName : fixture.displayName,
+          fixture.version === fixture.installed ? fixture.initialName : fixture.displayName,
         version: fixture.version,
         type: 'module',
         main: 'main.mjs',
@@ -87,7 +88,7 @@ const { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } =
 const { createHash, sign } = require('node:crypto');
 const { join } = require('node:path');
 const fixture = ${JSON.stringify(fixture)};
-app.setName(fixture.storageName);
+app.setName(fixture.version === fixture.installed ? fixture.initialName : fixture.storageName);
 app.setPath('userData', fixture.profile);
 app.setPath('temp', fixture.temporary);
 const receipt = (event, fields = {}) => appendFileSync(fixture.events,
@@ -96,7 +97,8 @@ const receipt = (event, fields = {}) => appendFileSync(fixture.events,
 app.whenReady().then(async () => {
   app.setName(fixture.displayName);
   const { createSettingsStore } = await import('./settings.mjs');
-  const encryption = safeStorage;
+  const { createMacEncryption } = await import('./mac-encryption.mjs');
+  const encryption = app.getVersion() === fixture.installed ? safeStorage : createMacEncryption(safeStorage, { previousName: fixture.initialName });
   const { registerArtifactFileHandlers } = await import('./artifact-file-handlers.mjs');
   const page = 'data:text/html;base64,' + Buffer.from('<title>Native update fixture</title>').toString('base64');
   const window = new BrowserWindow({
@@ -127,7 +129,12 @@ app.whenReady().then(async () => {
     }), { mode: 0o600, flag: 'wx' });
   const settingsBefore = readFileSync(fixture.settings);
   const environment = await createSettingsStore(fixture.settings, encryption).environment();
-  const decrypted = safeStorage.decryptString(encrypted);
+  let decrypted;
+  try { decrypted = safeStorage.decryptString(encrypted); }
+  catch (error) {
+    if (!encryption.decryptLegacyStringAsync) throw error;
+    decrypted = await encryption.decryptLegacyStringAsync(encrypted);
+  }
   const settingsAfter = readFileSync(fixture.settings);
   const remoteAfter = readFileSync(fixture.remoteSettings);
   const reopened = await createSettingsStore(fixture.settings, encryption).environment();
@@ -178,7 +185,7 @@ app.whenReady().then(async () => {
     return app.exit(0);
   }
   if (app.getVersion() !== fixture.installed) return setTimeout(() => app.quit(), 500);
-  if (fixture.kind === 'install') {
+  if (['install', 'migrate'].includes(fixture.kind)) {
     await window.loadURL(page);
     await window.webContents.executeJavaScript('nativeFixture.prepare()');
     const directories = readdirSync(fixture.temporary).filter((name) => name.startsWith('nod-files-'));
@@ -258,9 +265,9 @@ app.whenReady().then(async () => {
       asar: false,
       extendInfo: {
         CFBundleName:
-          fixture.version === fixture.installed ? fixture.storageName : fixture.displayName,
+          fixture.version === fixture.installed ? fixture.initialName : fixture.displayName,
         CFBundleDisplayName:
-          fixture.version === fixture.installed ? fixture.storageName : fixture.displayName,
+          fixture.version === fixture.installed ? fixture.initialName : fixture.displayName,
         ElectronSquirrelPreventDowngrades: true,
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: true },
       },
@@ -380,7 +387,7 @@ async function main() {
   try {
     await new Promise((accept) => server.listen(0, '127.0.0.1', accept));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    for (const kind of ['install', 'reject', 'downgrade']) {
+    for (const kind of ['install', 'reject', 'downgrade', 'migrate']) {
       const owner = randomUUID();
       const integrationRoot = join(root, `${kind}-profile`, 'profiles', 'local');
       const identityDirectory = join(integrationRoot, 'integration-identity');
@@ -420,6 +427,7 @@ async function main() {
       };
       fixture.storageName = `nod-${randomUUID()}`;
       fixture.displayName = fixture.storageName.replace('nod-', 'Nod-');
+      fixture.initialName = kind === 'migrate' ? fixture.displayName : fixture.storageName;
       fixture.caches = [fixture.identifier, `${fixture.identifier}.ShipIt`].map((id) =>
         join(homedir(), 'Library/Caches', id),
       );
@@ -493,6 +501,18 @@ async function main() {
       encryptionKeychain: storageKeychain,
     });
     for (const fixture of fixtures) {
+      if (fixture.kind === 'migrate')
+        await run('/usr/bin/security', [
+          'add-generic-password',
+          '-s',
+          `${fixture.initialName} Safe Storage`,
+          '-a',
+          `${fixture.initialName} Key`,
+          '-w',
+          randomBytes(16).toString('base64'),
+          '-A',
+          storageKeychain,
+        ]);
       const before = sha256(await readFile(fixture.data));
       const ownerBefore = await readFile(fixture.ownerFile);
       const installedSignature = sha256(
@@ -504,6 +524,7 @@ async function main() {
           install: 'UPD-NATIVE.v6',
           reject: 'UPD-SIGNATURE.v4',
           downgrade: 'UPD-DOWNGRADE.v2',
+          migrate: 'UPD-KEYCHAIN-MIGRATION.v1',
         }[fixture.kind],
         startedAt: new Date().toISOString(),
         archive: { bytes: archive.length, sha256: sha256(archive) },
@@ -538,7 +559,7 @@ async function main() {
       child.on('error', (error) => {
         entry.launchError = error.message;
       });
-      const installs = fixture.kind === 'install';
+      const installs = ['install', 'migrate'].includes(fixture.kind);
       const latestVersion = fixture.kind === 'install' ? '1.0.2' : '1.0.1';
       const deadline = Date.now() + (installs ? 300_000 : 120_000);
       let events = [];
@@ -688,8 +709,11 @@ async function main() {
             (event) =>
               event.asyncDecryptedHash === sha256(fixture.sentinel) &&
               event.appName === fixture.displayName &&
-              event.settingsBeforeHash === event.settingsHash &&
-              event.settingsHash === readyEvents[0].settingsHash,
+              (fixture.kind === 'migrate' && event.version === '1.0.1'
+                ? event.settingsBeforeHash === readyEvents[0].settingsHash &&
+                  event.settingsHash !== event.settingsBeforeHash
+                : event.settingsBeforeHash === event.settingsHash &&
+                  event.settingsHash === readyEvents[0].settingsHash),
           ) &&
           sha256(await readFile(fixture.settings)) === readyEvents.at(-1).settingsHash,
       );
@@ -702,8 +726,11 @@ async function main() {
             (event) =>
               event.serverUrl === fixture.serverUrl &&
               event.serverTokenHash === sha256(fixture.serverToken) &&
-              event.remoteSettingsBeforeHash === event.remoteSettingsHash &&
-              event.remoteSettingsHash === readyEvents[0].remoteSettingsHash,
+              (fixture.kind === 'migrate' && event.version === '1.0.1'
+                ? event.remoteSettingsBeforeHash === readyEvents[0].remoteSettingsHash &&
+                  event.remoteSettingsHash !== event.remoteSettingsBeforeHash
+                : event.remoteSettingsBeforeHash === event.remoteSettingsHash &&
+                  event.remoteSettingsHash === readyEvents[0].remoteSettingsHash),
           ) &&
           sha256(savedRemoteSettings) === readyEvents.at(-1).remoteSettingsHash &&
           typeof remoteSecrets.serverToken === 'string' &&
@@ -818,7 +845,7 @@ async function main() {
       report.checks.push({ id: 'UPD-CLEANUP', pass: false, error: error.message });
     }
     report.finishedAt = new Date().toISOString();
-    report.pass = !failure && report.cases.length === 3;
+    report.pass = !failure && report.cases.length === 4;
     await writeFile(join(output, `${Date.now()}.json`), JSON.stringify(report, null, 2));
   }
   if (failure) throw failure;

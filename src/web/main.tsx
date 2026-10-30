@@ -63,6 +63,12 @@ sessionStore.subscribe(() => {
   );
 });
 
+if (window.location.pathname === '/trust')
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.search.startsWith('?add=') ? `/vault${window.location.search}` : '/usage'}${window.location.hash}`,
+  );
 window.addEventListener('hashchange', async () => {
   if (await claimAccess()) await sessionStore.refresh();
 });

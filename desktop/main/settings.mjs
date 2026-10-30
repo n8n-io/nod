@@ -188,6 +188,36 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       }
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
+      if (platform === 'darwin' && encryption.decryptLegacyStringAsync) {
+        let result;
+        let replacement;
+        try {
+          result = await encryption.decryptLegacyStringAsync(Buffer.from(value, 'base64'));
+          if (
+            field === 'vaultKey'
+              ? Buffer.from(result, 'base64').length !== 32 ||
+                Buffer.from(result, 'base64').toString('base64') !== result
+              : !/^[A-Za-z0-9_-]{43,}$/.test(result)
+          )
+            throw new Error();
+          replacement = await protect(result);
+          if (
+            (await encryption.decryptStringAsync(Buffer.from(replacement, 'base64'))).result !==
+            result
+          )
+            throw new Error();
+        } catch (error) {
+          if (error.code === 'NOD_KEY_STORE_UNAVAILABLE') throw error;
+          replacement = undefined;
+        }
+        if (replacement) {
+          await write({
+            ...current,
+            secrets: { ...current.secrets, [field]: replacement },
+          });
+          return result;
+        }
+      }
       throw (
         failure ??
         new Error(

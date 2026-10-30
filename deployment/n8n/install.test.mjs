@@ -24,7 +24,7 @@ async function fixture(options = {}) {
   );
   const directory = await mkdtemp(join(tmpdir(), 'nod-install-fixture-'));
   const home = join(directory, 'home');
-  const target = join(directory, 'Applications', 'Nod.app');
+  const target = join(directory, 'Applications', options.legacyInstall ? 'nod.app' : 'Nod.app');
   const bin = join(directory, 'bin');
   await mkdir(bin);
   await mkdir(dirname(target), { recursive: true });
@@ -177,7 +177,7 @@ else stop();
 test('CLI-INSTALL: hosted script installs verified bytes and preserves the existing profile', async () => {
   const embedded = new Function(installNodes()[1].parameters.jsCode)()[0].json.body;
   assert.equal(embedded, installer);
-  for (const options of [{}, { fresh: true }]) {
+  for (const options of [{}, { fresh: true }, { legacyInstall: true }]) {
     const state = await fixture(options);
     try {
       const result = state.run();

@@ -4003,6 +4003,8 @@ test(
       [earlier.hash, later.hash].sort(),
     );
     assert.equal(pairingChecks.mock.callCount(), 1);
+    await f.pool.query('DROP TABLE app_setup_links');
+    await initializeIntegrationSchema(f.pool);
     await f.pool.query(
       "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
       [earlier.id],

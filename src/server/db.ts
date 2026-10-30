@@ -1,7 +1,8 @@
 import { logFailure } from './failure-log.ts';
 import pg from 'pg';
-import { databaseUrl } from './config.ts';
+import { databaseUrl, ownerId } from './config.ts';
 import { locksTable } from './locks.ts';
+import { transaction } from './transaction.ts';
 
 function poolSize(value: string | undefined, fallback: number) {
   const size = value === undefined ? fallback : Number(value);
@@ -106,9 +107,30 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS messages_turn_time ON messages(turn_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_attachments ON messages USING gin (attachments jsonb_path_ops);
     CREATE INDEX IF NOT EXISTS messages_text_search ON messages USING gin (to_tsvector('english',text));
-    ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS expires_at timestamptz;
-    ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleting_at timestamptz;
-    CREATE INDEX IF NOT EXISTS artifacts_cleanup ON artifacts(owner_id,COALESCE(deleting_at,expires_at),id)
-      WHERE expires_at IS NOT NULL OR deleting_at IS NOT NULL;
   `);
+  await pool.query(
+    `UPDATE turns SET status='cancelled',finished_at=now()
+     WHERE owner_id=$1 AND source='event' AND starts_with(source_id,'activity-check:') AND status='queued'`,
+    [ownerId],
+  );
+  await transaction(async (artifacts) => {
+    await artifacts.query('LOCK TABLE artifacts IN ACCESS EXCLUSIVE MODE');
+    const existing = await artifacts.query(
+      "SELECT 1 FROM pg_attribute WHERE attrelid='artifacts'::regclass AND attname='expires_at' AND NOT attisdropped",
+    );
+    await artifacts.query(`
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleting_at timestamptz;
+      CREATE INDEX IF NOT EXISTS artifacts_cleanup ON artifacts(owner_id,COALESCE(deleting_at,expires_at),id)
+        WHERE expires_at IS NOT NULL OR deleting_at IS NOT NULL;
+    `);
+    if (!existing.rowCount)
+      await artifacts.query(
+        `UPDATE artifacts a SET expires_at=clock_timestamp()+interval '24 hours'
+         WHERE a.owner_id=$1 AND a.thread_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=$1
+           AND m.attachments @> jsonb_build_array(jsonb_build_object('id',a.id::text)))`,
+        [ownerId],
+      );
+  }, pool);
 }

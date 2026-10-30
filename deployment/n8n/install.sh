@@ -135,6 +135,9 @@ case "$os_major" in ''|*[!0-9]*) fail 'Could not read the macOS version.' ;; esa
 [ "$os_major" -ge 14 ] || fail 'Nod requires macOS 14 or later.'
 applications='/Applications'
 target="$applications/Nod.app"
+if [ ! -e "$target" ] && [ ! -L "$target" ] && { [ -e "$applications/nod.app" ] || [ -L "$applications/nod.app" ]; }; then
+  target="$applications/nod.app"
+fi
 [ ! -L "$applications" ] && [ ! -L "$target" ] || fail 'The installation destination must not be a symbolic link.'
 [ ! -e "$target" ] || [ -d "$target" ] || fail 'The installation destination is not an app directory.'
 [ -d "$applications" ] && [ -w "$applications" ] && [ -x "$applications" ] || fail 'You need permission to install apps in /Applications. Use a macOS administrator account.'
