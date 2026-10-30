@@ -18,4 +18,5 @@ export interface MemoryBrief {
   }>;
   reads?: Array<{ action: string; args: Record<string, unknown>; result: unknown }>;
   readsTruncated?: boolean;
+  truncated?: boolean;
 }

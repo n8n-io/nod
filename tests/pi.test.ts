@@ -2606,6 +2606,50 @@ test('each model call yields one chat-format trace without image data', async ()
   ])
     assert.ok(!sent.includes(value), value);
   assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
+  const { ownerContext, compactOwnerContext, firstInstruction } =
+    await import('../src/runtime/prompt.ts');
+  const privateFact = 'Synthetic private memory detail: the blue parcel is in the attic.';
+  const selectedContext: RuntimeContext = {
+    ...context('/fixture'),
+    prompt: 'Give advice from what I told you.',
+    memoryBrief: {
+      mode: 'recall',
+      facts: [],
+      searches: [],
+      messages: [
+        {
+          id: randomUUID(),
+          role: 'user',
+          text: privateFact,
+          at: new Date().toISOString(),
+          shortened: false,
+        },
+      ],
+    },
+  };
+  for (const owned of [ownerContext(selectedContext), compactOwnerContext(selectedContext)]) {
+    assert.ok(owned.includes(privateFact));
+    const selectedTrace = piModelTrace(
+      {
+        ...calls[0],
+        context: {
+          ...calls[0].context,
+          messages: [
+            { role: 'user', content: owned, timestamp: 1 },
+            {
+              role: 'user',
+              content: firstInstruction(selectedContext, false, new Set()),
+              timestamp: 2,
+            },
+          ],
+        },
+      },
+      { source: 'agent' },
+      owned,
+    );
+    assert.ok(!JSON.stringify(selectedTrace).includes(privateFact));
+    assert.ok(JSON.stringify(selectedTrace).includes(selectedContext.prompt));
+  }
 });
 
 test('a long tool call does not send model requests without usage records', async (t) => {

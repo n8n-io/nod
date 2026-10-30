@@ -1817,6 +1817,14 @@ test('memory reply checks finish before delivery, share new evidence and run onc
       emit({ type: 'final', text: 'An unchecked answer.' });
     },
     {
+      checkIn: { budgetUsd: 1, spentUsd: 0 },
+      taskContext: {
+        id: randomUUID(),
+        title: 'Recall',
+        brief: 'Recall the source.',
+        doneWhen: 'Answer delivered.',
+        revision: 1,
+      },
       delta: (text) => {
         deltas.push(text);
       },
@@ -1826,8 +1834,21 @@ test('memory reply checks finish before delivery, share new evidence and run onc
     },
     {
       prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
-      reviewMemoryReply: async (context) => {
+      reviewMemoryReply: async (context, _text, execution) => {
         checks++;
+        execution.onEvent({
+          type: 'provider_usage',
+          usage: {
+            id: randomUUID(),
+            provider: 'fixture',
+            model: 'fixture',
+            category: 'memory',
+            operation: 'memory_check',
+            status: 'succeeded',
+            durationMs: 1,
+            costUsd: 1,
+          },
+        });
         assert.ok(!deltas.includes('An unchecked answer.'));
         assert.equal(context.memoryBrief?.reads?.length, 1);
         assert.equal(context.memoryBrief?.reads?.[0].action, 'history_search');

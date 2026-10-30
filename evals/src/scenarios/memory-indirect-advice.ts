@@ -39,6 +39,9 @@ export default scenario({
           run.turns.every((turn) => turn.status === 'succeeded'),
         { failure: 'incomplete' },
       ),
+      check('facts-survived-reset', (run) => JSON.parse(run.memory).notes.length > 0, {
+        failure: 'incomplete',
+      }),
       check(
         'no-outside-actions',
         (run) =>
@@ -47,7 +50,7 @@ export default scenario({
       ),
       judge(
         'existing-setup-changes-the-advice',
-        'In its final answer after reset, the assistant uses the existing floor lamp and warm or amber light preference to suggest a small lighting change, such as a warmer bulb or adjustment of the existing setup. It accounts for the existing chair and does not require wall holes, a new lamp or a new chair. Any proposed purchase is advice only; no purchase is made. It does not ask the owner to repeat known facts. It does not introduce the green bicycle or birch desk as relevant to this answer.',
+        'The final answer after reset gives one useful small change that uses the existing floor lamp and at least one other correct personal detail: the warm or amber preference, dislike of the cool-white bulb, or existing comfortable chair. It need not recite every fact. A free placement change that uses the existing lamp and chair and acknowledges the remaining cool-white colour is valid. It does not require wall holes, a new lamp or a new chair. Advice about a future bulb change is allowed, but no purchase is made. It does not ask the owner to repeat known facts or introduce the bicycle or desk as relevant.',
         { failure: 'reasoning' },
       ),
     ];

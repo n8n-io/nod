@@ -114,17 +114,20 @@ export function createHistorySearch({
     const picked = page.rows.slice(0, 20);
     const nextCursor = page.rows.length > 20 ? picked.at(-1)!.id : null;
     const { rows: messages } = await pool.query<HistoryMessage>(
-      `WITH thread AS (
+      `WITH terms AS (SELECT replace(plainto_tsquery('english',coalesce($4,''))::text,'&','|')::tsquery AS q),
+       thread AS (
          SELECT m.id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
          FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')}),
        picked AS (SELECT t.n,ids.place,t.id FROM unnest($2::uuid[]) WITH ORDINALITY ids(id,place) JOIN thread t ON t.id=ids.id),
        shown AS (
          SELECT t.*,bool_or(p.id=t.id) AS match,min(p.place) AS place FROM thread t
          JOIN picked p ON t.n BETWEEN p.n-$3 AND p.n+$3 GROUP BY t.id,t.role,t.text,t.turn_id,t.created_at,t.n)
-       SELECT s.id,s.role,left(s.text,6000) AS text,length(s.text)>6000 AS shortened,s.turn_id,s.created_at,
+       SELECT s.id,s.role,CASE WHEN length(s.text)<=1200 THEN s.text
+         ELSE ts_headline('english',s.text,terms.q,'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" … "') END AS text,
+         length(s.text)>1200 AS shortened,s.turn_id,s.created_at,
          split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match
-       FROM shown s LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1 ORDER BY s.place,s.n`,
-      [ownerId, picked.map((row) => row.id), query ? 1 : 0],
+       FROM shown s CROSS JOIN terms LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1 ORDER BY s.place,s.n`,
+      [ownerId, picked.map((row) => row.id), query ? 1 : 0, query ?? null],
     );
     return {
       turns: turns.rows,

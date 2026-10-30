@@ -248,6 +248,7 @@ export function createAgentRuntime(dependencies: {
     const reviewedReplies = new Map<string, string>();
     const reviewReply = async (text: string) => {
       const draft = text.trim();
+      if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
       if (!draft || !context.memoryBrief || !dependencies.reviewMemoryReply || overBudget())
         return draft;
       if (!reviewedReplies.has(draft)) {
@@ -983,7 +984,6 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const resumed = session.resumed;
       const compact = Boolean(session.contextWindow && session.contextWindow < 65_536);
-      const memoryBudget = Math.min(32_000, Math.floor((session.contextWindow ?? 131_072) / 8));
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
       const requestContext = compact
         ? {
@@ -994,7 +994,7 @@ export function createAgentRuntime(dependencies: {
           }
         : context;
       const fallback = instruct(
-        firstInstruction(requestContext, resumed && !compact, omitted, analysis, memoryBudget),
+        firstInstruction(requestContext, resumed && !compact, omitted, analysis),
       );
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
@@ -1005,9 +1005,7 @@ export function createAgentRuntime(dependencies: {
         : requestContext;
       await session!.prompt(
         audio
-          ? instruct(
-              firstInstruction(nativeContext, resumed && !compact, omitted, analysis, memoryBudget),
-            )
+          ? instruct(firstInstruction(nativeContext, resumed && !compact, omitted, analysis))
           : fallback,
         images,
         audio,
