@@ -29,8 +29,9 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
   const start = (slug: string) =>
     void signIn.connect({ service: slug, connectionId: reconnect(slug) });
   const shown = visual.services.filter((slug) => entry(slug));
-  const error = apps.error || catalog.error;
-  if (!shown.length && !error) return null;
+  const error = apps.error || (catalog.status === 403 ? '' : catalog.error);
+  const unavailable = catalog.status === 403 && shown.length < visual.services.length;
+  if (!shown.length && !error && !unavailable) return null;
   return (
     <section className="message-presentation presentation-apps" aria-label={visual.title}>
       <div className="connect-rows">
@@ -77,6 +78,14 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
             }}
           >
             Try again
+          </Button>
+        </Notice>
+      )}
+      {unavailable && (
+        <Notice kind="info">
+          Open Apps to see the available connections.{' '}
+          <Button variant="ghost" onClick={() => navigate('/apps')}>
+            Open Apps
           </Button>
         </Notice>
       )}

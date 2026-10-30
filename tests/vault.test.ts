@@ -3540,7 +3540,7 @@ window.nodDesktop={
   onStatus:listener=>{statusListener=listener;return()=>{statusListener=undefined}},
   prepare:async()=>{const ready={phase:'ready',runtime:{phase:'ready'}};statusListener(ready);return ready},
   getSettings:async()=>{reads++;if(failRead)throw new Error('Synthetic native read failed');return store.get()},
-  saveSettings:async change=>{saves++;if(failSave)throw new Error('Synthetic native save failed');if(failLogin&&change.launchAtLogin)throw new Error('Synthetic login setting blocked');return store.save(change)},
+  saveSettings:async change=>{saves++;if(failSave)throw new Error('Synthetic native save failed');if(failLogin&&change.launchAtLogin)return store.save({onboardingPreferenceStep:'complete'});return store.save(change)},
 };
 const calls=[];
 window.fetch=globalThis.fetch=async(url,options={})=>{
@@ -3571,7 +3571,7 @@ assert.equal(document.querySelector('[role="switch"]'),null);
 failRead=false;
 await act(async()=>button('Try again').click());
 await waitFor(()=>document.body.textContent.includes('Synthetic native save failed'));
-assert.equal(saves,2);
+assert.equal(saves,1);
 assert.notEqual((await store.get()).onboardingPreferenceStep,'complete');
 failSave=false;
 await act(async()=>button('Try again').click());
@@ -3579,14 +3579,14 @@ await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).notifications,false,'onboarding does not request notification permission');
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
-assert.equal(saves,3);
+assert.equal(saves,2);
 await act(async()=>root.unmount());
 store=createSettingsStore(join(directory,'settings.json'),{});
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal(document.querySelector('[role="switch"]'),null);
-assert.equal(saves,3,'a completed native step is never written again');
+assert.equal(saves,2,'a completed native step is never written again');
 await act(async()=>root.unmount());
 await store.save({onboardingCompleted:true});
 const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
@@ -3623,7 +3623,7 @@ const beforeBlocked=saves;
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('main [role="status"]'));
-assert.equal(saves,beforeBlocked+2);
+assert.equal(saves,beforeBlocked+1);
 assert.equal((await store.get()).launchAtLogin,false);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
 await act(async()=>root.unmount());
@@ -3631,7 +3631,7 @@ store=createSettingsStore(blockedPath,{});
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('main [role="status"]'));
-assert.equal(saves,beforeBlocked+2);
+assert.equal(saves,beforeBlocked+1);
 await store.save({onboardingCompleted:true});
 assert.equal((await store.get()).onboardingCompleted,true);
 assert.equal((await store.get()).launchAtLogin,false);

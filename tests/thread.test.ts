@@ -3357,11 +3357,19 @@ test(
               assert.doesNotMatch(JSON.stringify(cached.rows[0]?.suggestions), /owner@n8n\.io/);
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
-              if (['unknown', 'invalid', 'refused', 'revoked_read', 'cancelled'].includes(mode))
+              if (
+                [
+                  'unknown',
+                  'invalid',
+                  'refused',
+                  'revoked_read',
+                  'revoked_privacy',
+                  'cancelled',
+                ].includes(mode)
+              )
                 assert.equal(plannerBriefs.length, 0);
               if (
                 [
-                  'revoked_save',
                   'revoked_publish',
                   'cancelled_plan',
                   'cancelled_repair',
@@ -3373,6 +3381,8 @@ test(
               if (['revoked_read', 'revoked_privacy', 'revoked_plan', 'cancelled'].includes(mode))
                 assert.doesNotMatch(JSON.stringify(posted), /Juniper|Linear|googlecalendar/);
               if (mode === 'revoked_privacy' || mode === 'revoked_save') {
+                assert.equal(posted.length, 1);
+                assert.doesNotMatch(JSON.stringify(posted), /Juniper|Linear|googlecalendar/);
                 const cached = await db.pool.query(
                   'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
                   [owner],

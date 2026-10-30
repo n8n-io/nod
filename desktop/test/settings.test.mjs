@@ -6091,26 +6091,34 @@ test('desktop preference steps and completion require the owned normal app and d
         assert.equal((await f.storage.reopen().get()).notifications, true);
         await save(event, { notifications: false });
         assert.equal((await f.storage.reopen().get()).notifications, false);
-        await assert.rejects(
-          save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
-          /login items/,
-        );
+        await assert.rejects(save(event, { launchAtLogin: true }), /login items/);
         assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
         assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+        await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+        assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+        assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
         loginItemsWritable = true;
         for (const status of platform === 'darwin'
           ? [{ status: 'requires-approval' }, { status: 'not-found' }]
           : [{ executableWillLaunchAtLogin: false }]) {
           loginStatus = status;
-          await assert.rejects(
-            save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
-            /login items/,
-          );
+          await assert.rejects(save(event, { launchAtLogin: true }), /login items/);
           assert.equal(registered, true);
           assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
-          assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+          await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+          assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
         }
         loginStatus = {};
+        const originalSave = f.storage.store.save.bind(f.storage.store);
+        f.storage.store.save = async () => {
+          throw new Error('Synthetic settings storage failed.');
+        };
+        await assert.rejects(
+          save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+          /Synthetic settings storage failed/,
+        );
+        assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+        f.storage.store.save = originalSave;
         await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
         await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
         assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');

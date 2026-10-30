@@ -525,22 +525,24 @@ export function createOnboardingSuggestions(options: {
       if (saved.rows[0].posted_at)
         return { ...fallbackSuggestions({ gmail: false, telegram: false }), accounts: [] };
     }
-    const built = await build(signal);
-    signal.throwIfAborted();
-    return transaction(async (client) => {
-      if (!(await options.discovery.current(built.accounts, client)))
-        throw new Error('Connected accounts changed before the first tasks were saved.');
+    for (;;) {
+      const built = await build(signal);
       signal.throwIfAborted();
-      const stored = await client.query(
-        `INSERT INTO onboarding_suggestions(owner_id,suggestions) VALUES($1,$2)
+      const prepared = await transaction(async (client) => {
+        if (!(await options.discovery.current(built.accounts, client))) return;
+        signal.throwIfAborted();
+        const stored = await client.query(
+          `INSERT INTO onboarding_suggestions(owner_id,suggestions) VALUES($1,$2)
        ON CONFLICT(owner_id) DO UPDATE SET suggestions=CASE
          WHEN onboarding_suggestions.posted_at IS NULL THEN EXCLUDED.suggestions
          ELSE COALESCE(onboarding_suggestions.suggestions,EXCLUDED.suggestions) END
        RETURNING suggestions`,
-        [owner, JSON.stringify(built)],
-      );
-      return stored.rows[0].suggestions as PreparedSuggestions;
-    }, pool);
+          [owner, JSON.stringify(built)],
+        );
+        return stored.rows[0].suggestions as PreparedSuggestions;
+      }, pool);
+      if (prepared) return prepared;
+    }
   }
 
   function prepare(fresh = false) {

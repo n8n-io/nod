@@ -29,7 +29,7 @@ export function DesktopPreferencesSetup({
           : saveDesktopSettings({
               launchAtLogin: true,
               onboardingPreferenceStep: 'complete',
-            }).catch(() => saveDesktopSettings({ onboardingPreferenceStep: 'complete' })),
+            }),
       )
       .then((value) => {
         if (!current) return;
