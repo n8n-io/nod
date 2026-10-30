@@ -14,6 +14,8 @@ import { piUsageMetrics } from './usage.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 
+const untraced = new Set(['access', 'reflect', 'remember', 'style', 'skill']);
+
 function json(text: string) {
   const parse = (body: string) => {
     const start = body.indexOf('{');
@@ -128,7 +130,7 @@ export function createPiMemoryCurator(options: {
           });
         }
         const target = runtime.getModel(reply.provider, reply.model) ?? model;
-        if (task !== 'access' && options.traces?.active())
+        if (!untraced.has(task) && options.traces?.active())
           options.traces.record(
             piModelTrace(
               { model: target, context, message: reply, startedAt },

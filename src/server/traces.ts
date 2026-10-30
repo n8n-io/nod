@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
 import type { ModelTrace, ModelTraceDelivery, ModelTraces } from '../ports/traces.ts';
 import {
   createPersonalDataRedactor,
@@ -9,6 +10,9 @@ import { createTextRedactor, withoutSecretKeys } from './redaction.ts';
 
 const cacheLimit = 4096;
 const identifiers = new Set(['session_id', 'turn_id', 'run_id', 'parent_run_id']);
+const uuids = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const home = homedir();
+const homes = home.length > 1 ? [home, JSON.stringify(home).slice(1, -1)] : [];
 
 function structured(value: string, text: (value: string) => string) {
   const trimmed = value.trim();
@@ -43,7 +47,11 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
     const key = JSON.stringify(current);
     if (loaded?.profile !== key) {
       const personal = createPersonalDataRedactor(current);
-      loaded = { profile: key, text: (value) => personal(secretText(value)) };
+      loaded = {
+        profile: key,
+        text: (value) =>
+          personal(secretText(homes.reduce((text, path) => text.replaceAll(path, '~'), value))),
+      };
       cache.clear();
     }
     if (seen !== secrets.length) {
@@ -58,7 +66,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
         if (cache.size >= cacheLimit) cache.clear();
         cache.set(key, (safe = structured(value, text)));
       }
-      return safe;
+      return safe.replace(uuids, (id) => pseudonym(id.toLowerCase()));
     };
   }
 

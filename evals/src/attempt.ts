@@ -218,8 +218,9 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         browserHandoffs: trace.tools.filter(
           (call) => call.name === 'browser' && call.input?.action === 'handoff',
         ).length,
-        turns: trace.turns.map(({ source, status, error, startedAt, finishedAt }) => ({
+        turns: trace.turns.map(({ source, background, status, error, startedAt, finishedAt }) => ({
           source,
+          background,
           status,
           error,
           startedAt,

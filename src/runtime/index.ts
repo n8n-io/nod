@@ -410,7 +410,17 @@ export function createAgentRuntime(dependencies: {
             output !== confirmationNotice &&
             (delimitedTools.has(name) || name.startsWith('mcp__') || catalogResult)
           )
-            result = delimit(name, result);
+            result = delimit(
+              name,
+              result,
+              name === 'apps' ||
+                name === 'read_source' ||
+                name === 'proactive_issue' ||
+                name === 'codemode' ||
+                name.startsWith('mcp__')
+                ? context.timeZone
+                : undefined,
+            );
           end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
@@ -946,10 +956,10 @@ export function createAgentRuntime(dependencies: {
       );
       await pendingReplies;
       signal.throwIfAborted();
-      if (checkInStopped && status === 'succeeded')
-        throw new Error(
-          `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
-        );
+      const paused = () =>
+        `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
+      if (checkInStopped && status === 'succeeded' && !context.proactivity)
+        throw new Error(paused());
       if (modelError)
         throw new ModelRequestError(
           `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
@@ -957,6 +967,11 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
+      if (context.proactivity && status === 'succeeded' && overBudget()) {
+        status = 'waiting_user';
+        waitingFor = 'question';
+        waitingMessage = paused();
+      }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
       const result =

@@ -67,7 +67,7 @@ Account, schedule and source checks inside a transaction use its database connec
 
 ## One background observer
 
-App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm; the transcript stays saved. A turn runs alone in that session. New signals received during work wait for its next turn.
+App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm and the context is no larger than compaction would keep; the transcript stays saved. A turn runs alone in that session. New signals received during work wait for its next turn.
 
 ```mermaid
 flowchart TD
@@ -145,7 +145,7 @@ Turns and tool calls are never retried. Pi retries a model request that fails wi
 
 When the monthly spending limit is reached, new turns end `failed` before they call the model, and work you started posts one limit notice.
 
-Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Usage**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. Your next message to that session starts a new count.
+Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Usage**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. An observer turn that ends past the check-in without asking waits on that notice as its question instead, so no new batch starts until you reply. Your next message to that session starts a new count.
 
 ## Reset
 

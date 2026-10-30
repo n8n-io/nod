@@ -10,7 +10,59 @@ export function currentUserTime(timeZone: string | undefined, now = new Date()) 
   const utc = `Current UTC time: ${now.toISOString()}.`;
   if (!timeZone) return `${utc} User time zone: unknown, so ask before relying on local time.`;
   const local = localTimestamp(timeZone, now);
-  return `${utc} Current local time: ${local}. User time zone: ${timeZone}.`;
+  return `Current local time: ${local}. User time zone: ${timeZone}. Convert instants and deadlines to this zone with code; Z means UTC. Keep posted local hours in their original zone unless a conversion is requested. Label conversions.`;
+}
+
+export function localResultTimes(texts: string[], timeZone: string | undefined, jsonLines = false) {
+  if (!timeZone) return '';
+  const values: unknown[] = [...texts];
+  if (jsonLines)
+    for (const text of texts) {
+      if (values.length >= 10_000) break;
+      for (const line of text.split('\n', 10_000)) {
+        if (values.length >= 10_000) break;
+        if (!/^\s*[{[]/.test(line)) continue;
+        try {
+          values.push(JSON.parse(line));
+        } catch {}
+      }
+    }
+  const times = new Map<string, string>();
+  for (let count = 0; values.length && count < 10_000 && times.size < 32; count++) {
+    const value = values.pop();
+    if (typeof value === 'string') {
+      if (
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+      ) {
+        const at = new Date(value);
+        const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
+        if (
+          Number.isFinite(at.getTime()) &&
+          Number.isFinite(date.getTime()) &&
+          date.toISOString().slice(0, 10) === value.slice(0, 10)
+        ) {
+          const fraction = value.match(/\.\d+/)?.[0] ?? '';
+          times.set(
+            value,
+            localTimestamp(timeZone, at).replace(/([+-]\d{2}:\d{2}(?::\d{2})?)$/, `${fraction}$1`),
+          );
+        }
+      } else {
+        try {
+          const parsed: unknown = JSON.parse(value);
+          if (parsed !== value) values.push(parsed);
+        } catch {}
+      }
+    } else if (value && typeof value === 'object') {
+      for (const child of Object.values(value)) {
+        if (values.length >= 10_000) break;
+        values.push(child);
+      }
+    }
+  }
+  return times.size
+    ? `Local times in ${timeZone}: ${JSON.stringify(Object.fromEntries(times))}`
+    : '';
 }
 
 export function userFormat(

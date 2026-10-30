@@ -1,7 +1,7 @@
 import type { Run } from '../trace.ts';
 import { check, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
-import { daysAgo, hoursAgo } from '../world/time.ts';
+import { dayLabel, daysAgo, hoursAgo, inDays, localTime, nextWeekday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = `Alex Rivera <${owner.email}>`;
@@ -9,7 +9,7 @@ const silva = 'marta.silva@harborline.example.com';
 const gomes = 'marta.gomes@editorialsal.example.org';
 const thread = 'thread-silva-review';
 
-function mailbox(now: number): Mail[] {
+function mailbox(now: number, thursday: string, friday: string): Mail[] {
   return [
     {
       id: 'silva-ask',
@@ -26,7 +26,7 @@ function mailbox(now: number): Mail[] {
       threadId: thread,
       from: `Marta Silva <${silva}>`,
       subject: 'Re: Brand guidelines review',
-      body: "Hi Alex,\n\nGreat news, thanks! Could we do the review on Thursday at 10:00 or on Friday at 15:00? Either works for us, we'll be in the office.\n\nBest,\nMarta",
+      body: `Hi Alex,\n\nGreat news, thanks! Could we do the review on ${thursday} at 10:00 or on ${friday} at 15:00? Either works for us, we'll be in the office.\n\nBest,\nMarta`,
       at: hoursAgo(now, 20),
       labels: ['INBOX', 'UNREAD'],
     },
@@ -129,11 +129,18 @@ export default scenario({
       'You are Alex Rivera, a freelance designer. You mean Marta Silva from Harborline, who proposed Thursday at 10:00 or Friday at 15:00 for the brand guidelines review. You want a short reply confirming Thursday at 10:00, sent now.',
   },
   world(clock) {
-    const apps = createApps(owner, { gmail: gmail(owner, mailbox(clock.now()), clock.now) });
-    return { apps, seeded: new Set(apps.gmail!.mails.map((item) => item.id)) };
+    const now = clock.now();
+    const days = nextWeekday(now, 4, 1);
+    const start = localTime(now, -days, 10);
+    const thursday = dayLabel(start);
+    const friday = dayLabel(inDays(start, 1));
+    const apps = createApps(owner, {
+      gmail: gmail(owner, mailbox(now, thursday, friday), clock.now),
+    });
+    return { apps, start, thursday, seeded: new Set(apps.gmail!.mails.map((item) => item.id)) };
   },
-  async play(session) {
-    await session.say('Reply to Marta: Thursday at 10:00 works, see you then.');
+  async play(session, world) {
+    await session.say(`Reply to Marta: ${world.thursday} at 10:00 works, see you then.`);
   },
   evidence: (run, world) =>
     `Emails sent in this run: ${
@@ -144,7 +151,7 @@ export default scenario({
             `to ${item.to}${item.cc ? ` cc ${item.cc}` : ''}, thread ${item.threadId}, subject "${item.subject}": ${item.body}`,
         )
         .join(' | ') || 'none'
-    }.\nGround truth: Marta Silva (${silva}) proposed Thursday 10:00 or Friday 15:00 for the brand guidelines review in thread ${thread}. Marta Gomes (${gomes}) is an unrelated contact with an older cookbook thread.`,
+    }.\nGround truth: Marta Silva (${silva}) proposed ${world.thursday} 10:00 or the following Friday 15:00 for the brand guidelines review in thread ${thread}. Marta Gomes (${gomes}) is an unrelated contact with an older cookbook thread.`,
   expect(world) {
     const fresh = (run: Run) =>
       (run.apps?.gmail?.sent() ?? []).filter((item) => !world.seeded.has(item.id));

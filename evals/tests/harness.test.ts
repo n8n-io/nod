@@ -663,6 +663,23 @@ test('decision baselines bind only the validator revisions their source invokes'
   assert.equal(decisionAuthorization(raw, {}, loaded).mode, 'raw');
   assert.equal(decisionAuthorization(raw, loaded, loaded).mode, 'raw');
   assert.equal(decisionAuthorization(old, loaded, loaded).mode, 'basis');
+  const deny = decisionAuthorization(
+    old,
+    { basis: 'export function trustBasis() { return undefined; }' },
+    loaded,
+  );
+  assert.notEqual(deny.basisHash, decisionAuthorization(old, loaded, loaded).basisHash);
+  const denied = await evaluateDecision({
+    item: { id: 'revision-bound-read', kind: 'run', holdout: false, input: {}, expected: false },
+    instructions: 'Fixture policy',
+    values: [true, false],
+    authorization: deny,
+    review: async () => ({ run: true, because: 'read' }),
+    report: () => {},
+    canStart: () => undefined,
+  });
+  assert.equal(denied.effective, false);
+  assert.equal(denied.route, 'invalid-basis');
   assert.equal(
     decisionAuthorization(old, { basis, terms: 'older unused terms' }, loaded).termsHash,
     undefined,
@@ -673,13 +690,25 @@ test('decision baselines bind only the validator revisions their source invokes'
   assert.ok(composed.termsHash);
   for (const validators of [
     { terms },
-    { basis: basis + '\n', terms },
+    { basis: 'export const unrelated = true;', terms },
     { basis, terms: terms + '\n' },
   ])
     assert.throws(
       () => decisionAuthorization(current, validators, loaded),
       /Unsupported Trust .* validator revision/,
     );
+  assert.throws(
+    () =>
+      decisionAuthorization(
+        old,
+        { basis: "throw new Error('Fixture validator failure.');" },
+        loaded,
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === 'Unsupported Trust basis validator revision.' &&
+      String(error.cause).includes('Fixture validator failure.'),
+  );
   for (const source of [
     old + 'preservesTerms(output, input);',
     old + 'options.review(termsInstructions, input);',
@@ -1119,6 +1148,57 @@ test('repair email grading accepts only the requested mailbox after a real fixtu
       .find((item) => item.id === 'one-email-to-the-requested-retailer');
     assert.ok(gate?.kind === 'check');
     assert.equal((await gate.check({ apps: world.apps } as Run)).pass, pass, JSON.stringify(args));
+  }
+});
+
+test('repair evidence includes the guarantee term printed on the receipt without promising coverage', async () => {
+  for (const variant of ['base', 'holdout', 'explicit', 'expired'] as const) {
+    const definition = ambiguousDelegationScenario(variant);
+    const world = definition.world({ now: () => Date.UTC(2026, 9, 29, 12) });
+    const evidence = await definition.evidence!(
+      { apps: world.apps, approvals: [] } as unknown as Run,
+      world,
+    );
+    assert.match(
+      evidence,
+      /The receipt also states "Commercial repair guarantee: 24 months from purchase\."/,
+    );
+    assert.match(evidence, /not coverage for this fault/);
+    if (variant !== 'holdout')
+      assert.ok(
+        (world as typeof world & { receipt: Buffer }).receipt.includes(
+          Buffer.from('Commercial repair guarantee: 24 months from purchase.'),
+        ),
+      );
+  }
+});
+
+test('meeting reply fixtures use a future date even after Thursday morning and across daylight saving changes', async () => {
+  const definition = scenarios.find((item) => item.id === 'reply-in-thread-confirm-time')!;
+  for (let day = 22; day <= 30; day++) {
+    for (const hour of [7, 12, 23]) {
+      const now = Date.UTC(2026, 9, day, hour);
+      const world = definition.world({ now: () => now }) as ReturnType<typeof definition.world> & {
+        start: number;
+        thursday: string;
+      };
+      assert.ok(world.start > now);
+      assert.match(world.thursday, /^Thursday /);
+      assert.match(
+        world.apps!.gmail!.mails.find((mail: { id: string }) => mail.id === 'silva-proposal')!.body,
+        new RegExp(world.thursday),
+      );
+      const messages: string[] = [];
+      await definition.play(
+        {
+          say: async (text: string) => {
+            messages.push(text);
+          },
+        } as unknown as Session,
+        world,
+      );
+      assert.ok(messages[0].includes(world.thursday));
+    }
   }
 });
 

@@ -31,7 +31,13 @@ export function trustBasis(
   messageIds: readonly string[],
 ): TrustBasis | undefined {
   if (!answer || typeof answer !== 'object') return undefined;
-  const { run, because } = answer as { run?: unknown; because?: unknown };
+  const { run, because, terms } = answer as { run?: unknown; because?: unknown; terms?: unknown };
+  if (
+    terms !== undefined &&
+    (!Array.isArray(terms) ||
+      terms.some((term) => !term || typeof term !== 'object' || term.same !== true))
+  )
+    return undefined;
   if (run !== true || typeof because !== 'string') return undefined;
   if (because === 'read') return { kind: 'read' };
   const quote = because

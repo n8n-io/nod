@@ -50,6 +50,7 @@ async function packageFixtures(planPath) {
       'mac-encryption.mjs',
       'artifact-files.mjs',
       'artifact-file-handlers.mjs',
+      'updates.mjs',
     ])
       await copyFile(join(repository, 'desktop/main', name), join(directory, name));
     const identityPath = join(repository, 'src/providers/composio/identity.ts');
@@ -198,6 +199,43 @@ app.whenReady().then(async () => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
     app.quit();
   });
+  if (fixture.kind === 'install') {
+    const { createDesktopUpdater } = await import('./updates.mjs');
+    const feeds = new Map([
+      ['https://updates.example.invalid/1.0.1', fixture.feed],
+      ['https://updates.example.invalid/1.0.2', fixture.nextFeed],
+    ]);
+    let available = '1.0.1';
+    const updater = createDesktopUpdater({
+      currentVersion: app.getVersion(),
+      source: { latest: async () => ({ version: available, feedUrl: 'https://updates.example.invalid/' + available }) },
+      native: {
+        on: (...args) => autoUpdater.on(...args),
+        once: (...args) => autoUpdater.once(...args),
+        removeListener: (...args) => autoUpdater.removeListener(...args),
+        setFeedURL: ({ url }) => {
+          const feed = feeds.get(url);
+          if (!feed) throw new Error('Unexpected fixture feed.');
+          autoUpdater.setFeedURL({ url: feed });
+        },
+        checkForUpdates: () => autoUpdater.checkForUpdates(),
+      },
+      prepareRuntime: async () => {},
+      restart: async () => {
+        await disposeArtifactFiles();
+        receipt('files-closed', { artifactRemoved: !artifactRoot || !existsSync(artifactRoot) });
+        autoUpdater.quitAndInstall();
+      },
+    });
+    for (const version of ['1.0.1', '1.0.2']) {
+      available = version;
+      const ready = await updater.check();
+      if (ready?.version !== version) throw new Error('The staged update did not refresh.');
+      receipt('downloaded', { targetVersion: ready.version });
+    }
+    await updater.restart();
+    return;
+  }
   autoUpdater.on('update-downloaded', async () => {
     receipt('downloaded');
     await disposeArtifactFiles();
@@ -311,6 +349,7 @@ async function main() {
     source: (await run('git', ['rev-parse', 'HEAD'], { cwd: repository })).trim(),
     fixtureHash: sha256(await readFile(source)),
     settingsModuleHash: sha256(await readFile(join(repository, 'desktop/main/settings.mjs'))),
+    updaterModuleHash: sha256(await readFile(join(repository, 'desktop/main/updates.mjs'))),
     identityModuleHash: sha256(
       await readFile(join(repository, 'src/providers/composio/identity.ts')),
     ),
@@ -377,6 +416,12 @@ async function main() {
         application: join(root, `NodFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
         feed: `${origin}/${kind}/feed`,
+        ...(kind === 'install'
+          ? {
+              nextArchive: join(root, `${kind}-latest.zip`),
+              nextFeed: `${origin}/${kind}/latest-feed`,
+            }
+          : {}),
         installed: kind === 'downgrade' ? '1.0.2' : '1.0.0',
         kind,
       };
@@ -409,6 +454,7 @@ async function main() {
       JSON.stringify([
         ...fixtures.map((fixture) => ({ ...fixture, version: fixture.installed })),
         { ...fixtures[0], version: '1.0.1' },
+        { ...fixtures[0], version: '1.0.2', archive: fixtures[0].nextArchive },
         { ...fixtures[2], version: '1.0.1' },
         { ...fixtures[3], version: '1.0.1' },
       ]),
@@ -475,7 +521,7 @@ async function main() {
       const archive = await readFile(fixture.archive);
       const entry = {
         id: {
-          install: 'UPD-NATIVE.v5',
+          install: 'UPD-NATIVE.v6',
           reject: 'UPD-SIGNATURE.v4',
           downgrade: 'UPD-DOWNGRADE.v2',
           migrate: 'UPD-KEYCHAIN-MIGRATION.v1',
@@ -488,9 +534,22 @@ async function main() {
       routes.set(`/${fixture.kind}/archive.zip`, { file: fixture.archive, bytes: archive.length });
       routes.set(`/${fixture.kind}/feed`, {
         url: `${origin}/${fixture.kind}/archive.zip`,
-        name: '1.0.1',
+        name: 'nod 1.0.1',
         pub_date: '2026-10-04T00:00:00Z',
       });
+      if (fixture.nextArchive) {
+        const latest = await readFile(fixture.nextArchive);
+        entry.latestArchive = { bytes: latest.length, sha256: sha256(latest) };
+        routes.set(`/${fixture.kind}/latest.zip`, {
+          file: fixture.nextArchive,
+          bytes: latest.length,
+        });
+        routes.set(`/${fixture.kind}/latest-feed`, {
+          url: `${origin}/${fixture.kind}/latest.zip`,
+          name: 'nod 1.0.2',
+          pub_date: '2026-10-05T00:00:00Z',
+        });
+      }
       routes.set(`/${fixture.kind}/api/artifacts/${fixture.artifactId}/metadata`, {});
       routes.set(`/${fixture.kind}/api/artifacts/${fixture.artifactId}`, {
         text: fixture.artifactContent,
@@ -501,6 +560,7 @@ async function main() {
         entry.launchError = error.message;
       });
       const installs = ['install', 'migrate'].includes(fixture.kind);
+      const latestVersion = fixture.kind === 'install' ? '1.0.2' : '1.0.1';
       const deadline = Date.now() + (installs ? 300_000 : 120_000);
       let events = [];
       while (Date.now() < deadline) {
@@ -512,7 +572,9 @@ async function main() {
         if (
           events.some(
             (event) =>
-              event.event === 'error' || event.event === 'unavailable' || event.version === '1.0.1',
+              event.event === 'error' ||
+              event.event === 'unavailable' ||
+              event.version === latestVersion,
           )
         )
           break;
@@ -560,11 +622,11 @@ async function main() {
         );
         check(
           'UPD-INSTALL',
-          version === '1.0.1' &&
+          version === latestVersion &&
             events.some((event) => event.event === 'downloaded') &&
             events.some(
               (event) =>
-                event.version === '1.0.1' &&
+                event.version === latestVersion &&
                 event.event === 'ready' &&
                 event.executable === executable,
             ),
@@ -588,6 +650,24 @@ async function main() {
               ),
         );
       }
+      if (fixture.kind === 'install')
+        check(
+          'UPD-SUPERSEDE',
+          JSON.stringify(
+            events
+              .filter((event) => event.event === 'downloaded')
+              .map((event) => event.targetVersion),
+          ) === JSON.stringify(['1.0.1', '1.0.2']) &&
+            events
+              .filter((event) => event.event === 'downloaded')
+              .every((event) => event.version === fixture.installed) &&
+            !events.some((event) => event.version === '1.0.1') &&
+            ['latest-feed', 'latest.zip'].every((path) =>
+              report.requests.some(
+                (request) => request.path === `/${fixture.kind}/${path}` && request.completed,
+              ),
+            ),
+        );
       check(
         'UPD-DATA',
         sha256(await readFile(fixture.data)) === before &&
@@ -770,7 +850,7 @@ async function main() {
   }
   if (failure) throw failure;
   process.stdout.write(
-    'Native restart and update installation, signature and downgrade rejection, encrypted profile, remote token and integration identity preservation passed.\n',
+    'Native restart, pending update replacement and installation, signature and downgrade rejection, encrypted profile, remote token and integration identity preservation passed.\n',
   );
 }
 

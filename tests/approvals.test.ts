@@ -603,6 +603,46 @@ test(
         },
       );
 
+      await t.test('a quoted permission cannot override a reported term mismatch', async () => {
+        const turn = await begin('Email Ana the invoice for EUR 1200.');
+        try {
+          for (const terms of [
+            null,
+            {},
+            [false],
+            [{ user: 'EUR 1200', action: 'EUR 1300', same: false }],
+            [{ user: 'EUR 1200', action: 'EUR 1200', same: 'true' }],
+          ]) {
+            aligned = (input) => ({ run: true, because: cite(input), terms });
+            assert.equal(
+              (
+                await trust.check(turn, 'GMAIL_SEND_EMAIL', {
+                  ...email('ana@example.test'),
+                  body: 'Invoice EUR 1300.',
+                })
+              ).confirm,
+              true,
+            );
+          }
+          aligned = (input) => ({
+            run: true,
+            because: cite(input),
+            terms: [{ user: 'EUR 1200', action: 'EUR 1200', same: true }],
+          });
+          assert.equal(
+            (
+              await trust.check(turn, 'GMAIL_SEND_EMAIL', {
+                ...email('ana@example.test'),
+                body: 'Invoice EUR 1200.',
+              })
+            ).confirm,
+            false,
+          );
+        } finally {
+          await finish(turn.turnId, 'cancelled');
+        }
+      });
+
       await t.test('a stopped turn cannot use an awaited authorization result', async () => {
         for (const status of ['cancelled', 'succeeded']) {
           for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_FETCH_EMAILS']) {

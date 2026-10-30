@@ -1,0 +1,368 @@
+---
+import '../styles/nod.css';
+
+import n8n from '../assets/n8n-logo.svg?url';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const github = 'https://github.com/n8n-io/nod';
+const privacy = 'https://n8n.io/legal/privacy/';
+const download = 'https://internal.users.n8n.cloud/webhook/nod/download';
+const title = 'Nod · Your personal agent';
+const description =
+  'Nod is a personal agent that gets real-world jobs done. Open source, runs on your Mac, Windows PC or your own server, with the model provider you choose.';
+const url = 'https://nod.n8n.io/';
+const image = new URL(`${base}nod-og.png`, Astro.site);
+const logos = import.meta.glob('../../../public/logos/*.svg', { query: '?url', import: 'default', eager: true });
+const logo = (key) => logos[`../../../public/logos/${key}.svg`];
+
+const caps = [
+  { title: 'Proactive', sub: 'Spots what you can hand off' },
+  { title: 'Real-world jobs', sub: 'Finishes the hard ones' },
+  { title: 'Asks first', sub: 'Waits for your nod' },
+  { title: 'Your provider', sub: 'The model provider you choose' },
+];
+const providers = [
+  { key: 'openai', name: 'OpenAI', note: 'Your ChatGPT plan or API key' },
+  { key: 'anthropic', name: 'Anthropic', note: 'Your Anthropic API key' },
+  { key: 'google', name: 'Google Gemini', note: 'Your AI Studio API key' },
+  { key: 'openrouter', name: 'OpenRouter', note: 'Hundreds of models, one key' },
+  { key: 'local', name: 'Open-weight', note: 'Runs on your computer' },
+];
+const apps = [
+  { key: 'gmail', name: 'Gmail' },
+  { key: 'googlecalendar', name: 'Google Calendar' },
+  { key: 'googledrive', name: 'Google Drive' },
+  { key: 'googlesheets', name: 'Google Sheets' },
+  { key: 'slack', name: 'Slack' },
+  { key: 'notion', name: 'Notion' },
+  { key: 'linear', name: 'Linear' },
+  { key: 'outlook', name: 'Outlook' },
+];
+const months = ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
+const checks = [
+  { action: 'Download Q3 invoices', reason: 'You asked for this', ok: true },
+  { action: 'Pay €212 for flights', reason: 'Every payment with a saved card checks with you' },
+  { action: 'Email all 15 clients', reason: 'Came from an email, not from you' },
+];
+const faqs = [
+  [
+    'Is it for work or personal stuff?',
+    'Both. Most people start with life admin, like a refund or a booking. Then they hand it work: invoices, Slack, email.',
+  ],
+  [
+    'What does it cost?',
+    "Nod is free. You bring your own AI provider, which bills you directly, and Nod shows what each task cost. You can set a monthly limit. A model on your own computer costs nothing per request.",
+  ],
+  ['Do I need n8n?', 'No. Nod is its own app, made by the team behind n8n. If you use n8n, Nod can run your workflows too.'],
+  ['Which computers?', 'Mac with macOS 14 or later, on Apple silicon or Intel, and Windows 11 x64. You can also run it on your own server.'],
+  [
+    'Can I message it from my phone?',
+    'Yes. Connect Telegram or WhatsApp and message Nod from anywhere. It is the same conversation as in the app.',
+  ],
+  [
+    'Does it work when my laptop is closed?',
+    'Nod on your computer works while the computer is on and awake. Run it on your own server to keep it working around the clock.',
+  ],
+  [
+    'Can it make mistakes?',
+    "Yes. It's an n8n Labs experiment, and its safety check is a model's judgement. That's why it asks before anything you didn't ask for, and keeps a record of every sign-in, card use and action in your apps.",
+  ],
+];
+const tag = "font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;color:#87003c";
+const job = 'margin:10px 0 0;font-size:24px;font-weight:700;letter-spacing:-0.03em;line-height:1.12;text-wrap:balance';
+const detail = 'margin:12px 0 0;font-size:14px;line-height:1.45;color:#3d3a3b';
+const card = 'position:relative;overflow:hidden;flex:none;width:280px;height:360px;padding:26px;border-radius:30px;color:#191919;box-sizing:border-box';
+const split = `${card};display:flex;flex-direction:column;justify-content:space-between`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={url} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="n8n Labs" />
+    <meta property="og:url" content={url} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={image} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="nod to get the job done. A personal agent that gets real-world jobs done." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={image} />
+    <meta name="theme-color" content="#f6f5f5" />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    <link rel="apple-touch-icon" href={`${base}nod-touch-icon.png`} />
+  </head>
+  <body>
+    <div class="nod">
+      <section class="hero">
+        <nod-field class="backdrop" shape="field" cell="6" drift="6" scatter="1" alpha="0.65"></nod-field>
+        <div class="hero-inner">
+          <header class="top">
+            <a class="labs" href="https://n8n.io">
+              <img src={n8n} alt="n8n" width="80" height="16" />
+              <span class="rule"></span>
+              <span class="name">Labs</span>
+            </a>
+            <span class="status">Research preview</span>
+          </header>
+
+          <h1><nod-glyph mark nod-on="load hover" delay="900" nod-every="4600" nod-depth="38" nod-twice>nod</nod-glyph>to get the job done.</h1>
+          <p class="lede">A personal agent that gets <strong>real-world jobs</strong> done. It's yours: <strong>open source</strong>, runs <strong>on your computer</strong>, with the AI provider you choose.</p>
+
+          <div class="get">
+            <a class="download" id="download" href={`${download}/mac`}>
+              <span class="badge"><nod-glyph size="22" nod-on="hover"></nod-glyph></span>
+              <span class="label" id="download-label">Download for Mac</span>
+            </a>
+            <p class="platforms" id="platforms">
+              <span>Also for</span>
+              <a href={`${download}/mac`} data-platform="darwin-arm64" hidden>Mac with Apple silicon</a>
+              <a href={`${download}/mac-intel`} data-platform="darwin-x64">Intel Mac</a>
+              <a href={`${download}/windows`} data-platform="win32-x64">Windows</a>
+            </p>
+          </div>
+          <div class="source">
+            <a href={github} target="_blank" rel="noopener">
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+              <span>View on GitHub</span><span aria-hidden="true">↗</span>
+            </a>
+          </div>
+
+          <div class="demo">
+            <div class="caps">
+              {caps.map((cap, index) => (
+                <button class="cap" type="button" data-index={index}>
+                  <span class="cap-title">{cap.title}</span>
+                  <span class="cap-sub">{cap.sub}</span>
+                </button>
+              ))}
+            </div>
+            <div class="chat" aria-label="A sample conversation with nod">
+              <div class="log">
+                <div class="feed" id="feed" aria-live="polite"></div>
+              </div>
+              <div class="typing" id="typing"><nod-glyph size="26" mood="working"></nod-glyph></div>
+              <div class="composer" aria-hidden="true">
+                <span class="hint">Ask Nod to take something on…</span>
+                <span class="model" id="model">{providers[1].name}</span>
+                <span class="send">↑</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pillars">
+        <div class="wrap">
+          <h2>Capable to run your business.<br /><span class="pink">Open to be yours.</span></h2>
+          <div class="stack">
+            <nod-reveal>
+              <article class="pillar">
+                <div class="claim">
+                  <div class="word">Capable.</div>
+                  <p><strong>Its own computer and browser.</strong> It works in your apps and on any website, and finishes the job instead of handing you a to-do list.</p>
+                  <div class="punch"><p>Hand it the jobs that eat your week. It does the clicking, the forms and the follow-ups.</p></div>
+                </div>
+                <div class="panel">
+                  <nod-field class="backdrop" shape="glow" cell="7" alpha="0.75"></nod-field>
+                  <div class="apps">
+                    {apps.map((app) => (
+                      <span class="app"><img src={logo(app.key)} alt={app.name} width="28" height="28" loading="lazy" /></span>
+                    ))}
+                  </div>
+                  <div class="browser" aria-hidden="true">
+                    <span class="dots"><i></i><i></i><i></i></span>
+                    <span class="address">any website</span>
+                    <nod-glyph size="20" mood="working"></nod-glyph>
+                  </div>
+                </div>
+              </article>
+            </nod-reveal>
+
+            <nod-reveal>
+              <article class="pillar">
+                <div class="claim">
+                  <div class="word">Smart.</div>
+                  <p><strong>93.2% on LongMemEval</strong>, among the best published memory systems.</p>
+                  <div class="punch"><p>It remembers months of your conversations, so you don't have to keep reminding it what you want.</p></div>
+                </div>
+                <div class="panel">
+                  <nod-field class="arc" shape="arc" cell="6" aria-hidden="true"></nod-field>
+                  <div class="months">
+                    {months.map((month, index) => (
+                      <span class={index === 0 || index === months.length - 1 ? 'lit' : undefined}><i></i>{month}</span>
+                    ))}
+                  </div>
+                  <div class="exchange">
+                    <div class="you"><p class="said">Book the usual for Lisbon.</p></div>
+                    <div class="row">
+                      <nod-glyph size="24" mood="idle"></nod-glyph>
+                      <p class="bubble">Window seat and the hotel by the river, same as in March. Want me to book it?</p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </nod-reveal>
+
+            <nod-reveal>
+              <article class="pillar">
+                <div class="claim">
+                  <div class="word">Yours.</div>
+                  <p>Connect OpenAI, Anthropic, Google Gemini, OpenRouter and many more, or a model on your own computer. Run it on your Mac, your Windows PC or your own server. The code is open, every rule it follows included.</p>
+                  <div class="punch"><p>No lock-in. You pay your provider directly and switch whenever you like.</p></div>
+                </div>
+                <div class="panel snug">
+                  <nod-field class="backdrop" shape="glow" cell="7" alpha="0.75"></nod-field>
+                  <div class="providers">
+                    {providers.map((provider, index) => (
+                      <button class:list={['provider', { on: index === 1 }]} type="button" data-key={provider.key} data-name={provider.name} data-note={provider.note} aria-pressed={index === 1 ? 'true' : 'false'}>
+                        <span class:list={['logo', provider.key]} aria-hidden="true"></span>
+                        <span class="text"><b>{provider.name}</b><small>{provider.note}</small></span>
+                        <span class="radio" aria-hidden="true"></span>
+                      </button>
+                    ))}
+                  </div>
+                  <a class="read-code" href={github}>Read the code on GitHub<span aria-hidden="true">→</span></a>
+                </div>
+              </article>
+            </nod-reveal>
+
+            <nod-reveal>
+              <article class="pillar" id="trust">
+                <div class="claim">
+                  <div class="word">Safe.</div>
+                  <p>Nod asks before it sends, pays, posts or deletes anything you didn't ask for. A web page or an email can't give it permission.</p>
+                  <a class="more" href={`${base}trust/`}>Read more about the trust layer<span aria-hidden="true">→</span></a>
+                  <div class="punch"><p>Hand it real accounts and cards. Anything you didn't ask for waits for your nod.</p></div>
+                </div>
+                <div class="panel trust">
+                  <nod-field class="backdrop" shape="sides" cell="7" alpha="0.75"></nod-field>
+                  <div class="check-head"><nod-glyph size="16" mood="idle"></nod-glyph>trust layer · checking 3 actions</div>
+                  <div class="checks">
+                    {checks.map((check) => (
+                      <div class="item">
+                        <span class="text"><b>{check.action}</b><small>{check.reason}</small></span>
+                        <span class:list={['pill', { ok: check.ok }]}>{check.ok ? 'Allowed' : 'Needs your nod'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            </nod-reveal>
+          </div>
+        </div>
+      </section>
+
+      <section class="jobs">
+        <div class="jobs-head">
+          <h2>Hand it the <span class="pink">hard ones.</span></h2>
+          <p>Jobs that take an afternoon of tabs, logins and forms. Nod finishes them start to end.</p>
+        </div>
+        <div class="jobs-row">
+          <nod-drift-row interval="3400" duration="1800">
+            <article data-tilt="-1.6" style={`${card};background:oklch(0.88 0.072 60)`}>
+              <span style={tag}>Shopping</span>
+              <h3 style={job}>Watch a price and tell you when it drops</h3>
+              <p style={`${detail};max-width:12em`}>Checks on your schedule and speaks up only when it changes</p>
+              <nod-glyph size="210" nod-on="hover" nod-depth="30" style="position:absolute;right:-62px;bottom:-70px"></nod-glyph>
+            </article>
+
+            <article data-tilt="1.2" style={`${split};background:oklch(0.87 0.065 245)`}>
+              <div style="display:flex;align-items:center;gap:12px">
+                <nod-glyph size="44" mood="working"></nod-glyph>
+                <span style="font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;color:#3d3a3b">working…</span>
+              </div>
+              <div>
+                <span style={tag}>Life admin</span>
+                <h3 style={job}>Fill the grocery basket from recipe photos</h3>
+                <p style={detail}>Every ingredient in the cart, then it stops so you can check out</p>
+              </div>
+            </article>
+
+            <article data-tilt="-0.8" style={`${card};background:oklch(0.86 0.065 305)`}>
+              <span style={tag}>Travel</span>
+              <h3 style={job}>Book the hotel for the Lisbon offsite</h3>
+              <p style={`${detail};max-width:13em`}>By the river, booked once you said go</p>
+              <nod-glyph size="190" ink="#191919" nod-on="hover" nod-every="5200" nod-depth="40" style="position:absolute;left:50%;bottom:-96px;margin-left:-95px"></nod-glyph>
+            </article>
+
+            <article data-tilt="1.6" style={`${split};background:oklch(0.92 0.08 95)`}>
+              <div style="display:flex;align-items:flex-end;gap:10px">
+                <nod-glyph size="52" nod-on="load" nod-every="3800" delay="200"></nod-glyph>
+                <nod-glyph size="34" nod-on="load" nod-every="3800" delay="500"></nod-glyph>
+                <nod-glyph size="22" nod-on="load" nod-every="3800" delay="800"></nod-glyph>
+              </div>
+              <div>
+                <span style={tag}>Finance</span>
+                <h3 style={job}>Chase 3 unpaid invoices</h3>
+                <p style={detail}>Polite reminders, and it asks you before a second nudge</p>
+              </div>
+            </article>
+
+            <article data-tilt="-1.2" style={`${card};background:#ffbccc`}>
+              <span style={tag}>Life admin</span>
+              <h3 style={job}>Cancel a subscription and get your refund</h3>
+              <p style={`${detail};max-width:12em;color:#2e2a2c`}>Turns down the retention offers on the way</p>
+              <nod-glyph size="150" mood="idle" ink="#87003c" style="position:absolute;right:-30px;bottom:-34px;transform:rotate(-24deg)"></nod-glyph>
+            </article>
+
+            <article data-tilt="0.9" style={`${split};background:oklch(0.89 0.065 165)`}>
+              <nod-glyph mark nod-on="hover" nod-depth="38" nod-twice style="font-size:44px">nod</nod-glyph>
+              <div>
+                <span style={tag}>Work</span>
+                <h3 style={job}>Catch up on Slack and draft your replies</h3>
+                <p style={detail}>What needs you, with replies in your voice</p>
+              </div>
+            </article>
+          </nod-drift-row>
+        </div>
+      </section>
+
+      <section class="faqs">
+        <div class="wrap">
+          <h2>Straight answers</h2>
+          <div class="faq-list">
+            {faqs.map(([question, answer], index) => (
+              <details class="faq" name="faq" open={index === 0}>
+                <summary>{question}</summary>
+                <p>{answer}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <div class="note">
+          <nod-glyph size="18" mood="idle"></nod-glyph>
+          <span>An n8n Labs experiment. It may or may not become a product.</span>
+        </div>
+        <nav>
+          <a href={privacy} target="_blank" rel="noopener">Privacy</a>
+          <a href="https://n8n.io/imprint/" target="_blank" rel="noopener">Imprint</a>
+          <a href={base}>Docs</a>
+          <a href={github}>GitHub</a>
+        </nav>
+      </footer>
+    </div>
+
+    <script>
+      import '../scripts/nod-glyph.js';
+      import '../scripts/nod-field.js';
+      import '../scripts/nod-drift-row.js';
+      import { startDemo } from '../scripts/nod-demo.js';
+      import { startDownload } from '../scripts/nod-download.js';
+
+      startDemo();
+      startDownload();
+    </script>
+  </body>
+</html>

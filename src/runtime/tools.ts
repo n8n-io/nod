@@ -329,7 +329,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control the private browser. open {url}; snapshot {selector?,offset?} returns page text and @eN refs; click/fill/type/select/check/uncheck/hover {selector,text?}; press {key}; drag {selector,targetSelector} or {points,durationMs?}; upload {selector,path}; back/forward/reload; tab_list/tab_switch {tabId}; scroll {direction,selector?,amount?}; wait {text|url|load,waitMs?}; accept_dialog {text?}/dismiss_dialog; evaluate {script} runs one JavaScript expression. screenshot returns an image; share_screenshot {name?} stages an image for delivery. Coordinates x,y are fractions of a fresh screenshot. Never type secrets. download {url?|selector?,name?} saves a file; with neither it uses the open PDF or last download. Click document controls and inspect before downloading. Background files stay private until share_file. handoff {text} gives the owner control and pauses; state the needed action, then inspect after handback. Never send a /browser link. waitMs allows slow pages.',
+    'Control the private browser. open {url}; snapshot {selector?,offset?} returns page text and @eN refs; selector takes a current @eN ref, or CSS only for an element without one; click/fill/type/select/check/uncheck/hover {selector,text?}; press {key}; drag {selector,targetSelector} or {points,durationMs?}; upload {selector,path}; back/forward/reload; tab_list/tab_switch {tabId}; scroll {direction,selector?,amount?}; wait {text|url|load,waitMs?}; accept_dialog {text?}/dismiss_dialog; evaluate {script} runs one JavaScript expression. screenshot returns an image; share_screenshot {name?} stages an image for delivery. Coordinates x,y are fractions of a fresh screenshot. Never type secrets. download {url?|selector?,name?} saves a file; with neither it uses the open PDF or last download. Click document controls and inspect before downloading. Background files stay private until share_file. handoff {text} gives the owner control and pauses; state the needed action, then inspect after handback. Never send a /browser link. waitMs allows slow pages.',
     Type.Object({
       action: literals([
         'handoff',
@@ -390,7 +390,7 @@ export const toolDefinitions = {
   ),
   sign_in: defineTool(
     'sign_in',
-    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with visible {label,selector} CSS pairs, never @eN. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects the manage_apps saved login; one matching login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry; action is its short button label; label names the login. The server checks consent, fills and submits once. Inspect the result without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
+    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects the manage_apps saved login; one matching login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry; action is its short button label; label names the login. The server checks consent, fills and submits once. Inspect the result without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
     Type.Union([
       Type.Object(
         {
@@ -757,6 +757,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
   const observed = (
     step: { action: string; text?: string; key?: string },
     page: BrowserObservation,
+    choice?: string,
   ) => {
     turn.pageVisited?.(page.url, Boolean(turn.execution.parentRunId));
     turn.visited(browserId, page.url);
@@ -774,13 +775,17 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         : [...typed, pressed].slice(-10);
     else if (same && ['fill', 'type', 'select'].includes(step.action) && step.text)
       typed = [...typed, step.text.slice(0, 500)].slice(-10);
+    else if (same && choice) typed = [...typed, choice.slice(0, 500)].slice(-10);
     pressing = same && Boolean(pressed);
     return pageText(page);
   };
   const check = async (
     step: BrowserStep['step'],
-  ): Promise<{ expectOrigin?: string; expectUrl?: string } | { output: unknown }> => {
-    if (!context.browserStep) return {};
+  ): Promise<
+    | { binding: { expectOrigin?: string; expectUrl?: string }; choice?: string }
+    | { output: unknown }
+  > => {
+    if (!context.browserStep) return { binding: {} };
     const page = await computer.currentPage(
       browserId,
       step.action === 'upload' ? { action: 'click', selector: step.selector } : step,
@@ -792,7 +797,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       step.key!.trim() &&
       ['textbox', 'searchbox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
     )
-      return {};
+      return { binding: {} };
     const verdict = await context.browserStep({
       step,
       page,
@@ -800,7 +805,17 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();
-    if (verdict === 'run') return { expectOrigin: page.origin, expectUrl: page.url };
+    if (verdict === 'run')
+      return {
+        binding: { expectOrigin: page.origin, expectUrl: page.url },
+        ...(['check', 'uncheck'].includes(step.action) &&
+        page.controls?.length === 1 &&
+        page.controls[0].name
+          ? {
+              choice: `${step.action === 'check' ? 'Checked' : 'Unchecked'}: ${page.controls[0].name}`,
+            }
+          : {}),
+      };
     if (verdict === 'refused')
       throw new Error(
         "This step needs the owner's yes, and a subagent cannot ask. Stop and return it to the parent agent with the website, the control and what it would submit.",
@@ -930,7 +945,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           if ('output' in checked) return checked.output;
           file = await computer.download(
             browserId,
-            { selector: rest.selector, name, ...checked },
+            { selector: rest.selector, name, ...checked.binding },
             signal,
           );
         }
@@ -949,7 +964,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           { action },
           await computer.upload(
             browserId,
-            { selector: rest.selector, name: basename(rest.path), bytes, ...checked },
+            { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
             signal,
           ),
         );
@@ -962,9 +977,13 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           if (!(error instanceof BrowserActionError && error.code === 'browser_script_writes'))
             throw error;
         }
-      const checked = commits(step) ? await check(step) : {};
+      const checked = commits(step) ? await check(step) : { binding: {} };
       if ('output' in checked) return checked.output;
-      return observed(step, await computer.act(browserId, { ...step, ...checked }, signal));
+      return observed(
+        step,
+        await computer.act(browserId, { ...step, ...checked.binding }, signal),
+        checked.choice,
+      );
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);

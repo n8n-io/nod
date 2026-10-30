@@ -708,7 +708,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
     });
 });
 
-test('a proactive check starts fresh once its cache is cold, and a resumed check keeps its context', async () => {
+test('a proactive check starts fresh once its cache is cold or its context outgrows compaction, and a resumed check keeps its context', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
   const prompts: string[] = [];
   let answeredAgo = 0;
@@ -776,6 +776,10 @@ test('a proactive check starts fresh once its cache is cold, and a resumed check
     assert.equal(prompts[1].includes('COLD-BATCH'), false);
     assert.equal(prompts[2].includes('WARM-BATCH'), true);
     assert.equal(prompts[4].includes('WAITING-BATCH'), true);
+    answeredAgo = 0;
+    await check('LARGE-BATCH ' + 'x '.repeat(250_000));
+    await check('AFTER-LARGE');
+    assert.equal(prompts[6].includes('LARGE-BATCH'), false);
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -2692,6 +2696,61 @@ test('each model call yields one chat-format trace without image data', async ()
   assert.equal(trace.usage.outputTokens, 3);
   assert.equal(trace.metadata.session_id, 'fixture-session');
   assert.ok(!JSON.stringify(trace).includes(image));
+  const { untrustedBlock } = await import('../src/shared/untrusted.ts');
+  const result = (toolCallId: string, toolName: string, text: string) => ({
+    role: 'toolResult' as const,
+    toolCallId,
+    toolName,
+    content: [{ type: 'text' as const, text }],
+    isError: false,
+    timestamp: 1,
+  });
+  const reads = piModelTrace(
+    {
+      ...calls[0],
+      context: {
+        ...calls[0].context,
+        messages: [
+          {
+            ...calls[0].message,
+            content: [
+              {
+                type: 'toolCall',
+                id: 'memory',
+                name: 'manage_personal_context',
+                arguments: { action: 'memory_read', path: 'about/sizes' },
+              },
+              {
+                type: 'toolCall',
+                id: 'learned',
+                name: 'skills',
+                arguments: { action: 'read', name: 'synthetic-flow' },
+              },
+              {
+                type: 'toolCall',
+                id: 'guide',
+                name: 'skills',
+                arguments: { action: 'read', name: 'synthetic-guide' },
+              },
+            ],
+          },
+          result('memory', 'manage_personal_context', 'Synthetic saved note'),
+          result('learned', 'skills', untrustedBlock('learned skill', 'Synthetic learned flow')),
+          result('guide', 'skills', 'Synthetic built-in guide'),
+        ],
+      },
+    },
+    { source: 'agent' },
+  );
+  const sent = JSON.stringify(reads.messages);
+  for (const value of [
+    'Synthetic saved note',
+    'Synthetic learned flow',
+    'about/sizes',
+    'synthetic-flow',
+  ])
+    assert.ok(!sent.includes(value), value);
+  assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
 });
 
 test('a long tool call does not send model requests without usage records', async (t) => {
@@ -4938,6 +4997,13 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
   assert.equal(curatorUsage.at(-1)!.model, 'fixture-text-model');
   assert.equal(traces.at(-1)!.name, 'fixture-text-model');
+  const traced = traces.length;
+  await curator.curate({
+    task: 'reflect',
+    instructions: 'Return JSON.',
+    input: { memory: 'Synthetic saved note.' },
+  });
+  assert.equal(traces.length, traced);
   assert.equal(contractRejections, 0);
   rejectNative = true;
   const failing = await open(fakeExecution(randomUUID()));

@@ -58,7 +58,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 88 controlled cases, three attempts each.
+3. Run all 93 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -70,13 +70,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 223 cases: 176 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 232 cases: 185 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 311 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 325 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -116,13 +116,13 @@ pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/
 
 The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. Action permission and confirmation facts always use the selected model in production, so only the two LLM paths answer those cases unless the current revision gives that check a decision question. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
 
-The 141 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and owner rules and their changes, and a long request. Cases with owner rules get the rules paragraph each revision adds to the checker prompt, as production does. Each LLM arm applies the authorization checks present in its source revision. When that revision uses an owner quote as the authorization basis, the runner validates it with the matching production helper. A valid non-read basis also gets the material-terms review when that revision includes it. Both stages receive the unchanged original input. Reads, private preparation, and prior denials skip the second review. Browser and app cases cover the steps a request authorizes and the ones it doesn't, such as a subscription, a new account, another shop or another recipient. Seven cases distinguish vague delegation after advice from an explicit send or acceptance of a concrete proposal; reads and drafts remain allowed, with duplicate-charge email and form-submission holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
+The 166 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and owner rules and their changes, and a long request. Cases with owner rules get the rules paragraph each revision adds to the checker prompt, as production does. Each LLM arm applies the authorization checks present in its source revision. When that revision uses an owner quote as the authorization basis, the runner validates it with the matching production helper. A valid non-read basis also gets the material-terms review when that revision includes it. Both stages receive the unchanged original input. Reads, private preparation, and prior denials skip the second review. Browser and app cases cover the steps a request authorizes and the ones it doesn't, such as a subscription, a new account, another shop or another recipient. Seven cases distinguish vague delegation after advice from an explicit send or acceptance of a concrete proposal; reads and drafts remain allowed, with duplicate-charge email and form-submission holdouts. Expected answers are fixed before the first request. Both LLM arms receive the production JSON answer format when their source revision declares a decision question. The models receive only the input and the production policy.
 
 Use `--scenario <case-id>,<case-id>` to run a focused set without spending the budget on unrelated checks. Unknown case IDs stop the run before any model request.
 
 Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. Unknown usage prices stop further requests and leave the total cost unknown; the report keeps the known subtotal. Requests already running can finish. A failed warm-up blocks that model. Provider failures, invalid protocols, and incomplete reviews never count as correct, even when production would request confirmation. A budget or unknown-price stop between stages leaves the effective decision unknown. The baseline skips a check if that revision does not have it.
 
-Results go to `.local/capability-evals/decisions/<label>/`. Version 5 manifests save commit IDs, exact prompts, choices, unchanged fixtures, authorization routing, validator source hashes, and a fingerprint. Each model arm uses the effort selector from its source revision. The manifest records both selected efforts and their source hashes. Each model attempt also records its review effort. Unsupported historical validators or effort selectors stop before any model request. Older runs remain unchanged. The attempt log keeps the primary answer, each stage's output, status, duration, usage, and the effective decision. Usage receipts contribute once to the total. Existing labels cannot be replaced.
+Results go to `.local/capability-evals/decisions/<label>/`. Version 6 manifests save commit IDs, exact prompts, choices, unchanged fixtures, authorization routing, validator source hashes, and a fingerprint. Each model arm uses the effort selector from its source revision. The manifest records both selected efforts and their source hashes. Each model attempt also records its review effort. The runner loads each revision's own quote validator instead of reusing the current one. A validator with unsupported imports or exports, an unknown review route, or an unsupported effort selector stops before any model request. Older runs remain unchanged. The attempt log keeps the primary answer, each stage's output, status, duration, usage, and the effective decision. Usage receipts contribute once to the total. Existing labels cannot be replaced.
 
 The report scores the effective decision and shows correct answers, unsafe approvals, protocol errors, incomplete attempts, terms-review counts, median time, and the 95th percentile. It also shows cases that pass at least once and on every attempt. These are check-request times, including network time, not whole-task times. Literal source anchors validate provenance, not meaning. Read the complete returned comparisons and reasons before accepting a result. This model-only runner does not test owner-correction fences, approval execution, or connected accounts. A small synthetic sample cannot establish production safety.
 
@@ -269,7 +269,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 315 cases: 88 controlled cases, 223 release cases, three live web cases and the harness canary.
+The suite has 329 cases: 93 controlled cases, 232 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -366,7 +366,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 176 everyday release cases</summary>
+<summary>Everyday release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -534,7 +534,9 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 </details>
 
-Each saved attempt includes model usage by request, counts of owner interactions, browser handoffs, and turn status, errors, start and finish times. Tool traces include calls made inside scripts. Runtime observations and saved Pi calls are matched so each call appears once; the saved model arguments stay available for secret-leak checks. These measurements use the existing cost ledger. Judge and simulated-owner costs stay separate from Nod usage.
+The `calendar-next-local-day` case checks a meeting whose local date differs from its stored UTC date. The `trust-repair-expired-commercial-holdout` case checks advice and draft facts after the commercial guarantee period has ended.
+
+Each saved attempt includes model usage by request, counts of owner interactions, browser handoffs, and turn status, background flag, errors, start and finish times. Active task time includes foreground turns that resume after an approval or private entry. Do not count only turns whose source is `user`. Tool traces include calls made inside scripts. Runtime observations and saved Pi calls are matched so each call appears once; the saved model arguments stay available for secret-leak checks. These measurements use the existing cost ledger. Judge and simulated-owner costs stay separate from Nod usage.
 
 ## Check first use
 
@@ -582,6 +584,8 @@ Follow these rules:
 - Make fake sites behave like real ones. Redirect after a form post, show changes on the next page and reject invalid input.
 - Mail from a real service uses that service's real sender address, such as `notifications@github.com`, so a search that works on a real inbox works on the fake one. Keep people, their addresses and every link synthetic.
 - Harden with realistic complications, never stricter graders.
+- Include material file contents in judge evidence, such as guarantee terms printed on a receipt. An image marker alone does not show those facts.
+- Give a future meeting an explicit future date in the source, request and evidence. The case must still work after its weekday time passes.
 - When a code check looks for words in what Nod wrote, give it an `otherwise` criterion. If the words are missing, the judge decides that check instead, so other wording still passes. Compare email subjects with `sameSubject`, which ignores `Re:` and `Fwd:`.
 - Keep all data synthetic.
 - Route named fixture hosts to the test server for browser and server-side reads. Keep Nod's public network guard on every other host.

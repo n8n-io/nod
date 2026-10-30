@@ -299,17 +299,20 @@ export function createDesktopUpdater({
     },
     check() {
       if (disposed) return Promise.reject(new Error('Nod is closing.'));
-      if (ready) return Promise.resolve(ready);
+      if (restarting) return Promise.reject(new Error('Nod is restarting.'));
       if (checking) return checking;
       checking = (async () => {
         onStatus('checking');
         const candidate = await source.latest(currentVersion, controller.signal);
-        if (!candidate) return undefined;
+        if (!candidate) return ready;
         if (compareVersions(candidate.version, currentVersion) <= 0)
           throw new Error('The desktop update is not newer than this app.');
+        if (ready && compareVersions(candidate.version, ready.version) <= 0) return ready;
+        if (!native) ready = undefined;
         onStatus('preparing');
         await prepareRuntime(candidate, controller.signal, onStatus);
         controller.signal.throwIfAborted();
+        ready = undefined;
         onStatus('downloading');
         if (native)
           await new Promise((resolve, reject) => {
@@ -356,6 +359,7 @@ export function createDesktopUpdater({
       return checking;
     },
     restart() {
+      if (checking) return Promise.reject(new Error('A desktop update check is still running.'));
       if (!ready || disposed) return Promise.reject(new Error('No desktop update is ready.'));
       if (restarting) return restarting;
       restarting = restart(ready).finally(() => {

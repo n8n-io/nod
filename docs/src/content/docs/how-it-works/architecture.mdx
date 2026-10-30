@@ -58,6 +58,12 @@ Messages and schedule fires become turns in PostgreSQL with a `thread-drain` job
 
 One observer reads connected apps and saves private work. It starts separate tasks for outside actions, questions, and approvals. Those tasks use normal tools and Trust. See [Proactivity engine](/how-it-works/proactivity/). Ordinary tasks and schedules keep their normal tools.
 
+Guides tell Pi to list the full requested scope and time range before keyword filters in a broad review. A narrow search cannot establish full coverage.
+
+Structured results from apps, connected MCP tools, `read_source` and `proactive_issue` can include timestamps with UTC or numeric offsets. Before Pi reads a result, the runtime adds up to 32 local time equivalents in the owner's time zone. The source values stay unchanged. Posted local hours keep their original zone unless the owner asks for a conversion. Converted times name their zone. Nested script calls keep raw data; their JSON output can receive the same display annotation. Date-only values, times without an offset and direct browser observations are not converted. Personal tools such as `prepared_list` do not get this annotation. The annotation stays inside the same untrusted data block.
+
+For calendar plans, Pi uses availability tools when available and code for durations, gaps and proposed moves. Time ranges that only share an endpoint do not overlap. Required travel or preparation buffers are checked separately. Each proposed alternative is checked against the relevant calendar window.
+
 ## Where the code lives
 
 <FileTree>

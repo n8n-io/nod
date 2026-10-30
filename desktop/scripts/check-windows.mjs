@@ -32,7 +32,7 @@ try {
   );
   assert.deepEqual(await readdir(foreign), ['keep.txt']);
   assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'synthetic user file');
-  console.log('Installing the Windows preview without its runtime file.');
+  console.log('Installing the Windows app without its runtime file.');
   await copyFile(join(output, 'nod-Setup-x64.exe'), join(alone, 'nod-Setup-x64.exe'));
   await run(join(alone, 'nod-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const application = join(installation, 'nod.exe');

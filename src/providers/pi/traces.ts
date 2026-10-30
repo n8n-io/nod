@@ -1,7 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import type { Api, AssistantMessage, Context, Message, Model } from '@earendil-works/pi-ai';
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  Message,
+  Model,
+  ToolResultMessage,
+} from '@earendil-works/pi-ai';
 import type { ModelTrace } from '../../ports/traces.ts';
 import { piUsageMetrics } from './usage.ts';
+import { untrustedParts } from '../../shared/untrusted.ts';
+
+const omitted = '[owner context omitted]';
+const learnedSkill = untrustedParts('learned skill').open;
+const memory = (name: string, args: Record<string, unknown> | undefined) =>
+  name === 'manage_personal_context' && String(args?.action).startsWith('memory_');
 
 export interface PiModelCall {
   model: Model<Api>;
@@ -23,7 +36,7 @@ function text(content: string | { type: string; text?: string }[]) {
     .join('\n');
 }
 
-function chat(message: Message) {
+function chat(message: Message, hidden = new Set<string>()) {
   if (message.role === 'system')
     return {
       role: 'system',
@@ -52,7 +65,14 @@ function chat(message: Message) {
           tool_calls: calls.map((call) => ({
             id: call.id,
             type: 'function',
-            function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+            function: {
+              name: call.name,
+              arguments: JSON.stringify(
+                hidden.has(call.id) || memory(call.name, call.arguments)
+                  ? { action: call.arguments.action }
+                  : call.arguments,
+              ),
+            },
           })),
         }
       : {}),
@@ -71,6 +91,23 @@ export function piModelTrace(
   const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
   const inputTokens = (usage.inputTokens ?? 0) + cacheReadTokens + cacheWriteTokens;
   const outputTokens = usage.outputTokens ?? 0;
+  const calls = new Map(
+    call.context.messages.flatMap((message) =>
+      message.role === 'assistant'
+        ? message.content.flatMap((block) =>
+            block.type === 'toolCall' ? [[block.id, block.arguments] as const] : [],
+          )
+        : [],
+    ),
+  );
+  const owned = (message: ToolResultMessage) =>
+    memory(message.toolName, calls.get(message.toolCallId)) ||
+    (message.toolName === 'skills' && text(message.content).startsWith(learnedSkill));
+  const hidden = new Set(
+    call.context.messages.flatMap((message) =>
+      message.role === 'toolResult' && owned(message) ? [message.toolCallId] : [],
+    ),
+  );
   return {
     id: randomUUID(),
     name: call.model.id,
@@ -81,10 +118,14 @@ export function piModelTrace(
       ...(call.context.systemPrompt
         ? [{ role: 'system', content: call.context.systemPrompt }]
         : []),
-      ...call.context.messages.map(chat),
+      ...call.context.messages.map((message) =>
+        message.role === 'toolResult' && hidden.has(message.toolCallId)
+          ? { role: 'tool', tool_call_id: message.toolCallId, content: omitted }
+          : chat(message, hidden),
+      ),
     ].map((message) =>
       header && message.role === 'user' && message.content.startsWith(header)
-        ? { ...message, content: '[owner context omitted]' }
+        ? { ...message, content: omitted }
         : message,
     ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),

@@ -10,7 +10,7 @@ import { hardenElectron, run } from './release-tools.mjs';
 import { signWindowsFiles, windowsCodeFiles } from './windows-signing.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
-  throw new Error('Build this preview on Windows x64.');
+  throw new Error('Build the Windows app on Windows x64.');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = join(root, 'dist/windows');
 const stage = join(root, 'dist/windows-staging');
