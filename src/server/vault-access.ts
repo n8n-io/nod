@@ -41,7 +41,7 @@ function host(origin: string) {
   return new URL(origin).host;
 }
 
-type Chain = { id: string; ids: string[]; task: string };
+type Chain = { ids: string[]; task: string };
 
 export async function createVaultAccess(
   pool: Pool,
@@ -60,7 +60,7 @@ export async function createVaultAccess(
     CREATE TABLE IF NOT EXISTS vault_activity (
       id uuid PRIMARY KEY, owner_id text NOT NULL, at timestamptz NOT NULL DEFAULT now(),
       action text NOT NULL, origin text NOT NULL, item_id uuid, item_kind text,
-      turn_id uuid, root_turn_id uuid, task text NOT NULL DEFAULT '', reason text NOT NULL,
+      task text NOT NULL DEFAULT '', reason text NOT NULL,
       payment_id uuid, amount_minor bigint, currency text
     );
     CREATE INDEX IF NOT EXISTS vault_activity_owner_time ON vault_activity(owner_id,at DESC,id DESC);
@@ -68,13 +68,14 @@ export async function createVaultAccess(
     UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     ALTER TABLE vault_activity ADD COLUMN IF NOT EXISTS basis jsonb;
+    ALTER TABLE vault_activity DROP COLUMN IF EXISTS turn_id, DROP COLUMN IF EXISTS root_turn_id;
     DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {
-    const { rows } = await database.query<{ id: string; prompt: string; ids: string[] }>(
+    const { rows } = await database.query<{ prompt: string; ids: string[] }>(
       `${turnChainSql()}
-       SELECT u.id,u.prompt,(SELECT array_agg(id) FROM chain) AS ids FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
+       SELECT u.prompt,(SELECT array_agg(id) FROM chain) AS ids FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
        WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
     );
@@ -88,7 +89,6 @@ export async function createVaultAccess(
       .replace(/\s+/g, ' ')
       .trim();
     return {
-      id: row.id,
       ids: row.ids,
       task: task.length > 120 ? `${task.slice(0, 119)}…` : task,
     };
@@ -104,7 +104,6 @@ export async function createVaultAccess(
   }
 
   async function log(
-    turn: TurnRef,
     chain: Chain,
     entry: {
       action: VaultActivityEntry['action'];
@@ -118,8 +117,8 @@ export async function createVaultAccess(
     database: Pool | PoolClient = pool,
   ) {
     await database.query(
-      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason,payment_id,amount_minor,currency,basis)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,task,reason,payment_id,amount_minor,currency,basis)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ${entry.payment ? 'ON CONFLICT (owner_id,payment_id,action) WHERE payment_id IS NOT NULL DO NOTHING' : ''}`,
       [
         randomUUID(),
@@ -128,8 +127,6 @@ export async function createVaultAccess(
         entry.origin,
         entry.itemId ?? null,
         entry.itemKind ?? null,
-        turn.turnId,
-        chain.id,
         chain.task,
         entry.reason,
         entry.payment?.id ?? null,
@@ -143,10 +140,10 @@ export async function createVaultAccess(
 
   async function record(
     turn: TurnRef,
-    entry: Parameters<typeof log>[2],
+    entry: Parameters<typeof log>[1],
     database: Pool | PoolClient = pool,
   ) {
-    await log(turn, await root(turn, database), entry, database);
+    await log(await root(turn, database), entry, database);
   }
 
   async function used(
@@ -155,7 +152,6 @@ export async function createVaultAccess(
     database: Pool | PoolClient = pool,
   ) {
     await log(
-      turn,
       await root(turn, database),
       {
         action: 'sign_in',
@@ -207,7 +203,7 @@ export async function createVaultAccess(
         reason: work.source === 'schedule' ? 'schedule' : 'asked',
         basis: verdict.basis,
       };
-    await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
+    await log(chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     return {
       ok: false,
       args,

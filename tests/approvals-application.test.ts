@@ -1705,8 +1705,8 @@ test(
           assert.deepEqual(
             (
               await pool.query(
-                'SELECT action,item_id,reason FROM vault_activity WHERE turn_id=$1',
-                [entered],
+                'SELECT action,item_id,reason FROM vault_activity WHERE owner_id=$1 AND item_id=$2',
+                [ownerId, login],
               )
             ).rows,
             [{ action: 'code', item_id: login, reason: 'asked' }],
