@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { fakeDevtools } from './browser-fixture.ts';
 import type { runProcess } from '../src/providers/process.ts';
 
-export class LoginPage {
+class LoginPage {
   stage: 'identifier' | 'password' | 'otp' | 'complete' = 'identifier';
   location = { origin: 'https://1.1.1.1', href: 'https://1.1.1.1/login' };
   dom = new JSDOM('', { url: this.location.href, runScripts: 'outside-only' });

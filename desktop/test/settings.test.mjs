@@ -21,7 +21,6 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';

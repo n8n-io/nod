@@ -1878,7 +1878,7 @@ export function createAgentBrowserComputer(options: {
     if (state.saved.navigationFailed) throw new BrowserActionError('browser_navigation_failed');
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
-    const url = await currentUrl(state, signal);
+    await currentUrl(state, signal);
     if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
     const devtools = state.secrets.size ? await inspector(state) : undefined;

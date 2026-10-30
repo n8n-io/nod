@@ -1,18 +1,5 @@
 import { isPublicIpv4Address } from './public-address.ts';
 
-export interface LinkPreview {
-  url: string;
-  title?: string;
-  description?: string;
-  siteName?: string;
-  imageUrl: string;
-  playerUrl?: string;
-}
-
-export interface LinkPreviewResponse {
-  preview: LinkPreview | null;
-}
-
 export function publicMediaUrl(value: string): string | null {
   if (value.length > 2048) return null;
   try {

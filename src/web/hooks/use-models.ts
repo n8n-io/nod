@@ -12,7 +12,7 @@ import { ApiError, api, errorMessage, post } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
-export type Models = ReturnType<typeof useModels>;
+type Models = ReturnType<typeof useModels>;
 
 export const localServerAddress = 'http://localhost:11434/v1';
 

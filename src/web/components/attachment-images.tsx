@@ -42,19 +42,7 @@ export function restoreAttachmentFocus(trigger: AttachmentTrigger | null) {
   return true;
 }
 
-export function artifactPreview(artifact: Artifact): ImagePreview | null {
-  if (!attachmentKind(artifact.mimeType, artifact.name) || !ownedArtifactUrl(artifact.url))
-    return null;
-  return { ...artifact, downloadUrl: artifact.url };
-}
-
-export function artifactImage(artifact: Artifact): ImagePreview | null {
-  if (!previewableImage(artifact.mimeType, artifact.name) || !ownedArtifactUrl(artifact.url))
-    return null;
-  return { ...artifact, downloadUrl: artifact.url };
-}
-
-export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
+function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
   if (kind === 'sticker') return <StickerPlayer item={image} />;
   if (kind === 'video' && image.source === 'sticker') return <StickerVideo item={image} />;

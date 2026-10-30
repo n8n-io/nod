@@ -1,6 +1,5 @@
 import { costPerRequiredPass } from './aggregate.ts';
 import { insights, label, valueBand, type ChartRun } from './insights.ts';
-import { displayName } from './names.ts';
 
 const pct = (value: number | null) => (value === null ? 'n/a' : `${Math.round(value * 100)}%`);
 const money = (value: number | null) =>
@@ -86,5 +85,3 @@ ${facts(runs)
 
 Charts attached. Full report with every transcript and a "what went wrong" diagnosis per failure is in the PR.`;
 }
-
-export { displayName };

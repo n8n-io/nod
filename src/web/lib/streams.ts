@@ -1,4 +1,4 @@
-export interface StreamState {
+interface StreamState {
   threadId: string;
   active: Record<string, { turnId: string; text: string }>;
   completed: string[];
@@ -26,7 +26,7 @@ export const initialStreamState: StreamState = {
   active: {},
   completed: [],
 };
-export const completedStreamLimit = 512;
+const completedStreamLimit = 512;
 
 function closeStreams(state: StreamState, ids: string[]): StreamState {
   if (!ids.length) return state;

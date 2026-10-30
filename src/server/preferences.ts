@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { isSpeechVoiceId } from '../shared/speech.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
-export const preferencesSchema = z
+const preferencesSchema = z
   .object({
     speechVoice: z.string().max(128).refine(isSpeechVoiceId).nullable(),
     speechReply: z.enum(['auto', 'voice', 'always', 'never']),
@@ -18,7 +18,7 @@ export const preferencesSchema = z
     proactivePaused: z.boolean(),
   })
   .strict();
-export type Preferences = z.infer<typeof preferencesSchema>;
+type Preferences = z.infer<typeof preferencesSchema>;
 export const defaultPreferences: Preferences = {
   speechVoice: null,
   speechReply: 'auto',

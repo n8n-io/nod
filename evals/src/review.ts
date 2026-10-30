@@ -21,7 +21,7 @@ async function saveReviews(directory: string, reviews: Reviews) {
   await writeFile(join(directory, 'reviews.json'), JSON.stringify(reviews, null, 2));
 }
 
-export function kappa(both: number, onlyAuto: number, onlyHuman: number, neither: number) {
+function kappa(both: number, onlyAuto: number, onlyHuman: number, neither: number) {
   const total = both + onlyAuto + onlyHuman + neither;
   if (!total) return null;
   const observed = (both + neither) / total;

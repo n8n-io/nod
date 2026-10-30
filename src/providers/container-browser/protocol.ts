@@ -20,7 +20,7 @@ const identity = {
 const thread = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
 const selector = z.string().min(1);
 const point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
-export const browserDownloadInput = z
+const browserDownloadInput = z
   .object({
     selector: selector.optional(),
     url: z.string().min(1).optional(),

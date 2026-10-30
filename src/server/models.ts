@@ -91,7 +91,7 @@ export function endpointAddress(address: string) {
   return url.href.replace(/\/+$/, '');
 }
 
-export function azureAddress(address: string) {
+function azureAddress(address: string) {
   const value = address.trim();
   const url = endpointAddress(/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `https://${value}`);
   if (!url) return undefined;

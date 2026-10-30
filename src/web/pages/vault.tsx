@@ -16,7 +16,7 @@ import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
 import { Loading, Notice, SearchField } from '../components/ui';
 
-export type VaultItem = VaultListEntry | VaultSession;
+type VaultItem = VaultListEntry | VaultSession;
 
 const sessionLabels: Record<VaultSession['state'], string> = {
   saved: 'Saved session',

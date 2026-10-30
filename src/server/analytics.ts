@@ -92,7 +92,7 @@ export function analyticsModel(provider: string, model?: string) {
   };
 }
 
-export type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model?: string };
+type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model?: string };
 
 function turnModel(provider: TurnModel['model_provider'], model?: string): TurnModel {
   return { model_provider: provider, ...(model ? { model } : {}) };

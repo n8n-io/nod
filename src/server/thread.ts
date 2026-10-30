@@ -72,7 +72,7 @@ export interface TurnRef {
   browserId?: string;
   taskMessageId?: string;
 }
-export interface EnqueueTurnOptions {
+interface EnqueueTurnOptions {
   source: Exclude<TurnSource, 'user'>;
   sourceId?: string;
   channel?: string;
@@ -84,7 +84,7 @@ export interface EnqueueTurnOptions {
   startAfter?: Date;
   client?: PoolClient;
 }
-export interface SubmitUserMessageOptions {
+interface SubmitUserMessageOptions {
   threadId?: string;
   sourceId?: string;
   channel?: string;

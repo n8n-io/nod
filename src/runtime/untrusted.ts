@@ -2,10 +2,6 @@ import type { AgentToolResult } from '../ports/agent.ts';
 import { neutralised, untrustedParts } from '../shared/untrusted.ts';
 import { localResultTimes } from './time-context.ts';
 
-export function resultText(result: AgentToolResult) {
-  return result.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
-}
-
 export function delimit(
   source: string,
   result: AgentToolResult,

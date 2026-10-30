@@ -8,14 +8,11 @@ import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import test from 'node:test';
-import { crc32 } from 'node:zlib';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createBrowserProxy } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
-  decodeHtml,
-  parseLinkMetadata,
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
 import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
@@ -33,14 +30,6 @@ const html = (text = '<title>Fixture page</title>') => ({
   headers: { 'content-type': 'text/html; charset=utf-8' },
   body: Buffer.from(`<html><head>${text}</head><body>Fixture</body></html>`),
 });
-const png = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEElEQVR4nGP8w4AALAxEcQAz1AEKG5dMywAAAABJRU5ErkJggg==',
-  'base64',
-);
-const jpeg = Buffer.from(
-  '/9j/4AAQSkZJRgABAQAASABIAAD/2wBDAAICAgICAgMCAgMFAwMDBQYFBQUFBggGBgYGBggKCAgICAgICgoKCgoKCgoMDAwMDAwODg4ODg8PDw8PDw8PDw//2wBDAQICAgQEBAcEBAcQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCrAAo//9k=',
-  'base64',
-);
 
 test('preview eligibility blocks local, credential, consent and token URLs before any request', () => {
   for (const value of [
@@ -125,80 +114,6 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
   );
 });
 
-test('preview media comes only from public addresses and players only over HTTPS', () => {
-  const page = (head: string) =>
-    parseLinkMetadata(
-      `<html><head><title>Page</title>${head}</head></html>`,
-      'https://news.example.org/a',
-    );
-  assert.equal(
-    page('<meta property="og:image" content="http://127.0.0.1/a.png">')?.image,
-    undefined,
-  );
-  assert.equal(
-    page('<script type="application/ld+json">{"image":["https://cdn.example.org/a.jpg"]}</script>')
-      ?.image,
-    'https://cdn.example.org/a.jpg',
-  );
-  assert.equal(
-    page('<meta name="twitter:player" content="http://video.example.org/embed/1">')?.player,
-    undefined,
-  );
-  assert.equal(
-    page('<meta name="twitter:player" content="https://10.0.0.1/embed/1">')?.player,
-    undefined,
-  );
-  for (const address of ['100.64.0.1', '192.0.0.1', '198.18.0.1', '224.0.0.1']) {
-    assert.equal(
-      page(`<meta name="twitter:player" content="https://${address}/embed/1">`)?.player,
-      undefined,
-    );
-    assert.equal(
-      page(`<meta property="og:image" content="https://${address}/image.png">`)?.image,
-      undefined,
-    );
-  }
-  assert.equal(
-    page('<meta property="og:video:url" content="https://video.example.org/1.mp4">')?.player,
-    undefined,
-  );
-  assert.equal(
-    page('<meta name="twitter:player" content="https://video.example.org/embed/1">')?.player,
-    'https://video.example.org/embed/1',
-  );
-});
-
-test('preview pages decode with their declared charset', () => {
-  const latin = Buffer.from(
-    '<html><head><meta charset="iso-8859-1"><title>Pastéis</title></head></html>',
-    'latin1',
-  );
-  assert.equal(parseLinkMetadata(decodeHtml(latin), 'https://shop.example.org/')?.title, 'Pastéis');
-  assert.equal(
-    parseLinkMetadata(
-      decodeHtml(latin, 'text/html; charset=ISO-8859-1'),
-      'https://shop.example.org/',
-    )?.title,
-    'Pastéis',
-  );
-});
-
-test('a player whose host resolves to a private address is dropped', async () => {
-  const page = (player: string) =>
-    createPublicLinkPreviewProvider({
-      resolver: async (host) => [
-        { address: host === 'player.example.org' ? '10.0.0.7' : '93.184.216.34', family: 4 },
-      ],
-      request: async () =>
-        html(`<title>Video</title><meta name="twitter:player" content="${player}">`),
-    }).metadata('https://video.example.org/watch');
-  assert.equal((await page('https://player.example.org/embed/1'))?.player, undefined);
-  assert.equal(
-    (await page('https://cdn.example.org/embed/1'))?.player,
-    'https://cdn.example.org/embed/1',
-  );
-});
-
 test('every redirect checks DNS again and requests use the verified address', async () => {
   let lookups = 0;
   const calls: string[] = [];
@@ -211,9 +126,9 @@ test('every redirect checks DNS again and requests use the verified address', as
       return { status: 302, headers: { location: '/second' }, body: new Uint8Array() };
     },
   });
-  assert.equal(await provider.metadata('https://example.com/first'), null);
-  assert.equal(lookups, 2);
-  assert.deepEqual(calls, ['https://example.com/first']);
+  assert.equal(await provider.icon('https://example.com'), null);
+  assert.equal(lookups, 3);
+  assert.deepEqual(calls, ['https://example.com/favicon.ico']);
   let requested = false;
   const mixed = createPublicLinkPreviewProvider({
     resolver: async () => [...(await addresses()), { address: '10.0.0.2', family: 4 }],
@@ -222,13 +137,9 @@ test('every redirect checks DNS again and requests use the verified address', as
       return html();
     },
   });
-  assert.equal(await mixed.metadata('https://example.com'), null);
+  assert.equal(await mixed.icon('https://example.com'), null);
   assert.equal(requested, false);
-  for (const location of [
-    'http://169.254.169.254/latest',
-    'https://example.com/oauth/approve',
-    'https://example.com/?token=secret',
-  ]) {
+  for (const location of ['http://169.254.169.254/latest', 'https://169.254.169.254/latest']) {
     let requests = 0;
     const redirected = createPublicLinkPreviewProvider({
       resolver: addresses,
@@ -237,8 +148,8 @@ test('every redirect checks DNS again and requests use the verified address', as
         return { status: 302, headers: { location }, body: new Uint8Array() };
       },
     });
-    assert.equal(await redirected.metadata('https://example.com/article'), null);
-    assert.equal(requests, 1);
+    assert.equal(await redirected.icon('https://example.com'), null);
+    assert.equal(requests, 2);
   }
 });
 
@@ -275,27 +186,6 @@ test('pinned HTTP transport sends no cookies or authorization and stops after bo
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-});
-
-test('image proxy provider accepts bounded raster data and rejects SVG, spoofed types and oversized dimensions', async () => {
-  const oversized = Buffer.from(png);
-  oversized.writeUInt32BE(100000, 16);
-  oversized.writeUInt32BE(crc32(oversized.subarray(12, 29)), 29);
-  for (const [body, mime, expected] of [
-    [png, 'image/png', true],
-    [png, 'image/jpeg', false],
-    [jpeg, 'image/jpg', true],
-    [Buffer.from('<svg/>'), 'image/svg+xml', false],
-    [oversized, 'image/png', false],
-    [Buffer.alloc(5 * 1024 * 1024 + 1), 'image/png', false],
-  ] as const) {
-    const provider = createPublicLinkPreviewProvider({
-      resolver: addresses,
-      request: async () => ({ status: 200, headers: { 'content-type': mime }, body }),
-    });
-    const result = await provider.image('https://example.com/image');
-    assert.equal(Boolean(result), expected);
   }
 });
 

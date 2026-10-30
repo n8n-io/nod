@@ -12,7 +12,7 @@ const browserKeySchema = z.object({
   y: token,
 });
 
-export function renderIntegrationBrowser(
+function renderIntegrationBrowser(
   brokerOrigin: string,
   nonce: string,
   bridgeKey: string,

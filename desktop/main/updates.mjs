@@ -12,7 +12,7 @@ function versionParts(value) {
   return parts;
 }
 
-export function compareVersions(left, right) {
+function compareVersions(left, right) {
   const a = versionParts(left);
   const b = versionParts(right);
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return Math.sign(a[i] - b[i]);

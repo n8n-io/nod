@@ -15,7 +15,6 @@ import {
   ListOrdered as LucideListOrdered,
   MapPin as LucideMapPin,
   Monitor as LucideMonitor,
-  MonitorSmartphone as LucideMonitorSmartphone,
   Moon as LucideMoon,
   Pause as LucidePause,
   Plane as LucidePlane,
@@ -169,7 +168,6 @@ export const Trash2 = n8n('trash');
 export const Underline = n8n('text-underline');
 export const Undo2 = n8n('arrow-u-up-left');
 export const Unlink = n8n('link-slash');
-export const User = n8n('person');
 export const UserRound = n8n('person');
 export const Vault = n8n('vault');
 export const Workflow = n8n('workflow');
@@ -192,7 +190,6 @@ export const ListOrdered = lucide(LucideListOrdered);
 export const MapPin = lucide(LucideMapPin);
 export const Merge = lucide(LucideMerge);
 export const Monitor = lucide(LucideMonitor);
-export const MonitorSmartphone = lucide(LucideMonitorSmartphone);
 export const Moon = lucide(LucideMoon);
 export const Pause = lucide(LucidePause);
 export const Plane = lucide(LucidePlane);

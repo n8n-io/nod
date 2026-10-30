@@ -27,7 +27,6 @@ import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
 import type { Agent } from '../../ports/agent.ts';
-import type { WorkspaceSession } from '../../ports/computer.ts';
 import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';

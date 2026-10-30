@@ -326,14 +326,13 @@ test(
     const thread = await import('../src/server/thread.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
     const { createTasks } = await import('../src/server/tasks.ts');
-    const artifacts = await import('../src/server/artifacts.ts');
+    const artifacts = (await import('../src/server/artifacts.ts')).localArtifacts;
     const { createApp } = await import('../src/server/app.ts');
     const { createApprovals } = await import('../src/server/approvals.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     assert.equal(dataRoot, join(fixtureRoot, '.local'));
     let messages: ReturnType<typeof thread.createUserMessageService>;
     const app = await createApp({
-      questionStates: (ids) => approvals.states(ids),
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
       configuration: () => configuration({ llmReady: true }),
     });
@@ -1527,7 +1526,7 @@ test(
           const result = await messages.submit(
             'Yes',
             [
-              await artifacts.localArtifacts.storeUpload(
+              await artifacts.storeUpload(
                 Buffer.from('revision fixture'),
                 'revision.txt',
                 'text/plain',
@@ -1670,16 +1669,6 @@ test(
           assert.deepEqual(await messages.submit('Yes.', [], reply), accepted);
           const confirmed = await proposal(turn.turnId);
           assert.equal(confirmed.status, 'confirmed');
-          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
-            [confirmed.confirmation_message_id]: 'confirmed',
-          });
-          assert.equal(
-            (await request('GET', `/api/messages/around/${confirmed.confirmation_message_id}`))
-              .json()
-              .find((message: { id: string }) => message.id === confirmed.confirmation_message_id)
-              .questionState,
-            'confirmed',
-          );
           assert.equal(confirmed.execution_turn_id, accepted.turnId);
           assert.equal((await row(accepted.turnId)).channel, channel);
           const before = calls.length;
@@ -1702,9 +1691,6 @@ test(
             undefined,
           );
           assert.equal((await proposal(turn.turnId)).status, 'completed');
-          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
-            [confirmed.confirmation_message_id]: 'completed',
-          });
           await finish(accepted.turnId, 'succeeded');
         },
       );

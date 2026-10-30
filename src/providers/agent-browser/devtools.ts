@@ -22,8 +22,8 @@ export type BoundSignInControl = {
   url: string;
   submits: { method: string; to: string } | null;
 };
-export type FocusedField = { origin: string; session: string; context: number };
-export type ControlQuery = {
+type FocusedField = { origin: string; session: string; context: number };
+type ControlQuery = {
   selector?: string;
   point?: { x: number; y: number };
   pixel?: { x: number; y: number };

@@ -103,7 +103,6 @@
     "emoji-picker-react": "4.22.3",
     "esbuild": "0.28.2",
     "fake-indexeddb": "^6.2.6",
-    "fast-check": "^4.10.2",
     "fflate": "0.8.3",
     "jsdom": "30.1.3",
     "lefthook": "2.2.2",

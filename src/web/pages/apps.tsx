@@ -2,14 +2,7 @@ import { PageTitle } from '../components/page-title';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
-import {
-  AlertCircle,
-  ChevronDown,
-  ExternalLink,
-  ListFilter,
-  LoaderCircle,
-  X,
-} from '../components/icons';
+import { AlertCircle, ChevronDown, ListFilter, X } from '../components/icons';
 import type { AppSetupStatus, Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';

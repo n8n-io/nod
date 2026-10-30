@@ -6,11 +6,11 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { audioEntries } from './audio.ts';
 
 const maximum = 64 * 1024 * 1024;
-export const rebaseAt = 8 * 1024 * 1024;
+const rebaseAt = 8 * 1024 * 1024;
 export const keptImages = 4;
 export const removedImage =
   'An earlier image was removed from context. Take a new screenshot or read the file again if you need it.';
-export const removedCredential =
+const removedCredential =
   'An earlier saved login was removed from context. Use sign_in if you need to sign in again.';
 const failure = () =>
   new Error(
@@ -147,7 +147,7 @@ export function openLocalSession(directory: string) {
   return manager;
 }
 
-export function rebaseSession(
+function rebaseSession(
   source: SessionManager,
   next: SessionManager,
   secrets = legacySecrets(source.getEntries()),

@@ -454,10 +454,6 @@ button.vault-use:focus-visible {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.vault-glyph.is-paid {
-  background: var(--foreground);
-  color: var(--canvas);
-}
 .vault-use-text {
   display: grid;
   min-width: 0;

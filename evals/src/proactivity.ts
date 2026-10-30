@@ -1,6 +1,6 @@
 import type { AttemptResult } from './results.ts';
 
-export interface PopulationMetrics {
+interface PopulationMetrics {
   cohort: number;
   arm: 'engine' | 'baseline';
   records: number;

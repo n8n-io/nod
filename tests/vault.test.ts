@@ -1596,7 +1596,6 @@ test(
               url: request.url.replace('/vault/', '/api/credential-requests/'),
             });
             assert.ok(response.json().savedEntries.length > 1);
-            assert.equal(response.json().selectedEntryId, undefined);
             assert.equal(injections.length, count);
           }
         },

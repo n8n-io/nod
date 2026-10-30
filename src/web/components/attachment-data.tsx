@@ -29,7 +29,7 @@ import {
 import { SlidesView } from './attachment-slides';
 import { Button, Skeleton } from './ui';
 
-export type DataKind =
+type DataKind =
   | 'markdown'
   | 'text'
   | 'csv'

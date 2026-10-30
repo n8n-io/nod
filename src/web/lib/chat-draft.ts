@@ -2,7 +2,7 @@ import type { Artifact, Message } from '../../shared/contracts';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ownedArtifactUrl } from './attachment-url';
 
-export type ChatDraft = {
+type ChatDraft = {
   text: string;
   reply: Message['replyTo'];
   attachments: Artifact[];

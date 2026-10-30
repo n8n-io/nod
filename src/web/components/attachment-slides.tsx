@@ -56,7 +56,7 @@ type Item =
       rows: { height: number; cells: { text: TextBody; fill?: string; span: number }[] }[];
     };
 type Slide = { background: string; image?: string; items: Item[] };
-export type Deck = { width: number; height: number; slides: Slide[]; urls: string[] };
+type Deck = { width: number; height: number; slides: Slide[]; urls: string[] };
 
 type Part = { path: string; doc: Document; rels: Map<string, string> };
 type Theme = { colors: Record<string, string>; major: string; minor: string };
@@ -514,7 +514,7 @@ function background(part: Part | undefined, context: Context) {
   return value ? { color: value } : undefined;
 }
 
-export async function readDeck(buffer: ArrayBuffer): Promise<Deck> {
+async function readDeck(buffer: ArrayBuffer): Promise<Deck> {
   const { unzipSync, strFromU8 } = await import('fflate');
   const files = unzipSync(new Uint8Array(buffer), {
     filter: (file) =>

@@ -26,8 +26,6 @@ export interface Message {
   createdAt: string;
   attachments: Artifact[];
   presentation?: Presentation;
-  questionState?:
-    'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
   streamId?: string | null;
   reaction?: MessageReaction | null;
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;
@@ -64,13 +62,6 @@ export interface Activity {
   step: string | null;
   site: string | null;
   since: string;
-}
-export interface TurnEvent {
-  id: string;
-  turnId: string;
-  type: string;
-  summary: string;
-  createdAt: string;
 }
 export interface VaultLoginEntry {
   kind: 'login';
@@ -186,7 +177,6 @@ export interface CredentialRequest {
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   savedEntries?: (VaultLoginEntry & { username: string })[];
-  selectedEntryId?: string;
   username?: string;
   passwordManager?: { name: string; account?: string };
 }

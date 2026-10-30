@@ -1,6 +1,6 @@
 import type { ModelTrace, ModelTraceDelivery } from '../../ports/traces.ts';
 
-export const traceBytes = 8 * 1024 * 1024;
+const traceBytes = 8 * 1024 * 1024;
 
 export function createN8nTraces(options: {
   url?: string;

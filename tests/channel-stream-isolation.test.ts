@@ -8,7 +8,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
-import type { AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
 import { initialStreamState, streamReducer, type StreamAction } from '../src/web/lib/streams.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 

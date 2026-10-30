@@ -18,7 +18,7 @@ const day = 24 * 60 * 60 * 1000;
 const sensitiveTopics =
   'health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history';
 
-export const skillInput = z.discriminatedUnion('action', [
+const skillInput = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('save'),

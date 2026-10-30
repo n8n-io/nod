@@ -19,11 +19,9 @@ import { createLedger } from '../src/server/ledger.ts';
 import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
-import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
-import { loadLinkPreview } from '../src/web/lib/link-previews.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 
 test('unavailable decisions avoid ledger reads and retain dynamic availability and spending limits', async () => {
@@ -205,60 +203,6 @@ test('decision requests revalidate capability and cancellation after resolving c
       assert.equal(calls, 0);
       assert.equal(fallback, 0);
     });
-});
-
-test('queued and cached link previews cannot cross an owner change', async (t) => {
-  const calls: Array<{ url: string; account: string | null; respond(): void }> = [];
-  const requests: ReturnType<typeof loadLinkPreview>[] = [];
-  let automatic = false;
-  t.mock.method(globalThis, 'fetch', async (_path: string, options: RequestInit) => {
-    const url = JSON.parse(String(options.body)).url as string;
-    const account = new Headers(options.headers).get('X-nod-Account');
-    const imageUrl = `/api/link-preview/image/${randomUUID()}`;
-    return new Promise<Response>((resolve) => {
-      const respond = () => resolve(Response.json({ preview: { url, imageUrl } }));
-      calls.push({ url, account, respond });
-      if (automatic) respond();
-    });
-  });
-  const load = (url: string) => {
-    const pending = loadLinkPreview(url);
-    requests.push(pending);
-    return pending;
-  };
-  t.after(async () => {
-    automatic = true;
-    for (const call of calls) call.respond();
-    await Promise.all(requests);
-    setRequestAccount(null);
-  });
-  setRequestAccount('fixture-first-owner');
-  const cachedUrl = 'https://example.com/cached';
-  const firstCached = load(cachedUrl);
-  calls[0].respond();
-  const cached = await firstCached;
-  const urls = Array.from({ length: 5 }, (_, index) => `https://example.com/queued-${index}`);
-  const firstOwner = urls.map(load);
-  setRequestAccount('fixture-next-owner');
-  const nextOwner = load(urls[0]);
-  const nextCached = load(cachedUrl);
-  for (const call of calls.slice(1)) call.respond();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(
-    calls.filter((call) => call.account === 'fixture-next-owner').map((call) => call.url),
-    [urls[0], cachedUrl],
-  );
-  assert.deepEqual(
-    await Promise.all(firstOwner),
-    urls.map(() => null),
-  );
-  const repeated = load(urls[0]);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(calls.length, 7);
-  for (const call of calls.filter((call) => call.account === 'fixture-next-owner')) call.respond();
-  assert.ok(await nextOwner);
-  assert.deepEqual(await repeated, await nextOwner);
-  assert.notEqual((await nextCached)?.imageUrl, cached?.imageUrl);
 });
 
 describe('account routes', () => {

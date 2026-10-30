@@ -38,7 +38,6 @@ import {
   Skeleton,
 } from '../components/ui';
 import { desktopSettingsAvailable } from '../lib/desktop';
-import { navigate } from '../lib/navigation';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {

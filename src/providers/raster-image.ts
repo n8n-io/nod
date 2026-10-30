@@ -1,6 +1,6 @@
 import { crc32 } from 'node:zlib';
 
-export interface RasterImage {
+interface RasterImage {
   bytes: Uint8Array;
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
 }

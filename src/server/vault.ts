@@ -135,7 +135,7 @@ export type CredentialInjection = CredentialInput & {
   password?: string;
   code?: string;
 };
-export type VaultUse = {
+type VaultUse = {
   turnId: string;
   threadId: string;
   origin: string;
@@ -1434,7 +1434,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     if (!row) throw new VaultError('Credential request not found.', 404);
     const status = requestStatus(row);
     let savedEntries: CredentialRequest['savedEntries'];
-    let selectedEntryId: string | undefined;
     let username: string | undefined;
     if (status === 'pending' && (row.kind === 'identifier' || row.kind === 'password')) {
       const chosen = await selection(row.root_turn_id, row.owner_id, row.origin);
@@ -1462,12 +1461,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           continue;
         savedEntries.push({ ...metadata(entry), username: secret.username });
       }
-      if (
-        selected &&
-        !selected.blocked &&
-        savedEntries.some((entry) => entry.id === selected.entry_id)
-      )
-        selectedEntryId = selected.entry_id ?? undefined;
     }
     const manager =
       options.passwordManager &&
@@ -1488,7 +1481,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       ...(row.kind === 'method' ? { methods: row.inspection.methods ?? [] } : {}),
       status,
       ...(savedEntries ? { savedEntries } : {}),
-      ...(selectedEntryId ? { selectedEntryId } : {}),
       ...(row.kind === 'password' && username ? { username } : {}),
       ...(manager ? { passwordManager: manager } : {}),
     };

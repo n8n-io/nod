@@ -1,4 +1,4 @@
-import { cards, css, esc, money, pct, type Card, type ChartRun } from './chart.ts';
+import { cards, esc, money, pct, type Card, type ChartRun } from './chart.ts';
 import { insights, label } from './insights.ts';
 
 export interface StoryNotes {
@@ -6,7 +6,7 @@ export interface StoryNotes {
   learned?: string[];
 }
 
-export interface Suite {
+interface Suite {
   total: number;
   calibrating: number;
   gaps: number;
@@ -153,5 +153,3 @@ ${body}
 </div><script>document.title=String(document.documentElement.scrollHeight)</script>`;
   return { id: '00-the-story', html: `<style>${extra}</style>${html}` };
 }
-
-export { css };

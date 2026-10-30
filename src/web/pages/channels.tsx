@@ -36,7 +36,7 @@ const channelStatus = {
   'needs-setup': 'Needs setup',
   'coming-soon': 'Coming soon',
 };
-export const whatsappSteps = [
+const whatsappSteps = [
   'Before you begin',
   'Choose the numbers',
   'Verify your business app',
@@ -52,7 +52,7 @@ function ExternalLinkText({ href, children }: { href: string; children: React.Re
   );
 }
 
-export function ChannelSetupStep({
+function ChannelSetupStep({
   step,
   fields,
   onField,

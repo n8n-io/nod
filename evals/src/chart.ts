@@ -32,7 +32,7 @@ const secs = (value: number | null) =>
       ? `${(value / 60).toFixed(1)} min`
       : `${Math.round(value)} s`;
 
-export const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
+const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
 .card{width:1600px;min-height:900px;padding:60px 72px 44px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;flex-direction:column;position:relative;overflow:hidden}
 .eyebrow{font-size:15px;font-weight:700;letter-spacing:.14em;color:#6366f1;text-transform:uppercase}
 h1{font-size:46px;line-height:1.08;font-weight:780;letter-spacing:-.025em;margin-top:10px}

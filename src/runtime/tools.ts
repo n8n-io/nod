@@ -80,7 +80,7 @@ function unionOfObjects(schema: TSchema) {
   return members?.length && members.every((member) => member.properties) ? members : undefined;
 }
 
-export function rootObject<P extends TSchema>(schema: P): P {
+function rootObject<P extends TSchema>(schema: P): P {
   const members = unionOfObjects(schema);
   if (!members) return schema;
   const keys = [...new Set(members.flatMap((member) => Object.keys(member.properties)))];
@@ -124,7 +124,7 @@ function defineTool<const N extends string, P extends TSchema>(
   return { name, description, parameters: rootObject(parameters), strict: parameters, eager };
 }
 
-export const scheduleObservation = Type.Union([
+const scheduleObservation = Type.Union([
   Type.Object(
     {
       status: Type.Literal('verified'),
@@ -625,7 +625,7 @@ export const toolDefinitions = {
   ),
 };
 
-export interface NodTool<P extends TSchema = TSchema> {
+interface NodTool<P extends TSchema = TSchema> {
   name: string;
   description: string;
   parameters: P;

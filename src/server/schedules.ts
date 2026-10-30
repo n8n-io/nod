@@ -384,15 +384,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         throw invalid('This history cursor is invalid.');
       }
     }
-    if (scheduleId) {
-      z.uuid().parse(scheduleId);
-      const owned = await pool.query(
-        'SELECT id FROM schedules WHERE id=$1 AND owner_id=$2 UNION ALL SELECT id FROM schedule_runs WHERE schedule_id=$1 AND owner_id=$2 LIMIT 1',
-        [scheduleId, ownerId],
-      );
-      if (!owned.rowCount)
-        throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
-    }
     const rows = (
       await pool.query<RunRow>(
         `SELECT r.id,r.schedule_id AS "scheduleId",r.title,r.turn_id AS "turnId",
@@ -854,9 +845,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       remove(request.params.id),
     );
     app.get('/api/schedule-runs', (request) => history(request.query));
-    app.get<{ Params: { id: string } }>('/api/schedules/:id/runs', (request) =>
-      history(request.query, request.params.id),
-    );
   }
 
   return {

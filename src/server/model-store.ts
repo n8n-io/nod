@@ -24,7 +24,7 @@ export interface ModelState {
   hostId: string;
 }
 
-export interface ModelStore {
+interface ModelStore {
   initialize(): Promise<void>;
   read(): Promise<ModelState>;
   change<T>(run: (state: ModelState) => Promise<T> | T, signal?: AbortSignal): Promise<T>;

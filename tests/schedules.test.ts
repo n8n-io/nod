@@ -88,9 +88,9 @@ test(
       return { ...job, signal: new AbortController().signal };
     };
     const runs = async (id: string) => {
-      const response = await request('GET', `/api/schedules/${id}/runs`);
+      const response = await request('GET', '/api/schedule-runs?limit=100');
       assert.equal(response.statusCode, 200, response.body);
-      return response.json<ScheduleHistory>().runs;
+      return response.json<ScheduleHistory>().runs.filter((run) => run.scheduleId === id);
     };
     const saved = async (id: string) =>
       (await personal.listSchedules()).find((schedule) => schedule.id === id)!;

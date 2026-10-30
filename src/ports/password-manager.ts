@@ -9,7 +9,7 @@ export interface PasswordManagerSecret {
   authenticatorKey?: string;
 }
 
-export type PasswordManagerFailure = 'unavailable' | 'missing' | 'failed';
+type PasswordManagerFailure = 'unavailable' | 'missing' | 'failed';
 
 export class PasswordManagerError extends Error {
   constructor(

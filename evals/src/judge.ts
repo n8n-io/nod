@@ -75,7 +75,7 @@ export interface Simulator {
 }
 
 export const simulatorFailure = 'The simulated user failed';
-export const fallbackModels = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
+const fallbackModels = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
 export const providerRefusal =
   /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
 
@@ -148,7 +148,7 @@ export function createSimulator(llm: Llm): Simulator {
   };
 }
 
-export interface JudgeInput {
+interface JudgeInput {
   standard?: string;
   task: string;
   transcript: string;
@@ -156,7 +156,7 @@ export interface JudgeInput {
   criteria: Array<{ id: string; criterion: string }>;
 }
 
-export interface JudgeVerdict {
+interface JudgeVerdict {
   id: string;
   pass: boolean;
   na: boolean;

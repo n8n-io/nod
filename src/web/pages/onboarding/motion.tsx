@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type HTMLAttributes,
-  type ReactNode,
-  type SelectHTMLAttributes,
-} from 'react';
-import { ChevronDown } from '../../components/icons';
+import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { NodGlyph, prefersReducedMotion } from '../../components/motion';
 import { Button } from '../../components/ui';
 import { cn } from '../../lib/utils';
@@ -78,12 +70,6 @@ export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) 
   return <div className={cn('ob-bubble', className)} {...props} />;
 }
 
-export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div className={cn('ob-bubble ob-user-bubble', className)} data-analytics-private {...props} />
-  );
-}
-
 function Typing({ on = true }: { on?: boolean }) {
   return (
     <div
@@ -100,7 +86,7 @@ function Typing({ on = true }: { on?: boolean }) {
   );
 }
 
-export function Grow({ open, children }: { open: boolean; children: ReactNode }) {
+function Grow({ open, children }: { open: boolean; children: ReactNode }) {
   return (
     <div className="ob-grow" data-open={open} aria-hidden={!open} inert={!open}>
       <div>{children}</div>
@@ -226,14 +212,5 @@ export function Footer({
         )}
       </div>
     </div>
-  );
-}
-
-export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <span className={cn('ob-select', className)}>
-      <select className="input" {...props} />
-      <ChevronDown size={12} aria-hidden="true" />
-    </span>
   );
 }

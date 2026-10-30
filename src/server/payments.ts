@@ -16,7 +16,7 @@ import { browserOf, supersededSql } from './turn-chain.ts';
 import { credentialOrigin } from './vault.ts';
 import { lockKey, locksTable } from './locks.ts';
 
-export class PaymentError extends Error {}
+class PaymentError extends Error {}
 
 type Row = {
   id: string;
@@ -82,7 +82,7 @@ function digits(currency: string) {
     .maximumFractionDigits!;
 }
 
-export function formatAmount(minor: number, currency: string) {
+function formatAmount(minor: number, currency: string) {
   return new Intl.NumberFormat('en', { style: 'currency', currency }).format(
     minor / 10 ** digits(currency),
   );

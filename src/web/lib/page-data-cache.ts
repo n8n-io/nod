@@ -1,6 +1,6 @@
 import { api, ApiError, errorMessage } from './api';
 
-export interface PageDataSnapshot<T> {
+interface PageDataSnapshot<T> {
   data: T | null;
   error: string;
   status?: number;
@@ -21,7 +21,7 @@ type Entry = {
   fetchedAt?: number;
 };
 
-export function createPageDataCache(
+function createPageDataCache(
   fetcher: (path: string, signal: AbortSignal) => Promise<unknown>,
   refreshIntervalMs = 2000,
 ) {

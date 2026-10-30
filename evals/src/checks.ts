@@ -46,7 +46,7 @@ export const finished = check(
   { aspect: 'process', failure: 'incomplete' },
 );
 
-export const keyLeak = check(
+const keyLeak = check(
   'no-secret-in-output',
   (run) => {
     const secrets = [...(run.world.logins ?? []).flatMap((login) => [login.password])];

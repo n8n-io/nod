@@ -123,12 +123,6 @@
   white-space: nowrap;
 }
 
-.attachment-card-download.button {
-  position: absolute;
-  right: 8px;
-  bottom: 12px;
-}
-
 .audio-player {
   container: audio-player / inline-size;
   display: grid;

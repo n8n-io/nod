@@ -8,7 +8,7 @@ import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
 const outcomes = ['connected', 'continued', 'cancelled', 'failed', 'expired'];
 
-export type SignInTarget = { service: string; connectionId?: string; managed?: boolean };
+type SignInTarget = { service: string; connectionId?: string; managed?: boolean };
 
 function outcomeMessage(name: string, result?: string) {
   if (result === 'cancelled') return 'Sign-in cancelled. You can try again.';

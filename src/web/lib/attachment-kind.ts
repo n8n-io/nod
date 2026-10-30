@@ -1,4 +1,4 @@
-export type AttachmentKind =
+type AttachmentKind =
   | 'image'
   | 'sticker'
   | 'audio'

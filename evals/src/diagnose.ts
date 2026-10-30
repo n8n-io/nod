@@ -27,7 +27,7 @@ Decide:
 Be skeptical of blaming the agent: if a reasonable user would have been satisfied, say so and blame the scenario.
 Return only JSON: {"category":"...","blame":"...","rootCause":"...","turningPoint":"...","fix":"...","confidence":0.0}`;
 
-export async function diagnose(llm: Llm, attempt: AttemptResult): Promise<Diagnosis | undefined> {
+async function diagnose(llm: Llm, attempt: AttemptResult): Promise<Diagnosis | undefined> {
   const failed = attempt.checks.filter((check) => !check.pass && check.required);
   if (!failed.length && !attempt.error) return undefined;
   for (let tries = 0; tries < 2; tries++) {

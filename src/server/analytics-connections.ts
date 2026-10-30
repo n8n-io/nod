@@ -5,7 +5,7 @@ type ConnectionProperties = Extract<
   AnalyticsEvent,
   { event: 'nod_connection_changed' }
 >['properties'];
-export type ServiceFailureReason = NonNullable<
+type ServiceFailureReason = NonNullable<
   Extract<AnalyticsEvent, { event: 'nod_service_used' }>['properties']['failure_reason']
 >;
 export type AnalyticsConnection = {

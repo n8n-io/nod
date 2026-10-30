@@ -8,10 +8,10 @@ import { fingerprint, scenarios } from './scenarios/index.ts';
 import { repository } from './stack.ts';
 import { readAttempts } from './store.ts';
 
-export const gateFile = join(repository, 'evals', 'gate.json');
+const gateFile = join(repository, 'evals', 'gate.json');
 const settled = 10;
 
-export type Members = Record<string, { fingerprint: string; proof: string }>;
+type Members = Record<string, { fingerprint: string; proof: string }>;
 type Side = { manifest: Pick<RunManifest, 'model' | 'judge'>; attempts: AttemptResult[] };
 type Tally = { passed: number; total: number };
 export interface GateResult {
@@ -153,7 +153,7 @@ export function decide(members: Members, baseline: Side, candidate: Side): GateR
   };
 }
 
-export async function readMembers(file = gateFile) {
+async function readMembers(file = gateFile) {
   return JSON.parse(await readFile(file, 'utf8').catch(() => '{}')) as Members;
 }
 

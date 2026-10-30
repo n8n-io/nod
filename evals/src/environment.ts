@@ -9,7 +9,7 @@ import { keyVariables, loadEnvironment, repository } from './stack.ts';
 const container = 'nod-evals-pg';
 const port = 54398;
 
-export interface Check {
+interface Check {
   name: string;
   ok: boolean;
   detail: string;

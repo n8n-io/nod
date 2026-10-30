@@ -36,7 +36,6 @@ import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
-import type { Task } from '../shared/contracts.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 const inlineChars = 40_000;

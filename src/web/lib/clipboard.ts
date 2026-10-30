@@ -25,9 +25,7 @@ export async function copyContent(text: string, element?: HTMLElement | null) {
   if (element && typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
     const clone = element.cloneNode(true) as HTMLElement;
     clone
-      .querySelectorAll(
-        'button,time,.message-triggers,.copy-block,.browser-handoff,.setup-actions,.message-link-previews',
-      )
+      .querySelectorAll('button,time,.copy-block,.browser-handoff,.setup-actions')
       .forEach((node) => node.remove());
     await navigator.clipboard.write([
       new ClipboardItem({

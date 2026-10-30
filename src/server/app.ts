@@ -51,10 +51,7 @@ import { messagePreview } from './message-preview.ts';
 
 const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
-function messageView(
-  row: Message & { assistantReaction?: MessageReaction | null },
-  questionState?: Message['questionState'],
-): Message {
+function messageView(row: Message & { assistantReaction?: MessageReaction | null }): Message {
   const { assistantReaction, presentation, audioCaption, ...message } = row;
   const visual =
     message.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
@@ -62,7 +59,6 @@ function messageView(
     ...message,
     ...(typeof audioCaption === 'string' ? { audioCaption } : {}),
     ...(visual?.success ? { presentation: visual.data } : {}),
-    ...(questionState ? { questionState } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),
@@ -89,7 +85,6 @@ export interface AppDependencies {
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => boolean;
-  questionStates?: (messageIds: string[]) => Promise<Record<string, Message['questionState']>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -103,15 +98,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
         rows.flatMap((row) => (row.replyTo && !row.replyTo.isQuote ? [row.replyTo.id] : [])),
       ),
     ];
-    const [questions, targets] = await Promise.all([
-      dependencies.questionStates?.(rows.map((message) => message.id)).catch(() => undefined),
-      replyIds.length
-        ? pool.query<{ id: string; text: string }>(
-            'SELECT id,COALESCE(audio_caption,text) AS text FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[])',
-            [ownerId, replyIds],
-          )
-        : { rows: [] },
-    ]);
+    const targets = replyIds.length
+      ? await pool.query<{ id: string; text: string }>(
+          'SELECT id,COALESCE(audio_caption,text) AS text FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+          [ownerId, replyIds],
+        )
+      : { rows: [] };
     const previews = new Map(
       targets.rows.map((target) => [target.id, messagePreview(target.text)]),
     );
@@ -123,7 +115,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
               replyTo: { ...message.replyTo, text: previews.get(message.replyTo.id) ?? '' },
             }
           : message,
-        questions?.[message.id],
       ),
     );
   }
@@ -181,8 +172,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   const audioMessages = registerAudioMessages(app, dependencies);
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
-    const release = process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE;
-    return { ok: true, ...(release ? { release } : {}) };
+    return { ok: true };
   });
   if (desktopAccess)
     app.get('/api/desktop/status', async () => {
@@ -295,7 +285,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });
-  app.post<{ Params: { id: string } }>('/api/messages/:id/reaction', async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/api/messages/:id/reaction', async (request) => {
     const { reaction } = z
       .object({ reaction: z.string().max(64).refine(isMessageReaction).nullable() })
       .strict()
@@ -368,7 +358,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return { ok: true };
     }),
   );
-  app.get('/api/events', async (request, reply) => {
+  app.get('/api/events', async (_request, reply) => {
     reply.hijack();
     streams.add(reply.raw);
     reply.raw.writeHead(200, {

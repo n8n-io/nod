@@ -4,4 +4,4 @@ import { setAnalyticsClient } from './analytics';
 
 setAnalyticsClient(posthog);
 
-export { configureAnalytics, captureAnalytics, capturePageview } from './analytics';
+export { configureAnalytics } from './analytics';

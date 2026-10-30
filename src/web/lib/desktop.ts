@@ -31,9 +31,9 @@ export type DesktopSettingsChange = { onboardingCompleted?: true } & Partial<
   Pick<DesktopSettings, 'theme' | 'notifications' | 'launchAtLogin' | 'onboardingPreferenceStep'>
 >;
 
-export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
+type DesktopSettingsSection = 'general' | 'models' | 'preferences';
 
-export type DesktopFeedbackContext = {
+type DesktopFeedbackContext = {
   appVersion: string;
   appRelease: string | null;
   appModified: boolean | null;
@@ -84,10 +84,6 @@ export function openServerConnectionSettings() {
 
 export function desktopSettingsAvailable() {
   return typeof (window as DesktopWindow).nodDesktop?.getSettings === 'function';
-}
-
-export function openDesktopSettings(section: DesktopSettingsSection = 'general') {
-  window.dispatchEvent(new window.CustomEvent('nod:open-settings', { detail: section }));
 }
 
 export function subscribeDesktopNavigation(listener: (path: string) => void) {

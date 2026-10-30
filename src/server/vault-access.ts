@@ -31,7 +31,7 @@ type Row = {
   said: boolean;
 };
 
-export type VaultAccessVerdict =
+type VaultAccessVerdict =
   | { ok: true; reason: VaultActivityReason; basis?: TrustBasis }
   | { ok: false; details: Record<string, unknown>; args: Record<string, unknown> };
 

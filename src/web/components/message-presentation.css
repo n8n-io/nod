@@ -327,10 +327,6 @@
   }
 }
 @media (hover: hover) and (pointer: fine) {
-  .presentation-sources summary:hover {
-    color: var(--foreground);
-    background: var(--control);
-  }
   .message-presentation a:hover {
     text-decoration: underline;
   }

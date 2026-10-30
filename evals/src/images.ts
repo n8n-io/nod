@@ -8,7 +8,7 @@ import { cardPage, type Card } from './chart.ts';
 
 const run = promisify(execFile);
 
-export function findChrome() {
+function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',

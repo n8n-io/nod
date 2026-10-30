@@ -35,7 +35,7 @@ import {
 } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
 import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
-import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
+import type { IntegrationProvider } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult } from './integration-result.ts';
 import { createMailCheck } from './mail-check.ts';
@@ -76,10 +76,7 @@ import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
-import {
-  createEnvironmentKeyStore,
-  parseCredentialKey,
-} from '../providers/environment/key-store.ts';
+import { createEnvironmentKeyStore } from '../providers/environment/key-store.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
@@ -130,11 +127,7 @@ import type { TrustBasis } from './trust-basis.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
-import {
-  createChannelSettings,
-  initializeChannelSettings,
-  managedChannelEnvironment,
-} from './channel-settings.ts';
+import { createChannelSettings, managedChannelEnvironment } from './channel-settings.ts';
 import { createChannelMedia } from './channel-media.ts';
 import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
@@ -145,9 +138,9 @@ import { createAccountSession } from './account.ts';
 import { connectedGmail } from '../shared/onboarding.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
-import { createPool, initializeDatabase, pool } from './db.ts';
+import { initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
-import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
+import { createIntegrations } from './integrations.ts';
 import {
   createErrorRedactor,
   createRedactor,
@@ -183,7 +176,6 @@ import {
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
-import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
@@ -192,7 +184,7 @@ import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
-import { cachedIcons, createLinkPreviews } from './link-previews.ts';
+import { cachedIcons, registerLinkOpened } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
@@ -628,8 +620,7 @@ async function initializeApplication(
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.NOD_ANALYTICS_ID,
-    appVersion:
-      process.env.NOD_APP_VERSION || process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE,
+    appVersion: process.env.NOD_APP_VERSION,
   });
   let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
   const feedbackActivity = createFeedbackActivity('runtime');
@@ -941,9 +932,8 @@ async function initializeApplication(
   let vaultAccess!: Awaited<ReturnType<typeof createVaultAccess>>;
   let payments!: Awaited<ReturnType<typeof createPayments>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
-  const icon = adapters.linkPreviews?.icon
-    ? cachedIcons((origin) => adapters.linkPreviews!.icon!(origin))
-    : undefined;
+  const previews = adapters.linkPreviews;
+  const icon = previews ? cachedIcons((origin) => previews.icon(origin)) : undefined;
   const integrations = await createIntegrations(pool, {
     mailCheck,
     analytics: captureAnalytics,
@@ -1922,7 +1912,6 @@ async function initializeApplication(
     taskLedger: tasks.read,
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
-    questionStates: approvals.states,
     computer,
     configuration: () =>
       configuration({
@@ -1993,13 +1982,7 @@ async function initializeApplication(
     local: adapters.localSpeech,
     inputFormat: adapters.speechInputFormat,
   });
-  if (adapters.linkPreviews) {
-    const previews = adapters.linkPreviews;
-    createLinkPreviews({
-      metadata: (url) => previews.metadata(url),
-      image: (url) => previews.image(url),
-    }).registerRoutes(app);
-  }
+  registerLinkOpened(app);
   vault.registerRoutes(app);
   payments.registerRoutes(app);
   vaultAccess.registerRoutes(app);

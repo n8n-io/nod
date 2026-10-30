@@ -9,7 +9,7 @@ import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
-import type { TrustAction, TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { TrustAction, TrustEntry, TrustView } from '../shared/trust.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -19,7 +19,7 @@ import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Usage to resume.';
-export const defaultTaskUsd = 5;
+const defaultTaskUsd = 5;
 const usd = z
   .number()
   .min(1)

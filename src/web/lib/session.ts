@@ -3,7 +3,7 @@ import { api, ApiError, apiResponse, errorMessage, setRequestAccount } from './a
 import { pageDataCache } from './page-data-cache';
 import { applyAccountTheme } from './theme';
 
-export interface SessionSnapshot {
+interface SessionSnapshot {
   session: SessionResponse | null;
   loading: boolean;
   mutating: boolean;
@@ -39,7 +39,7 @@ function validSession(value: unknown): value is SessionResponse {
   );
 }
 
-export function createSessionStore(
+function createSessionStore(
   request: SessionRequest,
   clearPrivate: () => void,
   applyTheme: (session: SessionResponse | null) => void = () => {},

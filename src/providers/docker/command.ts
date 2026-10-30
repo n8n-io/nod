@@ -9,7 +9,7 @@ import type { ConnectedCli } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 
-export const cliInstallProgram = `import bz2,fcntl,gzip,hashlib,json,lzma,os,shutil,subprocess,sys
+const cliInstallProgram = `import bz2,fcntl,gzip,hashlib,json,lzma,os,shutil,subprocess,sys
 prefix=os.path.realpath(sys.argv[1])
 cli=json.loads(sys.argv[2])
 command=cli['command']
@@ -69,7 +69,7 @@ const cliInstallTimeoutMs = 600_000;
 export const connectedUser = (cli: ConnectedCli) =>
   20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
 
-export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
+const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
 line=sys.stdin.buffer.raw.readline()
 home=None
 def sealed(path):
@@ -263,7 +263,7 @@ export async function runWorkspaceCommand(options: {
   });
 }
 
-export function runSupervisedCommand(options: {
+function runSupervisedCommand(options: {
   args: string[];
   input?: string;
   environment?: Record<string, string>;

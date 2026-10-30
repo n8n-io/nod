@@ -1,6 +1,6 @@
 import type { CredentialInput } from '../../ports/computer.ts';
 
-export interface CredentialField {
+interface CredentialField {
   selector: string;
   value: string;
   code: boolean;

@@ -6,8 +6,8 @@ import {
   type DesktopPreferences,
 } from './desktop';
 
-export type Theme = 'light' | 'dark';
-export type ThemePreference = Theme | 'system';
+type Theme = 'light' | 'dark';
+type ThemePreference = Theme | 'system';
 
 const storageKey = 'nod.theme';
 const changeEvent = 'nod:theme';

@@ -78,7 +78,7 @@ export function createBridgeComputer(options: {
     return recovering;
   }
 
-  function updateMetadata(value: BrowserMetadata, order: number, input: BrowserCall) {
+  function updateMetadata(value: BrowserMetadata, order: number) {
     if (value.screen && order >= (screens.get(value.screen.threadId)?.sequence ?? 0)) {
       const { threadId: id, ...screen } = value.screen;
       screens.set(id, { sequence: order, value: screen });
@@ -196,7 +196,7 @@ export function createBridgeComputer(options: {
         if (code !== 0 || !response || output) return unavailable();
         settled = true;
         cleanup();
-        updateMetadata(response.metadata, order, input);
+        updateMetadata(response.metadata, order);
         if (cancelling || (!response.ok && response.error === 'cancelled'))
           return reject(new Error('Browser operation cancelled.'));
         if (response.ok) return resolve(response.result);

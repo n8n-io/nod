@@ -1,6 +1,6 @@
 import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
 
-export const appResultInlineChars = 40_000;
+const appResultInlineChars = 40_000;
 
 const emailContentFields = new Set([
   'subject',
@@ -60,7 +60,7 @@ export type MailCheck = (
   signal?: AbortSignal,
 ) => Promise<Array<boolean | undefined>>;
 
-export const mailCheckChars = 8000;
+const mailCheckChars = 8000;
 
 export function mailCheckText(text: string) {
   const parts: string[] = [];

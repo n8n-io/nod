@@ -24,7 +24,7 @@ if (
     (process.env.NOD_WEB_ROOT !== undefined && !isAbsolute(process.env.NOD_WEB_ROOT)))
 )
   throw new Error('Desktop runtime configuration is incomplete.');
-export const runtimeEnvironment = process.env.NOD_ENVIRONMENT || 'development';
+const runtimeEnvironment = process.env.NOD_ENVIRONMENT || 'development';
 export function configuration(overrides: Partial<Configuration> = {}): Configuration {
   return {
     provider: 'unconfigured',

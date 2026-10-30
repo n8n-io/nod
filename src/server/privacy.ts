@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import type { PrivacyNoticeResponse } from '../shared/privacy.ts';
 
-export function parsePrivacyNotice(value: unknown): string | undefined {
+function parsePrivacyNotice(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') throw new Error('Configure a valid public privacy notice.');
   return value.trim() || undefined;

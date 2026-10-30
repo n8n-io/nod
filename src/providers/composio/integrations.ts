@@ -12,7 +12,6 @@ import {
   IntegrationInboxCursorExpired,
   IntegrationPermissionError,
   type IntegrationProvider,
-  type IntegrationService,
   type IntegrationSession,
 } from '../../ports/integrations.ts';
 

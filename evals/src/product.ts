@@ -19,7 +19,7 @@ const banned: Array<[RegExp, string]> = [
   [/^\s*#{1,3} /m, 'a heading'],
 ];
 
-export function tripwire(run: Run) {
+function tripwire(run: Run) {
   const userSpoke = run.messages
     .filter((m) => m.role === 'user')
     .map((m) => m.text)

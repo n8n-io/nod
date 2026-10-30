@@ -167,7 +167,7 @@ const fact = (
   expected,
 });
 
-export const decisionCases: Case[] = [
+const decisionCases: Case[] = [
   action(
     'relative-meeting-shift-without-source-state',
     "Push tomorrow's design review back an hour and email Ana to let her know.",

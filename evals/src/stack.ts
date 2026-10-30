@@ -45,7 +45,7 @@ export async function loadEnvironment() {
   } as Record<string, string | undefined>;
 }
 
-export function selectModel(
+function selectModel(
   environment: Record<string, string | undefined>,
   provider: string = environment.LLM_PROVIDER || 'openai',
   name = environment.LLM_MODEL,

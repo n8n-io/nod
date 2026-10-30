@@ -6,7 +6,7 @@ type MessageMarker = Pick<Message, 'id' | 'role' | 'createdAt'>;
 const epoch = '1970-01-01T00:00:00.000Z';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function parseChatReadCursor(input: unknown): ChatReadCursor | null {
+function parseChatReadCursor(input: unknown): ChatReadCursor | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const value = input as Record<string, unknown>;
   if (
@@ -92,7 +92,7 @@ export async function reconcileUnreadChat(
   return Math.min(unread.size, 100);
 }
 
-export function chatReadStorageKey(ownerId: string, threadId: string) {
+function chatReadStorageKey(ownerId: string, threadId: string) {
   return `nod.chat-read.${JSON.stringify([ownerId, threadId])}`;
 }
 

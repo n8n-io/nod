@@ -1,6 +1,6 @@
-export type AuthenticatorAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
+type AuthenticatorAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 
-export interface AuthenticatorParameters {
+interface AuthenticatorParameters {
   secret: Uint8Array;
   algorithm: AuthenticatorAlgorithm;
   digits: number;

@@ -143,11 +143,11 @@ Provider IDs come from the fixed [supported connection list](/connect/models/#se
 
 Settings, memory and schedules:
 
-| Event                  | When                                                              | Properties                                                                                                                                                                      |
-| ---------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nod_settings_updated` | A settings change succeeds, including a model selection from chat | `section`: `account`, `preferences`, `channels`, `models`, `trust`, `memory`, `apps`; `operation`: `update`, `connect_started`, `disconnect`; `channel`: `telegram`, `whatsapp` |
-| `nod_memory_changed`   | A memory note or learned skill is saved or removed                | `kind`: `note`, `skill`; `operation`: `save`, `forget`, `archive`, `clear`; `actor`: `owner`, `agent`, `background`. Never the note                                             |
-| `nod_schedule_changed` | A schedule change commits                                         | `operation`: `create`, `update`, `delete`; `schedule_kind`: `once`, `recurring`; bounded `cadence`; `actor`: `user`, `agent`                                                    |
+| Event                  | When                                                              | Properties                                                                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nod_settings_updated` | A settings change succeeds, including a model selection from chat | `section`: `account`, `preferences`, `channels`, `models`, `trust`, `memory`; `operation`: `update`, `connect_started`, `disconnect`; `channel`: `telegram`, `whatsapp` |
+| `nod_memory_changed`   | A memory note or learned skill is saved or removed                | `kind`: `note`, `skill`; `operation`: `save`, `forget`, `archive`, `clear`; `actor`: `owner`, `agent`, `background`. Never the note                                     |
+| `nod_schedule_changed` | A schedule change commits                                         | `operation`: `create`, `update`, `delete`; `schedule_kind`: `once`, `recurring`; bounded `cadence`; `actor`: `user`, `agent`                                            |
 
 Apps, connections and Vault:
 
@@ -197,7 +197,7 @@ These are pseudonymous measurements from owners who share usage data. Installati
 Recordings show navigation, layout, controls, scrolling and clicks, with private content removed.
 
 - **Masked:** all input values and all text, except product labels marked as public.
-- **Blocked:** chat messages and drafts, reply quotes, link previews, attachments and file previews, task titles, steps and results, the Usage summary and the text of each Usage row, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
+- **Blocked:** chat messages and drafts, reply quotes, link tooltips, attachments and file previews, task titles, steps and results, the Usage summary and the text of each Usage row, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
 - **Replaced:** every URL becomes a fixed `https://nod.invalid` route, without query strings, fragments or external destinations.
 - **Never collected:** console output, request headers and bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles.
 

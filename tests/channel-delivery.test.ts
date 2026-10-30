@@ -2212,7 +2212,8 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     const { initializeDatabase, pool } = await import('../src/server/db.ts');
-    const { storeArtifact, readThreadArtifacts } = await import('../src/server/artifacts.ts');
+    const { storeArtifact, readThreadArtifacts } = (await import('../src/server/artifacts.ts'))
+      .localArtifacts;
     const files = await import('../src/shared/files.ts');
     const { ownerId, dataRoot } = await import('../src/server/config.ts');
     const { activeThread } = await import('../src/server/thread.ts');

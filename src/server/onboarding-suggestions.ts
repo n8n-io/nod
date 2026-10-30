@@ -24,8 +24,7 @@ type PreparedSuggestions = {
   accounts: DiscoveryAccount[];
   seen?: string[];
 };
-export type DiscoveryAccount = AppAccount;
-export type Brief = { summary: string; waiting: string[]; recurring: string[]; upcoming: string[] };
+type DiscoveryAccount = AppAccount;
 type Checked = {
   intro: string;
   picks: Array<Task | undefined>;
@@ -607,7 +606,7 @@ export function createOnboardingSuggestions(options: {
         )
           return;
         const claimed = await client.query(
-          'UPDATE onboarding_suggestions SET posted_at=now(),brief=NULL WHERE owner_id=$1 AND greeted_at IS NOT NULL AND posted_at IS NULL',
+          'UPDATE onboarding_suggestions SET posted_at=now() WHERE owner_id=$1 AND greeted_at IS NOT NULL AND posted_at IS NULL',
           [owner],
         );
         if (!claimed.rowCount) return;
@@ -647,12 +646,7 @@ export function createOnboardingSuggestions(options: {
          UNION ALL SELECT 1 FROM messages WHERE owner_id=$1 AND suggestions IS NOT NULL LIMIT 1`,
         [owner, thread.id],
       );
-      if (blocked.rowCount) {
-        await client.query('UPDATE onboarding_suggestions SET brief=NULL WHERE owner_id=$1', [
-          owner,
-        ]);
-        return false;
-      }
+      if (blocked.rowCount) return false;
       await client.query(
         'INSERT INTO onboarding_suggestions(owner_id) VALUES($1) ON CONFLICT(owner_id) DO NOTHING',
         [owner],
@@ -680,14 +674,8 @@ export function createOnboardingSuggestions(options: {
       owner_id text PRIMARY KEY, suggestions jsonb, greeted_at timestamptz, posted_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS brief jsonb;
-    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS brief_at timestamptz;
+    ALTER TABLE onboarding_suggestions DROP COLUMN IF EXISTS brief, DROP COLUMN IF EXISTS brief_at;
     ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS greeting_message_id uuid`);
-    await pool.query(
-      `UPDATE onboarding_suggestions SET brief=NULL WHERE owner_id=$1 AND brief IS NOT NULL
-       AND (posted_at IS NOT NULL OR brief_at IS NULL OR brief_at<now()-interval '1 day')`,
-      [owner],
-    );
     const unfinished = await pool.query(
       'SELECT 1 FROM onboarding_suggestions WHERE owner_id=$1 AND greeted_at IS NOT NULL AND posted_at IS NULL',
       [owner],

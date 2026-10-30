@@ -1,6 +1,6 @@
 import type { DecisionModel, DecisionQuestion } from '../ports/decisions.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import type { Mail, MailCheck } from './integration-result.ts';
+import type { MailCheck } from './integration-result.ts';
 
 export function createMailCheck({
   curator,

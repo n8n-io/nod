@@ -2,13 +2,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { parse } from 'parse5';
-import { getDomainWithoutSuffix as domainWithoutSuffix } from 'tldts';
-import type {
-  LinkPreviewProvider,
-  PublicLinkMetadata,
-  SiteIcon,
-} from '../../ports/link-preview.ts';
-import { previewableUrl, publicMediaUrl } from '../../shared/link-preview.ts';
+import type { LinkPreviewProvider, SiteIcon } from '../../ports/link-preview.ts';
 import { publicUrl, type AddressResolver } from '../agent-browser/network.ts';
 import { rasterImageType } from '../raster-image.ts';
 
@@ -104,147 +98,6 @@ export const requestPublicPreview: PreviewRequest = ({
     request.end();
   });
 
-function clean(value: string | undefined, max: number) {
-  return (
-    value
-      ?.replace(/[\u0000-\u001f\u007f]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, max) || undefined
-  );
-}
-
-function siteTitle(title: string | undefined, url: string, siteName?: string) {
-  if (!title) return title;
-  const squash = (value: string) =>
-    value
-      .normalize('NFKD')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]/gu, '');
-  const sites = [siteName, domainWithoutSuffix(url)]
-    .map((value) => value && squash(value))
-    .filter(Boolean);
-  const matches = (value: string) => sites.includes(squash(value));
-  const end = /^(.*\S)\s*[:|\-–—]\s+(.+)$/.exec(title);
-  const trimmed = end && matches(end[2]) ? end[1] : title;
-  const start = /^(.+?)\s*[:|\-–—]\s+(\S.*)$/.exec(trimmed);
-  const result = start && matches(start[1]) ? start[2] : trimmed;
-  return matches(result) ? undefined : result;
-}
-
-function jsonLdImage(text: string): string | undefined {
-  try {
-    const stack: unknown[] = [JSON.parse(text)];
-    for (let steps = 0; stack.length && steps < 200; steps++) {
-      const value = stack.pop();
-      if (!value || typeof value !== 'object') continue;
-      if (Array.isArray(value)) {
-        stack.push(...value);
-        continue;
-      }
-      const record = value as Record<string, unknown>;
-      const image = Array.isArray(record.image) ? record.image[0] : record.image;
-      const source = image && typeof image === 'object' ? (image as Record<string, unknown>) : {};
-      const url = [image, source.contentUrl, source.url].find((value) => typeof value === 'string');
-      if (typeof url === 'string') return url;
-      if (record['@graph']) stack.push(record['@graph']);
-    }
-  } catch {}
-  return undefined;
-}
-
-export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata | null {
-  const document = parse(html);
-  const head = document.childNodes.find((node) => node.nodeName === 'html');
-  const elements = head && 'childNodes' in head ? head.childNodes : [];
-  const container = elements.find((node) => node.nodeName === 'head');
-  const nodes = container && 'childNodes' in container ? container.childNodes : [];
-  const meta = new Map<string, string>();
-  const images: string[] = [];
-  let title = '';
-  for (const node of nodes) {
-    if (!('attrs' in node)) continue;
-    const attrs = new Map(node.attrs.map((attr) => [attr.name.toLowerCase(), attr.value]));
-    if (node.nodeName === 'meta') {
-      const key = (attrs.get('property') ?? attrs.get('name'))?.toLowerCase();
-      if (key && attrs.has('content') && !meta.has(key)) meta.set(key, attrs.get('content')!);
-      if (attrs.get('itemprop') === 'image' && attrs.get('content'))
-        images.push(attrs.get('content')!);
-    }
-    if (node.nodeName === 'link' && attrs.get('href')) {
-      const rel = (attrs.get('rel') ?? '').toLowerCase().split(/\s+/);
-      if (rel.includes('image_src')) images.push(attrs.get('href')!);
-    }
-    if (
-      node.nodeName === 'script' &&
-      attrs.get('type')?.toLowerCase() === 'application/ld+json' &&
-      'childNodes' in node
-    ) {
-      const image = jsonLdImage(
-        node.childNodes.map((child) => ('value' in child ? child.value : '')).join(''),
-      );
-      if (image) images.push(image);
-    }
-    if (node.nodeName === 'title' && 'childNodes' in node)
-      title = node.childNodes.map((child) => ('value' in child ? child.value : '')).join('');
-  }
-  const published = [meta.get('og:title'), meta.get('twitter:title'), title]
-    .map((value) => clean(value, 200))
-    .find(Boolean);
-  const media = (value: string | undefined, secure = false) => {
-    try {
-      const resolved = value && publicMediaUrl(new URL(value, url).href);
-      return resolved && (!secure || resolved.startsWith('https:')) ? resolved : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  const image = [
-    meta.get('og:image:secure_url'),
-    meta.get('og:image'),
-    meta.get('og:image:url'),
-    meta.get('twitter:image'),
-    meta.get('twitter:image:src'),
-    ...images,
-  ]
-    .map((value) => media(value))
-    .find(Boolean);
-  const player =
-    media(meta.get('twitter:player'), true) ??
-    (meta.get('og:video:type')?.toLowerCase() === 'text/html'
-      ? media(
-          meta.get('og:video:secure_url') ?? meta.get('og:video:url') ?? meta.get('og:video'),
-          true,
-        )
-      : undefined);
-  const siteName = clean(meta.get('og:site_name'), 100);
-  const resultTitle = siteTitle(published, url, siteName);
-  return {
-    url,
-    ...(resultTitle ? { title: resultTitle } : {}),
-    description: clean(
-      meta.get('og:description') ?? meta.get('twitter:description') ?? meta.get('description'),
-      400,
-    ),
-    siteName,
-    ...(image ? { image } : {}),
-    ...(player ? { player } : {}),
-  };
-}
-
-export function decodeHtml(body: Uint8Array, contentType = '') {
-  const start = Buffer.from(body.subarray(0, 2048)).toString('latin1');
-  const label =
-    /charset\s*=\s*["']?\s*([\w-]+)/i.exec(contentType)?.[1] ??
-    /<meta[^>]+charset\s*=\s*["']?\s*([\w-]+)/i.exec(start)?.[1] ??
-    'utf-8';
-  try {
-    return new TextDecoder(label).decode(body);
-  } catch {
-    return new TextDecoder().decode(body);
-  }
-}
-
 function iconUrl(value: string) {
   if (value.length > 2048) return null;
   try {
@@ -302,15 +155,14 @@ export function createPublicLinkPreviewProvider(
   async function fetchPublic(
     value: string,
     maxBytes: number,
-    metadata = maxBytes < 1024 * 1024,
-    destination = previewableUrl,
-    signal = AbortSignal.timeout(Math.min(5000, options.timeoutMs ?? 5000)),
+    metadata: boolean,
+    signal: AbortSignal,
     purpose?: 'icon',
   ) {
     let current = value;
     for (let redirects = 0; redirects <= 3; redirects++) {
       signal.throwIfAborted();
-      const safe = destination(current);
+      const safe = iconUrl(current);
       if (!safe) throw new Error('Preview destination is not supported.');
       const resolved = await new Promise<Awaited<ReturnType<typeof publicUrl>>>(
         (resolve, reject) => {
@@ -353,35 +205,10 @@ export function createPublicLinkPreviewProvider(
     throw new Error('Too many preview redirects.');
   }
   return {
-    async metadata(url) {
-      try {
-        const result = await fetchPublic(url, 1024 * 1024, true);
-        if (
-          !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
-            result.headers['content-type'] ?? '',
-          )
-        )
-          return null;
-        const metadata = parseLinkMetadata(
-          decodeHtml(result.body, result.headers['content-type']),
-          result.url,
-        );
-        if (!metadata?.player) return metadata;
-        const { player, ...rest } = metadata;
-        return (await publicUrl(player, options.resolver).then(
-          () => true,
-          () => false,
-        ))
-          ? metadata
-          : rest;
-      } catch {
-        return null;
-      }
-    },
     async icon(origin) {
       const signal = AbortSignal.timeout(Math.min(8000, options.timeoutMs ?? 8000));
       const fetchIcon = async (url: string): Promise<SiteIcon | null> => {
-        const result = await fetchPublic(url, 128 * 1024, false, iconUrl, signal, 'icon');
+        const result = await fetchPublic(url, 128 * 1024, false, signal, 'icon');
         const mimeType = icoImage(result.body) ? 'image/x-icon' : rasterImageType(result.body);
         return mimeType ? { bytes: result.body, mimeType } : null;
       };
@@ -390,13 +217,7 @@ export function createPublicLinkPreviewProvider(
         if (icon) return icon;
       } catch {}
       try {
-        const page = await fetchPublic(
-          new URL('/', origin).href,
-          256 * 1024,
-          true,
-          iconUrl,
-          signal,
-        );
+        const page = await fetchPublic(new URL('/', origin).href, 256 * 1024, true, signal);
         if (
           !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
             page.headers['content-type'] ?? '',
@@ -411,18 +232,6 @@ export function createPublicLinkPreviewProvider(
           } catch {}
         }
         return null;
-      } catch {
-        return null;
-      }
-    },
-    async image(url) {
-      try {
-        const result = await fetchPublic(url, 5 * 1024 * 1024, false, publicMediaUrl);
-        const mimeType = rasterImageType(result.body);
-        const declared = result.headers['content-type']?.split(';')[0].trim().toLowerCase();
-        if (!mimeType || (declared === 'image/jpg' ? 'image/jpeg' : declared) !== mimeType)
-          return null;
-        return { bytes: result.body, mimeType };
       } catch {
         return null;
       }

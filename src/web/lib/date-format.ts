@@ -54,7 +54,7 @@ export const regions = [
 
 const browserRegions = new Map<string, string | null>();
 
-export function browserRegion() {
+function browserRegion() {
   const region = browserRegions.get(Intl.DateTimeFormat().resolvedOptions().timeZone);
   if (region) return region;
   const languages =
@@ -209,14 +209,6 @@ export function formatClockTime(value: string, format = current) {
   return formatter(format, clock(format), 'UTC').format(
     Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])),
   );
-}
-
-function formatDate(value: string | number | Date, format = current, now = new Date()) {
-  return formatter(format, {
-    day: 'numeric',
-    month: 'short',
-    ...(sameYear(value, format, now) ? {} : { year: 'numeric' }),
-  }).format(date(value));
 }
 
 export function formatCalendarDate(value: string, format = current) {

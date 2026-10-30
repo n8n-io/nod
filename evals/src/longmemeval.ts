@@ -16,7 +16,7 @@ import {
 import { prepare } from './run.ts';
 import { appSource, parseModel, repository, type Model } from './stack.ts';
 
-export interface LongMemEvalOptions {
+interface LongMemEvalOptions {
   data: string;
   root: string;
   label: string;
@@ -126,7 +126,7 @@ const cost = (result: QuestionRun) =>
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
 
-export function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
+function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
   const types = [...new Set(results.map((result) => result.type))].sort();
   const bySetup = Object.fromEntries(
     setups.map((setup) => {

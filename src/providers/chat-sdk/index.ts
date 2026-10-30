@@ -221,7 +221,7 @@ function sameSecret(actual: string | undefined, expected: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function channelConfiguration(env: Environment) {
+function channelConfiguration(env: Environment) {
   const telegramMissing = [
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_WEBHOOK_SECRET_TOKEN',

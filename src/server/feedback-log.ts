@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export interface FeedbackLogScope {
+interface FeedbackLogScope {
   turnId?: string;
   sessionId?: string;
   runId?: string;
@@ -28,7 +28,7 @@ export interface FeedbackLogSnapshot {
   };
 }
 
-export interface FeedbackLog {
+interface FeedbackLog {
   record(event: string, data?: unknown, scope?: FeedbackLogScope): void;
   snapshot(): Promise<FeedbackLogSnapshot>;
   close(): Promise<void>;

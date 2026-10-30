@@ -492,4 +492,3 @@ export const localArtifacts = createArtifactService({
   ownerId,
   localRoot: dataRoot,
 });
-export const { storeArtifact, publishArtifact, readThreadArtifacts } = localArtifacts;

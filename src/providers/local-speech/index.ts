@@ -7,7 +7,7 @@ import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { speechVoices } from '../../shared/speech.ts';
 import { verifySpeechCache } from './cache.ts';
 
-export interface LocalSpeechStatus {
+interface LocalSpeechStatus {
   state: 'not_downloaded' | 'downloading' | 'ready' | 'failed';
   progress?: number;
 }

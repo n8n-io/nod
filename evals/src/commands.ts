@@ -24,7 +24,7 @@ import { loadEnvironment, parseModel } from './stack.ts';
 import { listRuns, loadRun, resultsRoot, saveRun } from './store.ts';
 import type { RunSummary } from './results.ts';
 
-export const help = `Nod capability evals
+const help = `Nod capability evals
 
   Start here
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing

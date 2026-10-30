@@ -94,7 +94,8 @@ test(
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { configuration, dataRoot, ownerId, port } = await import('../src/server/config.ts');
-    const { localArtifacts, storeArtifact } = await import('../src/server/artifacts.ts');
+    const { localArtifacts } = await import('../src/server/artifacts.ts');
+    const { storeArtifact } = localArtifacts;
     const { createPersonalService } = await import('../src/server/personal.ts');
     const { createVault } = await import('../src/server/vault.ts');
     const { createApprovals } = await import('../src/server/approvals.ts');

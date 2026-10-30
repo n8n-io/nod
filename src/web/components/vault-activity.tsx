@@ -31,7 +31,7 @@ const reasons: Record<VaultActivityReason, string> = {
   said_yes: 'You approved',
 };
 
-export function formatMoney(amount: { minor: number; currency: string }) {
+function formatMoney(amount: { minor: number; currency: string }) {
   const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: amount.currency });
   return format.format(amount.minor / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
 }
@@ -113,7 +113,7 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
   );
 }
 
-export function VaultActivityList({
+function VaultActivityList({
   entries,
   opener,
 }: {

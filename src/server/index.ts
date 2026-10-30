@@ -1,14 +1,5 @@
 import { pool } from './db.ts';
-import {
-  authToken,
-  dataRoot,
-  desktopMode,
-  host,
-  ownerId,
-  port,
-  publicOrigin,
-  webRoot,
-} from './config.ts';
+import { authToken, dataRoot, desktopMode, host, port, publicOrigin, webRoot } from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
 

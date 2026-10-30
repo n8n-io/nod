@@ -208,7 +208,7 @@ function release(pool: Map<string, PooledClient>, key: string, entry: PooledClie
   void entry.ready.then((client) => client.close()).catch(() => {});
 }
 
-export async function withRemoteMcp<T>(
+async function withRemoteMcp<T>(
   endpoint: string,
   headers: Record<string, string>,
   operation: (client: Client, options: RequestOptions) => Promise<T>,

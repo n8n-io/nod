@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { AttachmentTrigger, ImagePreview } from './attachment-images';
 
-export interface ArtifactDrawerControls {
+interface ArtifactDrawerControls {
   selectedId: string | null;
   open(id: string, trigger?: AttachmentTrigger, source?: 'drafts'): void;
   setDrafts(items: ImagePreview[]): void;

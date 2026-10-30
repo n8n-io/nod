@@ -10,7 +10,7 @@ import type {
   WentWrong,
 } from './results.ts';
 
-export function choose(n: number, k: number) {
+function choose(n: number, k: number) {
   if (k < 0 || k > n) return 0;
   let value = 1;
   for (let i = 1; i <= k; i++) value = (value * (n - k + i)) / i;
@@ -27,7 +27,7 @@ export function passPowK(n: number, c: number, k: number) {
   return choose(c, k) / choose(n, k);
 }
 
-export function wilson(passed: number, total: number, z = 1.96) {
+function wilson(passed: number, total: number, z = 1.96) {
   if (!total) return null;
   const p = passed / total;
   const denominator = 1 + (z * z) / total;
@@ -86,7 +86,7 @@ export function band(passAt1: number | null, attempts: number) {
   return passAt1 >= 0.95 ? 'anchor' : passAt1 === 0 ? 'frontier' : 'discriminator';
 }
 
-export function percentile(values: number[], fraction: number) {
+function percentile(values: number[], fraction: number) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)];
@@ -102,7 +102,7 @@ const sum = (values: Array<number | null>) =>
     ? null
     : values.reduce<number>((total, value) => total + value!, 0);
 
-export const completedTask = (item: AttemptResult) =>
+const completedTask = (item: AttemptResult) =>
   item.status === 'pass' ||
   (item.status === 'fail' &&
     !item.error &&

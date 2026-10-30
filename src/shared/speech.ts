@@ -116,5 +116,3 @@ export function isSpeechVoiceId(id: string) {
     /^elevenlabs-direct:[A-Za-z0-9_-]{1,64}$/.test(id)
   );
 }
-
-export type SpeechVoiceId = (typeof speechVoices)[number]['id'];

@@ -49,7 +49,6 @@ const blocked = [
   '.model-option small',
   '.message-reply-quote',
   '.reply-context',
-  '.message-link-previews',
   '.message-link-tooltip',
   '.message-attachments',
   '.pending-attachments',

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -9,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
-import pg from 'pg';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';

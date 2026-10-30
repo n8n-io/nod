@@ -13,7 +13,7 @@ const domain = z
     /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$/,
   );
 
-export const serviceFailureReason = z.enum([
+const serviceFailureReason = z.enum([
   'authentication',
   'permission',
   'rate_limited',
@@ -113,15 +113,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('nod_settings_updated'),
       properties: z
         .object({
-          section: z.enum([
-            'account',
-            'preferences',
-            'channels',
-            'models',
-            'trust',
-            'memory',
-            'apps',
-          ]),
+          section: z.enum(['account', 'preferences', 'channels', 'models', 'trust', 'memory']),
           operation: z.enum(['update', 'connect_started', 'disconnect']),
           channel: z.enum(['telegram', 'whatsapp']).optional(),
         })

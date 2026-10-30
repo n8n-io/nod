@@ -139,7 +139,7 @@ type ChannelSettingsRow = {
   summary: ChannelSetupSummary;
 };
 
-export async function initializeChannelSettings(pool: Pick<Pool, 'query'>) {
+async function initializeChannelSettings(pool: Pick<Pool, 'query'>) {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS channel_settings(owner_id text NOT NULL,provider text NOT NULL,enabled boolean NOT NULL,ciphertext text,summary jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner_id,provider))`,
   );
@@ -258,7 +258,7 @@ function issuePairing(summary: ChannelSetupSummary) {
     pairingUrl: `https://t.me/${handle.slice(1)}?start=${code}`,
   };
 }
-export function openChannelSettings(key: Buffer, owner: string, row: ChannelSettingsRow) {
+function openChannelSettings(key: Buffer, owner: string, row: ChannelSettingsRow) {
   const result = z
     .record(z.string(), z.string().max(8192))
     .parse(JSON.parse(openVaultValue(key, binding(owner, row.provider), row.ciphertext!)));

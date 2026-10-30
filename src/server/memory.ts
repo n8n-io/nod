@@ -8,7 +8,6 @@ import {
   area,
   areaEntries,
   find,
-  fold,
   freeSlug,
   id,
   indexLayout,

@@ -22,7 +22,7 @@ export function createFeedbackCapture(ownerId: string) {
   };
 }
 
-export async function captureFeedbackScreenshot(): Promise<File | null> {
+async function captureFeedbackScreenshot(): Promise<File | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const capture = desktopFeedbackScreenshot();

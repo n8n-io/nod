@@ -103,8 +103,7 @@
   padding: 0 24px 24px;
   text-align: center;
 }
-.ob-main:focus,
-.ob-desktop-preference:focus {
+.ob-main:focus {
   outline: none;
 }
 .ob-screen {
@@ -238,12 +237,6 @@
   font-size: var(--text-body);
   line-height: 1.6;
 }
-.ob-user-bubble {
-  align-self: flex-end;
-  max-width: min(82%, 640px);
-  background: var(--chat-sent);
-  color: var(--chat-sent-foreground);
-}
 .ob-typing {
   display: inline-flex;
   align-items: center;
@@ -317,29 +310,6 @@
 .ob-footer .ob-next {
   min-width: 144px;
 }
-.ob-select {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.ob-select > select {
-  width: auto;
-  padding-right: 40px;
-  appearance: none;
-  font-weight: 500;
-  cursor: pointer;
-}
-.ob-select > svg {
-  position: absolute;
-  right: 16px;
-  color: var(--muted-foreground);
-  pointer-events: none;
-}
-@keyframes ob-step-in {
-  from {
-    opacity: 0;
-  }
-}
 @keyframes ob-bounce {
   0%,
   60%,
@@ -350,24 +320,6 @@
   30% {
     opacity: 1;
     transform: translateY(-4px);
-  }
-}
-@keyframes ob-wave {
-  0%,
-  60%,
-  100% {
-    transform: rotate(0deg);
-  }
-  10%,
-  30% {
-    transform: rotate(16deg);
-  }
-  20%,
-  40% {
-    transform: rotate(-8deg);
-  }
-  50% {
-    transform: rotate(10deg);
   }
 }
 @media (max-width: 640px) {

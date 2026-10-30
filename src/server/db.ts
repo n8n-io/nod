@@ -11,7 +11,7 @@ function poolSize(value: string | undefined, fallback: number) {
   return size;
 }
 
-export function createPool(config: pg.PoolConfig) {
+function createPool(config: pg.PoolConfig) {
   const created = new pg.Pool({
     connectionString: databaseUrl,
     connectionTimeoutMillis: 10_000,

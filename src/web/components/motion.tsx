@@ -8,7 +8,7 @@ export function prefersReducedMotion() {
   );
 }
 
-export type GlyphReaction = { kind: 'on' | 'off'; count: number };
+type GlyphReaction = { kind: 'on' | 'off'; count: number };
 
 export function NodGlyph({
   size = 32,

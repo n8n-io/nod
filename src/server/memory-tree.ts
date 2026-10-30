@@ -96,7 +96,7 @@ const watermark = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z\/[0-9a-f-]{36}$/;
 export type Area = z.infer<typeof area>;
 export type Entry = z.infer<typeof entrySchema>;
 export type Archived = z.infer<typeof archivedSchema>;
-export type Reason = Archived['reason'];
+type Reason = Archived['reason'];
 export type Skill = z.infer<typeof skillSchema>;
 export interface Tree {
   enabled: boolean;
@@ -126,7 +126,7 @@ export const isEmpty = (tree: Tree) =>
   !tree.skills.length;
 
 export const pathOf = (entry: { area: Area; slug: string }) => `${entry.area}/${entry.slug}`;
-export const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
+const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
 export const locate = (tree: Tree, target: string) =>
   tree.entries.find((entry) => pathOf(entry) === target);
 export const fold = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
@@ -134,14 +134,14 @@ const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
 const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const tokens = (value: string) =>
   [...segmenter.segment(fold(value))].filter((part) => part.isWordLike).map((part) => part.segment);
-export const words = (value: string) =>
+const words = (value: string) =>
   tokens(value).filter((word) => word.length > 1 || /\p{N}/u.test(word) || cjk.test(word));
 export const same = (a: string, b: string) => {
   const left = tokens(a).join(' ');
   return !!left && left === tokens(b).join(' ');
 };
 
-export const abstractOf = (entry: Entry) => entry.abstract ?? entry.text;
+const abstractOf = (entry: Entry) => entry.abstract ?? entry.text;
 export const statusOf = (entry: Entry) =>
   entry.origin === 'stated'
     ? 'stated'
@@ -301,7 +301,7 @@ const matches = (tokens: string[], term: string) =>
     (token) => token === term || ((term.length > 2 || cjk.test(term)) && token.startsWith(term)),
   );
 
-export const brief = (entry: Entry) => ({
+const brief = (entry: Entry) => ({
   path: pathOf(entry),
   abstract: abstractOf(entry),
   status: statusOf(entry),

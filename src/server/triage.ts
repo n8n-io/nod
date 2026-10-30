@@ -10,7 +10,7 @@ import { createPreferencesStore } from './preferences.ts';
 
 const preferencesStore = createPreferencesStore(pool, ownerId);
 export const getPreferences = preferencesStore.get;
-export const updatePreferences = preferencesStore.update;
+const updatePreferences = preferencesStore.update;
 
 export function createTriage(options: {
   consumers?: WorkConsumers;

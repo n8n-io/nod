@@ -41,7 +41,7 @@ export interface Session {
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
-export async function waitUntil(ready: () => Promise<boolean>, deadline: number) {
+async function waitUntil(ready: () => Promise<boolean>, deadline: number) {
   while (Date.now() < deadline) {
     if (await ready()) return;
     await sleep(250);

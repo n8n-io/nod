@@ -32,7 +32,7 @@ export async function feedbackContext(options: {
   const execute = promisify(childProcess.execFile);
   const { environment } = options;
   const development = environment.NODE_ENV !== 'production';
-  let appRelease = environment.NOD_IMAGE_RELEASE || environment.NOD_RELEASE || null;
+  let appRelease: string | null = null;
   let appModified: boolean | null = null;
   if (development) {
     try {

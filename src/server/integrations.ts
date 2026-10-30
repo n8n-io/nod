@@ -51,7 +51,6 @@ import {
 } from './integration-files.ts';
 import { fileBytes } from '../shared/files.ts';
 import { IntegrationError, verifyIntegrationCompletion } from './integration-connection.ts';
-export { IntegrationError } from './integration-connection.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -200,7 +199,7 @@ function messageIdentity(data: Record<string, unknown>, field: 'message' | 'thre
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? value : undefined;
 }
 
-export async function eventOverview(
+async function eventOverview(
   toolkit: string,
   trigger: string,
   data: Record<string, unknown>,

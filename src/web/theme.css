@@ -21,7 +21,6 @@
   --brand-pink: #ff91ac;
   --pink-70: #87003c;
   --pink-80: #5a0026;
-  --pink-90: #44001b;
   --background: var(--white);
   --canvas: var(--background);
   --sidebar: #f5f5f5;
@@ -56,7 +55,6 @@
   --switch-off: var(--gray-70);
   --switch-thumb: var(--white);
   --secondary: var(--surface-inset);
-  --secondary-foreground: var(--text-secondary);
   --muted: var(--surface-subtle);
   --border: var(--gray-25);
   --ring: var(--pink-70);
@@ -64,8 +62,6 @@
   --focus-halo: 0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent);
   --selection: var(--pink-20);
   --dot-grid: var(--gray-30);
-  --deboss-top: var(--gray-20);
-  --deboss-bottom: var(--gray-0);
   --destructive: #ad2943;
   --destructive-hover: #922139;
   --on-solid: var(--white);
@@ -87,7 +83,6 @@
     0 6px 24px color-mix(in srgb, var(--black) 6%, transparent), 0 1px 3px var(--shadow-color);
   --shadow-menu: 0 12px 32px var(--shadow-overlay), 0 2px 8px var(--shadow-color);
   --shadow-dialog: 0 24px 80px var(--shadow-overlay);
-  --shadow-deboss: inset 8px 8px 12px var(--deboss-top), inset -8px -8px 12px var(--deboss-bottom);
   --control-radius: 8px;
   --input-radius: 12px;
   --radius-full: 400px;
@@ -104,12 +99,9 @@
   --page-inline: clamp(24px, 4vw, 48px);
   --page-width: 1184px;
   --chat-width: 880px;
-  --telegram: #2aabee;
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-reveal: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
-  --reaction-pin-size: 20px;
 }
 
 :root[data-theme='dark'] {
@@ -142,8 +134,6 @@
   --ring: var(--brand-pink);
   --selection: var(--pink-80);
   --dot-grid: var(--gray-80);
-  --deboss-top: var(--black);
-  --deboss-bottom: color-mix(in srgb, var(--white) 10%, transparent);
   --error: #ffacb9;
   --error-soft: #3d252e;
   --success: #96d6b0;
@@ -156,7 +146,6 @@
   --shadow-overlay: #00000059;
   --shadow-color: #00000026;
   --shadow-composer: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
-  --telegram: #229ed9;
 }
 
 :root[data-theme='dark'] .dialog-content {

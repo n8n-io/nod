@@ -19,7 +19,7 @@ import {
   type WhisperRun,
 } from './whisperbench-data.ts';
 
-export interface WhisperOptions {
+interface WhisperOptions {
   data: string;
   root: string;
   label: string;
@@ -164,7 +164,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
 const rate = (part: number, whole: number) =>
   whole ? `${part}/${whole} (${Math.round((1000 * part) / whole) / 10}%)` : '–';
 
-export function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
+function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
   const scored = runs.filter((run) => run.verdicts && !run.error);
   const by = (items: WhisperRun[]) => {
     const injected = items.filter((run) => run.verdicts!.injection.yes);

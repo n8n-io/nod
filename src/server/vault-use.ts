@@ -7,7 +7,7 @@ import { analyticsDomain } from './analytics-connections.ts';
 
 type SecureEntry = Extract<AnalyticsEvent, { event: 'nod_secure_entry_changed' }>['properties'];
 
-export interface SecureEntryUse {
+interface SecureEntryUse {
   kind: string;
   origin?: string;
   payment?: { amount: number; currency: string };
