@@ -54,7 +54,7 @@ stateDiagram-v2
   gone --> Confirmed: you bring it back
 ```
 
-Replaced and expired notes move to **Let go** instead of being deleted. Plans and older guesses without fact details also move there if they were not mentioned again for 60 days. Completed events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
+Replaced and expired notes move to **Let go** instead of being deleted. A plan or an older guess without fact details also moves there if Nod learned it automatically from only one message and it was not repeated for 60 days. Completed events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
 
 ## Sensitive topics
 
