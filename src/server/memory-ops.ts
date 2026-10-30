@@ -4,6 +4,7 @@ import {
   area,
   areaEntries,
   fits,
+  factSchema,
   fold,
   freeSlug,
   line,
@@ -29,6 +30,8 @@ const reflectOp = z.discriminatedUnion('op', [
     m: ordinals,
     quote: line(),
     sensitive: z.boolean(),
+    fact: factSchema.optional(),
+    replaces: z.array(path).max(8).optional(),
   }),
   z.object({
     op: z.literal('archive'),
@@ -53,6 +56,15 @@ export function applyOps(
     const parsed = reflectOp.safeParse(item);
     return parsed.success ? [parsed.data] : [];
   });
+  const replace = (op: Extract<z.infer<typeof reflectOp>, { op: 'add' }>, target: string) => {
+    for (const previous of op.replaces ?? []) {
+      const entry = locate(tree, previous);
+      if (!entry || previous === target || (origin === 'inferred' && entry.origin !== 'inferred'))
+        continue;
+      archive(tree, entry, 'superseded', now, target);
+      applied.push({ operation: 'archive', path: previous, text: entry.text });
+    }
+  };
   for (const op of [
     ...ops.filter(({ op }) => op === 'archive'),
     ...ops.filter(({ op }) => op === 'add'),
@@ -68,7 +80,10 @@ export function applyOps(
       applied.push({ operation: 'archive', path: op.path, text: entry.text });
       continue;
     }
-    if (unsafe(op.text, op.abstract) || (origin === 'inferred' && op.sensitive && !tree.sensitive))
+    if (
+      unsafe(op.text, op.abstract, ...(op.fact?.entities ?? [])) ||
+      (origin === 'inferred' && op.sensitive && !tree.sensitive)
+    )
       continue;
     const match = areaEntries(tree, op.area).find((entry) => same(entry.text, op.text));
     if (match) {
@@ -79,6 +94,8 @@ export function applyOps(
         match.origin = 'stated';
         if (op.expires) match.expires = op.expires;
       }
+      if (op.fact) match.fact = op.fact;
+      replace(op, pathOf(match));
       applied.push({ operation: 'save', path: pathOf(match), text: match.text });
       continue;
     }
@@ -91,10 +108,15 @@ export function applyOps(
       updated: now,
       sources,
       ...(op.expires ? { expires: op.expires } : {}),
+      ...(op.fact ? { fact: op.fact } : {}),
     };
-    tree.entries.push(entry);
+    const previous = { entries: tree.entries, archive: tree.archive, applied: applied.length };
+    tree.entries = [...tree.entries, entry];
+    replace(op, pathOf(entry));
     if (!fits(tree)) {
-      tree.entries.pop();
+      tree.entries = previous.entries;
+      tree.archive = previous.archive;
+      applied.length = previous.applied;
       continue;
     }
     applied.push({ operation: 'save', path: pathOf(entry), text: entry.text });

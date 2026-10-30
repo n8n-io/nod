@@ -156,6 +156,7 @@ import { createPersonalService } from './personal.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
+import { createMemoryRecall } from './memory-recall.ts';
 import { createLearnedSkills } from './learned-skills.ts';
 import { automaticSpeechVoice, createSpeech } from './speech.ts';
 import {
@@ -734,6 +735,10 @@ async function initializeApplication(
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     withExecution: ledger.withExecution,
+    prepareMemory: (context, execution, canContinue) =>
+      ledger.withExecution(execution, () => memoryRecall.prepare(context, canContinue)),
+    reviewMemoryReply: (context, text, execution) =>
+      ledger.withExecution(execution, () => memoryRecall.review(context, text)),
     analyzeImages:
       analyzeImages &&
       ((images, request, signal, execution) =>
@@ -819,6 +824,7 @@ async function initializeApplication(
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   const communication = createCommunication({
     pool,

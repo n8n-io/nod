@@ -35,6 +35,7 @@ import { currentUserTime } from './time-context.ts';
 import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
+import type { MemoryBrief } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
@@ -131,6 +132,16 @@ export function createAgentRuntime(dependencies: {
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
   keepWarm?(threadId: string): Promise<boolean>;
+  prepareMemory?(
+    context: RuntimeContext,
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+    canContinue: () => boolean,
+  ): Promise<MemoryBrief | undefined>;
+  reviewMemoryReply?(
+    context: RuntimeContext,
+    text: string,
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+  ): Promise<string>;
   withExecution?<T>(
     execution: ExecutionScope & { onEvent(event: AgentEvent): void },
     work: () => T,
@@ -234,6 +245,21 @@ export function createAgentRuntime(dependencies: {
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
+    const reviewedReplies = new Map<string, string>();
+    const reviewReply = async (text: string) => {
+      const draft = text.trim();
+      if (!draft || !context.memoryBrief || !dependencies.reviewMemoryReply || overBudget())
+        return draft;
+      if (!reviewedReplies.has(draft)) {
+        const checked = await untilAborted(
+          dependencies.reviewMemoryReply(context, draft, { ...execution, onEvent: countUsage }),
+          signal,
+        );
+        signal.throwIfAborted();
+        reviewedReplies.set(draft, checked);
+      }
+      return reviewedReplies.get(draft)!;
+    };
     const deliverReply = async (
       text: string,
       id?: string,
@@ -241,7 +267,7 @@ export function createAgentRuntime(dependencies: {
       presentation?: Presentation,
     ) => {
       signal.throwIfAborted();
-      const trimmed = text.trim();
+      const trimmed = presentation ? text.trim() : await reviewReply(text);
       const visual = presentation ? JSON.stringify(presentation) : '';
       if (!trimmed || (trimmed === lastReply && (!visual || visual === lastPresentation)))
         return false;
@@ -277,7 +303,8 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (speakNext || replyOwed) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if ((speakNext || replyOwed) && !(context.memoryBrief && dependencies.reviewMemoryReply))
+          context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -453,6 +480,21 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
+      if (dependencies.prepareMemory && !overBudget()) {
+        context.memoryBrief = await untilAborted(
+          dependencies.prepareMemory(
+            context,
+            { ...execution, onEvent: countUsage },
+            () => !stopped && !overBudget(),
+          ),
+          signal,
+        );
+        signal.throwIfAborted();
+        if (overBudget())
+          throw new Error(
+            `This work has used ${dollars(checkInSpent)}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+          );
+      }
       const screenSources = () =>
         context.proactivity?.screen?.(
           {
@@ -601,8 +643,20 @@ export function createAgentRuntime(dependencies: {
           ...context,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
             context.integration(action, args, callSignal, admissions.getStore()?.admit),
-          manage: (action: string, args: Record<string, unknown>) =>
-            context.manage(action, args, admissions.getStore()?.admit),
+          manage: async (action: string, args: Record<string, unknown>) => {
+            const result = await context.manage(action, args, admissions.getStore()?.admit);
+            signal.throwIfAborted();
+            if (
+              context.memoryBrief &&
+              ['memory_read', 'memory_find', 'history_search'].includes(action)
+            ) {
+              const read = { action, args, result };
+              const reads = (context.memoryBrief.reads ??= []);
+              if (JSON.stringify([...reads, read]).length <= 80_000) reads.push(read);
+              else context.memoryBrief.readsTruncated = true;
+            }
+            return result;
+          },
         },
         computer: browser,
         pageVisited: dependencies.pageVisited,
@@ -831,6 +885,8 @@ export function createAgentRuntime(dependencies: {
             const messages = [];
             const incoming = await takeMessages();
             if (incoming.length) {
+              context.memoryBrief = undefined;
+              reviewedReplies.clear();
               checkInSpent = checkInStrikes = 0;
               replyOwed = true;
             }
@@ -927,6 +983,7 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const resumed = session.resumed;
       const compact = Boolean(session.contextWindow && session.contextWindow < 65_536);
+      const memoryBudget = Math.min(32_000, Math.floor((session.contextWindow ?? 131_072) / 8));
       const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
       const requestContext = compact
         ? {
@@ -937,7 +994,7 @@ export function createAgentRuntime(dependencies: {
           }
         : context;
       const fallback = instruct(
-        firstInstruction(requestContext, resumed && !compact, omitted, analysis),
+        firstInstruction(requestContext, resumed && !compact, omitted, analysis, memoryBudget),
       );
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
@@ -948,7 +1005,9 @@ export function createAgentRuntime(dependencies: {
         : requestContext;
       await session!.prompt(
         audio
-          ? instruct(firstInstruction(nativeContext, resumed && !compact, omitted, analysis))
+          ? instruct(
+              firstInstruction(nativeContext, resumed && !compact, omitted, analysis, memoryBudget),
+            )
           : fallback,
         images,
         audio,
@@ -973,6 +1032,7 @@ export function createAgentRuntime(dependencies: {
       }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
+      if (context.taskContext && taskResult) taskResult = await reviewReply(taskResult);
       const result =
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult

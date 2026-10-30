@@ -14,7 +14,15 @@ import { piUsageMetrics } from './usage.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 
-const untraced = new Set(['access', 'reflect', 'remember', 'style', 'skill']);
+const untraced = new Set([
+  'access',
+  'reflect',
+  'remember',
+  'recall',
+  'memory_check',
+  'style',
+  'skill',
+]);
 
 function json(text: string) {
   const parse = (body: string) => {

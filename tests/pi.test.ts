@@ -90,6 +90,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
   const { coreSkills } = await import('../src/runtime/prompt.ts');
   for (const { provider, id, window, limit } of [
     { provider: 'compatible', id: 'fixture-small', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-memory-small', window: 8192, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/free', window: 200_000, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
@@ -294,6 +295,22 @@ test('models and routers complete tool discovery inside the endpoint context', a
         prompt: 'Return the text report named report.txt.',
         rules: 'Do not contact anyone.',
         memory: 'Synthetic earlier memory. '.repeat(2000),
+        ...(id === 'fixture-memory-small'
+          ? {
+              memoryBrief: {
+                mode: 'recall' as const,
+                facts: [],
+                searches: [],
+                messages: Array.from({ length: 100 }, () => ({
+                  id: randomUUID(),
+                  role: 'user',
+                  text: 'Earlier source evidence. '.repeat(50),
+                  at: new Date().toISOString(),
+                  shortened: false,
+                })),
+              },
+            }
+          : {}),
         history: Array.from({ length: 20 }, () => ({
           role: 'assistant',
           text: 'Synthetic older conversation. '.repeat(200),

@@ -11,6 +11,7 @@ import type {
   SpeechReplyMode,
 } from '../shared/contracts.ts';
 import type { ProactiveIssue } from '../shared/proactivity.ts';
+import type { MemoryBrief } from './memory-recall.ts';
 
 export interface ModelUsageObservation {
   type: 'model_usage';
@@ -155,6 +156,7 @@ export interface RuntimeContext {
     createdAt?: string | Date;
   }>;
   memory?: string;
+  memoryBrief?: MemoryBrief;
   learnedSkills?: Array<{ name: string; description: string }>;
   checkIn?: { budgetUsd: number; spentUsd: number };
   previousFailure?: string;

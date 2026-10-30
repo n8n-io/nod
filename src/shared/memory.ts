@@ -12,6 +12,13 @@ export const areaLabels: Record<MemoryArea, string> = {
   lessons: 'Lessons',
 };
 export type MemoryStatus = 'stated' | 'observed' | 'tentative';
+export interface MemoryFact {
+  kind: 'fact' | 'preference' | 'plan' | 'event' | 'possession';
+  entities: string[];
+  occurredOn?: string;
+  validFrom?: string;
+  validTo?: string;
+}
 export type MemoryReason =
   'superseded' | 'merged' | 'duplicate' | 'expired' | 'stale' | 'obsolete' | 'contradicted';
 
@@ -20,6 +27,7 @@ export interface MemorySource {
   text: string | null;
   at: string | null;
   channel: string | null;
+  shortened?: boolean;
 }
 
 export interface MemoryNote {
@@ -32,6 +40,7 @@ export interface MemoryNote {
   expires: string | null;
   learnedFrom: 'email' | null;
   sources: MemorySource[];
+  fact?: MemoryFact;
 }
 
 export interface MemoryArchived {
@@ -42,6 +51,7 @@ export interface MemoryArchived {
   by: string | null;
   archived: string;
   sources: MemorySource[];
+  fact?: MemoryFact;
 }
 
 export interface LearnedSkill {

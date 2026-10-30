@@ -3735,6 +3735,9 @@ test(
           assert.deepEqual(await personal.manage('history_search', { query: 'Archived' }), {
             turns: [],
             messages: [],
+            complete: true,
+            totalMatches: 0,
+            nextCursor: null,
           });
           assert.equal(
             (

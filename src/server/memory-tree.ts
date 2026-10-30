@@ -58,6 +58,17 @@ const skillSchema = z.object({
   turn: z.uuid().optional(),
 });
 
+export const factSchema = z
+  .object({
+    kind: z.enum(['fact', 'preference', 'plan', 'event', 'possession']),
+    entities: z.array(line(120)).max(12),
+    occurredOn: z.iso.date().optional(),
+    validFrom: z.iso.date().optional(),
+    validTo: z.iso.date().optional(),
+  })
+  .strict()
+  .refine((fact) => !fact.validFrom || !fact.validTo || fact.validFrom <= fact.validTo);
+
 const entryFields = z.object({
   area,
   slug,
@@ -68,6 +79,7 @@ const entryFields = z.object({
   edited: timestamp.optional(),
   sources: z.array(id).max(5),
   expires: z.iso.date().optional(),
+  fact: factSchema.optional(),
 });
 const evidenced = (entry: z.infer<typeof entryFields>) =>
   entry.sources.length > 0 || !!entry.edited || entry.origin === 'email';
@@ -180,7 +192,11 @@ export function parse(bytes?: Uint8Array): Tree {
   const body = new TextDecoder().decode(bytes);
   const seen = new Set<string>();
   const keep = (entry: Entry) => {
-    if (unsafe(entry.text, entry.abstract) || seen.has(pathOf(entry))) return;
+    if (
+      unsafe(entry.text, entry.abstract, ...(entry.fact?.entities ?? [])) ||
+      seen.has(pathOf(entry))
+    )
+      return;
     seen.add(pathOf(entry));
     tree.entries.push(entry);
   };
@@ -201,7 +217,10 @@ export function parse(bytes?: Uint8Array): Tree {
   }
   for (const raw of Array.isArray(doc.archive) ? doc.archive : []) {
     const entry = archivedSchema.safeParse(raw);
-    if (entry.success && !unsafe(entry.data.text, entry.data.abstract))
+    if (
+      entry.success &&
+      !unsafe(entry.data.text, entry.data.abstract, ...(entry.data.fact?.entities ?? []))
+    )
       tree.archive.push(entry.data);
   }
   for (const raw of Array.isArray(doc.skills) ? doc.skills : []) {
@@ -324,6 +343,8 @@ export function open(tree: Tree, target: string) {
     text: entry.text,
     status: statusOf(entry),
     evidence: entry.sources.length,
+    sources: entry.sources,
+    ...(entry.fact ? { fact: entry.fact } : {}),
     updated: entry.updated,
     ...(entry.expires ? { expires: entry.expires } : {}),
   };
@@ -349,6 +370,7 @@ export function view(
         expires: entry.expires ?? null,
         learnedFrom: entry.origin === 'email' ? ('email' as const) : null,
         sources: entry.sources.map(source),
+        ...(entry.fact ? { fact: entry.fact } : {}),
       })),
     archive: tree.archive.toReversed().map((entry) => ({
       path: pathOf(entry),
@@ -358,6 +380,7 @@ export function view(
       by: entry.by ?? null,
       archived: entry.archived,
       sources: entry.sources.map(source),
+      ...(entry.fact ? { fact: entry.fact } : {}),
     })),
     skills: tree.skills
       .toSorted((a, b) => b.updated.localeCompare(a.updated) || a.name.localeCompare(b.name))

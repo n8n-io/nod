@@ -10,7 +10,8 @@ import type {
   ScheduleRun,
   TurnStatus,
 } from '../shared/contracts.ts';
-import { activeThreadSql, type enqueueTurn } from './thread.ts';
+import type { enqueueTurn } from './thread.ts';
+import { activeThreadSql } from './history.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 

@@ -203,10 +203,6 @@ export interface ThreadDependencies {
   ) => Promise<unknown>;
 }
 
-export function activeThreadSql(alias = 'm') {
-  return `${alias}.thread_id=(SELECT th.id FROM threads th WHERE th.owner_id=${alias}.owner_id AND th.archived_at IS NULL)`;
-}
-
 export async function activeThread(database: Pool | PoolClient = pool, owner = ownerId) {
   const select = () =>
     database.query('SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [owner]);

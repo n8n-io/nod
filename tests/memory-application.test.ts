@@ -16,6 +16,8 @@ import { applyOps } from '../src/server/memory-ops.ts';
 import { emptyTree, parse, render, type Entry, type Tree } from '../src/server/memory-tree.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
+import { createHistorySearch } from '../src/server/history.ts';
+import { createMemoryRecall } from '../src/server/memory-recall.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -940,5 +942,204 @@ test(
     await Promise.all(notes.map((text) => memory.add({ area: 'preferences', text })));
     const saved = (await store.read('memory/MEMORY.md', 1_000_000))!.bytes.toString();
     for (const text of ['Lives in Lisbon.', ...notes]) assert.ok(saved.includes(text), text);
+  },
+);
+
+test('memory corrections keep their evidence, type and dates and do not archive a fact before a valid replacement', () => {
+  const tree = treeOf(
+    entry({ slug: 'visit', origin: 'inferred', text: 'Plans to visit Cedar Fair.' }),
+  );
+  const source = {
+    id: ids[1],
+    text: 'I cancelled Cedar Fair. I attended Maple Fair on 2026-01-03.',
+  };
+  const add = {
+    op: 'add',
+    area: 'about',
+    slug: 'maple',
+    text: '2026-01-03: Attended Maple Fair.',
+    fact: { kind: 'event', entities: ['Maple Fair'], occurredOn: '2026-01-03' },
+    replaces: ['about/visit'],
+    m: [1],
+    quote: 'I attended Maple Fair on 2026-01-03.',
+    sensitive: false,
+  };
+  applyOps(tree, [{ ...add, quote: 'I attended Cedar Fair.' }], [source], when);
+  assert.equal(tree.entries[0].slug, 'visit');
+  assert.equal(tree.archive.length, 0);
+  applyOps(
+    tree,
+    [{ ...add, fact: { ...add.fact, validFrom: '2026-03-01', validTo: '2026-02-01' } }],
+    [source],
+    when,
+  );
+  assert.equal(tree.archive.length, 0);
+  applyOps(tree, [add], [source], when);
+  const saved = parse(render(tree));
+  assert.deepEqual(
+    saved.entries.map((note) => [note.slug, note.sources, note.fact]),
+    [['maple', [source.id], add.fact]],
+  );
+  assert.equal(saved.archive[0].by, 'about/maple');
+  assert.equal(saved.archive[0].reason, 'superseded');
+  repair(saved, new Date('2026-06-01'));
+  assert.equal(saved.entries.length, 1);
+});
+
+test(
+  'history pages keep every match and memory evidence stays within its owner and active conversation',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_memory_recall_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,archived_at timestamptz);
+      CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz);
+      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text,thread_id uuid,prompt text,status text,source text,channel text,created_at timestamptz);
+      CREATE TABLE preferences(owner_id text,time_zone text);`);
+    const active = randomUUID(),
+      archived = randomUUID(),
+      foreign = randomUUID();
+    await pool.query('INSERT INTO threads VALUES($1,$4,NULL),($2,$4,now()),($3,$5,NULL)', [
+      active,
+      archived,
+      foreign,
+      'owner-a',
+      'owner-b',
+    ]);
+    const records = Array.from({ length: 45 }, (_, n) => ({
+      id: randomUUID(),
+      owner: 'owner-a',
+      thread: active,
+      role: 'user',
+      text: n < 20 ? 'Maple fair cedar elm.' : 'Maple fair.',
+      at: new Date(Date.UTC(2026, 0, 1, 0, n)),
+    }));
+    const other = {
+      id: randomUUID(),
+      owner: 'owner-b',
+      thread: foreign,
+      role: 'user',
+      text: 'Foreign Maple detail.',
+      at: new Date(),
+    };
+    const old = {
+      ...other,
+      id: randomUUID(),
+      owner: 'owner-a',
+      thread: archived,
+      text: 'Archived Maple detail.',
+    };
+    const assistant = {
+      ...other,
+      id: randomUUID(),
+      owner: 'owner-a',
+      thread: active,
+      role: 'assistant',
+      text: 'Assistant detail.',
+    };
+    for (const record of [...records, other, old, assistant]) {
+      await pool.query('INSERT INTO messages VALUES($1,$2,$3,NULL,$4,$5,$6)', [
+        record.id,
+        record.owner,
+        record.thread,
+        record.role,
+        record.text,
+        record.at,
+      ]);
+    }
+    const search = createHistorySearch({ pool, ownerId: 'owner-a' });
+    for (const order of ['relevance', 'newest']) {
+      const found: string[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await search({ query: 'Maple fair cedar elm', cursor, order });
+        assert.equal(page.totalMatches, 45);
+        found.push(
+          ...page.messages.filter((message) => message.match).map((message) => message.id),
+        );
+        assert.equal(page.complete, !page.nextCursor);
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+      assert.equal(found.length, 45);
+      assert.deepEqual(new Set(found), new Set(records.map((record) => record.id)));
+    }
+    await assert.rejects(search({ query: 'Maple', cursor: other.id }), /cursor/);
+    await assert.rejects(search({ query: 'Maple', before: old.id }), /unavailable/);
+    await assert.rejects(search({ around: other.id }), /unavailable/);
+    await assert.rejects(search({ around: old.id }), /unavailable/);
+    const datePage = await search({ from: '2026-01-01', to: '2026-01-01' });
+    assert.equal(datePage.totalMatches, 45);
+    const store = memoryObjectStore();
+    const memory = createMemoryService({ pool, ownerId: 'owner-a', store });
+    const tree = treeOf(
+      entry({
+        slug: 'maple',
+        text: 'Maple fair.',
+        sources: [records[0].id, other.id, assistant.id],
+      }),
+    );
+    await store.write('memory/MEMORY.md', render(tree), { expectedVersion: null });
+    const read = await memory.read({ path: 'about/maple' });
+    assert.ok('sources' in read);
+    assert.deepEqual(
+      read.sources.map((source) => source.text),
+      [records[0].text, null, null],
+    );
+    const inputs: string[] = [];
+    const recall = createMemoryRecall({
+      pool,
+      ownerId: 'owner-a',
+      memory,
+      curator: {
+        id: 'fixture',
+        configured: true,
+        async curate({ task, input }) {
+          inputs.push(JSON.stringify(input));
+          if (task === 'memory_check')
+            return { supported: false, usedPaths: ['about/foreign'], answer: 'Foreign answer.' };
+          return 'mode' in input
+            ? {
+                paths: ['about/maple', 'about/foreign'],
+                messages: [records[0].id, other.id, old.id],
+              }
+            : { mode: 'aggregate', paths: ['about/maple', 'about/foreign'], queries: ['Maple'] };
+        },
+      },
+    });
+    const context = {
+      prompt: 'How many Maple fairs did I attend?',
+      signal: new AbortController().signal,
+      history: [],
+      currentMessageId: randomUUID(),
+    } as unknown as Parameters<typeof recall.prepare>[0];
+    const before = await memory.load();
+    const brief = await recall.prepare(context);
+    assert.ok(brief);
+    assert.deepEqual(
+      brief.facts.map((fact) => fact.path),
+      ['about/maple'],
+    );
+    assert.deepEqual(
+      brief.messages.map((message) => message.id),
+      [records[0].id],
+    );
+    assert.ok(!inputs.join('\n').includes('Foreign Maple detail.'));
+    assert.ok(!inputs.join('\n').includes('Archived Maple detail.'));
+    context.memoryBrief = brief;
+    assert.equal(
+      await recall.review(context, 'I do not have a complete count.'),
+      'I do not have a complete count.',
+    );
+    assert.deepEqual(await memory.load(), before);
   },
 );

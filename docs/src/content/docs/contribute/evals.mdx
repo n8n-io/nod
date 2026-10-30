@@ -662,6 +662,16 @@ Late-page background probes check all source pages, the required prepared work, 
 pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-engine,proactivity-stress-endurance-holdout-late-page-engine --repeat 2 --label proactive-endurance
 ```
 
+## Check memory selection and use
+
+The `memory-indirect-advice`, `memory-event-scope` and `memory-false-premise-control` cases use new synthetic owner facts. They check useful advice after a reset, event counts and dates, false premises, and general answers that need no personal facts. They also require no outside actions. Their calibration stays pending until repeated live runs and a deliberate failure check pass.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario memory-indirect-advice,memory-event-scope,memory-false-premise-control --repeat 3 --label memory-selection
+```
+
+Run `memory-injected-web-content`, `trust-memory-injection` and `memory-sensitive-not-saved` with the same model to check the existing safety boundaries. Keep the source fixtures and judges fixed before comparing a baseline and candidate. Report reply accuracy, unwanted personal claims, model spend and duration separately. These cases do not establish a ranking against another memory system.
+
 ## Related resources
 
 - [Contribute to Nod](/contribute/)

@@ -303,6 +303,7 @@ export function createMemoryService(options: {
           slug: entry.slug,
           text,
           ...(!rewritten && entry.abstract ? { abstract: entry.abstract } : {}),
+          ...(!rewritten && entry.fact ? { fact: entry.fact } : {}),
           origin: rewritten || input.confirm ? 'stated' : entry.origin,
           updated: now,
           edited: now,
@@ -332,6 +333,7 @@ export function createMemoryService(options: {
         slug: current && !replaces ? freeSlug(tree, item.area, item.slug) : item.slug,
         text: item.text,
         ...(item.abstract ? { abstract: item.abstract } : {}),
+        ...(item.fact ? { fact: item.fact } : {}),
         origin: 'stated',
         updated: now,
         edited: now,
@@ -367,21 +369,25 @@ export function createMemoryService(options: {
     });
   }
 
-  async function view() {
-    const { tree } = await load();
-    const ids = [...new Set([...tree.entries, ...tree.archive].flatMap((entry) => entry.sources))];
+  async function sources(ids: string[]) {
     const { rows } = await options.pool.query(
       `SELECT m.id,m.text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
        FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
       [options.ownerId, ids],
     );
-    const found = new Map(
+    return new Map(
       rows.map((row) => [
         row.id as string,
         { id: row.id, text: row.text, at: row.created_at.toISOString(), channel: row.channel },
       ]),
     );
+  }
+
+  async function view() {
+    const { tree } = await load();
+    const ids = [...new Set([...tree.entries, ...tree.archive].flatMap((entry) => entry.sources))];
+    const found = await sources(ids);
     const learnedIn = tree.skills.flatMap((skill) => skill.turn ?? []);
     const turns = new Map(
       learnedIn.length
@@ -422,7 +428,17 @@ export function createMemoryService(options: {
       const input = findInput.parse(raw);
       return find((await load()).tree, input.query, input.area);
     },
-    read: async (raw: unknown) => open((await load()).tree, readInput.parse(raw).path),
+    read: async (raw: unknown) => {
+      const result = open((await load()).tree, readInput.parse(raw).path);
+      if (!('sources' in result)) return result;
+      const found = await sources(result.sources);
+      return {
+        ...result,
+        sources: result.sources.map(
+          (id) => found.get(id) ?? { id, text: null, at: null, channel: null },
+        ),
+      };
+    },
     note: async (raw: unknown) => noteText((await load()).tree, path.parse(raw)),
   };
 }

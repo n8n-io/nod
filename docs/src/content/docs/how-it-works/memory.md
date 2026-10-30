@@ -42,9 +42,9 @@ flowchart TD
 
 - The **index** lists every entry's full text in the owner context, one line each as `area/slug: text`, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
-- An **entry** shows its full text, status and evidence count.
+- An **entry** shows its full text, status, source messages and evidence count. A missing source stays marked as unavailable.
 
-`memory_find` matches words in the slug, abstract and text. There's no model and there are no embeddings.
+`memory_find` matches words in the slug, abstract and text. This direct tool uses no model or embeddings. Before an owner request, Nod also uses the memory model to select relevant facts and expand search terms.
 
 ### Earlier conversation
 
@@ -54,9 +54,41 @@ Notes hold what lasts. For everything else, Pi searches the conversation itself 
 - `from` and `to` keep matches between two dates in the owner's time zone; alone, they list that period's messages.
 - `around` returns one message with the five before and after it, such as the reply to a question.
 
-Before a turn started by an owner message, the server runs the same search on that message and gives Pi the six best-matching older owner messages, shortened, as `relatedConversation`, so an answer or recommendation can use what the owner said without waiting for a search.
+Before a turn started by an owner message, the server gives Pi six older owner messages that share words with the request. It also prepares evidence for the current question:
 
-Pi is told to search when the conversation in front of it doesn't show what the owner said, did or planned, to gather every mention and keep only what fits the question before it counts or totals, to let the newest statement win, to answer what it said earlier from the conversation before correcting it, and to say it doesn't have something rather than answer from a near match. Search uses PostgreSQL full-text search with an index, with no model and no embeddings. A reset conversation is no longer searched.
+```mermaid
+flowchart TD
+  request[Your request]:::accent --> select[Select facts and expand searches]
+  select --> search[Search the active conversation]
+  search --> rank[Rank facts and source messages]
+  rank --> answer[Pi prepares an answer]
+  answer --> check[Check personal claims]
+  check --> reply[Deliver the checked text]:::go
+```
+
+The memory model selects existing notes. It can connect an indirect question to a preference or possession. It expands search terms with related concepts and source names, then ranks the returned messages. The server accepts only note paths and message IDs from the supplied records. Model-written facts do not enter this evidence packet or memory.
+
+The full note index stays available. The selected evidence appears next to the current request, with sources and dates. A note marked **Mentioned once** can still have an exact source. That label records repetition; it does not prove the note is false.
+
+For totals and comparisons, automatic retrieval follows up to five pages per search. It uses up to five searches and keeps at most 100 messages. Each message or source excerpt has at most 1,200 characters. Each model input is bounded at 256,000 characters. A shortened message remains marked so Pi can read the full source. Ranking can select fewer records. Pi receives a smaller packet when its model has a small context window. A shortened packet keeps source references and requires further reads for complete evidence.
+
+`history_search` returns `totalMatches`, `nextCursor` and `complete`. Continue with `cursor: nextCursor`, keeping the same query, dates and order. `before` limits the message date; it is not a relevance-page cursor. `order` can be `relevance` or `newest`. Dates filter when messages were sent, not when their events happened. A reset conversation is not searched.
+
+:::caution[Search coverage]
+`complete` covers the matches for one search. It does not prove that the search found every real event. Counts need all relevant searches, event dates, duplicate removal and the requested conditions.
+:::
+
+### Check the answer
+
+When selected evidence is available, the memory model checks each text reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, the selected evidence and later memory or history reads. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. Visual presentations keep their existing delivery path.
+
+The check must keep plans separate from completed events and possessions separate from purchases. It must also keep an earlier assistant statement separate from a verified correction. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
+
+Selection uses up to two model calls. A text reply can add one check; the same draft is checked once per turn. These calls count in **Usage** and the session's spending check-in. Each call has a 20-second deadline. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
+
+:::caution[Model limits]
+Selection and reply checks can make mistakes. If a call fails or returns invalid data, Nod keeps its word-search fallback or original answer; it does not claim that the answer passed a check.
+:::
 
 ## How the model saves memory
 
@@ -71,8 +103,8 @@ flowchart LR
 ```
 
 1. The server reads the current owner message, the owner's last 10 messages in that conversation and any older owner messages Pi names by ID, such as one it found with `history_search`. It skips task-card titles the owner tapped, which are Nod's wording, messages over 4,000 characters and messages with a secret. A message Pi names that isn't one of the owner's own refuses the save.
-2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never Nod's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
-3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. When the messages make a saved note untrue, the model can archive it; the old version stays in the archive.
+2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never Nod's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note can also hold its kind, source entities, event date and validity dates. Plans, completed events, possessions and preferences stay distinct. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
+3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. When the messages make a saved note untrue, the model can name the notes it replaces. Nod saves the new note before it archives those notes, and links them to the replacement. The old version stays in the archive.
 
 This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, made again once if its answer can't be read. If the model is unreachable or its answer still can't be read, nothing is saved and Pi gets the reason.
 
@@ -119,10 +151,10 @@ Every write uses a compare-and-swap on the document version, so a stale writer c
 Repair runs first on every tick, even without a model key. It archives:
 
 - entries past their expiry date,
-- inferred entries with one source that nobody repeated for 60 days, and
+- older inferred entries without structured fact details, with one source that nobody repeated for 60 days, and
 - duplicates whose text matches after normalizing case, accents and punctuation. The stronger entry stays.
 
-The archive keeps as many records as fit. When the file reaches 256 KiB, the oldest archived records go first. A save that still doesn't fit is refused with **Memory is full**.
+Structured facts do not expire only because they were mentioned once. Their expiry dates and corrections still apply. The archive keeps as many records as fit. When the file reaches 256 KiB, the oldest archived records go first. A save that still doesn't fit is refused with **Memory is full**.
 
 ### Reflect
 

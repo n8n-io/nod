@@ -1800,3 +1800,105 @@ test('time annotations read nested JSON outputs, keep source values and bound ad
   assert.equal(Object.keys(converted).length, 32);
   for (const key of Object.keys(converted)) assert.ok(source.includes(key));
 });
+
+test('memory reply checks finish before delivery, share new evidence and run once per draft', async () => {
+  const deltas: string[] = [];
+  let checks = 0;
+  const checked = 'A source-backed memory answer.';
+  const { replies, result } = await fixture(
+    async (tools, emit) => {
+      await call(tools, 'manage_personal_context', {
+        action: 'history_search',
+        args: { query: 'Maple' },
+      });
+      emit({ type: 'message_start' });
+      emit({ type: 'text_delta', text: 'An unchecked answer.' });
+      emit({ type: 'message_end', status: 'succeeded' });
+      emit({ type: 'final', text: 'An unchecked answer.' });
+    },
+    {
+      delta: (text) => {
+        deltas.push(text);
+      },
+      manage: async () => ({
+        messages: [{ id: randomUUID(), role: 'user', text: 'I attended Maple.' }],
+      }),
+    },
+    {
+      prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
+      reviewMemoryReply: async (context) => {
+        checks++;
+        assert.ok(!deltas.includes('An unchecked answer.'));
+        assert.equal(context.memoryBrief?.reads?.length, 1);
+        assert.equal(context.memoryBrief?.reads?.[0].action, 'history_search');
+        return checked;
+      },
+    },
+  );
+  assert.equal(checks, 1);
+  assert.deepEqual(replies, [checked]);
+  assert.equal(result.spokenReply, checked);
+  assert.ok(!deltas.join('').includes('An unchecked answer.'));
+});
+
+test('Stop ends a memory check that ignores cancellation without delivering its draft', async () => {
+  const stop = new AbortController();
+  const replies: string[] = [];
+  await assert.rejects(
+    fixture(
+      async (_tools, emit) => {
+        emit({ type: 'final', text: 'An unchecked answer.' });
+      },
+      {
+        signal: stop.signal,
+        reply: async (text) => {
+          replies.push(text);
+        },
+      },
+      {
+        prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
+        reviewMemoryReply: async () => {
+          stop.abort();
+          return new Promise<string>(() => {});
+        },
+      },
+    ),
+    /abort/i,
+  );
+  assert.deepEqual(replies, []);
+});
+
+test('memory selection spend reaches the session check-in before the agent opens', async () => {
+  let opened = false;
+  await assert.rejects(
+    fixture(
+      async () => {
+        opened = true;
+      },
+      {
+        checkIn: { budgetUsd: 1, spentUsd: 0 },
+      },
+      {
+        prepareMemory: async (_context, execution, canContinue) => {
+          execution.onEvent({
+            type: 'provider_usage',
+            usage: {
+              id: randomUUID(),
+              provider: 'fixture',
+              model: 'fixture',
+              category: 'memory',
+              operation: 'recall',
+              status: 'succeeded',
+              durationMs: 1,
+              costUsd: 1,
+            },
+          });
+          assert.equal(canContinue(), false);
+          return undefined;
+        },
+      },
+    ),
+    /check-in/,
+  );
+  assert.equal(opened, false);
+});

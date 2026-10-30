@@ -12,6 +12,7 @@ export function repair(tree: Tree, now: Date) {
     if (entry.expires && entry.expires < iso.slice(0, 10)) archive(tree, entry, 'expired', iso);
     else if (
       entry.origin === 'inferred' &&
+      !entry.fact &&
       entry.sources.length < 2 &&
       now.getTime() - Date.parse(entry.updated) > staleMs
     )
