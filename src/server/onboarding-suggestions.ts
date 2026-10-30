@@ -332,8 +332,8 @@ export function createOnboardingSuggestions(options: {
   async function discover(signal: AbortSignal, timeZone: string | null) {
     const discovery = options.discovery;
     const accounts = await discovery.accounts();
-    const evidence: Array<{ account: DiscoveryAccount; observations: string[] }> = [];
-    const seen = new Set<string>();
+    const evidence: Array<{ account: DiscoveryAccount; observations: string[]; seen: string[] }> =
+      [];
     const own = accounts.flatMap((account) => account.email?.split('@')[1]?.toLowerCase() ?? []);
     const budget = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
     const active = async (account: DiscoveryAccount, currentSignal = signal) => {
@@ -367,6 +367,7 @@ export function createOnboardingSuggestions(options: {
         );
       if (!chosen.success) return;
       const observations: string[] = [];
+      const seen = new Set<string>();
       for (const choice of chosen.data.reads) {
         const tool = tools.find((candidate) => candidate.name === choice.tool);
         if (!tool || !(await active(account, accountSignal))) continue;
@@ -379,7 +380,7 @@ export function createOnboardingSuggestions(options: {
             options.mailCheck,
             accountSignal,
           );
-          accountSignal.throwIfAborted();
+          if (!(await active(account, accountSignal))) break;
           const full = JSON.stringify(clean ?? null);
           for (const slug of senderApps(senderAddresses(clean), own)) seen.add(slug);
           const text = masked(full).slice(0, briefLimit / Math.max(1, accounts.length * 2));
@@ -389,7 +390,7 @@ export function createOnboardingSuggestions(options: {
         }
       }
       if (!observations.length || !(await active(account, accountSignal))) return;
-      evidence.push({ account, observations });
+      evidence.push({ account, observations, seen: [...seen] });
     };
     let next = 0;
     await Promise.all(
@@ -402,14 +403,16 @@ export function createOnboardingSuggestions(options: {
         }
       }),
     );
-    const briefs: Array<{ source: string; observations: string[] }> = [];
-    for (const item of evidence) {
-      const brief = { source: item.account.slug, observations: item.observations };
-      if ((await active(item.account)) && JSON.stringify([...briefs, brief]).length <= briefLimit)
-        briefs.push(brief);
-    }
     const available: DiscoveryAccount[] = [];
     for (const account of accounts) if (await active(account)) available.push(account);
+    const briefs: Array<{ source: string; observations: string[] }> = [];
+    const seen = new Set<string>();
+    for (const item of evidence) {
+      if (!available.includes(item.account) || !(await active(item.account))) continue;
+      const brief = { source: item.account.slug, observations: item.observations };
+      if (JSON.stringify([...briefs, brief]).length <= briefLimit) briefs.push(brief);
+      for (const slug of item.seen) seen.add(slug);
+    }
     return {
       accounts: available.map(({ email: _email, ...account }) => account),
       briefs,
@@ -524,15 +527,20 @@ export function createOnboardingSuggestions(options: {
     }
     const built = await build(signal);
     signal.throwIfAborted();
-    const stored = await pool.query(
-      `INSERT INTO onboarding_suggestions(owner_id,suggestions) VALUES($1,$2)
+    return transaction(async (client) => {
+      if (!(await options.discovery.current(built.accounts, client)))
+        throw new Error('Connected accounts changed before the first tasks were saved.');
+      signal.throwIfAborted();
+      const stored = await client.query(
+        `INSERT INTO onboarding_suggestions(owner_id,suggestions) VALUES($1,$2)
        ON CONFLICT(owner_id) DO UPDATE SET suggestions=CASE
          WHEN onboarding_suggestions.posted_at IS NULL THEN EXCLUDED.suggestions
          ELSE COALESCE(onboarding_suggestions.suggestions,EXCLUDED.suggestions) END
        RETURNING suggestions`,
-      [owner, JSON.stringify(built)],
-    );
-    return stored.rows[0].suggestions as PreparedSuggestions;
+        [owner, JSON.stringify(built)],
+      );
+      return stored.rows[0].suggestions as PreparedSuggestions;
+    }, pool);
   }
 
   function prepare(fresh = false) {

@@ -3022,7 +3022,9 @@ test(
             'invalid',
             'refused',
             'revoked_read',
+            'revoked_privacy',
             'revoked_plan',
+            'revoked_save',
             'revoked_publish',
             'cancelled',
             'cancelled_plan',
@@ -3061,6 +3063,7 @@ test(
               additionalProperties: false,
             };
             const closing = new AbortController();
+            let bindingChecks = 0;
             let plans!: ReturnType<typeof createOnboardingSuggestions>;
             plans = createOnboardingSuggestions({
               ownerId: owner,
@@ -3069,8 +3072,10 @@ test(
               signal: closing.signal,
               answers: async () => [],
               telegram: async () => false,
-              mailCheck: async (emails) =>
-                emails.map(({ subject }) => subject === 'Verification code'),
+              mailCheck: async (emails) => {
+                if (mode === 'revoked_privacy') active.clear();
+                return emails.map(({ subject }) => subject === 'Verification code');
+              },
               curator: {
                 id: 'fixture',
                 configured: true,
@@ -3139,7 +3144,10 @@ test(
                 },
               },
               discovery: {
-                accounts: async () => accounts,
+                accounts: async () =>
+                  mode === 'revoked_privacy'
+                    ? accounts.filter((account) => active.has(account.connectionId))
+                    : accounts,
                 search: async (account) => {
                   if (mode === 'unavailable' && account === accounts[0])
                     throw new Error('Synthetic unavailable account.');
@@ -3217,7 +3225,14 @@ test(
                   ];
                 },
                 current: async (bound, client) => {
-                  if (mode === 'revoked_publish' && client) active.clear();
+                  if (client) {
+                    bindingChecks++;
+                    if (
+                      mode === 'revoked_save' ||
+                      (mode === 'revoked_publish' && bindingChecks > 1)
+                    )
+                      active.clear();
+                  }
                   return bound.every(
                     (account) => active.get(account.connectionId) === account.binding,
                   );
@@ -3346,6 +3361,7 @@ test(
                 assert.equal(plannerBriefs.length, 0);
               if (
                 [
+                  'revoked_save',
                   'revoked_publish',
                   'cancelled_plan',
                   'cancelled_repair',
@@ -3354,8 +3370,15 @@ test(
                 ].includes(mode)
               )
                 assert.equal(posted.length, 0);
-              if (mode === 'revoked_read' || mode === 'revoked_plan' || mode === 'cancelled')
-                assert.doesNotMatch(JSON.stringify(posted), /Juniper/);
+              if (['revoked_read', 'revoked_privacy', 'revoked_plan', 'cancelled'].includes(mode))
+                assert.doesNotMatch(JSON.stringify(posted), /Juniper|Linear|googlecalendar/);
+              if (mode === 'revoked_privacy' || mode === 'revoked_save') {
+                const cached = await db.pool.query(
+                  'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
+                  [owner],
+                );
+                assert.doesNotMatch(JSON.stringify(cached.rows), /linear|googlecalendar/);
+              }
             }
           }
         },
