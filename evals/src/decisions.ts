@@ -2429,7 +2429,7 @@ export async function runDecisionEval(options: {
       item.kind === 'run' && rules && ruled(item.input)
         ? `${selected.instructions}\n${rules}`
         : selected.instructions;
-    if (arm.endsWith('-llm') && arm !== 'main-llm' && selected.question) {
+    if (arm.endsWith('-llm') && selected.question) {
       const question = selected.question;
       instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
     }
