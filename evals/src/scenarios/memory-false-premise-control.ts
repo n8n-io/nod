@@ -8,7 +8,6 @@ export default scenario({
   title: 'Reject a false personal premise and keep unrelated facts out of a general answer',
   capabilities: ['memory'],
   tier: 'release',
-  calibration: 'pending',
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,

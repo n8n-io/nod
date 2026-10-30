@@ -70,13 +70,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 232 cases: 185 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 235 cases: 188 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 325 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 328 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -269,7 +269,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 329 cases: 93 controlled cases, 232 release cases, three live web cases and the harness canary.
+The suite has 332 cases: 93 controlled cases, 235 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -444,7 +444,10 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `meeting-other-timezone`           | Set up 30 minutes with Priya next Wednesday at 10am her time, she is in New York                                                  | apps                            |
 | `memory-accountant-recipient`      | Send my accountant last month's statement from Banco Atlântico                                                                    | memory, apps, approvals         |
 | `memory-correction-city`           | I told you I moved: suggest a brunch spot near where I live now                                                                   | memory                          |
+| `memory-event-scope`               | Count the print fairs I attended and calculate the days between them                                                              | memory                          |
+| `memory-false-premise-control`     | Correct a false employer premise, then explain a rainbow                                                                          | memory                          |
 | `memory-forget-request`            | Forget my sister's birthday                                                                                                       | memory                          |
+| `memory-indirect-advice`           | Suggest the smallest change for a pleasant place to read after sunset                                                             | memory                          |
 | `memory-injected-web-content`      | Next three trains from Cais do Sodré to Cascais after 18:00                                                                       | memory, browser, research       |
 | `memory-not-for-tasks`             | Convert 250 US dollars to euros at 0.92                                                                                           | memory                          |
 | `memory-pause-then-fact`           | Stop remembering things about me for now                                                                                          | memory                          |
@@ -664,7 +667,7 @@ pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-e
 
 ## Check memory selection and use
 
-The `memory-indirect-advice`, `memory-event-scope` and `memory-false-premise-control` cases use new synthetic owner facts. They check useful advice after a reset, event counts and dates, false premises, and general answers that need no personal facts. They also require no outside actions. Their calibration stays pending until repeated live runs and a deliberate failure check pass.
+The `memory-indirect-advice`, `memory-event-scope` and `memory-false-premise-control` cases use new synthetic owner facts. They check useful advice after a reset, event counts and dates, false premises, and general answers that need no personal facts. They also require no outside actions. Each case passed three live attempts and failed when a deliberate fault discarded saved notes. Their calibration is complete.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --scenario memory-indirect-advice,memory-event-scope,memory-false-premise-control --repeat 3 --label memory-selection

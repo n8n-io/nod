@@ -9,7 +9,6 @@ export default scenario({
   title: 'Count completed events and use their event dates after a reset',
   capabilities: ['memory'],
   tier: 'release',
-  calibration: 'pending',
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,

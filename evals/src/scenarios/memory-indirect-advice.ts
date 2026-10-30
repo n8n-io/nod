@@ -8,7 +8,6 @@ export default scenario({
   title: 'Use earlier possessions and preferences for a new advice question',
   capabilities: ['memory'],
   tier: 'release',
-  calibration: 'pending',
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
