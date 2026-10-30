@@ -14,7 +14,7 @@ import { windowsCodeFiles } from './windows-signing.mjs';
 assert.equal(process.platform, 'win32');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = join(root, 'dist/windows');
-const installation = await mkdtemp(join(tmpdir(), 'nod-installed-preview-'));
+const installation = await mkdtemp(join(tmpdir(), 'nod-installed-'));
 const foreign = await mkdtemp(join(tmpdir(), 'nod-foreign-folder-'));
 const alone = await mkdtemp(join(tmpdir(), 'nod-installer-alone-'));
 const receipt = { installed: false, signatures: false, engine: false, wsl: false };

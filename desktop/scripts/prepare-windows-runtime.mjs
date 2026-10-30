@@ -70,7 +70,7 @@ for (const notice of lock.notices) {
   await mkdir(dirname(file), { recursive: true });
   await download(notice.url, notice.sha256, file);
 }
-const image = 'nod-windows-rootfs:preview';
+const image = 'nod-windows-rootfs:local';
 await run(
   'docker',
   [
