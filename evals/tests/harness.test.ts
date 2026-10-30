@@ -697,6 +697,18 @@ test('decision baselines bind only the validator revisions their source invokes'
       () => decisionAuthorization(current, validators, loaded),
       /Unsupported Trust .* validator revision/,
     );
+  assert.throws(
+    () =>
+      decisionAuthorization(
+        old,
+        { basis: "throw new Error('Fixture validator failure.');" },
+        loaded,
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === 'Unsupported Trust basis validator revision.' &&
+      String(error.cause).includes('Fixture validator failure.'),
+  );
   for (const source of [
     old + 'preservesTerms(output, input);',
     old + 'options.review(termsInstructions, input);',

@@ -1960,8 +1960,8 @@ export function decisionAuthorization(
         const value = validate(...args);
         return value ? { ...value } : undefined;
       };
-    } catch {
-      throw new Error('Unsupported Trust basis validator revision.');
+    } catch (cause) {
+      throw new Error('Unsupported Trust basis validator revision.', { cause });
     }
   }
   if (terms && validators.terms !== loaded.terms)
