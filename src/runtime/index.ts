@@ -410,7 +410,16 @@ export function createAgentRuntime(dependencies: {
             output !== confirmationNotice &&
             (delimitedTools.has(name) || name.startsWith('mcp__') || catalogResult)
           )
-            result = delimit(name, result);
+            result = delimit(
+              name,
+              result,
+              name === 'apps' ||
+                name === 'read_source' ||
+                name === 'codemode' ||
+                name.startsWith('mcp__')
+                ? context.timeZone
+                : undefined,
+            );
           end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});

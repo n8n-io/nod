@@ -54,6 +54,7 @@ export interface AttemptResult {
     compactions?: number;
     turns: Array<{
       source: string;
+      background?: boolean;
       status?: string;
       error?: string | null;
       startedAt?: number;

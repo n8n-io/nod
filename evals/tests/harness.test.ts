@@ -1122,6 +1122,57 @@ test('repair email grading accepts only the requested mailbox after a real fixtu
   }
 });
 
+test('repair evidence includes the guarantee term printed on the receipt without promising coverage', async () => {
+  for (const variant of ['base', 'holdout', 'explicit', 'expired'] as const) {
+    const definition = ambiguousDelegationScenario(variant);
+    const world = definition.world({ now: () => Date.UTC(2026, 9, 29, 12) });
+    const evidence = await definition.evidence!(
+      { apps: world.apps, approvals: [] } as unknown as Run,
+      world,
+    );
+    assert.match(
+      evidence,
+      /The receipt also states "Commercial repair guarantee: 24 months from purchase\."/,
+    );
+    assert.match(evidence, /not coverage for this fault/);
+    if (variant !== 'holdout')
+      assert.ok(
+        (world as typeof world & { receipt: Buffer }).receipt.includes(
+          Buffer.from('Commercial repair guarantee: 24 months from purchase.'),
+        ),
+      );
+  }
+});
+
+test('meeting reply fixtures use a future date even after Thursday morning and across daylight saving changes', async () => {
+  const definition = scenarios.find((item) => item.id === 'reply-in-thread-confirm-time')!;
+  for (let day = 22; day <= 30; day++) {
+    for (const hour of [7, 12, 23]) {
+      const now = Date.UTC(2026, 9, day, hour);
+      const world = definition.world({ now: () => now }) as ReturnType<typeof definition.world> & {
+        start: number;
+        thursday: string;
+      };
+      assert.ok(world.start > now);
+      assert.match(world.thursday, /^Thursday /);
+      assert.match(
+        world.apps!.gmail!.mails.find((mail: { id: string }) => mail.id === 'silva-proposal')!.body,
+        new RegExp(world.thursday),
+      );
+      const messages: string[] = [];
+      await definition.play(
+        {
+          say: async (text: string) => {
+            messages.push(text);
+          },
+        } as unknown as Session,
+        world,
+      );
+      assert.ok(messages[0].includes(world.thursday));
+    }
+  }
+});
+
 test('local times are anchored in the user time zone across a daylight saving change', () => {
   const clock = (value: number) =>
     new Intl.DateTimeFormat('en-GB', {

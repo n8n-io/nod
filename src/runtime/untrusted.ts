@@ -1,15 +1,26 @@
 import type { AgentToolResult } from '../ports/agent.ts';
 import { neutralised, untrustedParts } from '../shared/untrusted.ts';
+import { localResultTimes } from './time-context.ts';
 
 export function resultText(result: AgentToolResult) {
   return result.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
 }
 
-export function delimit(source: string, result: AgentToolResult): AgentToolResult {
+export function delimit(
+  source: string,
+  result: AgentToolResult,
+  timeZone?: string,
+): AgentToolResult {
   const { open, close } = untrustedParts(source);
   const content = result.content.map((part) =>
     part.type === 'text' ? { ...part, text: neutralised(part.text) } : part,
   );
+  const times = localResultTimes(
+    content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+    timeZone,
+    source === 'codemode',
+  );
+  if (times) content.unshift({ type: 'text', text: times });
   return {
     ...result,
     content: content.every((part) => part.type === 'text')
