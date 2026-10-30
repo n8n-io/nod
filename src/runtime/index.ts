@@ -1,4 +1,4 @@
-import type { Presentation } from '../shared/presentation.ts';
+import { presentationText, type Presentation } from '../shared/presentation.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -258,10 +258,15 @@ export function createAgentRuntime(dependencies: {
       )
         return draft;
       if (!reviewedReplies.has(draft)) {
-        const checked = await untilAborted(
-          dependencies.reviewMemoryReply(context, draft, { ...execution, onEvent: countUsage }),
-          signal,
-        );
+        let checked = draft;
+        try {
+          checked = await untilAborted(
+            dependencies.reviewMemoryReply(context, draft, { ...execution, onEvent: countUsage }),
+            signal,
+          );
+        } catch {
+          signal.throwIfAborted();
+        }
         signal.throwIfAborted();
         reviewedReplies.set(draft, checked);
       }
@@ -274,7 +279,12 @@ export function createAgentRuntime(dependencies: {
       presentation?: Presentation,
     ) => {
       signal.throwIfAborted();
-      const trimmed = presentation ? text.trim() : await reviewReply(text);
+      const draft = presentation
+        ? `${text.trim()}\n\n${presentationText(presentation)}`
+        : text.trim();
+      const checked = await reviewReply(draft);
+      if (checked !== draft) presentation = undefined;
+      const trimmed = presentation ? text.trim() : checked;
       const visual = presentation ? JSON.stringify(presentation) : '';
       if (!trimmed || (trimmed === lastReply && (!visual || visual === lastPresentation)))
         return false;

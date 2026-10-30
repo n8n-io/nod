@@ -38,7 +38,7 @@ Before a skill is saved, the memory model replaces names, addresses, contact det
 
 Something Nod picks up from one message is **Mentioned once**: Nod uses it, but as less certain. It becomes **Learned** when a second message repeats it.
 
-Nod selects relevant facts for your current question and searches your earlier messages in the current conversation, so it can answer from the conversation itself, with the date you said it. It can use related concepts to find useful context, so advice can use a preference without the same words. It checks personal claims against the selected sources before it delivers a text answer. These model steps can make mistakes and count toward usage. After you reset the conversation, the old one isn't searched.
+Nod selects relevant facts for your current question and searches your earlier messages in the current conversation, so it can answer from the conversation itself, with the date you said it. It can use related concepts to find useful context, so advice can use a preference without the same words. When evidence, a memory model and spending capacity are available, it checks personal claims before delivery. A failed check keeps the original answer. These model steps can make mistakes and count toward usage. After you reset the conversation, the old one isn't searched.
 
 ```mermaid
 stateDiagram-v2
@@ -54,7 +54,7 @@ stateDiagram-v2
   gone --> Confirmed: you bring it back
 ```
 
-Replaced and expired notes, and older guesses without fact details that were not mentioned again for 60 days, move to **Let go** instead of being deleted. Dated events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
+Replaced and expired notes move to **Let go** instead of being deleted. Plans and older guesses without fact details also move there if they were not mentioned again for 60 days. Completed events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
 
 ## Sensitive topics
 

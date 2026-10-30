@@ -64,11 +64,13 @@ export function createHistorySearch({
     if (before && !boundary) throw new Error('This history result is unavailable.');
     const terms = `WITH terms AS (SELECT replace(plainto_tsquery('english',coalesce($2,''))::text,'&','|')::tsquery AS q,
       coalesce((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC') AS zone)`;
-    const where = (alias: string, column: string) =>
-      `${alias}.owner_id=$1 AND ${activeThreadSql(alias)} AND ($2::text IS NULL OR to_tsvector('english',${column}) @@ terms.q)
+    const scope = (alias: string) =>
+      `${alias}.owner_id=$1 AND ${activeThreadSql(alias)}
        AND ($3::timestamptz IS NULL OR (${alias}.created_at,${alias}.id)<($3,$4::uuid))
        AND ($5::date IS NULL OR (${alias}.created_at AT TIME ZONE terms.zone)::date>=$5)
        AND ($6::date IS NULL OR (${alias}.created_at AT TIME ZONE terms.zone)::date<=$6)`;
+    const where = (alias: string, column: string) =>
+      `${scope(alias)} AND ($2::text IS NULL OR to_tsvector('english',${column}) @@ terms.q)`;
     const ordered = (alias: string, column: string) =>
       `${query && order === 'relevance' ? `ts_rank_cd(to_tsvector('english',${column}),terms.q,1) DESC,` : ''}${alias}.created_at DESC,${alias}.id DESC`;
     const values = [
@@ -85,11 +87,12 @@ export function createHistorySearch({
       values,
     );
     const page = await pool.query<HistoryMessage & { place: string; total: number }>(
-      `${terms}, docs AS (
+      `${terms}, corpus AS (
          SELECT m.id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v
-         FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')}),
+         FROM messages m CROSS JOIN terms WHERE ${scope('m')}),
+       docs AS (SELECT corpus.* FROM corpus CROSS JOIN terms WHERE $2::text IS NULL OR corpus.v @@ terms.q),
        weights AS (
-         SELECT w,ln(1+((SELECT count(*) FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')})-count(*)+0.5)/(count(*)+0.5)) AS idf
+         SELECT w,ln(1+((SELECT count(*) FROM corpus)-count(*)+0.5)/(count(*)+0.5)) AS idf
          FROM (SELECT DISTINCT lexeme AS w FROM unnest(tsvector_to_array(to_tsvector('english',coalesce($2,'')))) lexeme) words
          JOIN docs ON docs.v @@ quote_literal(w)::tsquery GROUP BY w),
        scores AS (

@@ -80,7 +80,7 @@ For totals and comparisons, Nod can select up to 100 facts. Other requests use u
 
 ### Check the answer
 
-When selected evidence is available, the memory model checks each text reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. Visual presentations keep their existing delivery path.
+When selected evidence, a configured memory model and spending capacity are available, the memory model checks each reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. For a visual presentation, the check receives its full text form with the accompanying message. If the check revises that answer, Nod delivers the revised text instead of the visual. It does not rewrite presentation fields or links.
 
 The check must keep plans separate from completed events and possessions separate from purchases. It must also keep an earlier assistant statement separate from a verified correction. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
 
@@ -151,10 +151,10 @@ Every write uses a compare-and-swap on the document version, so a stale writer c
 Repair runs first on every tick, even without a model key. It archives:
 
 - entries past their expiry date,
-- older inferred entries without structured fact details, with one source that nobody repeated for 60 days, and
+- inferred plans and older inferred entries without structured fact details, with one source that nobody repeated for 60 days, and
 - duplicates whose text matches after normalizing case, accents and punctuation. The stronger entry stays.
 
-Structured facts do not expire only because they were mentioned once. Their expiry dates and corrections still apply. The archive keeps as many records as fit. When the file reaches 256 KiB, the oldest archived records go first. A save that still doesn't fit is refused with **Memory is full**.
+Completed events and other structured facts do not expire only because they were mentioned once. Their expiry dates and corrections still apply. The archive keeps as many records as fit. When the file reaches 256 KiB, the oldest archived records go first. A save that still doesn't fit is refused with **Memory is full**.
 
 ### Reflect
 

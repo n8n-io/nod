@@ -1852,6 +1852,7 @@ test('memory reply checks finish before delivery, share new evidence and run onc
         assert.ok(!deltas.includes('An unchecked answer.'));
         assert.equal(context.memoryBrief?.reads?.length, 1);
         assert.equal(context.memoryBrief?.reads?.[0].action, 'history_search');
+        assert.match(JSON.stringify(context.memoryBrief?.reads?.[0].result), /I attended Maple\./);
         return checked;
       },
     },
@@ -1860,6 +1861,51 @@ test('memory reply checks finish before delivery, share new evidence and run onc
   assert.deepEqual(replies, [checked]);
   assert.equal(result.spokenReply, checked);
   assert.ok(!deltas.join('').includes('An unchecked answer.'));
+});
+
+test('memory checks cover visual claims and keep the draft when a check fails', async () => {
+  for (const outcome of ['revise', 'keep', 'fail']) {
+    const delivered: Array<{ text: string; presentation: unknown }> = [];
+    let checks = 0;
+    const { result } = await fixture(
+      async (tools) => {
+        await call(tools, 'send_message', {
+          text: 'Your preference is shown below.',
+          presentation: {
+            version: 1,
+            type: 'diagram',
+            title: 'Your light preference',
+            sources: [],
+            nodes: [{ id: 'lamp', label: 'You prefer cool white light.' }],
+            edges: [],
+          },
+        });
+      },
+      {
+        reply: async (text, _id, _replyTo, presentation) => {
+          delivered.push({ text, presentation });
+        },
+      },
+      {
+        prepareMemory: async () => ({ mode: 'personalize', facts: [], messages: [], searches: [] }),
+        reviewMemoryReply: async (_context, draft) => {
+          checks++;
+          assert.match(draft, /Your preference is shown below\./);
+          assert.match(draft, /You prefer cool white light\./);
+          if (outcome === 'fail') throw new Error('The memory store is unavailable.');
+          return outcome === 'revise' ? 'You prefer warm amber light.' : draft;
+        },
+      },
+    );
+    assert.equal(result.status, 'succeeded');
+    assert.equal(checks, 1);
+    assert.equal(delivered.length, 1);
+    assert.equal(
+      delivered[0].text,
+      outcome === 'revise' ? 'You prefer warm amber light.' : 'Your preference is shown below.',
+    );
+    assert.equal(Boolean(delivered[0].presentation), outcome !== 'revise');
+  }
 });
 
 test('Stop ends a memory check that ignores cancellation without delivering its draft', async () => {

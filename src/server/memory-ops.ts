@@ -14,6 +14,7 @@ import {
   same,
   slug,
   unsafe,
+  type Entry,
   type Tree,
 } from './memory-tree.ts';
 
@@ -86,35 +87,33 @@ export function applyOps(
     )
       continue;
     const match = areaEntries(tree, op.area).find((entry) => same(entry.text, op.text));
+    const previous = { entries: tree.entries, archive: tree.archive, applied: applied.length };
+    let entry: Entry;
     if (match) {
       if (origin === 'inferred' && match.origin !== 'inferred') continue;
-      match.sources = union(match.sources, sources);
-      if (op.quote.length <= 400) match.quote = op.quote;
-      else delete match.quote;
-      match.updated = now;
+      entry = { ...match, sources: union(match.sources, sources), updated: now };
+      if (op.quote.length <= 400) entry.quote = op.quote;
       if (origin === 'stated') {
-        match.origin = 'stated';
-        if (op.expires) match.expires = op.expires;
+        entry.origin = 'stated';
+        if (op.expires) entry.expires = op.expires;
       }
-      if (op.fact) match.fact = op.fact;
-      replace(op, pathOf(match));
-      applied.push({ operation: 'save', path: pathOf(match), text: match.text });
-      continue;
+      if (op.fact) entry.fact = op.fact;
+      tree.entries = tree.entries.map((item) => (item === match ? entry : item));
+    } else {
+      entry = {
+        area: op.area,
+        slug: freeSlug(tree, op.area, op.slug),
+        text: op.text,
+        ...(op.abstract ? { abstract: op.abstract } : {}),
+        origin,
+        updated: now,
+        sources,
+        ...(op.quote.length <= 400 ? { quote: op.quote } : {}),
+        ...(op.expires ? { expires: op.expires } : {}),
+        ...(op.fact ? { fact: op.fact } : {}),
+      };
+      tree.entries = [...tree.entries, entry];
     }
-    const entry = {
-      area: op.area,
-      slug: freeSlug(tree, op.area, op.slug),
-      text: op.text,
-      ...(op.abstract ? { abstract: op.abstract } : {}),
-      origin,
-      updated: now,
-      sources,
-      ...(op.quote.length <= 400 ? { quote: op.quote } : {}),
-      ...(op.expires ? { expires: op.expires } : {}),
-      ...(op.fact ? { fact: op.fact } : {}),
-    };
-    const previous = { entries: tree.entries, archive: tree.archive, applied: applied.length };
-    tree.entries = [...tree.entries, entry];
     replace(op, pathOf(entry));
     if (!fits(tree)) {
       tree.entries = previous.entries;

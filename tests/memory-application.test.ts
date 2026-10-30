@@ -607,6 +607,33 @@ test('a full memory file sheds the oldest archive entries before refusing a save
     when,
   );
   assert.equal(crowded.entries.length, before);
+  const full = treeOf(entry({ quote: 'A note.', origin: 'inferred' }));
+  for (let index = 0; render(full).length < 256 * 1024 - 1000; index++)
+    full.entries.push(large(index));
+  const unchanged = render(full);
+  const applied = applyOps(
+    full,
+    [
+      {
+        op: 'add',
+        area: 'about',
+        slug: 'note',
+        text: 'A note.',
+        m: [1],
+        quote: 'A note.',
+        sensitive: false,
+        fact: {
+          kind: 'fact',
+          entities: Array.from({ length: 12 }, (_, index) => `${index}`.padEnd(120, 'x')),
+        },
+        replaces: ['about/fact-0'],
+      },
+    ],
+    [{ id: ids[1], text: 'A note.' }],
+    '2026-02-01T00:00:00.000Z',
+  );
+  assert.deepEqual(applied, []);
+  assert.deepEqual(render(full), unchanged);
 });
 
 test('repair archives expired, stale and duplicate entries, keeps distinct numbers and never deletes', () => {
@@ -625,6 +652,12 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
       origin: 'inferred',
       updated: '2026-03-01T00:00:00.000Z',
       sources: [ids[0], ids[1]],
+    }),
+    entry({
+      slug: 'old-plan',
+      text: 'Plans to visit Cedar Fair.',
+      origin: 'inferred',
+      fact: { kind: 'plan', entities: ['Cedar Fair'] },
     }),
     entry({
       slug: 'send-summary',
@@ -654,7 +687,7 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
       sources: [ids[2], ids[3]],
     }),
   );
-  assert.equal(repair(tree, now), 4);
+  assert.equal(repair(tree, now), 5);
   assert.deepEqual(tree.entries.map((item) => item.slug).sort(), [
     'home',
     'never-send-summary',
@@ -672,6 +705,7 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
     [
       ['trip', 'expired', undefined],
       ['guess', 'stale', undefined],
+      ['old-plan', 'stale', undefined],
       ['tea', 'duplicate', 'about/tea-again'],
       ['tea-guess', 'duplicate', 'about/tea-again'],
     ],
@@ -994,6 +1028,15 @@ test('memory corrections keep their evidence, type and dates and do not archive 
   assert.equal(saved.entries[0].quote, add.quote);
   assert.equal(saved.archive[0].by, 'about/maple');
   assert.equal(saved.archive[0].reason, 'superseded');
+  const longQuote = `${add.quote} ${'A synthetic detail. '.repeat(24)}`;
+  applyOps(
+    saved,
+    [{ ...add, replaces: [], quote: longQuote }],
+    [{ id: ids[2], text: longQuote }],
+    when,
+  );
+  assert.equal(saved.entries[0].quote, add.quote);
+  assert.ok(saved.entries[0].sources.includes(source.id));
   repair(saved, new Date('2026-06-01'));
   assert.equal(saved.entries.length, 1);
   const next = { id: ids[2], text: 'I now prefer print workshops.' };
@@ -1127,6 +1170,29 @@ test(
     await assert.rejects(search({ around: old.id }), /unavailable/);
     const datePage = await search({ from: '2026-01-01', to: '2026-01-01' });
     assert.equal(datePage.totalMatches, 45);
+    const scoped = Array.from({ length: 10 }, (_, index) => ({
+      id: randomUUID(),
+      text: index === 0 ? 'Quartz.' : index < 8 ? 'Cedar elm.' : 'Slate.',
+      at: new Date(Date.UTC(2026, 0, 2, 0, index)),
+    }));
+    for (const record of scoped)
+      await pool.query('INSERT INTO messages VALUES($1,$2,$3,NULL,$4,$5,$6)', [
+        record.id,
+        'owner-a',
+        active,
+        'user',
+        record.text,
+        record.at,
+      ]);
+    for (const before of [undefined, scoped[9].id]) {
+      const ranked = await search({
+        query: 'quartz cedar elm',
+        from: '2026-01-02',
+        to: '2026-01-02',
+        before,
+      });
+      assert.equal(ranked.messages.find((message) => message.match)?.id, scoped[0].id);
+    }
     const store = memoryObjectStore();
     const memory = createMemoryService({ pool, ownerId: 'owner-a', store });
     const tree = treeOf(
