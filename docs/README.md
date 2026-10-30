@@ -1,6 +1,6 @@
 # Nod docs
 
-The source of [Nod's documentation](https://nod-docs.pages.dev), built with [Astro Starlight](https://starlight.astro.build) and hosted on Cloudflare Pages. The **Docs** workflow builds and checks the site, then attaches a `nod-docs` artifact. Publishing is a separate step; see [Publish the docs](src/content/docs/contribute/write-docs.mdx#publish-the-docs).
+The source of [Nod's documentation](https://nod-docs.pages.dev), built with [Astro Starlight](https://starlight.astro.build) and hosted on Cloudflare Pages. The **Docs** workflow builds and checks the site, and on `main` deploys it with the landing page to nod.n8n.io; see [Publish the docs](src/content/docs/contribute/write-docs.mdx#publish-the-docs).
 
 ```sh
 pnpm --dir docs install --frozen-lockfile
