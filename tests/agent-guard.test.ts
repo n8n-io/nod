@@ -1366,6 +1366,74 @@ test('secure credential pause prevents subsequent tools in the same execution se
   }
 });
 
+test('browser checks retain successful named checkbox choices only on their page', async () => {
+  let url = 'https://example.com/form';
+  const seen: Array<{ selector?: string; typed: string[] }> = [];
+  const controls = new Map([
+    ['@skip', [{ role: 'checkbox', name: 'Skip delivery' }]],
+    ['@old', [{ role: 'checkbox', name: 'Include old records' }]],
+    ['@failed', [{ role: 'checkbox', name: 'Failed option' }]],
+    ['@blocked', [{ role: 'checkbox', name: 'Blocked option' }]],
+    [
+      '@ambiguous',
+      [
+        { role: 'checkbox', name: 'First' },
+        { role: 'checkbox', name: 'Second' },
+      ],
+    ],
+  ]);
+  await fixture(
+    async (tools) => {
+      await call(tools, 'browser', { action: 'open', url });
+      await call(tools, 'browser', { action: 'fill', selector: '@query', text: 'Synthetic query' });
+      await call(tools, 'browser', { action: 'check', selector: '@skip' });
+      await call(tools, 'browser', { action: 'uncheck', selector: '@old' });
+      await assert.rejects(call(tools, 'browser', { action: 'check', selector: '@failed' }));
+      await call(tools, 'browser', { action: 'check', selector: '@blocked' });
+      await call(tools, 'browser', { action: 'check', selector: '@ambiguous' });
+      await call(tools, 'browser', { action: 'click', selector: '@save' });
+      url = 'https://example.com/other';
+      await call(tools, 'browser', { action: 'open', url });
+      await call(tools, 'browser', { action: 'click', selector: '@other-save' });
+    },
+    {
+      browserStep: async ({ step, typed }) => {
+        seen.push({ selector: step.selector, typed: [...typed] });
+        return step.selector === '@blocked' ? { result: 'Blocked' } : 'run';
+      },
+    },
+    {
+      computer: fakeComputer({
+        currentPage: async (_id, step) => ({
+          origin: new URL(url).origin,
+          url,
+          controls: controls.get(step?.selector ?? ''),
+        }),
+        act: async (_id, step) => {
+          assert.equal('choice' in step, false);
+          assert.equal('binding' in step, false);
+          assert.notEqual(step.selector, '@blocked');
+          if (step.selector === '@failed') throw new Error('Synthetic browser failure');
+          if (['check', 'uncheck', 'click'].includes(step.action))
+            assert.equal(step.expectUrl, url);
+          return { url, text: 'Synthetic form' };
+        },
+      }),
+    },
+  );
+  assert.deepEqual(seen.find(({ selector }) => selector === '@skip')?.typed, ['Synthetic query']);
+  assert.deepEqual(seen.find(({ selector }) => selector === '@old')?.typed, [
+    'Synthetic query',
+    'Checked: Skip delivery',
+  ]);
+  assert.deepEqual(seen.find(({ selector }) => selector === '@save')?.typed, [
+    'Synthetic query',
+    'Checked: Skip delivery',
+    'Unchecked: Include old records',
+  ]);
+  assert.deepEqual(seen.find(({ selector }) => selector === '@other-save')?.typed, []);
+});
+
 test('browser handoff requires a live page, binds its session and stops further work without a link', async () => {
   const sessionId = randomUUID();
   let opened = false;

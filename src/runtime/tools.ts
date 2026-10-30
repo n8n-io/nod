@@ -757,6 +757,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
   const observed = (
     step: { action: string; text?: string; key?: string },
     page: BrowserObservation,
+    choice?: string,
   ) => {
     turn.pageVisited?.(page.url, Boolean(turn.execution.parentRunId));
     turn.visited(browserId, page.url);
@@ -774,13 +775,17 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         : [...typed, pressed].slice(-10);
     else if (same && ['fill', 'type', 'select'].includes(step.action) && step.text)
       typed = [...typed, step.text.slice(0, 500)].slice(-10);
+    else if (same && choice) typed = [...typed, choice.slice(0, 500)].slice(-10);
     pressing = same && Boolean(pressed);
     return pageText(page);
   };
   const check = async (
     step: BrowserStep['step'],
-  ): Promise<{ expectOrigin?: string; expectUrl?: string } | { output: unknown }> => {
-    if (!context.browserStep) return {};
+  ): Promise<
+    | { binding: { expectOrigin?: string; expectUrl?: string }; choice?: string }
+    | { output: unknown }
+  > => {
+    if (!context.browserStep) return { binding: {} };
     const page = await computer.currentPage(
       browserId,
       step.action === 'upload' ? { action: 'click', selector: step.selector } : step,
@@ -792,7 +797,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       step.key!.trim() &&
       ['textbox', 'searchbox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
     )
-      return {};
+      return { binding: {} };
     const verdict = await context.browserStep({
       step,
       page,
@@ -800,7 +805,17 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();
-    if (verdict === 'run') return { expectOrigin: page.origin, expectUrl: page.url };
+    if (verdict === 'run')
+      return {
+        binding: { expectOrigin: page.origin, expectUrl: page.url },
+        ...(['check', 'uncheck'].includes(step.action) &&
+        page.controls?.length === 1 &&
+        page.controls[0].name
+          ? {
+              choice: `${step.action === 'check' ? 'Checked' : 'Unchecked'}: ${page.controls[0].name}`,
+            }
+          : {}),
+      };
     if (verdict === 'refused')
       throw new Error(
         "This step needs the owner's yes, and a subagent cannot ask. Stop and return it to the parent agent with the website, the control and what it would submit.",
@@ -930,7 +945,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           if ('output' in checked) return checked.output;
           file = await computer.download(
             browserId,
-            { selector: rest.selector, name, ...checked },
+            { selector: rest.selector, name, ...checked.binding },
             signal,
           );
         }
@@ -949,7 +964,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           { action },
           await computer.upload(
             browserId,
-            { selector: rest.selector, name: basename(rest.path), bytes, ...checked },
+            { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
             signal,
           ),
         );
@@ -962,9 +977,13 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           if (!(error instanceof BrowserActionError && error.code === 'browser_script_writes'))
             throw error;
         }
-      const checked = commits(step) ? await check(step) : {};
+      const checked = commits(step) ? await check(step) : { binding: {} };
       if ('output' in checked) return checked.output;
-      return observed(step, await computer.act(browserId, { ...step, ...checked }, signal));
+      return observed(
+        step,
+        await computer.act(browserId, { ...step, ...checked.binding }, signal),
+        checked.choice,
+      );
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
