@@ -49,7 +49,6 @@ const tools = [
   'create_audio',
   'delegate',
   'follow_up',
-  'get_credential',
   'manage_apps',
   'manage_personal_context',
   'pay',

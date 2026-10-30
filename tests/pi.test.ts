@@ -24,7 +24,7 @@ import {
   type RuntimeContext,
 } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
-import { openLocalSession, readPiSessionEntries } from '../src/providers/pi/checkpoint.ts';
+import { readPiSessionEntries } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createPiUsageTracker } from '../src/providers/pi/usage.ts';
@@ -1133,7 +1133,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Nod tools', asy
   }
 });
 
-// Local Pi sessions: rebase, legacy credential scrubbing, dangling tool calls, restore.
+// Local Pi sessions: rebase, dangling tool calls, restore.
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'nod-local-pi-'));
@@ -1144,64 +1144,10 @@ async function fixture() {
   };
 }
 
-async function localDirectory(f: Awaited<ReturnType<typeof fixture>>) {
-  const local = join(f.directory, 'local');
-  await mkdir(local);
-  return local;
-}
-
 async function localText(directory: string) {
   return (
     await Promise.all((await filesUnder(directory)).map((file) => readFile(file, 'utf8')))
   ).join('\n');
-}
-
-function legacyLogin(manager: SessionManager, password = 'synthetic-legacy-password') {
-  const usage = {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-  const call = (id: string, name: string, args: Record<string, string>, timestamp: number) =>
-    manager.appendMessage({
-      role: 'assistant',
-      api: 'openai-responses',
-      provider: 'openai',
-      model: 'fixture',
-      timestamp,
-      stopReason: 'toolUse',
-      content: [{ type: 'toolCall', id, name, arguments: args }],
-      usage,
-    });
-  manager.appendMessage({ role: 'user', content: 'Sign in to the fixture site.', timestamp: 1 });
-  call('legacy', 'get_credential', {}, 2);
-  manager.appendMessage({
-    role: 'toolResult',
-    toolCallId: 'legacy',
-    toolName: 'get_credential',
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({ username: 'fixture-user', password }),
-      },
-    ],
-    details: {},
-    isError: false,
-    timestamp: 3,
-  });
-  call('typed', 'browser', { action: 'fill', selector: '@e2', text: password }, 4);
-  manager.appendMessage({
-    role: 'toolResult',
-    toolCallId: 'typed',
-    toolName: 'browser',
-    content: [{ type: 'text', text: 'Filled.' }],
-    details: {},
-    isError: false,
-    timestamp: 5,
-  });
 }
 
 async function filesUnder(directory: string): Promise<string[]> {
@@ -1213,114 +1159,6 @@ async function filesUnder(directory: string): Promise<string[]> {
   }
   return found;
 }
-
-test('short legacy passwords are removed after compaction without changing message types', async () => {
-  const f = await fixture();
-  try {
-    const local = await localDirectory(f);
-    const manager = SessionManager.create(local, local);
-    legacyLogin(manager, 'q');
-    const kept = manager.getLeafId()!;
-    manager.appendCompaction('The saved password was q.', kept, 50, { value: 'q' });
-    manager.appendMessage({ role: 'user', content: 'Use the password q.', timestamp: 6 });
-    manager.appendMessage({
-      role: 'bashExecution',
-      command: 'printf q',
-      output: 'q',
-      exitCode: 0,
-      cancelled: false,
-      truncated: false,
-      timestamp: 7,
-    });
-    manager.appendMessage({
-      role: 'assistant',
-      api: 'openai-responses',
-      provider: 'openai',
-      model: 'fixture',
-      timestamp: 8,
-      stopReason: 'stop',
-      content: [{ type: 'thinking', thinking: 'The password was q.' }],
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    });
-    const restored = openLocalSession(local);
-    assert.doesNotMatch(
-      JSON.stringify(restored.buildSessionContext().messages),
-      /password (?:was )?q/,
-    );
-    assert.ok(restored.buildSessionContext().messages.some((message) => message.role === 'user'));
-    assert.doesNotMatch(await localText(local), /get_credential|"value":"q"|password (?:was )?q/);
-  } finally {
-    await f.close();
-  }
-});
-
-test('legacy passwords are removed from embedded JSON strings', async () => {
-  const f = await fixture();
-  try {
-    const local = await localDirectory(f);
-    const password = 'synthetic"quoted\\password';
-    const manager = SessionManager.create(local, local);
-    legacyLogin(manager, password);
-    manager.appendMessage({ role: 'user', content: JSON.stringify({ password }), timestamp: 6 });
-    const restored = openLocalSession(local);
-    const texts = restored
-      .buildSessionContext()
-      .messages.flatMap((message) =>
-        'content' in message
-          ? typeof message.content === 'string'
-            ? [message.content]
-            : message.content.filter((part) => part.type === 'text').map((part) => part.text)
-          : [],
-      );
-    for (const text of texts) {
-      assert.equal(text.includes(password), false);
-      assert.equal(text.includes(JSON.stringify(password).slice(1, -1)), false);
-    }
-    assert.doesNotMatch(await localText(local), /synthetic.*quoted/);
-  } finally {
-    await f.close();
-  }
-});
-
-test('a local summary is scrubbed with credentials from its retained earlier file', async () => {
-  const f = await fixture();
-  try {
-    const local = join(f.directory, 'local');
-    await mkdir(local);
-    const older = SessionManager.create(local, local);
-    legacyLogin(older);
-    const current = SessionManager.create(local, local);
-    current.appendMessage({ role: 'user', content: 'Read the report.', timestamp: 6 });
-    current.appendCompaction(
-      'Use fixture-user with synthetic-legacy-password.',
-      current.getLeafId(),
-      50,
-    );
-    const activeFile = current.getSessionFile()!;
-    const { utimes } = await import('node:fs/promises');
-    await utimes(activeFile, new Date(Date.now() + 1000), new Date(Date.now() + 1000));
-    const opened = openLocalSession(local);
-    assert.doesNotMatch(
-      JSON.stringify(opened.buildSessionContext().messages),
-      /fixture-user|synthetic-legacy-password/,
-    );
-    const files = await filesUnder(local);
-    assert.equal(files.length, 1);
-    assert.doesNotMatch(
-      await readFile(files[0]!, 'utf8'),
-      /fixture-user|synthetic-legacy-password/,
-    );
-  } finally {
-    await f.close();
-  }
-});
 
 test('real Pi saves its user message and tool call before a side effect and records the result', async () => {
   const f = await fixture();

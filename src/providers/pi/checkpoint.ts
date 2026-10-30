@@ -1,5 +1,5 @@
 import { SessionManager, type FileEntry } from '@earendil-works/pi-coding-agent';
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -10,8 +10,6 @@ const rebaseAt = 8 * 1024 * 1024;
 export const keptImages = 4;
 export const removedImage =
   'An earlier image was removed from context. Take a new screenshot or read the file again if you need it.';
-const removedCredential =
-  'An earlier saved login was removed from context. Use sign_in if you need to sign in again.';
 const failure = () =>
   new Error(
     'The assistant session could not be saved. Stop and restore storage before continuing.',
@@ -74,84 +72,14 @@ export async function readPiSessionEntries(options: { threadId: string; sessionR
   return entries(await readFile(latest.path)).slice(1);
 }
 
-function legacyCredential(message: { role: string; toolName?: string; content?: unknown }) {
-  return (
-    message.role === 'toolResult' &&
-    message.toolName === 'get_credential' &&
-    JSON.stringify(message.content) !== JSON.stringify([{ type: 'text', text: removedCredential }])
-  );
-}
-
-function holdsCredentials(manager: SessionManager) {
-  return manager
-    .getEntries()
-    .some((entry) => entry.type === 'message' && legacyCredential(entry.message));
-}
-
-function legacySecrets(context: ReturnType<SessionManager['getEntries']>) {
-  const values = new Set<string>();
-  for (const entry of context)
-    if (entry.type === 'message' && legacyCredential(entry.message))
-      for (const part of entry.message.role === 'toolResult' ? entry.message.content : [])
-        if (part.type === 'text')
-          try {
-            const credential = JSON.parse(part.text);
-            for (const value of [credential?.username, credential?.password])
-              if (typeof value === 'string' && value.length) {
-                values.add(value);
-                values.add(JSON.stringify(value).slice(1, -1));
-              }
-          } catch {}
-  return [...values].sort((a, b) => b.length - a.length);
-}
-
-function scrub<T>(value: T, secrets: string[]): T {
-  if (!secrets.length) return value;
-  if (typeof value === 'string')
-    return secrets.reduce((text, secret) => text.split(secret).join('[removed]'), value) as T;
-  if (Array.isArray(value)) return value.map((item) => scrub(item, secrets)) as T;
-  if (value && typeof value === 'object')
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, scrub(item, secrets)]),
-    ) as T;
-  return value;
-}
-
 export function openLocalSession(directory: string) {
-  let manager = SessionManager.continueRecent(directory, directory);
+  const manager = SessionManager.continueRecent(directory, directory);
   const file = manager.getSessionFile();
-  if (!file || !existsSync(file)) return manager;
-  const retained = readdirSync(directory)
-    .filter((name) => name.endsWith('.jsonl'))
-    .map((name) => join(directory, name))
-    .filter((path) => path !== file && statSync(path).isFile());
-  const secrets = [
-    ...new Set(
-      [
-        legacySecrets(manager.getEntries()),
-        ...retained.map((path) => {
-          if (statSync(path).size > maximum) throw failure();
-          return legacySecrets(SessionManager.open(path).getEntries());
-        }),
-      ].flat(),
-    ),
-  ].sort((a, b) => b.length - a.length);
-  const legacy = holdsCredentials(manager) || secrets.length > 0;
-  if (!legacy && statSync(file).size <= rebaseAt) return manager;
-  manager = rebaseSession(manager, SessionManager.create(directory, directory), secrets);
-  const current = manager.getSessionFile();
-  if (legacy && current && existsSync(current))
-    for (const name of readdirSync(directory))
-      if (name.endsWith('.jsonl') && join(directory, name) !== current)
-        rmSync(join(directory, name), { force: true });
-  return manager;
+  if (!file || !existsSync(file) || statSync(file).size <= rebaseAt) return manager;
+  return rebaseSession(manager, SessionManager.create(directory, directory));
 }
 
-function rebaseSession(
-  source: SessionManager,
-  next: SessionManager,
-  secrets = legacySecrets(source.getEntries()),
-) {
+function rebaseSession(source: SessionManager, next: SessionManager) {
   const context = source.buildContextEntries();
   const audio = audioEntries(source);
   const recordings = new Map(audio.map((entry) => [entry.id, entry]));
@@ -160,12 +88,7 @@ function rebaseSession(
   );
   const current = new Set(context.map((entry) => entry.id));
   const copyRecording = (entry: (typeof audio)[number]) =>
-    next.appendCustomMessageEntry(
-      entry.customType,
-      scrub(entry.content, secrets),
-      entry.display,
-      scrub(entry.details, secrets),
-    );
+    next.appendCustomMessageEntry(entry.customType, entry.content, entry.display, entry.details);
   for (const entry of audio.slice(-2)) if (!current.has(entry.id)) copyRecording(entry);
   let images = context.reduce(
     (count, entry) =>
@@ -176,12 +99,7 @@ function rebaseSession(
   );
   for (const entry of context) {
     if (entry.type === 'compaction')
-      next.appendCompaction(
-        scrub(entry.summary, secrets),
-        null,
-        entry.tokensBefore,
-        scrub(entry.details, secrets),
-      );
+      next.appendCompaction(entry.summary, null, entry.tokensBefore, entry.details);
     else if (entry.type === 'custom_message' && recordings.has(entry.id))
       copyRecording(recordings.get(entry.id)!);
     else if (entry.type === 'custom_message' && entry.customType === 'nod-audio-input') {
@@ -189,44 +107,22 @@ function rebaseSession(
         if (message.role === 'custom')
           next.appendMessage({
             role: 'user',
-            content: scrub(message.content, secrets),
+            content: message.content,
             timestamp: message.timestamp,
           });
     } else if (entry.type === 'message') {
       const message = entry.message;
       next.appendMessage(
-        (legacyCredential(message)
-          ? { ...message, content: [{ type: 'text' as const, text: removedCredential }] }
-          : {
+        ('content' in message && typeof message.content !== 'string'
+          ? {
               ...message,
-              ...('details' in message ? { details: scrub(message.details, secrets) } : {}),
-              ...(message.role === 'bashExecution'
-                ? {
-                    command: scrub(message.command, secrets),
-                    output: scrub(message.output, secrets),
-                  }
-                : {}),
-              ...('content' in message
-                ? {
-                    content:
-                      typeof message.content === 'string'
-                        ? scrub(message.content, secrets)
-                        : message.content.map((part) =>
-                            part.type === 'text'
-                              ? { ...part, text: scrub(part.text, secrets) }
-                              : part.type === 'thinking'
-                                ? { ...part, thinking: scrub(part.thinking, secrets) }
-                                : part.type === 'toolCall'
-                                  ? { ...part, arguments: scrub(part.arguments, secrets) }
-                                  : part.type === 'image' &&
-                                      message.role === 'toolResult' &&
-                                      images-- > keptImages
-                                    ? { type: 'text' as const, text: removedImage }
-                                    : part,
-                          ),
-                  }
-                : {}),
-            }) as Parameters<typeof next.appendMessage>[0],
+              content: message.content.map((part) =>
+                part.type === 'image' && message.role === 'toolResult' && images-- > keptImages
+                  ? { type: 'text' as const, text: removedImage }
+                  : part,
+              ),
+            }
+          : message) as Parameters<typeof next.appendMessage>[0],
       );
     }
   }

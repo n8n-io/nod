@@ -6031,27 +6031,6 @@ test(
         Buffer.from((await memoryObject()).bytes).toString('utf8'),
         /sk-fixture|broken/,
       );
-
-      await store.write(
-        'memory/MEMORY.md',
-        Buffer.from(
-          `# Memory\n\n## ${randomUUID()}\nKind: preference\nUpdated: 2026-01-01T00:00:00.000Z\nSources: ${randomUUID()}\n\nPrefers email updates.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: 2026-01-02T00:00:00.000Z\nSources: ${randomUUID()}\n\nOften asks for a design first.\n\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
-        ),
-        { expectedVersion: (await memoryObject()).version },
-      );
-      assert.deepEqual((await memory.context()).split('\n'), [
-        'preferences/prefers-email-updates: Prefers email updates.',
-        'lessons/often-asks-for-design-first: Often asks for a design first. (tentative)',
-      ]);
-      assert.equal(
-        (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
-        'tentative',
-      );
-      await remember([add('about', 'chess', chess)], await post(chess));
-      const migrated = Buffer.from((await memoryObject()).bytes).toString('utf8');
-      assert.match(migrated, /^\{/);
-      assert.doesNotMatch(migrated, /Broken entry/);
-      assert.match(migrated, /Often asks for a design first/);
     } finally {
       await close();
     }
