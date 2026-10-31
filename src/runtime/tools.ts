@@ -548,6 +548,7 @@ export const toolDefinitions = {
         }),
       ),
     }),
+    true,
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
