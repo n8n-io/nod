@@ -6,7 +6,6 @@
 @import './components/presentation-booking.css';
 @import './components/presentation-travel.css';
 @import './components/presentation-chart.css';
-@import './components/product-survey.css';
 
 @font-face {
   font-family: 'Geist';
@@ -720,14 +719,6 @@ input[type='range']:disabled {
 .chat-page {
   height: 100%;
   min-height: 0;
-}
-.chat-route {
-  display: flex;
-  flex-direction: column;
-}
-.chat-route > .chat-page {
-  height: auto;
-  flex: 1;
 }
 .chat-route[hidden] {
   display: none;

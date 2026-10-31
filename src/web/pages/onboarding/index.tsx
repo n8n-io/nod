@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import { startupMessage } from '../../../shared/desktop-startup';
 import type { ModelsResponse } from '../../../shared/models';
-import type { AnalyticsProfile } from '../../../shared/analytics-profile';
 import {
   onboardingSteps,
   onboardingVersion,
@@ -28,8 +27,6 @@ import { Welcome } from './steps/welcome';
 import { Brain } from './steps/brain';
 import { Email } from './steps/email';
 import { Privacy } from './steps/privacy';
-import { Profile } from './steps/profile';
-import { Community } from './steps/community';
 import { OnboardingFrame } from './frame';
 
 export type StepProps = {
@@ -42,7 +39,6 @@ export type StepProps = {
   onReady?(): void;
   usageShared?: boolean;
   traces?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
-  profile?: { value: AnalyticsProfile; onChange(value: AnalyticsProfile): Promise<void> };
 };
 
 const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
@@ -50,8 +46,6 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   email: Email,
   brain: Brain,
   privacy: Privacy,
-  profile: Profile,
-  community: Community,
 };
 
 function mineEmail() {
@@ -67,8 +61,6 @@ export function Onboarding({
   usageShared = false,
   traces,
   onTraces,
-  profile,
-  onProfile,
 }: {
   user: AccountUser;
   onComplete(): Promise<void>;
@@ -76,8 +68,6 @@ export function Onboarding({
   usageShared?: boolean;
   traces?: boolean;
   onTraces?(enabled: boolean): Promise<void>;
-  profile?: AnalyticsProfile;
-  onProfile?(value: AnalyticsProfile): Promise<void>;
 }) {
   useBrowserTimeZone();
   const desktop = desktopRuntimeAvailable();
@@ -100,14 +90,11 @@ export function Onboarding({
     if (replay || welcomed || nativePreferences)
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     const stored = readStep<{ owner: string; step: string; version?: number }>();
-    const previousVersion =
-      stored?.version === 3 && ['email', 'brain', 'privacy', 'preferences'].includes(stored.step);
-    const savedStep =
-      previousVersion && desktop && stored.step === 'preferences' ? 'profile' : stored?.step;
+    const savedStep = stored?.step;
     const step: SetupStep = nativePreferences
       ? 'preferences'
       : stored?.owner === user.id &&
-          (stored.version === onboardingVersion || previousVersion) &&
+          stored.version === onboardingVersion &&
           (onboardingSteps.includes(savedStep as OnboardingStep) ||
             (desktop && savedStep === 'preferences')) &&
           savedStep !== 'welcome'
@@ -323,8 +310,6 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'profile' || step === 'community')
-      captureAnalytics('nod_onboarding_step_skipped', { step });
     if (step === 'email') {
       emailSkipped.current = true;
       captureAnalytics('nod_onboarding_step_skipped', { step });
@@ -338,8 +323,8 @@ export function Onboarding({
       emailSkipped.current = false;
     }
     if (step === 'brain' && mining) mineEmail();
-    if (step !== 'community' && step !== 'preferences') return void go(1);
-    if (desktop && step === 'community')
+    if (step !== 'privacy' && step !== 'preferences') return void go(1);
+    if (desktop && step === 'privacy')
       return setPosition({ step: 'preferences', arrived: 'forward' });
     if (finishing) return;
     setWaitingForServices(preparation !== 'ready' || Boolean(runtimeError));
@@ -424,8 +409,7 @@ export function Onboarding({
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}
-          nextLabel={!desktop && step === 'community' ? 'Start chatting' : undefined}
-          profile={onProfile ? { value: profile ?? {}, onChange: onProfile } : undefined}
+          nextLabel={!desktop && step === 'privacy' ? 'Start chatting' : undefined}
           usageShared={usageShared}
           traces={
             step === 'privacy' && traces !== undefined && onTraces

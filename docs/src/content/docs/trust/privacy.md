@@ -99,8 +99,6 @@ Analytics have no fields for raw messages, replies, tool arguments or results, V
 
 Events include tool use, approvals, model tokens and cost, run timing and failures, connection outcomes, and the kinds of replies and files shown or opened. They record whether work was owner-requested and whether it ran as immediate, scheduled, or background work. They exclude website domains, purchase amounts and currencies, Vault inventory, file names, task answer-choice labels, and generated reply content. Nod does not make model calls to read conversations or infer task categories, frustration, or success for analytics.
 
-Onboarding optionally asks your role, company size, familiarity with AI, and the AI tools you use. Answers stay on your installation while usage sharing is off. With sharing on, these fixed categories accompany analytics and update a pseudonymous PostHog profile. You can skip every question. Nod can also offer an optional recommendation score or a fixed-choice question about why you stopped using it. Submitted scores and reasons are shared with PostHog; opening or answering a survey updates participation state in that profile. There is no free-text survey response.
-
 Analytics stop when you turn sharing off. App events can link to that session's masked recording. Measurements use a pseudonymous installation ID, which does not identify the same person across installations. Ask to delete past data through **Send feedback**. See [Analytics](/deploy/analytics/#stop-sharing-or-delete-past-data) for the full list and limits.
 
 ## Conversation traces

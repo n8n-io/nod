@@ -4117,12 +4117,7 @@ await act(async()=>release());
 check('UI5-owner-fence',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
 check('UI2-content-free',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(file.id)&&!JSON.stringify(events).includes('private-message'));
 setRequestAccount('synthetic-owner-one');
-configureAnalytics({...configuration,profile:{role:'employee',ai_tools:['n8n']}},'web');
-client.capture('nod_artifact_action',{kind:'text',location:'drawer',action:'copy',title:privateValue});
-check('UI6-profile-bounded',events.at(-1).properties.profile_role==='employee'&&events.at(-1).properties.profile_ai_tools.join(',')==='n8n'&&!('title' in events.at(-1).properties));
-configureAnalytics({...configuration,profile:{role:privateValue,ai_tools:['n8n']}},'web');
-client.capture('nod_artifact_action',{kind:'text',location:'drawer',action:'copy'});
-check('UI6-invalid-profile-dropped',!Object.keys(events.at(-1).properties).some(key=>key.startsWith('profile_')));
+configureAnalytics(configuration,'web');
 client.capture('nod_answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
 check('UI7-choices-bounded',events.at(-1).properties.option_count===3&&events.at(-1).properties.selected_count===2&&!JSON.stringify(events.at(-1)).includes(privateValue)&&!JSON.stringify(events.at(-1)).includes(file.id));
 await act(async()=>root.unmount());
@@ -4130,111 +4125,6 @@ configureAnalytics(undefined);
 dom.window.close();
 console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
 assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
-process.exit(0);
-`,
-  });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
-
-test('optional product surveys require visible user choice and fence declined or stale submissions', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 30_000,
-    input: String.raw`
-import assert from 'node:assert/strict';
-import {JSDOM} from 'jsdom';
-const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
-Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,getComputedStyle:dom.window.getComputedStyle.bind(dom.window),requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
-for(const name of ['Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','KeyboardEvent','CustomEvent','MutationObserver','NodeFilter','DocumentFragment'])globalThis[name]=dom.window[name];
-Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
-window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-const {createElement,act}=await import('react');
-const {createRoot}=await import('react-dom/client');
-const {ProductSurveyPrompt}=await import('./src/web/components/product-survey.tsx');
-const {setRequestAccount}=await import('./src/web/lib/api.ts');
-const {recordingOptions}=await import('./src/web/lib/analytics-privacy.ts');
-const submission='00000000-0000-4000-8000-000000000888';
-let survey='nps',failShown=true,failSend=false,delay=false,release;
-const calls=[];
-window.fetch=globalThis.fetch=async(path,options)=>{
- assert.equal(path,'/api/product-survey');
- if(options.method!=='POST')return Response.json({offer:{survey,submission_id:submission}});
- const body=JSON.parse(options.body);calls.push({body,signal:options.signal});
- if(body.status==='shown'&&failShown)return Response.json({error:'Synthetic shown failure'},{status:503});
- if(body.status==='sent'&&failSend)return Response.json({error:'Synthetic send failure'},{status:503});
- if(delay)return new Promise(resolve=>{release=()=>resolve(Response.json({accepted:true}))});
- return Response.json({accepted:true});
-};
-const root=createRoot(document.getElementById('root'));
-let props={ownerId:'survey-owner-one',enabled:true,visible:true};
-setRequestAccount(props.ownerId);
-const render=()=>act(async()=>root.render(createElement(ProductSurveyPrompt,props)));
-const settle=async condition=>{for(let i=0;i<60&&!condition();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
-const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
-const click=async text=>act(async()=>button(text).click());
-await render();
-await settle(()=>button('One question about Nod'));
-assert.equal(document.querySelector('[role="dialog"]'),null);
-assert.equal(calls.length,0);
-await click('One question about Nod');
-await settle(()=>button('Try again'));
-assert.ok(document.querySelector('[role="dialog"]').matches(recordingOptions.blockSelector));
-assert.ok(document.querySelector('fieldset').disabled);
-const describedBy=document.querySelector('fieldset').getAttribute('aria-describedby');
-assert.ok(describedBy,'NPS scale must describe its radio group');
-const scale=document.getElementById(describedBy);
-assert.ok(scale,'NPS description must exist');
-assert.match(scale.textContent,/0/);assert.match(scale.textContent,/10/);
-assert.equal(calls.filter(call=>call.body.status==='shown').length,1);
-failShown=false;
-await click('Try again');
-await settle(()=>!document.querySelector('fieldset').disabled);
-await act(async()=>document.querySelector('input[value="8"]').click());
-failSend=true;
-await click('Send');
-await settle(()=>document.body.textContent.includes('Synthetic send failure'));
-assert.equal(document.querySelector('input[value="8"]').checked,true);
-assert.deepEqual(calls.at(-1).body,{survey:'nps',submission_id:submission,status:'sent',score:8});
-failSend=false;
-await click('Send');
-await settle(()=>document.body.textContent.includes('Thanks for your feedback.'));
-assert.equal(calls.some(call=>call.body.status==='dismissed'),false);
-props={...props,ownerId:'survey-owner-two'};setRequestAccount(props.ownerId);survey='churn';
-await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
-await settle(()=>!document.querySelector('fieldset').disabled);
-assert.equal(document.querySelectorAll('textarea,input[type="text"]').length,0);
-await act(async()=>document.querySelector('input[value="unreliable"]').click());
-await click('Send');
-await settle(()=>document.body.textContent.includes('Thanks for your feedback.'));
-assert.deepEqual(calls.at(-1).body,{survey:'churn',submission_id:submission,status:'sent',reason:'unreliable'});
-props={...props,ownerId:'survey-owner-three'};setRequestAccount(props.ownerId);delay=true;
-await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
-await settle(()=>release);const pending=calls.at(-1);
-props={...props,enabled:false};await render();
-assert.equal(pending.signal.aborted,true);assert.equal(document.querySelector('[role="dialog"]'),null);
-await act(async()=>release());
-assert.equal(document.querySelector('[role="dialog"]'),null);
-delay=false;props={...props,enabled:true,ownerId:'survey-owner-four'};setRequestAccount(props.ownerId);
-await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
-await settle(()=>!document.querySelector('fieldset').disabled);delay=true;release=undefined;
-await click('Not now');
-assert.equal(document.querySelector('[role="dialog"]'),null);
-assert.equal(calls.at(-1).body.status,'dismissed');
-const dismiss=calls.at(-1);props={...props,visible:false};await render();assert.equal(dismiss.signal.aborted,true);
-await act(async()=>release());
-delay=false;props={...props,ownerId:'survey-owner-five',enabled:true,visible:true};setRequestAccount(props.ownerId);
-await render();await settle(()=>button('One question about Nod'));
-const beforeHidden=calls.length;
-Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
-await click('One question about Nod');
-assert.equal(calls.length,beforeHidden);
-Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
-await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
-await settle(()=>document.querySelector('fieldset')&&!document.querySelector('fieldset').disabled);
-assert.equal(calls.length,beforeHidden+1);
-await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
-assert.equal(calls.length,beforeHidden+1);
-await act(async()=>root.unmount());dom.window.close();
-console.log(JSON.stringify({result:'pass',checks:['explicit-open','shown-ack','private-replay','shown-retry','preserved-answer','nps-send','churn-send','no-free-text','consent-abort','offline-dismiss','unmount-abort','hidden-dialog-return','nps-accessible-scale'],requests:calls.map(call=>call.body)},null,2));
 process.exit(0);
 `,
   });
@@ -4291,88 +4181,6 @@ delay=true;release=undefined;await start();await settle(()=>release);
 setRequestAccount('other-owner');await act(async()=>release());assert.equal(completions().length,1);
 await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
 console.log(JSON.stringify({result:'pass',checks:['confirmed-success','original-entry','unverified-broadcast','cancelled-attempt','owner-fence'],events:captured},null,2));
-process.exit(0);
-`,
-  });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
-
-test('optional analytics profile edits preserve failed answers and explicitly clear saved answers', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 30_000,
-    input: String.raw`
-import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
-Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
-for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLSelectElement', 'Event', 'CustomEvent']) globalThis[name] = dom.window[name];
-Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
-window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
-const { createElement, act, useState } = await import('react');
-const { createRoot } = await import('react-dom/client');
-const { Profile } = await import('./src/web/pages/onboarding/steps/profile.tsx');
-const { analyticsProfileSchema } = await import('./src/shared/analytics-profile.ts');
-const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
-let saved = {}, fail = true, advanced = 0, skipped = 0;
-const writes = [];
-function Host() {
-  const [step, setStep] = useState('profile');
-  if (step === 'next') return createElement('button', { onClick: () => setStep('profile') }, 'Return to profile');
-  return createElement(Profile, {
-    arrived: 'back', usageShared: true,
-    onBack() {}, onSkip() { skipped++; },
-    onNext() { advanced++; setStep('next'); },
-    profile: { value: saved, async onChange(value) {
-      const body = JSON.parse(JSON.stringify(value));
-      assert.equal(analyticsProfileSchema.safeParse(body).success, true);
-      writes.push(body);
-      if (fail) throw new Error('Synthetic save rejected');
-      saved = body;
-    } },
-  });
-}
-const root = createRoot(document.getElementById('root'));
-await act(async () => root.render(createElement(Host)));
-const button = (text) => [...document.querySelectorAll('button')].find((value) => value.textContent.trim() === text);
-const click = async (text) => act(async () => button(text).click());
-const select = async (index, value) => act(async () => {
-  const control = document.querySelectorAll('select')[index];
-  control.value = value;
-  control.dispatchEvent(new Event('change', { bubbles: true }));
-});
-assert.ok(document.querySelector('.ob-profile').matches(recordingOptions.blockSelector));
-await select(0, 'business_owner');
-await select(1, '2_10');
-await select(2, 'technical');
-await click('ChatGPT');
-await click('Claude');
-await click('None yet');
-assert.equal(button('ChatGPT').getAttribute('aria-pressed'), 'false');
-assert.equal(button('Claude').getAttribute('aria-pressed'), 'false');
-assert.equal(button('None yet').getAttribute('aria-pressed'), 'true');
-await click('ChatGPT');
-assert.equal(button('None yet').getAttribute('aria-pressed'), 'false');
-await click('Continue');
-assert.equal(advanced, 0);
-assert.ok(document.querySelector('[role="alert"]'));
-assert.deepEqual([...document.querySelectorAll('select')].map((input) => input.value), ['business_owner', '2_10', 'technical']);
-assert.equal(button('ChatGPT').getAttribute('aria-pressed'), 'true');
-fail = false;
-await click('Continue');
-assert.equal(advanced, 1);
-assert.deepEqual(saved, { role: 'business_owner', company_size: '2_10', ai_experience: 'technical', ai_tools: ['chatgpt'] });
-await click('Return to profile');
-assert.deepEqual([...document.querySelectorAll('select')].map((input) => input.value), ['business_owner', '2_10', 'technical']);
-for (let index = 0; index < 3; index++) await select(index, '');
-await click('ChatGPT');
-await click('Continue');
-assert.equal(advanced, 2);
-assert.equal(skipped, 0);
-assert.deepEqual(saved, {});
-assert.deepEqual(writes.at(-1), {});
-await act(async () => root.unmount());
-dom.window.close();
-console.log(JSON.stringify({ result: 'pass', checks: ['bounded-save', 'failed-save-retains', 'none-exclusive', 'clear-saved-answers'], writes }, null, 2));
 process.exit(0);
 `,
   });
@@ -4486,71 +4294,6 @@ assert.equal(completions().length, beforeOwner);
 await act(async () => root.unmount()); dom.window.close();
 console.log(JSON.stringify({ result: 'pass', checks: ['chat-discovery-origin', 'rejected-discovery', 'wrong-discovery-id', 'managed-chat-confirmed', 'wrong-completion-hash', 'completion-once', 'owner-fence', 'consent-fence'], events: captured }, null, 2));
 process.exit(0);
-`,
-  });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
-
-test('interrupted onboarding preserves owned progress and includes newly added optional steps', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 30_000,
-    input: String.raw`
-import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
-Object.assign(globalThis, { window: dom.window, document: dom.window.document, location: dom.window.location, IS_REACT_ACT_ENVIRONMENT: true, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
-for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment']) globalThis[name] = dom.window[name];
-Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
-globalThis.ResizeObserver = class { observe() {} disconnect() {} };
-window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
-window.nodDesktop = { getSettings: () => new Promise(() => {}), ready: async () => {} };
-let ready = true, complete = 0;
-window.fetch = globalThis.fetch = async (path) => {
-  if (path === '/api/models') return Response.json(ready ? { connections: [{ id: 'synthetic-model', status: 'connected', models: [{ id: 'synthetic-model', efforts: ['high'] }] }], selection: { connectionId: 'synthetic-model', modelId: 'synthetic-model', effort: 'high' } } : { connections: [], selection: null });
-  if (path === '/api/preferences') return Response.json({ timeZone: 'Europe/Lisbon' });
-  if (path === '/api/account/prepare') return Response.json({ ok: true });
-  if (['/api/apps', '/api/apps/catalog'].includes(path)) return Response.json([]);
-  throw new Error('Unexpected synthetic request: ' + path);
-};
-const { createElement, act } = await import('react');
-const { createRoot } = await import('react-dom/client');
-const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
-const { DesktopPreferencesSetup } = await import('./src/web/pages/onboarding/steps/desktop-preferences.tsx');
-const { onboardingSteps } = await import('./src/shared/onboarding.ts');
-const { writeStep, clearStored, readStep } = await import('./src/web/pages/onboarding/storage.ts');
-const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
-const root = createRoot(document.getElementById('root'));
-const checks = [];
-const check = (id, run) => { try { run(); checks.push({ id, status: 'pass' }); } catch (error) { checks.push({ id, status: 'fail', error: error.message }); } };
-async function mount(stored) {
-  await act(async () => root.render(null));
-  pageDataCache.clear(); clearStored(); writeStep(stored);
-  await act(async () => root.render(createElement(Onboarding, { user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null }, onComplete: async () => { complete++; } })));
-}
-await mount({ owner: 'synthetic-owner', step: 'preferences', version: 3 });
-check('old-preferences-visits-profile', () => { assert.equal(document.querySelector('.ob')?.dataset.step, 'profile'); assert.equal(complete, 0); });
-check('migrated-progress-saved', () => assert.deepEqual(readStep(), { owner: 'synthetic-owner', step: 'profile', version: 4 }));
-for (const step of ['email', 'privacy']) {
-  await mount({ owner: 'synthetic-owner', step, version: 3 });
-  check('preserves-' + step, () => { assert.equal(document.querySelector('.ob')?.dataset.step, step); assert.equal(readStep().version, 4); });
-}
-ready = false;
-await mount({ owner: 'synthetic-owner', step: 'brain', version: 3 });
-check('preserves-unconfigured-brain', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'brain'));
-ready = true;
-await mount({ owner: 'synthetic-owner', step: 'preferences', version: 4 });
-check('current-preferences-terminal', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'community'));
-await mount({ owner: 'another-owner', step: 'privacy', version: 3 });
-check('owner-progress-isolation', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'welcome'));
-await act(async () => root.render(createElement(DesktopPreferencesSetup, { steps: onboardingSteps, onReady() {} })));
-check('terminal-progress', () => {
-  const dots = [...document.querySelectorAll('.ob-dots span')];
-  assert.equal(dots.at(-1)?.dataset.state, 'current');
-  assert.equal(dots.filter((dot) => dot.dataset.state === 'next').length, 0);
-});
-await act(async () => root.unmount()); pageDataCache.clear(); dom.window.close();
-console.log(JSON.stringify({ result: checks.every((check) => check.status === 'pass') ? 'pass' : 'fail', checks }, null, 2));
-process.exit(checks.every((check) => check.status === 'pass') ? 0 : 1);
 `,
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);

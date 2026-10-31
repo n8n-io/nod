@@ -1,14 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { analyticsProfileSchema } from '../shared/analytics-profile.ts';
-import { productSurveyEventSchema } from '../shared/product-surveys.ts';
-import type { ProductSurveys } from './product-surveys.ts';
-import type {
-  AccountSettings,
-  AccountUpdate,
-  AccountUser,
-  SessionResponse,
-} from '../shared/account.ts';
+import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AccountStore } from './account-store.ts';
 import { analyticsModel, type Analytics } from './analytics.ts';
 
@@ -18,7 +10,6 @@ const accountUpdate = z
     onboardingCompleted: z.boolean().optional(),
     usageData: z.boolean().optional(),
     traces: z.boolean().optional(),
-    analyticsProfile: analyticsProfileSchema.optional(),
   })
   .strict();
 
@@ -33,42 +24,13 @@ export function createAccountSession(options: {
   onboardingMissing?(): Promise<'brain' | 'email' | null>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
-  surveys?: ProductSurveys;
   prepare?(signal: AbortSignal): Promise<void>;
 }) {
   const origin = new URL(options.origin).origin;
   const user = options.localUser;
   const owner = user.id;
   let accountVersion = 0;
-  let consentVersion = 0;
-  let profilePublication:
-    | { consent: ReturnType<Analytics['consent']> | undefined; version: number; enabling: boolean }
-    | undefined;
   let pending: Promise<unknown> | undefined;
-  function applyAccount(account: AccountSettings, consent: { enabled: boolean; revision: string }) {
-    const previousConsent = options.analytics?.consent(owner);
-    options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
-    options.analytics?.setProfile(owner, account.analyticsProfile ?? {});
-    options.onTraces?.(account.traces);
-    const publication = profilePublication;
-    profilePublication = undefined;
-    const currentConsent = options.analytics?.consent(owner);
-    if (
-      publication &&
-      publication.version === consentVersion &&
-      account.analyticsProfile !== undefined &&
-      currentConsent?.enabled &&
-      ((publication.enabling && publication.consent?.version === previousConsent?.version) ||
-        (publication.consent?.enabled &&
-          !publication.consent.signal.aborted &&
-          publication.consent.version === currentConsent.version) ||
-        (publication.consent?.version === 0 && previousConsent?.version === 0))
-    )
-      options.analytics?.capture(owner, {
-        event: 'nod_profile_updated',
-        properties: account.analyticsProfile,
-      });
-  }
   async function readAccount() {
     for (;;) {
       await pending?.catch(() => {});
@@ -76,15 +38,13 @@ export function createAccountSession(options: {
       const account = await options.accounts.read(owner);
       const consent = await options.accounts.readConsent(owner);
       if (accountVersion !== version || pending) continue;
-      applyAccount(account, consent);
+      options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+      options.onTraces?.(account.traces);
       return { ...account, usageData: consent.enabled };
     }
   }
   async function updateAccount(input: AccountUpdate) {
     const version = ++accountVersion;
-    if (input.usageData !== undefined) consentVersion++;
-    const publicationVersion = consentVersion;
-    const originalConsent = options.analytics?.consent(owner);
     if (input.usageData === false) options.analytics?.setUsageData(owner, false);
     if (input.traces === false) options.onTraces?.(false);
     const update = (pending ?? Promise.resolve())
@@ -92,14 +52,9 @@ export function createAccountSession(options: {
       .then(async () => {
         const account = await options.accounts.update(owner, input);
         const consent = await options.accounts.readConsent(owner);
-        if (input.analyticsProfile !== undefined || input.usageData === true)
-          profilePublication = {
-            consent: originalConsent,
-            version: publicationVersion,
-            enabling: input.usageData === true,
-          };
         if (accountVersion === version) {
-          applyAccount(account, consent);
+          options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+          options.onTraces?.(account.traces);
         }
         return { ...account, usageData: consent.enabled };
       });
@@ -117,7 +72,6 @@ export function createAccountSession(options: {
         onboardingCompleted: account.onboardingCompleted,
         usageData: account.usageData,
         traces: account.traces,
-        analyticsProfile: account.analyticsProfile,
       },
       capabilities: {
         developer: Boolean(options.developerIds?.has(owner)),
@@ -161,32 +115,6 @@ export function createAccountSession(options: {
     }
   }
   function register(app: FastifyInstance) {
-    app.get('/api/product-survey', async (_request, reply) => {
-      reply.header('cache-control', 'no-store');
-      const account = await readAccount();
-      if (!account.onboardingCompleted || !options.analytics?.configuration(owner).enabled)
-        return { offer: null };
-      return { offer: (await options.surveys?.offer(owner)) ?? null };
-    });
-    app.post('/api/product-survey', async (request, reply) => {
-      if (!guard(request, reply)) return;
-      const input = productSurveyEventSchema.parse(request.body);
-      const account = await readAccount();
-      if (!account.onboardingCompleted || !options.analytics?.configuration(owner).enabled)
-        return reply.code(409).send({ error: 'This survey is no longer available.' });
-      const consent = options.analytics.consent(owner);
-      const result = (await options.surveys?.respond(owner, input)) ?? {
-        accepted: false,
-        changed: false,
-      };
-      if (
-        result.changed &&
-        !consent.signal.aborted &&
-        consent.version === options.analytics.consent(owner).version
-      )
-        options.analytics.capture(owner, { event: 'nod_survey_changed', properties: input });
-      return { accepted: result.accepted };
-    });
     app.get('/api/session', async (_request, reply) => {
       reply.header('cache-control', 'no-store');
       return response();

@@ -5,12 +5,6 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createServer as createViteServer } from 'vite';
-import { analyticsProfileSchema, type AnalyticsProfile } from '../src/shared/analytics-profile';
-import {
-  productSurveyEventSchema,
-  type ProductSurveyEvent,
-  type ProductSurveyOffer,
-} from '../src/shared/product-surveys';
 
 const port = Number(process.env.NOD_ANALYTICS_FIXTURE_PORT ?? '0');
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid fixture port.');
@@ -42,9 +36,6 @@ function hasGeneratedNode(value: unknown): boolean {
 let completed = false;
 let usageData = false;
 let traces = false;
-let analyticsProfile: AnalyticsProfile = {};
-let surveyOffer: ProductSurveyOffer | null = null;
-const surveyRequests: ProductSurveyEvent[] = [];
 let user = 'fixture-owner-one';
 const configuration = {
   provider: 'fixture',
@@ -83,14 +74,12 @@ const session = () => ({
     onboardingCompleted: completed,
     usageData,
     traces,
-    analyticsProfile,
   },
   capabilities: { developer: true, traces: true },
   analytics: {
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
     environment: 'development',
-    profile: analyticsProfile,
   },
 });
 const preferences = {
@@ -193,7 +182,6 @@ const server = createServer(async (request, response) => {
       count: events.length,
       privateDataLeaked: serialized.includes(privateText),
       generatedContentLeaked: hasGeneratedNode(decoded),
-      surveyRequests,
       ...(url.searchParams.get('compact') === '1' ? {} : { events: decoded }),
     });
     return;
@@ -202,18 +190,12 @@ const server = createServer(async (request, response) => {
     user = 'fixture-owner-two';
     usageData = false;
     traces = false;
-    analyticsProfile = {};
-    surveyOffer = null;
     json({ ok: true });
     return;
   }
   if (url.pathname === '/__fixture__/prepare') {
-    completed = url.searchParams.get('onboarding') !== 'on';
+    completed = true;
     usageData = url.searchParams.get('sharing') === 'on';
-    analyticsProfile = {};
-    const survey = url.searchParams.get('survey');
-    surveyOffer =
-      survey === 'nps' || survey === 'churn' ? { survey, submission_id: randomUUID() } : null;
     messages.splice(
       0,
       messages.length,
@@ -252,41 +234,13 @@ const server = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
   if (url.pathname === '/api/session') json(session());
-  else if (url.pathname === '/api/product-survey' && request.method === 'GET')
-    json({ offer: usageData && completed ? surveyOffer : null });
-  else if (url.pathname === '/api/product-survey' && request.method === 'POST') {
-    const parsed = productSurveyEventSchema.safeParse(body);
-    if (!usageData || !completed) {
-      response.statusCode = 409;
-      json({ error: 'This survey is no longer available.' });
-      return;
-    }
-    const accepted =
-      parsed.success &&
-      surveyOffer?.survey === parsed.data.survey &&
-      surveyOffer.submission_id === parsed.data.submission_id;
-    if (accepted && parsed.success) {
-      surveyRequests.push(parsed.data);
-      if (parsed.data.status !== 'shown') surveyOffer = null;
-    }
-    json({ accepted });
-  } else if (url.pathname === file.url) {
+  else if (url.pathname === file.url) {
     response.setHeader('content-type', file.mimeType);
     response.end(privateText);
   } else if (url.pathname === '/api/account') {
-    const profile =
-      body.analyticsProfile === undefined
-        ? undefined
-        : analyticsProfileSchema.safeParse(body.analyticsProfile);
-    if (profile && !profile.success) {
-      response.statusCode = 400;
-      json({ error: 'Invalid profile.' });
-      return;
-    }
     completed = body.onboardingCompleted ?? completed;
     if (typeof body.usageData === 'boolean') usageData = body.usageData;
     if (typeof body.traces === 'boolean') traces = body.traces;
-    if (profile?.success) analyticsProfile = profile.data;
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });

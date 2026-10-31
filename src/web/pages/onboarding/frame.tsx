@@ -9,8 +9,6 @@ const stepNames: Record<OnboardingStep, string> = {
   email: 'Connect your email',
   brain: 'Connect an AI provider',
   privacy: 'Help improve Nod',
-  profile: 'About you',
-  community: 'Join the Nod community',
 };
 
 export function OnboardingFrame({

@@ -109,29 +109,6 @@
 .ob-screen {
   display: contents;
 }
-.ob-profile-fields {
-  display: grid;
-  gap: 20px;
-  margin-left: 48px;
-}
-.ob-profile-tools {
-  padding: 0;
-  border: 0;
-  min-width: 0;
-}
-.ob-profile-tools legend {
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-.ob-profile-tools > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.ob-profile-tools [aria-pressed='true'] {
-  border-color: var(--primary);
-  color: var(--primary);
-}
 .ob-runtime {
   display: flex;
   flex-shrink: 0;

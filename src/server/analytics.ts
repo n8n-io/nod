@@ -7,11 +7,6 @@ import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 import { apiKeyModelProviders } from '../shared/models.ts';
-import {
-  analyticsProfileSchema,
-  analyticsProfileProperties,
-  type AnalyticsProfile,
-} from '../shared/analytics-profile.ts';
 
 import {
   analyticsEvent,
@@ -155,7 +150,6 @@ export async function createAnalytics(options: {
     consent: ReturnType<typeof consent>;
   }>();
   const replaySessions = new Map<string, string>();
-  const profiles = new Map<string, AnalyticsProfile>();
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -183,7 +177,6 @@ export async function createAnalytics(options: {
       distinctId: enabled ? `local:${localId}` : null,
       environment: options.environment,
       ...(appVersion ? { appVersion } : {}),
-      ...(enabled && owner && profiles.has(owner) ? { profile: profiles.get(owner) } : {}),
     };
   }
   function capture(owner: string, event: AnalyticsEvent, delivery: AnalyticsDelivery = {}) {
@@ -243,7 +236,6 @@ export async function createAnalytics(options: {
             analytics_schema: posthogConfig.schemaVersion,
             environment: options.environment,
             capture_source: 'server',
-            ...(config.profile ? analyticsProfileProperties(config.profile) : {}),
             ...(version ? { app_version: version } : {}),
             ...(runId ? { run_id: runId } : {}),
             ...(run?.work ??
@@ -318,12 +310,6 @@ export async function createAnalytics(options: {
       };
     },
     setUsageData,
-    setProfile(owner: string, profile: unknown) {
-      const parsed = analyticsProfileSchema.safeParse(profile);
-      if (!parsed.success) return false;
-      profiles.set(owner, parsed.data);
-      return true;
-    },
     forOwner:
       (owner: string): CaptureAnalytics =>
       (event, delivery) =>

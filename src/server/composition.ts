@@ -132,7 +132,6 @@ import { createChannelMedia } from './channel-media.ts';
 import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
-import { createProductSurveys } from './product-surveys.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
@@ -1168,8 +1167,6 @@ async function initializeApplication(
       .filter(connectedGmail)
       .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
-  const productSurveys = createProductSurveys(pool);
-  await productSurveys.initialize();
   const appReads = {
     accounts: async (client?: import('pg').PoolClient) => {
       const connected = (await integrations.list(ownerId, { refresh: false, client })).filter(
@@ -1267,7 +1264,6 @@ async function initializeApplication(
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
-  analytics.setProfile(ownerId, (await localAccounts.read(ownerId)).analyticsProfile ?? {});
   const ownerProfile = async () => {
     const [connections, preferences] = await Promise.all([
       integrations.list(ownerId, { refresh: false }),
@@ -1959,7 +1955,6 @@ async function initializeApplication(
     analytics,
     model: () => adapters.model,
     accounts: localAccounts,
-    surveys: productSurveys,
     origin: publicOrigin,
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),

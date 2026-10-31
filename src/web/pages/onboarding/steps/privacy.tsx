@@ -10,7 +10,7 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
   const items = [
     ...(traces
       ? [
-          <Bubble>Will you help the Nod team make me better?</Bubble>,
+          <Bubble>One last thing. Will you help the Nod team make me better?</Bubble>,
           <Bubble>
             I can send our conversations, including what I read and do, to the Nod team at n8n so
             they can see where I go wrong. I remove the personal details I can recognize first. Kept

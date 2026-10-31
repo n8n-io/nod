@@ -7,15 +7,13 @@ import { feedbackActivity } from './feedback-activity';
 import { requestAccountVersion } from './api';
 import type { AttachmentKind } from '../../shared/attachment-kind';
 import type { Presentation } from '../../shared/presentation';
-import { analyticsProfileProperties, analyticsProfileSchema } from '../../shared/analytics-profile';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
-    step: 'welcome' | 'email' | 'brain' | 'privacy' | 'profile' | 'community';
+    step: 'welcome' | 'email' | 'brain' | 'privacy';
     direction: 'forward' | 'back';
   };
-  nod_onboarding_step_skipped: { step: 'email' | 'profile' | 'community' };
-  nod_community_opened: { destination: 'forum' };
+  nod_onboarding_step_skipped: { step: 'email' };
   nod_app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
   nod_presentation_viewed: { kind: Presentation['type'] };
   nod_answer_choices_viewed: { multiple: boolean; option_count: number };
@@ -97,11 +95,10 @@ const artifactKinds = [
 ];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   nod_onboarding_step_viewed: {
-    step: ['welcome', 'email', 'brain', 'privacy', 'profile', 'community'],
+    step: ['welcome', 'email', 'brain', 'privacy'],
     direction: ['forward', 'back'],
   },
-  nod_onboarding_step_skipped: { step: ['email', 'profile', 'community'] },
-  nod_community_opened: { destination: ['forum'] },
+  nod_onboarding_step_skipped: { step: ['email'] },
   nod_app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
   nod_presentation_viewed: {
     kind: ['image', 'map', 'flights', 'seats', 'booking', 'chart', 'apps', 'diagram'],
@@ -316,7 +313,6 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
   );
-  const profile = analyticsProfileSchema.safeParse(configuration.profile ?? {});
   const sanitized = {
     uuid: event.uuid,
     event: event.event,
@@ -326,7 +322,6 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       analytics_schema: posthogConfig.schemaVersion,
       ...(configuration.appVersion ? { app_version: configuration.appVersion } : {}),
       environment: configuration.environment,
-      ...(profile.success ? analyticsProfileProperties(profile.data) : {}),
       surface,
       route,
       $current_url: sanitizedAnalyticsUrl(route),

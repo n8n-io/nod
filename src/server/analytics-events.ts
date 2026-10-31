@@ -1,7 +1,5 @@
 import { z } from 'zod';
-import { productSurveyEventSchema } from '../shared/product-surveys.ts';
 import { modelProviders } from '../shared/models.ts';
-import { analyticsProfileSchema } from '../shared/analytics-profile.ts';
 
 export const analyticsVersion = z
   .string()
@@ -59,12 +57,6 @@ const turnProperties = z.object({
   model: analyticsModel.optional(),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
-  z
-    .object({ event: z.literal('nod_survey_changed'), properties: productSurveyEventSchema })
-    .strict(),
-  z
-    .object({ event: z.literal('nod_profile_updated'), properties: analyticsProfileSchema })
-    .strict(),
   z
     .object({
       event: z.literal('nod_onboarding_completed'),

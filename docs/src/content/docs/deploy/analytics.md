@@ -1,6 +1,6 @@
 ---
 title: Analytics and recordings
-description: What usage data Nod collects, how to turn it off, and what optional profiles and surveys share.
+description: What usage data Nod collects, how to turn it off, and what its measurements can explain.
 sidebar:
   order: 4
 ---
@@ -9,7 +9,7 @@ Nod shares bounded product events and masked session recordings so the team can 
 
 Usage sharing is on for new owners. Data goes to the n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, credentials, and free-form input are excluded. Optional profile answers and survey responses use the fixed categories below.
+Messages, generated content, connected-app results, credentials, and free-form input are excluded.
 
 ## Turn usage sharing on or off
 
@@ -47,7 +47,7 @@ Nod counts installations, not people. Two installations count as two; a shared i
 | Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
 | Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
-The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting an optional profile or opening a survey can create one with categories and survey participation state. Names and contact details aren't added.
+The owner's sharing choice still applies. Nod disables IP geolocation. Events don't create PostHog person profiles or add names and contact details.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and apply the project's internal/test exclusions.
 
@@ -67,7 +67,7 @@ The schema doesn't infer task categories, completed goals, or frustration from c
 
 Events use `analytics_schema=nod_v4`, `environment`, and `app_version` when available. This schema starts fresh; earlier analytics aren't migrated into its dashboards.
 
-UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`. Submitted profile categories appear as `profile_role`, `profile_company_size`, `profile_ai_experience`, and `profile_ai_tools` on both.
+UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`.
 
 Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. Web turns can also carry the sending tab's PostHog `$session_id`. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
@@ -79,27 +79,26 @@ Server events must pass a strict schema. UI events keep only allowed properties 
 
 ### Setup and app interaction
 
-| Event                                                     | What it records                                                                                                     |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `$pageview`, `$snapshot`                                  | Normalized app route or masked replay data. URLs become `https://nod.invalid` routes.                               |
-| `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`, `profile`, `community`) and direction. Native Welcome isn't observed. |
-| `nod_onboarding_step_skipped`                             | Skipped `email`, `profile`, or `community` step.                                                                    |
-| `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                                                 |
-| `nod_community_opened`                                    | Public n8n Labs community `forum` destination.                                                                      |
-| `nod_settings_viewed`, `nod_tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                                          |
-| `nod_chat_message_sent`                                   | Attachment/reply booleans and composer/task-card/ask-Nod/task-reply/answer-choice source.                           |
-| `nod_chat_stop_requested`                                 | Stop requested in the app.                                                                                          |
-| `nod_task_card_started`, `nod_task_action`                | Card kind and bounded position, or fixed task control.                                                              |
-| `nod_setup_link_clicked`, `nod_link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                               |
-| `nod_browser_handoff_action`                              | Done, back, reload, expand, or collapse.                                                                            |
-| `nod_message_reaction_changed`, `nod_message_action`      | Fixed reaction/action, input method, and assistant/user role.                                                       |
-| `nod_attachment_added`                                    | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                        |
-| `nod_app_connect_clicked`, `nod_app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                                      |
-| `nod_model_selected`                                      | Provider, settings/onboarding entry, and whether the recommendation was chosen.                                     |
-| `nod_ui_error`                                            | Fixed area and action, without error text.                                                                          |
-| `nod_feedback_sent`                                       | Bug/feature/other category and attachment/report booleans, without feedback content.                                |
+| Event                                                     | What it records                                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `$pageview`, `$snapshot`                                  | Normalized app route or masked replay data. URLs become `https://nod.invalid` routes.       |
+| `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed. |
+| `nod_onboarding_step_skipped`                             | Skipped `email` step.                                                                       |
+| `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                         |
+| `nod_settings_viewed`, `nod_tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                  |
+| `nod_chat_message_sent`                                   | Attachment/reply booleans and composer/task-card/ask-Nod/task-reply/answer-choice source.   |
+| `nod_chat_stop_requested`                                 | Stop requested in the app.                                                                  |
+| `nod_task_card_started`, `nod_task_action`                | Card kind and bounded position, or fixed task control.                                      |
+| `nod_setup_link_clicked`, `nod_link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.       |
+| `nod_browser_handoff_action`                              | Done, back, reload, expand, or collapse.                                                    |
+| `nod_message_reaction_changed`, `nod_message_action`      | Fixed reaction/action, input method, and assistant/user role.                               |
+| `nod_attachment_added`                                    | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                |
+| `nod_app_connect_clicked`, `nod_app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.              |
+| `nod_model_selected`                                      | Provider, settings/onboarding entry, and whether the recommendation was chosen.             |
+| `nod_ui_error`                                            | Fixed area and action, without error text.                                                  |
+| `nod_feedback_sent`                                       | Bug/feature/other category and attachment/report booleans, without feedback content.        |
 
-Email, profile answers, and community joining are optional. Model setup can be bypassed when already configured. Sharing must be enabled when a step appears to observe it.
+Connecting email is optional. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
 ### Runs, models, and connected services
 
@@ -146,38 +145,18 @@ Views require a visible app and content intersecting its viewport. Repeated moun
 
 Answer-choice collectors and dashboards are ready for the separate answer-choice feature integration. They exclude option labels, selected text, and response content.
 
-## Optional profile and feedback
+## Measurement gaps
 
-The onboarding profile is optional. Leave any field unanswered or skip it. `nod_profile_updated` carries only submitted categories:
-
-| Field           | Allowed answers                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------- |
-| `role`          | `agency_owner`, `business_owner`, `employee`, `individual`, `other`                               |
-| `company_size`  | `solo`, `2_10`, `11_50`, `51_200`, `201_plus`                                                     |
-| `ai_experience` | `new`, `occasional`, `regular`, `technical`                                                       |
-| `ai_tools`      | Any of `chatgpt`, `claude`, `gemini`, `copilot`, `n8n`, `coding_agents`, `other`, or `none` alone |
-
-These answers describe the installation's audience. They don't identify an employer or establish who pays. Unanswered fields remain unknown; multiple AI-tool categories aren't additive.
-
-Eligible installations see **One question about Nod**. Selecting it opens an optional survey. Closing it dismisses that survey. Submitting or dismissing prevents another offer of that kind on the installation.
-
-- **Recommendation:** A score from zero to 10 after at least three distinct owner requests have succeeded across three days. The first successful request must be at least seven days ago; the latest success within three days. The installation must also have an owner message within the last seven days.
-- **Stopped use:** One fixed reason after at least three distinct owner requests have succeeded and seven days without a new owner message. Recent messages prevent the offer even when their work is queued, running, failed, cancelled, or waiting. Reasons cover no useful task, setup, reliability, speed, cost, privacy, another tool, or other. There is no free-text field.
-
-Survey eligibility counts messages in chat and Tasks, including genuine owner confirmation messages on resume turns. Automatic resumes of the same request count once towards the successful-request threshold; its first successful completion determines the activity day. Fresh owner messages reset inactivity; automatic resumes and work without an owner request don't. The saved active-use and retention charts use the narrower `user`/`task` source filter. The stopped-use question appears only when someone reopens the app; it can't reach people who never return. No email or other outreach is sent.
-
-The server translates validated actions into PostHog `survey shown`, `survey sent`, and `survey dismissed` events. They contain fixed survey/question identifiers, a random submission ID, and the numeric score or fixed reason. Survey participation metadata can be stored on the pseudonymous profile. Sharing must be on.
-
-Nod owns survey display and eligibility. Draft or paused status in PostHog doesn't disable the app's survey UI. Turning usage sharing off or setting `NOD_ANALYTICS_ENABLED=false` suppresses offers and capture.
+NPS, reasons for leaving, role, company size, AI experience, and preferred AI tools are not collected. Usage events cannot establish satisfaction, useful task completion, trust, or why someone never returns. These remain questions for separate research.
 
 ## What recordings show
 
 Recordings show navigation, layout, controls, scrolling, and clicks with private content removed.
 
 - All input values and text are masked except static product labels marked public.
-- Chat, answer choices, survey/profile controls, artifacts, attachments, tasks, Usage details, account names, credentials, Vault values, and the remote browser view are blocked.
+- Chat, answer choices, artifacts, attachments, tasks, Usage details, account names, credentials, Vault values, and the remote browser view are blocked.
 - Images, media, iframes, and canvases are blocked. URLs become fixed `https://nod.invalid` app routes.
-- Console output, network payloads, autocapture, automatic exceptions, and feature-flag events are disabled. Remote survey popups are disabled; Nod renders its own optional survey.
+- Console output, network payloads, autocapture, automatic exceptions, and feature-flag events are disabled. Remote survey popups are disabled.
 
 Capture failures don't interrupt Nod. PostHog configuration and model keys never enter the workspace.
 
