@@ -677,6 +677,11 @@
     transform: scale(0.97);
   }
 }
+@media (pointer: coarse), (hover: none) {
+  .flight-details-toggle {
+    min-height: 44px;
+  }
+}
 @container (max-width: 420px) {
   .flight-route {
     gap: 8px;

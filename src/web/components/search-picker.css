@@ -101,3 +101,9 @@
   padding: 8px 4px 0;
   border-top: 1px solid var(--border);
 }
+
+@media (max-width: 640px), (pointer: coarse) {
+  .search-picker-option {
+    min-height: 44px;
+  }
+}

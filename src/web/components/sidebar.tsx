@@ -335,9 +335,9 @@ export function Sidebar({
                   >
                     <span className="nav-icon">
                       <Icon size={20} solid={path === item.path} aria-hidden="true" />
-                      {item.path === '/' && unreadBadge}
                     </span>
                     <span data-analytics-public>{item.label}</span>
+                    {item.path === '/' && unreadBadge}
                   </a>
                 );
               })}

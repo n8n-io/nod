@@ -1926,6 +1926,30 @@ test('send_message validates structured visuals and delivers each distinct prese
     ],
     edges: [{ from: 'request', to: 'answer' }],
   };
+  const legacyFlight: Presentation = {
+    version: 1,
+    type: 'flights',
+    title: 'Synthetic itinerary',
+    sources: [],
+    options: [
+      {
+        id: 'trip',
+        journeys: [
+          {
+            id: 'outbound',
+            label: 'Outbound',
+            segments: [
+              {
+                airline: 'Synthetic Air',
+                departure: { airport: 'AAA', time: '10:00' },
+                arrival: { airport: 'BBB', time: '12:00' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
   for (const text of ['The request reaches the answer.', ''])
     await t.test(text ? 'with accompanying text' : 'visual only', async (t) => {
       const replies: Array<Parameters<RuntimeContext['reply']>> = [];
@@ -1944,9 +1968,28 @@ test('send_message validates structured visuals and delivers each distinct prese
               const exposed = Compile(guide.presentationSchema as Parameters<typeof Compile>[0]);
               assert.equal(exposed.Check(presentation), true);
               assert.equal(exposed.Check({ ...presentation, version: 2 }), false);
+              assert.equal(exposed.Check(legacyFlight), false);
               const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await assert.rejects(
+                send.execute({ text: '', presentation: legacyFlight }),
+                (error: unknown) => {
+                  assert.ok(error instanceof Error);
+                  assert.match(error.message, /\/presentation\/options\/0\/status/);
+                  for (const status of ['booked', 'option', 'unknown'])
+                    assert.ok(error.message.includes(status));
+                  assert.ok(!error.message.includes(legacyFlight.title));
+                  return true;
+                },
+              );
               for (const value of [
                 { text: 'Answer', presentation: { ...presentation, version: 2 } },
+                {
+                  text: '',
+                  presentation: {
+                    ...legacyFlight,
+                    options: [{ ...legacyFlight.options[0], status: 'unverified' }],
+                  },
+                },
                 {
                   text: 'Answer',
                   presentation: { ...presentation, edges: [{ from: 'missing', to: 'answer' }] },
@@ -1955,6 +1998,14 @@ test('send_message validates structured visuals and delivers each distinct prese
               ])
                 await assert.rejects(send.execute(value));
               assert.equal(replies.length, 0);
+              for (const status of ['booked', 'option', 'unknown'] as const) {
+                const flight: Presentation = {
+                  ...legacyFlight,
+                  options: [{ ...legacyFlight.options[0], status }],
+                };
+                assert.equal(exposed.Check(flight), true);
+                await send.execute({ text: '', presentation: flight });
+              }
               const value = {
                 text,
                 replyToMessageId: replyTo,
@@ -1984,9 +2035,16 @@ test('send_message validates structured visuals and delivers each distinct prese
         },
       });
       assert.equal(result.status, 'succeeded');
-      assert.equal(replies.length, 2);
-      assert.deepEqual(replies[0], [text, undefined, replyTo, presentation]);
-      assert.equal(replies[1][3]?.title, 'Updated synthetic delivery');
+      assert.equal(replies.length, 5);
+      assert.deepEqual(replies[3], [text, undefined, replyTo, presentation]);
+      assert.equal(replies[4][3]?.title, 'Updated synthetic delivery');
+      assert.deepEqual(
+        replies.slice(0, 3).map((reply) => {
+          assert.equal(reply[3]?.type, 'flights');
+          return reply[3]?.type === 'flights' ? reply[3].options[0].status : undefined;
+        }),
+        ['booked', 'option', 'unknown'],
+      );
     });
 });
 

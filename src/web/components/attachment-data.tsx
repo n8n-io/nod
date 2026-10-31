@@ -241,16 +241,20 @@ function SheetView({ sheets, onDetail }: { sheets: Sheet[]; onDetail(detail: str
               {rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   <th scope="row">{rowIndex + 1}</th>
-                  {headings.map((_, column) => (
-                    <Tooltip
-                      key={column}
-                      content={(row[column]?.length ?? 0) > 40 ? row[column] : undefined}
-                    >
-                      <td className={numeric[column] ? 'is-number' : undefined}>
+                  {headings.map((_, column) => {
+                    const cell = (
+                      <td key={column} className={numeric[column] ? 'is-number' : undefined}>
                         <SpreadsheetCell value={row[column] ?? ''} />
                       </td>
-                    </Tooltip>
-                  ))}
+                    );
+                    return (row[column]?.length ?? 0) > 40 ? (
+                      <Tooltip key={column} content={row[column]}>
+                        {cell}
+                      </Tooltip>
+                    ) : (
+                      cell
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

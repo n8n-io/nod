@@ -56,6 +56,78 @@ const booking = {
     .optional(),
 };
 
+const flightsPresentation = z.strictObject({
+  ...common,
+  type: z.literal('flights'),
+  options: z
+    .array(
+      z.strictObject({
+        id,
+        label: text(120).optional(),
+        status: z
+          .enum(['booked', 'option', 'unknown'])
+          .describe(
+            'booked for a confirmed purchased itinerary, option for a candidate, unknown when the booking state is not established.',
+          )
+          .optional(),
+        bookingReference: text(80)
+          .describe('A known booking reference, separate from the itinerary label.')
+          .optional(),
+        price: text(80)
+          .describe('Include only when known and relevant; not required for booked itineraries.')
+          .optional(),
+        baggage: text(200).optional(),
+        url: url.optional(),
+        recommended: z.boolean().optional(),
+        journeys: z
+          .array(
+            z.strictObject({
+              id,
+              label: text(80),
+              duration: text(80).optional(),
+              segments: z
+                .array(
+                  z.strictObject({
+                    airline: text(80),
+                    flightNumber: text(40).optional(),
+                    operatedBy: text(80).optional(),
+                    aircraft: text(120).optional(),
+                    cabin: text(80).optional(),
+                    duration: text(80).optional(),
+                    departure: airport,
+                    arrival: airport,
+                    technicalStops: z
+                      .array(
+                        z.strictObject({
+                          airport: text(80),
+                          duration: text(80).optional(),
+                          details: text(300).optional(),
+                        }),
+                      )
+                      .max(4)
+                      .optional(),
+                    connectionAfter: z
+                      .strictObject({
+                        duration: text(80).optional(),
+                        airportChange: z.enum(['yes', 'no', 'unknown']),
+                        selfTransfer: z.enum(['yes', 'no', 'unknown']),
+                        details: text(400).optional(),
+                      })
+                      .optional(),
+                  }),
+                )
+                .min(1)
+                .max(8),
+            }),
+          )
+          .min(1)
+          .max(6),
+      }),
+    )
+    .min(1)
+    .max(8),
+});
+
 export const presentationSchema = z
   .discriminatedUnion('type', [
     z.strictObject({
@@ -81,68 +153,7 @@ export const presentationSchema = z
         .min(1)
         .max(12),
     }),
-    z.strictObject({
-      ...common,
-      type: z.literal('flights'),
-      options: z
-        .array(
-          z.strictObject({
-            id,
-            label: text(120).optional(),
-            status: z.enum(['booked', 'option']).optional(),
-            bookingReference: text(80).optional(),
-            price: text(80).optional(),
-            baggage: text(200).optional(),
-            url: url.optional(),
-            recommended: z.boolean().optional(),
-            journeys: z
-              .array(
-                z.strictObject({
-                  id,
-                  label: text(80),
-                  duration: text(80).optional(),
-                  segments: z
-                    .array(
-                      z.strictObject({
-                        airline: text(80),
-                        flightNumber: text(40).optional(),
-                        operatedBy: text(80).optional(),
-                        aircraft: text(120).optional(),
-                        cabin: text(80).optional(),
-                        duration: text(80).optional(),
-                        departure: airport,
-                        arrival: airport,
-                        technicalStops: z
-                          .array(
-                            z.strictObject({
-                              airport: text(80),
-                              duration: text(80).optional(),
-                              details: text(300).optional(),
-                            }),
-                          )
-                          .max(4)
-                          .optional(),
-                        connectionAfter: z
-                          .strictObject({
-                            duration: text(80).optional(),
-                            airportChange: z.enum(['yes', 'no', 'unknown']),
-                            selfTransfer: z.enum(['yes', 'no', 'unknown']),
-                            details: text(400).optional(),
-                          })
-                          .optional(),
-                      }),
-                    )
-                    .min(1)
-                    .max(8),
-                }),
-              )
-              .min(1)
-              .max(6),
-          }),
-        )
-        .min(1)
-        .max(8),
-    }),
+    flightsPresentation,
     z.strictObject({
       ...common,
       type: z.literal('seats'),
@@ -318,6 +329,22 @@ export const presentationSchema = z
         invalid('Diagram edges must reference existing nodes.');
     }
   });
+
+export const presentationInputSchema = z
+  .discriminatedUnion('type', [
+    flightsPresentation.extend({
+      options: z
+        .array(
+          flightsPresentation.shape.options.element.extend({
+            status: flightsPresentation.shape.options.element.shape.status.unwrap(),
+          }),
+        )
+        .min(1)
+        .max(8),
+    }),
+    ...presentationSchema.options.filter((schema) => schema !== flightsPresentation),
+  ])
+  .pipe(presentationSchema);
 
 export type Presentation = z.infer<typeof presentationSchema>;
 

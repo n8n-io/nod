@@ -83,7 +83,7 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
     'Nod keeps short notes about you so it does not have to ask twice. Each note has a status:',
     [
       ...statuses.map(({ label, meaning }) => `- **${label}**: ${meaning}`),
-      '- **Let go**: Archived by you, replaced, expired or not mentioned for 60 days. Kept so you can bring it back.',
+      '- **Let go**: Archived by you, replaced or expired. Automatically learned plans and older guesses without fact details also move here after 60 days without repetition when they have fewer than two sources. You can bring them back while they remain in the archive.',
     ].join('\n'),
     `Saving new notes is ${view.saving ? 'on' : 'off'}. Sensitive topics (health, religion, politics and similar) are ${view.sensitive ? 'remembered' : 'learned only when you ask'}.`,
     ...sections,

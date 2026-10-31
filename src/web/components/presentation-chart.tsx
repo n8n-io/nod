@@ -58,7 +58,7 @@ function Reading({
       aria-atomic="true"
     >
       <span className="chart-reading-label">{label}</span>
-      {visual.unit && <span className="sr-only">Values in {visual.unit}</span>}
+      {visual.unit && <span className="chart-reading-unit">Values in {visual.unit}</span>}
       <dl>
         {series.map((item) => {
           const point = item.points.find((point) => point.label === label);
@@ -153,6 +153,12 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
             ),
           )}
         </div>
+        {(visual.yLabel || visual.unit) && (
+          <span className="chart-measure">
+            {visual.yLabel}
+            {visual.unit && (visual.yLabel ? ` (${visual.unit})` : visual.unit)}
+          </span>
+        )}
       </div>
       <div
         className="chart-plot"
@@ -381,6 +387,7 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
           </div>
         )}
       </div>
+      {visual.xLabel && <p className="chart-axis-label">{visual.xLabel}</p>}
       <div className="sr-only">
         <table>
           <caption>{visual.title}</caption>
@@ -521,7 +528,7 @@ function RadialChart({ visual }: { visual: ChartVisual }) {
               <span className="chart-slice-value">
                 <strong>
                   {exact(point.value)}
-                  {percentages ? '%' : ''}
+                  {visual.unit ? `${percentages ? '' : ' '}${visual.unit}` : ''}
                 </strong>
                 {!percentages && <small>{percent(point.value)}</small>}
               </span>

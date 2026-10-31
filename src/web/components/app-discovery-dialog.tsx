@@ -454,7 +454,7 @@ export function AppDiscoveryDialog({
               {oauth
                 ? 'Sign in to connect your account.'
                 : paths.some((path) => path.kind === 'cli')
-                  ? 'Add your account securely.'
+                  ? 'Save credentials. The command is not checked during setup.'
                   : 'Nod will check access before connecting.'}
             </DialogDescription>
           </div>
@@ -494,7 +494,6 @@ export function AppDiscoveryDialog({
                 {path.kind === 'http' && path.testPath && (
                   <p>Read check: GET {readCheckUrl(path) ?? 'unavailable'}</p>
                 )}
-                {path.kind === 'cli' && <p>The command is not checked during setup.</p>}
                 {path.source?.sha256 && <p>SHA-256: {path.source.sha256}</p>}
               </div>
             ))}

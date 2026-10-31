@@ -55,7 +55,7 @@ The workspace can reach the internet. Code that Nod runs there can download file
 
 ## Get files from Nod
 
-When Nod shares a file, it appears as an attachment in the Nod app, up to 90 MB. Select it to open a panel next to the chat. Press Left or Right to move through the conversation's files and visuals. Drag the panel's edge to resize it, and press **Escape** to close it. Arrow keys keep their usual behavior while you edit, use media controls, select text, or pan a zoomed preview. Select **Download** to save a file.
+When Nod shares a file, it appears as an attachment in the Nod app, up to 90 MB. Select it to open a panel next to the chat. Press Left or Right to move through the conversation's files and visuals. Drag the panel's edge to resize it, and press **Escape** to close it. Arrow keys keep their usual behavior in inputs, media controls, selected text, or a zoomed preview. Select **Download** to save a file.
 
 File actions appear over previews in chat and in the panel's toolbar. Videos play directly in chat when your browser supports the format, with a preview frame when available. Playback starts when you select Play and pauses when the video leaves view. Use the expand control to open the larger player.
 
@@ -64,7 +64,6 @@ The panel remembers reading state for up to eight recently viewed files, with a 
 - **Use in message** adds an existing file to your draft.
 - **Copy image** copies raster image data where the clipboard supports it. **Download** keeps the original file format.
 - In the desktop app, drag a file card, image, or preview file icon to a folder to copy the file. **Save to Downloads** shows **Open** and **Show in folder** after the save completes. The file menu uses the system menu.
-- **Edit copy** lets you change a plain-text or Markdown file. **Save copy to message** creates a new file and attaches it to your draft. The original file remains available.
 
 Native opening is limited to supported document and raster image types. Save other formats and open them from your file manager.
 

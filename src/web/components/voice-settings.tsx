@@ -60,6 +60,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const catalogRequest = useRef<AbortController | null>(null);
+  const catalogResult = useRef<Promise<SpeechSettings | undefined> | null>(null);
   const prepareRequest = useRef<AbortController | null>(null);
   const saveRequest = useRef<AbortController | null>(null);
   const previewRequest = useRef<AbortController | null>(null);
@@ -165,32 +166,41 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       }
     }
   }
-  async function refreshVoices() {
-    if (catalogRequest.current) return;
+  function refreshVoices(fresh = false): Promise<SpeechSettings | undefined> {
+    if (catalogResult.current)
+      return fresh
+        ? catalogResult.current.then(() => (mounted.current ? refreshVoices() : undefined))
+        : catalogResult.current;
+    if (!mounted.current) return Promise.resolve(undefined);
     const controller = new AbortController();
     catalogRequest.current = controller;
     setCatalogRefreshing(true);
     setCatalogError('');
-    try {
-      const result = await api<SpeechSettings>('/api/speech/voices/refresh', {
-        method: 'POST',
-        signal: controller.signal,
-      });
-      controller.signal.throwIfAborted();
-      update((current) =>
-        current
-          ? { ...result, speechVoice: current.speechVoice, speechReply: current.speechReply }
-          : result,
-      );
-      return result;
-    } catch (cause) {
-      if (!controller.signal.aborted) setCatalogError(errorMessage(cause));
-    } finally {
-      if (catalogRequest.current === controller) {
-        catalogRequest.current = null;
-        if (mounted.current) setCatalogRefreshing(false);
+    const pending = (async () => {
+      try {
+        const result = await api<SpeechSettings>('/api/speech/voices/refresh', {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        controller.signal.throwIfAborted();
+        update((current) =>
+          current
+            ? { ...result, speechVoice: current.speechVoice, speechReply: current.speechReply }
+            : result,
+        );
+        return result;
+      } catch (cause) {
+        if (!controller.signal.aborted) setCatalogError(errorMessage(cause));
+      } finally {
+        if (catalogRequest.current === controller) {
+          catalogRequest.current = null;
+          catalogResult.current = null;
+          if (mounted.current) setCatalogRefreshing(false);
+        }
       }
-    }
+    })();
+    catalogResult.current = pending;
+    return pending;
   }
   async function save(change: Partial<AccountPreferences>) {
     if (saveRequest.current) return false;
@@ -378,8 +388,9 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                 }}
                 onChange={(speechVoice) => {
                   if (speechVoice && !voices.some((voice) => voice.id === speechVoice)) return;
-                  setPickerOpen(false);
-                  void save({ speechVoice });
+                  void save({ speechVoice }).then((saved) => {
+                    if (saved && mounted.current) setPickerOpen(false);
+                  });
                 }}
                 onPreview={(voice) => void preview(voice)}
                 onStop={stop}
@@ -507,7 +518,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                 await refreshVoices();
               }}
               onConnected={() => {
-                void refreshVoices().then(() => {
+                void refreshVoices(true).then(() => {
                   if (!mounted.current) return;
                   returnToChooser.current = true;
                   setConnectionBusy(false);

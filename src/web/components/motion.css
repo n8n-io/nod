@@ -73,6 +73,10 @@
 .sidebar .brand-glyph {
   transition: transform 240ms var(--ease-enter);
 }
+.sidebar .brand-glyph svg {
+  transform-box: view-box;
+  transform-origin: center;
+}
 @media (hover: hover) {
   .sidebar :is(.brand, .mobile-chat-link):hover .brand-glyph {
     transform: scale(1.04);

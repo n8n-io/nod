@@ -222,7 +222,7 @@
   }
 }
 @media (hover: hover) and (pointer: fine) {
-  .place-select:hover {
+  .place-select:hover:not([aria-pressed='true']) {
     background: var(--control-hover);
   }
   .place-pin:hover {

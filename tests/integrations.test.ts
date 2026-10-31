@@ -5854,12 +5854,28 @@ test(
     const transport = createDiscoveredTransport(async () => {
       throw new Error('Proposal creation must not call the remote server.');
     });
+    const authorizations: Array<{ endpoint: string; clientId?: string }> = [];
+    const oauth: Parameters<typeof createDiscoveredConnections>[1]['oauth'] = {
+      async begin(endpoint, redirectUri, _state, _scope, clientId) {
+        authorizations.push({ endpoint, clientId });
+        return {
+          url: 'https://authorization.example.test/consent',
+          saved: { redirectUri, clientInformation: { client_id: clientId! } },
+        };
+      },
+      async finish() {
+        throw new Error('The fixture must not finish OAuth.');
+      },
+      async refresh() {
+        throw new Error('The fixture must not refresh OAuth.');
+      },
+    };
     const options = {
       ownerId,
       baseUrl: 'http://localhost:4310',
       grantVault,
       transport,
-      oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
+      oauth,
     };
     (await createDiscoveredConnections(pool, options)).registerRoutes(app);
     const create = (payload: Record<string, unknown>) =>
@@ -5876,6 +5892,11 @@ test(
       const response = await create({ ...input, endpoint });
       assert.equal(response.statusCode, 400, response.body);
     }
+    for (const auth of ['bearer', 'x-api-key']) {
+      const rejected = await create({ ...input, auth, clientIdRequired: true });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+    }
+    assert.equal((await create({ ...input, clientIdRequired: 'true' })).statusCode, 400);
     assert.equal((await create({ ...input, ownerId: 'foreign-owner' })).statusCode, 400);
     assert.equal((await pool.query('SELECT id FROM discovered_connection_proposals')).rowCount, 0);
     const response = await create(input);
@@ -5907,6 +5928,54 @@ test(
       ).statusCode,
       404,
     );
+    const registered = await create({
+      ...input,
+      endpoint: 'HTTPS://93.184.216.34/registered',
+      clientIdRequired: true,
+    });
+    assert.equal(registered.statusCode, 200, registered.body);
+    const registeredId = registered.json().id;
+    const setup = await app.inject({ url: `/api/apps/discovery/${registeredId}` });
+    assert.equal(setup.statusCode, 200, setup.body);
+    assert.deepEqual(setup.json().paths, [
+      {
+        kind: 'mcp',
+        endpoint: 'https://93.184.216.34/registered',
+        auth: 'oauth',
+        clientIdRequired: true,
+      },
+    ]);
+    assert.equal(setup.json().callbackUrl, 'http://127.0.0.1:4310/api/apps/callback');
+    const authorize = (server: typeof app, payload: Record<string, unknown>) =>
+      server.inject({
+        method: 'POST',
+        url: `/api/apps/discovery/${registeredId}/authorize`,
+        payload,
+      });
+    assert.equal((await authorize(app, {})).statusCode, 400);
+    assert.equal((await authorize(foreign, { clientId: 'synthetic-client' })).statusCode, 404);
+    assert.equal(authorizations.length, 0);
+    const started = await authorize(app, { clientId: 'synthetic-client' });
+    assert.equal(started.statusCode, 200, started.body);
+    assert.deepEqual(authorizations, [
+      { endpoint: 'https://93.184.216.34/registered', clientId: 'synthetic-client' },
+    ]);
+    assert.equal(started.json().url, 'https://authorization.example.test/consent');
+    for (const auth of ['oauth', 'bearer', 'x-api-key']) {
+      const ordinary = await create({
+        ...input,
+        endpoint: `HTTPS://93.184.216.34/${auth}`,
+        auth,
+        clientIdRequired: false,
+      });
+      assert.equal(ordinary.statusCode, 200, ordinary.body);
+      const view = await app.inject({ url: `/api/apps/discovery/${ordinary.json().id}` });
+      assert.equal(view.statusCode, 200, view.body);
+      assert.deepEqual(view.json().paths, [
+        { kind: 'mcp', endpoint: `https://93.184.216.34/${auth}`, auth },
+      ]);
+      assert.equal(Object.hasOwn(view.json(), 'callbackUrl'), false);
+    }
     assert.equal((await pool.query('SELECT id FROM discovered_connections')).rowCount, 0);
   },
 );

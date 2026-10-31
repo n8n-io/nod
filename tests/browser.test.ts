@@ -2656,7 +2656,8 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 300 }]; };
       const requests = [], writes = [], players = [], revoked = [], preparations = [], busy = [], saves = [];
       let delaySave = false, failSave = false;
-      let failConnection = true;
+      let failConnection = true, delayCatalog = false, addConnectedVoice = false;
+      const catalogs = [];
       const connections = [], connectionWrites = [];
       window.open = () => ({ opener: null, location: { replace() {} }, close() {} });
       URL.createObjectURL = () => 'blob:preview-' + players.length;
@@ -2675,15 +2676,24 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         local: { state: 'ready' }, localInput: { state: 'ready' },
         defaultVoice: 'local:pf_dora', voices: [
           { id: 'local:pm_alex', name: 'Alex', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
+          { id: 'local:af_heart', name: 'Heart', description: 'American English', engine: 'Kokoro', language: 'en-US' },
           { id: 'openai:coral', name: 'Coral', description: 'Warm and friendly', engine: 'OpenAI' },
           { id: 'local:pf_dora', name: 'Dora', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
         ] };
       globalThis.fetch = (path, options) => {
         if (path === '/api/speech') return Promise.resolve(Response.json(settings));
         if (path === '/api/models') return Promise.resolve(Response.json({ connections, selection: null }));
-        if (path === '/api/speech/voices/refresh') return Promise.resolve(Response.json(settings));
+        if (path === '/api/speech/voices/refresh') {
+          const snapshot = structuredClone(settings);
+          if (delayCatalog) return new Promise(resolve => catalogs.push({ complete: () => resolve(Response.json(snapshot)) }));
+          return Promise.resolve(Response.json(snapshot));
+        }
         if (path === '/api/models/keys' || path === '/api/models/oauth/complete') {
           connectionWrites.push({ path, body: JSON.parse(options.body) });
+          if (!failConnection && addConnectedVoice) {
+            settings = { ...settings, voices: [...settings.voices, { id: 'openai:cedar', name: 'Cedar', description: 'Newly connected', engine: 'OpenAI' }] };
+            addConnectedVoice = false;
+          }
           return Promise.resolve(failConnection ? Response.json({ error: 'Synthetic connection failure' }, { status: 400 }) : Response.json({ connections, selection: null }));
         }
         if (path === '/api/models/oauth') {
@@ -2782,6 +2792,18 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(document.activeElement, picker().querySelector('.voice-choice'));
         await click('Clear voice search', picker());
         assert.equal(document.activeElement, search);
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, 'Kokoro');
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        assert.equal(picker().querySelectorAll('.voice-choice').length, 1);
+        assert.ok(picker().querySelector('[aria-label^="Choose Heart"]'));
+        await click('Clear voice search', picker());
+        await act(async () => {
+          picker().querySelector('[aria-label^="Choose Coral"]').focus();
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true, cancelable: true }));
+        });
+        assert.equal(document.activeElement, picker().querySelector('[aria-label^="Choose Dora"]'));
         assert.deepEqual(writes, []);
         await click('Play ' + dora, picker());
         assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
@@ -2811,7 +2833,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         delaySave = true;
         await click('Choose Dora, Brazilian Portuguese, Free voices', picker());
         assert.equal(requests[3].options.signal.aborted, true);
-        await settle(() => !picker());
+        assert.ok(picker());
         assert.equal(busy.at(-1), true);
         assert.equal(saves[0].options.signal.aborted, false);
         await act(async () => saves[0].complete());
@@ -2930,11 +2952,34 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await act(async () => button('Auto').click());
         await settle(() => settings.speechReply === 'auto' && busy.at(-1) === false);
         assert.deepEqual(writes.at(-1), { speechReply: 'auto' });
+        await open();
+        const voiceSearch = picker().querySelector('input');
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(voiceSearch, 'Coral');
+          voiceSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        delaySave = true;
+        failSave = true;
+        const failedChoice = picker().querySelector('[aria-label="Choose Coral, Warm and friendly, OpenAI"]');
+        await act(async () => failedChoice.focus());
+        await click('Choose Coral, Warm and friendly, OpenAI', picker());
+        assert.ok(picker());
+        assert.equal(failedChoice.getAttribute('aria-disabled'), 'true');
+        await act(async () => saves.at(-1).complete());
+        await settle(() => busy.at(-1) === false);
+        assert.equal(picker().querySelector('input').value, 'Coral');
+        assert.equal(document.activeElement, failedChoice);
+        assert.ok(picker().querySelector('[role="alert"]'));
+        assert.equal(settings.speechVoice, 'local:pf_dora');
+        failSave = false;
+        delaySave = false;
+        await click('Choose Coral, Warm and friendly, OpenAI', picker());
+        await settle(() => !picker() && settings.speechVoice === 'openai:coral');
         const beforeCatalogLoss = writes.length;
         settings = { ...settings, speechVoice: 'elevenlabs-direct:saved' };
         await act(async () => window.dispatchEvent(new Event('focus')));
         await settle(() => document.querySelector('.voice-settings > .field-hint[role="status"]'));
-        assert.equal(document.querySelector('.voice-settings-choice > .voice-sample').disabled, true);
+        assert.equal(document.querySelector('.voice-settings-choice .voice-sample').disabled, true);
         assert.equal(writes.length, beforeCatalogLoss);
         await open();
         assert.equal(picker().querySelector('[aria-checked="true"]'), null);
@@ -2970,6 +3015,9 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
           input.dispatchEvent(new Event('input', { bubbles: true }));
         });
         await open();
+        delayCatalog = true;
+        await act(async () => picker().querySelector('.voice-refresh-option').click());
+        assert.equal(catalogs.length, 1);
         await act(async () => [...picker().querySelectorAll('.voice-provider-option')].find(item => item.textContent.includes('OpenAI')).click());
         await settle(() => dialog('OpenAI'));
         await act(async () => [...dialog('OpenAI').querySelectorAll('button')].find(item => ['Connect', 'Add API key'].includes(item.textContent.trim())).click());
@@ -2983,8 +3031,17 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(keyInput.value, 'synthetic-retry-key');
         assert.deepEqual(connectionWrites.at(-1).body, { provider: 'openai', key: 'synthetic-retry-key' });
         failConnection = false;
+        addConnectedVoice = true;
         await act(async () => assert.equal(await drafts.get('voice-connection').save(), true));
+        assert.ok(dialog('OpenAI'));
+        assert.equal(picker(), null);
+        await act(async () => catalogs[0].complete());
+        await settle(() => catalogs.length === 2);
+        assert.ok(dialog('OpenAI'));
+        await act(async () => catalogs[1].complete());
+        delayCatalog = false;
         await settle(() => !dialog('OpenAI') && picker());
+        assert.ok(picker().querySelector('[aria-label^="Choose Cedar"]'));
         assert.equal(writes.length, beforeAutomaticSample);
         await act(async () => [...picker().querySelectorAll('.voice-provider-option')].find(item => item.textContent.includes('OpenRouter')).click());
         await settle(() => dialog('OpenRouter'));
@@ -5519,6 +5576,158 @@ test('SearchPicker selects empty-string options with keyboard navigation and fil
         assert.equal(document.activeElement, trigger());
       } finally {
         await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('shared controls retain reachable tabs, visible-label typeahead and disabled explanations', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        innerWidth: 1024, innerHeight: 768,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement',
+        'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const matches = window.Element.prototype.matches;
+      window.Element.prototype.matches = function(selector) {
+        return selector === ':focus-visible' ? this === document.activeElement : matches.call(this, selector);
+      };
+      let left = 100;
+      window.HTMLElement.prototype.getClientRects = function() { return [this.getBoundingClientRect()]; };
+      window.HTMLElement.prototype.getBoundingClientRect = function() {
+        const x = this.id === 'moving-anchor' ? left : 0;
+        return { x, y: 100, top: 100, bottom: 124, left: x, right: x + 80, width: 80, height: 24 };
+      };
+      globalThis.fetch = async path => { throw new Error('Unexpected request: ' + path); };
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Tabs } = await import('./src/web/components/tabs.tsx');
+      const { ActionMenuSurface, ActionMenuItem } = await import('./src/web/components/action-menu.tsx');
+      const { Tooltip } = await import('./src/web/components/tooltip.tsx');
+      const { Button } = await import('./src/web/components/ui.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      const render = content => act(async () => root.render(content));
+      const key = (node, key) => act(async () => node.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
+      const tick = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 45)); });
+      try {
+        const values = [];
+        const items = [{ value: 'a', label: 'A', disabled: true }, { value: 'b', label: 'B' }, { value: 'c', label: 'C' }];
+        await render(h(Tabs, { id: 'tabs', panelId: 'panel', label: 'Controls', items, value: 'a', onValueChange: value => { values.push(value); return false; } }));
+        const tabs = document.querySelectorAll('[role="tab"]');
+        assert.equal(tabs[0].disabled, true);
+        assert.equal(tabs[1].tabIndex, 0);
+        assert.equal(tabs[2].tabIndex, -1);
+        await act(async () => tabs[1].focus());
+        await key(tabs[1], 'End');
+        assert.deepEqual(values, ['c']);
+        assert.equal(document.activeElement, tabs[1]);
+        await render(h(Tabs, { id: 'tabs', panelId: 'panel', label: 'Controls', items: items.map(item => ({ ...item, disabled: true })), value: 'a', onValueChange() {} }));
+        assert.equal(document.querySelector('[role="tab"][tabindex="0"]'), null);
+        await render(h(ActionMenuSurface, { 'aria-label': 'Choose voice' },
+          h(ActionMenuItem, { 'aria-label': 'Choose Alpha' }, 'Alpha'),
+          h(ActionMenuItem, { 'aria-label': 'Choose Beta' }, 'Beta'),
+          h(ActionMenuItem, { textValue: 'Zulu', 'aria-label': 'Choose Alternate' }, 'Alternate'),
+          h(ActionMenuItem, { disabled: true }, 'Bravo')));
+        const menu = document.querySelector('[role="menu"]');
+        const choices = menu.querySelectorAll('[role="menuitem"]');
+        await act(async () => choices[0].focus());
+        await key(choices[0], 'b');
+        assert.equal(document.activeElement, choices[1]);
+        await key(choices[1], 'Home');
+        assert.equal(document.activeElement, choices[0]);
+        await key(choices[0], 'End');
+        assert.equal(document.activeElement, choices[2]);
+        await render(h(Tooltip, { content: 'Moving control', forceOpen: true }, h('button', { id: 'moving-anchor' }, 'Move')));
+        const tooltip = document.querySelector('[role="tooltip"]');
+        const first = Number.parseFloat(tooltip.style.left);
+        left += 120;
+        await tick();
+        assert.equal(Number.parseFloat(tooltip.style.left), first + 120);
+        let clicked = 0;
+        await render(h(Button, { disabled: true, title: 'A spending limit pauses control', onClick() { clicked++; } }, 'Return to Nod'));
+        const button = document.querySelector('button');
+        assert.equal(button.disabled, true);
+        const target = document.querySelector('[data-tooltip-trigger]');
+        assert.equal(target.tabIndex, 0);
+        await act(async () => target.focus());
+        await tick();
+        const explanation = document.querySelector('[role="tooltip"]');
+        assert.ok(explanation);
+        assert.equal(target.getAttribute('aria-describedby'), explanation.id);
+        await act(async () => button.click());
+        assert.equal(clicked, 0);
+        await key(target, 'Escape');
+        assert.equal(document.querySelector('[role="tooltip"]'), null);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('navigation guards restore raw app history entries before leaving unsaved settings', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('', { url: 'https://nod.fixture.invalid/apps' });
+      Object.assign(globalThis, { window: dom.window, PopStateEvent: dom.window.PopStateEvent });
+      const { guardNavigation, navigate, subscribeNavigation } = await import('./src/web/lib/navigation.ts');
+      const originalPush = window.history.pushState, originalReplace = window.history.replaceState;
+      const unsubscribe = subscribeNavigation(() => {});
+      let proceed;
+      const until = async predicate => {
+        const deadline = Date.now() + 1000;
+        while (!predicate()) {
+          assert.ok(Date.now() < deadline, 'History traversal did not reach the expected entry');
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      };
+      let clearGuard = () => {};
+      try {
+        window.history.pushState(null, '', '/apps?connect=synthetic');
+        window.history.replaceState({ connection: 'synthetic' }, '', '/apps');
+        navigate('/settings');
+        clearGuard = guardNavigation((path, continueNavigation) => {
+          proceed = continueNavigation;
+          return false;
+        });
+        window.history.back();
+        await until(() => proceed && window.location.pathname === '/settings');
+        assert.equal(window.history.state.nodNavigationIndex, 2);
+        proceed();
+        await until(() => window.location.pathname === '/apps');
+        assert.equal(window.history.state.connection, 'synthetic');
+        clearGuard();
+        window.history.forward();
+        await until(() => window.location.pathname === '/settings');
+        const second = subscribeNavigation(() => {});
+        unsubscribe();
+        second();
+        assert.equal(window.history.pushState, originalPush);
+        assert.equal(window.history.replaceState, originalReplace);
+      } finally {
+        clearGuard();
+        unsubscribe();
         dom.window.close();
       }
     `,

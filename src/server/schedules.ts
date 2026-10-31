@@ -14,6 +14,7 @@ import type { enqueueTurn } from './thread.ts';
 import { activeThreadSql } from './history.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import { logFailure } from './failure-log.ts';
 
 const queue = 'scheduled-task';
 const timingSchema = z.object({
@@ -413,7 +414,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     const page = rows.slice(0, input.limit);
     const last = page.at(-1);
     const costs = includeCosts
-      ? ((await dependencies.sessionCosts?.(page.map((run) => run.turnId))) ?? {})
+      ? await dependencies.sessionCosts?.(page.map((run) => run.turnId)).catch((cause) => {
+          logFailure('schedule_costs_unavailable', cause);
+          return undefined;
+        })
       : undefined;
     return {
       runs: page.map((row) => ({

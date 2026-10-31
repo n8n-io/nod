@@ -4268,8 +4268,8 @@ test('native onboarding replay keeps server recovery reachable without restartin
       }
       document.querySelector('.setup-entry-actions button:last-child').click();
       await settle(() => f.windows.at(-1) !== entry);
-      const server = f.windows.at(-1);
-      const connection = mount(server);
+      let server = f.windows.at(-1);
+      let connection = mount(server);
       await settle(
         () =>
           server.isVisible() &&
@@ -4280,6 +4280,22 @@ test('native onboarding replay keeps server recovery reachable without restartin
       assert.equal(connection.querySelector('#server-token').value, '');
       assert.equal(connection.querySelectorAll('.server-actions button').length, remote ? 2 : 1);
       assert.throws(() => f.handlers.get('nod:onboarding:continue')(eventFor(server)));
+      f.replayOnboarding();
+      await settle(() => f.windows.at(-1) !== server);
+      assert.equal(server.isDestroyed(), true);
+      const replayed = f.windows.at(-1);
+      assert.equal(replayed.query.onboarding, 'true');
+      const replayedDocument = mount(replayed);
+      await settle(
+        () =>
+          replayed.isVisible() &&
+          replayedDocument.querySelector('.setup-entry-actions button:last-child'),
+      );
+      replayedDocument.querySelector('.setup-entry-actions button:last-child').click();
+      await settle(() => f.windows.at(-1) !== replayed);
+      server = f.windows.at(-1);
+      connection = mount(server);
+      await settle(() => server.isVisible() && connection.querySelector('.server-actions button'));
       connection.querySelector('.server-actions button').click();
       await settle(() => f.windows.at(-1) !== server);
       const returned = f.windows.at(-1);

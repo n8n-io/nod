@@ -3,6 +3,7 @@ import { Link2 } from './icons';
 import { api, errorMessage } from '../lib/api';
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -23,6 +24,8 @@ export function ManualMcpDialog({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [auth, setAuth] = useState('oauth');
+  const [clientIdRequired, setClientIdRequired] = useState(false);
   const request = useRef<AbortController | null>(null);
   const continuing = useRef(false);
   useEffect(() => () => request.current?.abort(), []);
@@ -38,7 +41,10 @@ export function ManualMcpDialog({
     try {
       const result = await api<{ id: string }>('/api/apps/mcp', {
         method: 'POST',
-        body: JSON.stringify(Object.fromEntries(values)),
+        body: JSON.stringify({
+          ...Object.fromEntries(values),
+          ...(auth === 'oauth' && clientIdRequired ? { clientIdRequired: true } : {}),
+        }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
@@ -88,7 +94,7 @@ export function ManualMcpDialog({
               name="endpoint"
               type="url"
               placeholder="https://example.com/mcp"
-              pattern="https://.*"
+              pattern="[Hh][Tt][Tt][Pp][Ss]://.*"
               required
               maxLength={2048}
               spellCheck={false}
@@ -96,12 +102,28 @@ export function ManualMcpDialog({
             />
           </Field>
           <Field label="Authentication">
-            <select className="input" name="auth" defaultValue="oauth" disabled={saving}>
+            <select
+              className="input"
+              name="auth"
+              value={auth}
+              onChange={(event) => setAuth(event.target.value)}
+              disabled={saving}
+            >
               <option value="oauth">Sign in through your browser</option>
               <option value="bearer">Access token</option>
               <option value="x-api-key">API key</option>
             </select>
           </Field>
+          {auth === 'oauth' && (
+            <label className="app-discovery-client">
+              <Checkbox
+                checked={clientIdRequired}
+                onChange={(event) => setClientIdRequired(event.target.checked)}
+                disabled={saving}
+              />
+              <span>This server requires a client ID</span>
+            </label>
+          )}
           {error && <Notice>{error}</Notice>}
           <Button type="submit" disabled={saving}>
             {saving ? 'Checking server…' : 'Continue'}

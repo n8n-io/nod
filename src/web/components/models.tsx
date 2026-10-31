@@ -1014,6 +1014,11 @@ export function ModelPicker({
   const selected = models.data?.selection;
   const connection = models.data?.connections.find((item) => item.id === selected?.connectionId);
   const model = connection?.models.find((item) => item.id === selected?.modelId);
+  const sourceDescription = connection
+    ? [...new Set([modelProviderNames[connection.provider], connectionName(connection)])].join(
+        ' · ',
+      )
+    : '';
   const connections = (models.data?.connections ?? []).filter(
     (source) => source.status === 'connected',
   );
@@ -1164,14 +1169,14 @@ export function ModelPicker({
         }}
         aria-label={
           model
-            ? `Choose model: ${model.name}, ${connectionName(connection!)}`
+            ? `Choose model: ${model.name}, ${sourceDescription}`
             : canChoose
               ? 'Choose a model'
               : 'Connect a model'
         }
         title={
           model
-            ? `${model.name} · ${connectionName(connection!)}${model.audio ? ` · ${model.textModelName ? `Text support: ${model.textModelName}` : 'Text model unavailable'}` : ''}`
+            ? `${model.name} · ${sourceDescription}${model.audio ? ` · ${model.textModelName ? `Text support: ${model.textModelName}` : 'Text model unavailable'}` : ''}`
             : undefined
         }
       >
@@ -1209,6 +1214,7 @@ export function ModelPicker({
           }}
         >
           <DialogTitle>Choose a model</DialogTitle>
+          <p className="field-hint">Applies to your next message.</p>
           <div className="model-picker-toolbar">
             <SearchField
               inputRef={searchInput}

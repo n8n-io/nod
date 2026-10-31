@@ -262,7 +262,13 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
             maxLength={200}
             onChange={(event) => changeQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey)
+              if (
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229 ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey
+              )
                 return;
               if (event.key === 'Enter') {
                 event.preventDefault();

@@ -9,7 +9,7 @@ import {
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { answerChoiceInputSchema, answerChoicesSchema } from '../shared/answer-choices.ts';
-import { presentationSchema, type Presentation } from '../shared/presentation.ts';
+import { presentationInputSchema, type Presentation } from '../shared/presentation.ts';
 import { Value } from '@sinclair/typebox/value';
 import {
   appConfirmation,
@@ -164,9 +164,9 @@ const taskNextCheck = Type.String({
 
 TypeRegistry.Set(
   'NodPresentation',
-  (_schema, value) => presentationSchema.safeParse(value).success,
+  (_schema, value) => presentationInputSchema.safeParse(value).success,
 );
-const { $schema, ...presentationJsonSchema } = z.toJSONSchema(presentationSchema, {
+const { $schema, ...presentationJsonSchema } = z.toJSONSchema(presentationInputSchema, {
   target: 'draft-7',
   io: 'input',
 });
@@ -889,11 +889,20 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     }),
     bind(toolDefinitions.send_message, async (p) => {
       const visual =
-        p.presentation === undefined ? undefined : presentationSchema.parse(p.presentation);
+        p.presentation === undefined ? undefined : presentationInputSchema.parse(p.presentation);
       if (!p.text.trim() && !visual) throw new Error('A text answer or visual is required.');
-      return (
-        (await turn.reply(p.text, undefined, p.replyToMessageId, visual)) ?? 'Message delivered.'
-      );
+      const delivery = await turn.reply(p.text, undefined, p.replyToMessageId, visual);
+      const outcome = {
+        none: 'The text answer is already visible to the owner.',
+        original: 'The visual and accompanying text are already visible to the owner.',
+        corrected: 'The corrected visual and accompanying text are already visible to the owner.',
+        omitted:
+          'The corrected plain-text answer is already visible to the owner; the requested visual was not included.',
+      }[delivery.presentation];
+      return {
+        ...delivery,
+        message: `${outcome} If this completes the request, finish with no additional text. Continue only for substantive new results, caveats or remaining work; do not announce or recap delivery.`,
+      };
     }),
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]

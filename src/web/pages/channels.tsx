@@ -270,6 +270,7 @@ function ChannelCard({
       name={provider.name}
       logo={<img src={`/logos/${provider.id}.svg`} alt="" width={24} height={24} />}
       description={provider.description}
+      detail={setup?.managed ? 'Managed by your server' : undefined}
       badge={
         status && (
           <span className="channel-chip" data-status={status}>

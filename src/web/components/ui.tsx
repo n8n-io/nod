@@ -39,9 +39,18 @@ export function Button({
     tooltipDelay?: number;
   }) {
   const Component = asChild ? Slot : 'button';
+  const control = (
+    <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />
+  );
   return (
     <Tooltip content={title} shortcut={shortcut} side={tooltipSide} delay={tooltipDelay}>
-      <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />
+      {props.disabled && title && !asChild ? (
+        <span className="tooltip-disabled-trigger" tabIndex={0}>
+          {control}
+        </span>
+      ) : (
+        control
+      )}
     </Tooltip>
   );
 }

@@ -539,7 +539,7 @@ export function Apps({
                       </span>
                       {issue && <span className="app-account-attention" aria-hidden="true" />}
                     </Button>
-                    {!addAccount.browserUrl && (
+                    {!addAccount.browserUrl && !addAccount.savedLogin && (
                       <Button
                         variant="outline"
                         size="icon"
@@ -747,7 +747,7 @@ export function Apps({
                     } else if (view === 'connected') {
                       setView('all');
                       setVisibleCount(24);
-                      page.current?.querySelector<HTMLButtonElement>('[data-view="all"]')?.focus();
+                      document.getElementById(`${tabsId}-all`)?.focus();
                     } else {
                       void refreshCatalog();
                       appSearch.current?.focus();

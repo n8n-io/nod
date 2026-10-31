@@ -26,6 +26,21 @@
   font-size: 12px;
   min-width: 0;
 }
+.chart-measure,
+.chart-reading-unit,
+.chart-axis-label {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.chart-reading-unit {
+  display: block;
+  margin-bottom: 6px;
+}
+.chart-axis-label {
+  margin: 0;
+  padding: 0 20px 12px;
+  text-align: center;
+}
 .chart-legend button,
 .chart-series {
   display: inline-flex;

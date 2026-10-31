@@ -24,6 +24,8 @@ export function Tabs<Value extends string>({
   className?: string;
 }) {
   const list = useRef<HTMLDivElement>(null);
+  const selected = items.findIndex((item) => item.value === value && !item.disabled);
+  const reachable = selected < 0 ? items.findIndex((item) => !item.disabled) : selected;
 
   function focus(index: number) {
     const bar = list.current;
@@ -40,7 +42,7 @@ export function Tabs<Value extends string>({
     const item = items[index];
     if (!item || item.disabled) return;
     if (onValueChange(item.value) === false) {
-      focus(items.findIndex((entry) => entry.value === value));
+      focus(reachable);
       return;
     }
     if (moveFocus) focus(index);
@@ -63,7 +65,7 @@ export function Tabs<Value extends string>({
           className="tabs-tab"
           aria-selected={value === item.value}
           aria-controls={panelId}
-          tabIndex={value === item.value ? 0 : -1}
+          tabIndex={index === reachable ? 0 : -1}
           disabled={item.disabled}
           onClick={() => select(index, false)}
           onKeyDown={(event) => {

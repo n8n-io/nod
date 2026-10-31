@@ -55,22 +55,7 @@ const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.tu
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
 function visualText(presentation: unknown) {
   const visual = presentationSchema.safeParse(presentation);
-  if (!visual.success) return '';
-  const value = visual.data;
-  if (value.type !== 'diagram') return presentationText(value);
-  const labels = new Map(value.nodes.map((node) => [node.id, node.label]));
-  return [
-    value.title,
-    value.caption,
-    value.asOf,
-    ...value.nodes.map((node) => [node.label, node.detail].filter(Boolean).join(': ')),
-    ...value.edges.map((edge) =>
-      [`${labels.get(edge.from)} → ${labels.get(edge.to)}`, edge.label].filter(Boolean).join(': '),
-    ),
-    ...value.sources.map((source) => `${source.label}: ${source.url}`),
-  ]
-    .filter(Boolean)
-    .join('\n');
+  return visual.success ? presentationText(visual.data) : '';
 }
 
 function messageView(row: Message & { assistantReaction?: MessageReaction | null }): Message {

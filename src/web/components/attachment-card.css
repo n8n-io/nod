@@ -13,7 +13,7 @@
   pointer-events: none;
 }
 
-.file-actions > :is(.button, a) {
+.file-actions > :is(.button, a, .tooltip-disabled-trigger) {
   flex: none;
   width: 32px;
   height: 32px;
@@ -23,7 +23,7 @@
   pointer-events: auto;
 }
 
-.file-actions > :is(.button, a):hover {
+.file-actions > :is(.button, a, .tooltip-disabled-trigger):hover {
   color: var(--foreground);
   background: var(--control-hover);
 }
@@ -39,34 +39,45 @@
   margin: 0;
 }
 
-.attachment-card > .file-actions > :is(.button, a),
-.attachment-image-item > .file-actions > :is(.button, a),
-.attachment-video-toolbar :is(.button, a) {
+.attachment-card > .file-actions > :is(.button, a, .tooltip-disabled-trigger),
+.attachment-image-item > .file-actions > :is(.button, a, .tooltip-disabled-trigger),
+.attachment-video-toolbar :is(.button, a, .tooltip-disabled-trigger) {
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
 
-.attachment-card > .file-actions > :is(.button, a):hover,
-.attachment-image-item > .file-actions > :is(.button, a):hover,
-.attachment-video-toolbar :is(.button, a):hover {
+.attachment-card > .file-actions > :is(.button, a, .tooltip-disabled-trigger):hover,
+.attachment-image-item > .file-actions > :is(.button, a, .tooltip-disabled-trigger):hover,
+.attachment-video-toolbar :is(.button, a, .tooltip-disabled-trigger):hover {
   background: var(--control-hover);
 }
 
+.file-actions > .tooltip-disabled-trigger > .button {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
 .file-action-notice {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  z-index: 90;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   width: max-content;
-  max-width: 240px;
+  max-width: min(240px, calc(100vw - 24px), var(--radix-popover-content-available-width));
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
   padding: 6px 8px;
   border-radius: var(--control-radius);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  color: var(--foreground);
   font-size: 12px;
+  overflow-wrap: anywhere;
   pointer-events: auto;
 }
 
@@ -234,7 +245,7 @@
 }
 
 @media (pointer: coarse) {
-  .file-actions > :is(.button, a),
+  .file-actions > :is(.button, a, .tooltip-disabled-trigger),
   .attachment-video-toolbar > .button {
     width: 44px;
     height: 44px;

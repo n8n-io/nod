@@ -15,7 +15,7 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## Scheduled work
 
-Open **Scheduled** to review upcoming schedules. Expand **Inactive** for paused schedules and **Recent runs** for their history. See [Schedules](/use/schedules/).
+Open **Scheduled** to review upcoming schedules. Expand **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
 
 ## What a card shows
 

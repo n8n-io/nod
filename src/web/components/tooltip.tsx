@@ -151,16 +151,20 @@ export function Tooltip({
       });
       const position = selected ?? side;
       const point = locations[position];
-      element.style.left = `${Math.max(gap, Math.min(point.x, viewportWidth - width - gap))}px`;
-      element.style.top = `${Math.max(gap, Math.min(point.y, viewportHeight - height - gap))}px`;
+      const left = `${Math.max(gap, Math.min(point.x, viewportWidth - width - gap))}px`;
+      const top = `${Math.max(gap, Math.min(point.y, viewportHeight - height - gap))}px`;
+      if (element.style.left !== left) element.style.left = left;
+      if (element.style.top !== top) element.style.top = top;
       element.style.visibility = 'visible';
       element.dataset.side = position;
     };
-    place();
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
-    observer?.observe(trigger);
-    observer?.observe(element);
-    return () => observer?.disconnect();
+    let frame: number;
+    const track = () => {
+      place();
+      frame = requestAnimationFrame(track);
+    };
+    track();
+    return () => cancelAnimationFrame(frame);
   }, [visible, content, shortcut, side, hide]);
   const child = children as ReactElement<{ title?: string; 'aria-describedby'?: string }>;
   const description = [child.props['aria-describedby'], visible && content ? id : undefined]

@@ -99,3 +99,10 @@
 .app-discovery-details .app-discovery-setup {
   margin: 12px 0 0 -12px;
 }
+.app-discovery-client {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: var(--text-control);
+}

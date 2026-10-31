@@ -1854,11 +1854,7 @@ async function prepare(options = {}) {
 
 function replayOnboarding() {
   if (quitting) return status;
-  if (
-    (connectionSettingsOpen || onboardingSetupOpen) &&
-    setupWindow &&
-    !setupWindow.isDestroyed()
-  ) {
+  if (onboardingSetupOpen && setupWindow && !setupWindow.isDestroyed()) {
     showEngine();
     return status;
   }

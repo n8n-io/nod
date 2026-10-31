@@ -144,6 +144,9 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
               <div className="attachment-video-toolbar">
                 <FileActions item={image} />
                 <Button
+                  draggable
+                  onDragStart={(event) => fileDrag(event, image)}
+                  onPointerEnter={() => prepareFile(image)}
                   type="button"
                   variant="ghost"
                   size="icon"

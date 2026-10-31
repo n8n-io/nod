@@ -1423,8 +1423,10 @@ export async function createDiscoveredConnections(
           name: proposalSchema.shape.name,
           endpoint: z.url().max(2048),
           auth: z.enum(['oauth', 'bearer', 'x-api-key']),
+          clientIdRequired: z.boolean().optional(),
         })
         .strict()
+        .refine((value) => !value.clientIdRequired || value.auth === 'oauth')
         .safeParse(request.body);
       if (!parsed.success) throw error('Enter a name, server URL and authentication method.');
       const { name, auth } = parsed.data;
@@ -1433,7 +1435,18 @@ export async function createDiscoveredConnections(
       });
       const service = `mcp-${createHash('sha256').update(endpoint).digest('hex').slice(0, 24)}`;
       const result = await create(
-        { name, service, paths: [{ kind: 'mcp', endpoint, auth }] },
+        {
+          name,
+          service,
+          paths: [
+            {
+              kind: 'mcp',
+              endpoint,
+              auth,
+              ...(parsed.data.clientIdRequired ? { clientIdRequired: true } : {}),
+            },
+          ],
+        },
         undefined,
         'apps',
       );

@@ -12,6 +12,7 @@ export const sidebarItems = [
 type NavigationGuard = (path: string, proceed: () => void) => boolean;
 let navigationGuard: NavigationGuard | null = null;
 let committedNavigation = false;
+const historyObservers = new WeakMap<History, { listeners: Set<() => void>; stop(): void }>();
 
 export function guardNavigation(guard: NavigationGuard) {
   navigationGuard = guard;
@@ -24,6 +25,51 @@ function navigationIndex() {
   return typeof window.history.state?.nodNavigationIndex === 'number'
     ? (window.history.state.nodNavigationIndex as number)
     : 0;
+}
+
+function observeHistory(listener: () => void) {
+  const history = window.history;
+  let observers = historyObservers.get(history);
+  if (!observers) {
+    const listeners = new Set<() => void>();
+    const pushState = history.pushState;
+    const replaceState = history.replaceState;
+    const push: History['pushState'] = (state, unused, url) => {
+      pushState.call(history, { ...state, nodNavigationIndex: navigationIndex() + 1 }, unused, url);
+      for (const observer of listeners) observer();
+    };
+    const replace: History['replaceState'] = (state, unused, url) => {
+      replaceState.call(
+        history,
+        {
+          ...state,
+          nodNavigationIndex:
+            typeof state?.nodNavigationIndex === 'number'
+              ? state.nodNavigationIndex
+              : navigationIndex(),
+        },
+        unused,
+        url,
+      );
+      for (const observer of listeners) observer();
+    };
+    history.pushState = push;
+    history.replaceState = replace;
+    observers = {
+      listeners,
+      stop() {
+        if (history.pushState === push) history.pushState = pushState;
+        if (history.replaceState === replace) history.replaceState = replaceState;
+        historyObservers.delete(history);
+      },
+    };
+    historyObservers.set(history, observers);
+  }
+  observers.listeners.add(listener);
+  return () => {
+    if (!observers.listeners.delete(listener)) return;
+    if (!observers.listeners.size) observers.stop();
+  };
 }
 
 export function replaceNavigation(path: string) {
@@ -43,6 +89,10 @@ export function subscribeNavigation(listener: () => void) {
   let accepted = false;
   let current = window.location.pathname + window.location.search + window.location.hash;
   window.history.replaceState({ ...window.history.state, nodNavigationIndex: index }, '');
+  const stopObserving = observeHistory(() => {
+    index = navigationIndex();
+    current = window.location.pathname + window.location.search + window.location.hash;
+  });
   const update = () => {
     const next = window.location.pathname + window.location.search + window.location.hash;
     const nextIndex = navigationIndex();
@@ -77,7 +127,10 @@ export function subscribeNavigation(listener: () => void) {
     listener();
   };
   window.addEventListener('popstate', update);
-  return () => window.removeEventListener('popstate', update);
+  return () => {
+    window.removeEventListener('popstate', update);
+    stopObserving();
+  };
 }
 
 export function navigate(path: string) {

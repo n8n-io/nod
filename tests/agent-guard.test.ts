@@ -215,11 +215,22 @@ test('native visual replies need no filler and deduplicate only identical conten
         await assert.rejects(
           call(tools, 'send_message', { text: '', presentation: { ...visual, nodes: [] } }),
         );
-        await call(tools, 'send_message', { text: '', presentation: visual });
-        await call(tools, 'send_message', { text: '  ', presentation: visual });
+        const first = await call(tools, 'send_message', { text: '', presentation: visual });
+        const repeated = await call(tools, 'send_message', { text: '  ', presentation: visual });
+        for (const [result, delivered] of [
+          [first, true],
+          [repeated, false],
+        ] as const) {
+          const receipt = JSON.parse(result.content.find((part) => part.type === 'text')!.text);
+          assert.equal(receipt.delivered, delivered);
+          assert.equal(receipt.presentation, 'original');
+        }
         await call(tools, 'send_message', { text: '', presentation: updated });
-        await call(tools, 'send_message', { text: 'A separate useful caveat.' });
-        emit({ type: 'final', text: '' });
+        const caveat = await call(tools, 'send_message', { text: 'A separate useful caveat.' });
+        const receipt = JSON.parse(caveat.content.find((part) => part.type === 'text')!.text);
+        assert.equal(receipt.delivered, true);
+        assert.equal(receipt.presentation, 'none');
+        emit({ type: 'final', text: 'An additional verified result.' });
       },
       {
         background,
@@ -233,6 +244,7 @@ test('native visual replies need no filler and deduplicate only identical conten
       { text: '', presentation: visual },
       { text: '', presentation: updated },
       { text: 'A separate useful caveat.' },
+      ...(!background ? [{ text: 'An additional verified result.' }] : []),
     ]);
   }
 });
@@ -1951,14 +1963,23 @@ test('memory reply checks finish before delivery, share new evidence and run onc
 });
 
 test('memory checks cover visual claims and keep the draft when a check fails', async () => {
-  for (const { outcome, text } of ['revise', 'keep', 'fail'].flatMap((outcome) =>
+  for (const { outcome, text } of [
+    'revise',
+    'keep',
+    'fail',
+    'prose',
+    'reject',
+    'indeterminate',
+    'repair',
+  ].flatMap((outcome) =>
     ['Your preference is shown below.', ''].map((text) => ({ outcome, text })),
   )) {
     const delivered: Array<{ text: string; presentation: unknown }> = [];
     let checks = 0;
+    let receipt: { delivered: boolean; presentation: string };
     const { result } = await fixture(
       async (tools) => {
-        await call(tools, 'send_message', {
+        const response = await call(tools, 'send_message', {
           text,
           presentation: {
             version: 1,
@@ -1969,6 +1990,7 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
             edges: [],
           },
         });
+        receipt = JSON.parse(response.content.find((part) => part.type === 'text')!.text);
       },
       {
         reply: async (text, _id, _replyTo, presentation) => {
@@ -1977,11 +1999,34 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
       },
       {
         prepareMemory: async () => ({ mode: 'personalize', facts: [], messages: [], searches: [] }),
-        reviewMemoryReply: async (_context, draft) => {
+        reviewMemoryReply: async (_context, draft, _execution, visual) => {
           checks++;
           if (text) assert.match(draft, /Your preference is shown below\./);
           assert.match(draft, /You prefer cool white light\./);
+          assert.equal(visual?.text, text);
+          assert.equal(visual?.presentation.type, 'diagram');
           if (outcome === 'fail') throw new Error('The memory store is unavailable.');
+          if (outcome === 'prose')
+            return { text: 'The saved preference is shown below.', presentationSupported: true };
+          if (outcome === 'reject')
+            return { text: 'You prefer warm amber light.', presentationSupported: false };
+          if (outcome === 'indeterminate') return { text: 'You prefer warm amber light.' };
+          if (outcome === 'repair')
+            return {
+              text: 'You prefer warm amber light.',
+              presentationSupported: false,
+              correctedVisual: {
+                text: '',
+                presentation: {
+                  version: 1,
+                  type: 'diagram',
+                  title: 'Your light preference',
+                  sources: [],
+                  nodes: [{ id: 'lamp', label: 'You prefer warm amber light.' }],
+                  edges: [],
+                },
+              },
+            };
           return outcome === 'revise' ? 'You prefer warm amber light.' : draft;
         },
       },
@@ -1989,8 +2034,33 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
     assert.equal(result.status, 'succeeded');
     assert.equal(checks, 1);
     assert.equal(delivered.length, 1);
-    assert.equal(delivered[0].text, outcome === 'revise' ? 'You prefer warm amber light.' : text);
-    assert.equal(Boolean(delivered[0].presentation), outcome !== 'revise');
+    assert.equal(
+      delivered[0].text,
+      outcome === 'prose'
+        ? 'The saved preference is shown below.'
+        : ['revise', 'reject', 'indeterminate'].includes(outcome)
+          ? 'You prefer warm amber light.'
+          : outcome === 'repair'
+            ? ''
+            : text,
+    );
+    assert.equal(
+      Boolean(delivered[0].presentation),
+      ['keep', 'fail', 'prose', 'repair'].includes(outcome),
+    );
+    assert.equal(receipt!.delivered, true);
+    assert.equal(
+      receipt!.presentation,
+      outcome === 'repair'
+        ? 'corrected'
+        : ['keep', 'fail', 'prose'].includes(outcome)
+          ? 'original'
+          : 'omitted',
+    );
+    if (outcome === 'repair') {
+      assert.match(JSON.stringify(delivered[0].presentation), /warm amber/);
+      assert.doesNotMatch(JSON.stringify(delivered[0].presentation), /cool white/);
+    }
   }
 });
 

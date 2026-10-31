@@ -4628,10 +4628,9 @@ test(
             [diagramId],
           );
           assert.match(inspected[0].snippet, /Inspection \[entry\] desk/);
-          assert.doesNotMatch(
-            inspected[0].snippet,
-            /\(entry\)|\(exit\)|\[entry\] Inspection|\[exit\] Inspection|"nodes"|"edges"/,
-          );
+          assert.match(inspected[0].snippet, /Inspection \[entry\] desk \(entry\)/);
+          assert.match(inspected[0].snippet, /Inspection \[entry\] desk \(exit\)/);
+          assert.doesNotMatch(inspected[0].snippet, /"nodes"|"edges"|"from"|"to"|"version"/);
           for (const query of ['Zephyr', 'phyr', 'Amber']) {
             const found = (
               await request('GET', `/api/messages/search?q=${encodeURIComponent(query)}`)

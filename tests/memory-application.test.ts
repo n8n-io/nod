@@ -18,6 +18,8 @@ import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createHistorySearch } from '../src/server/history.ts';
 import { createMemoryRecall } from '../src/server/memory-recall.ts';
+import type { MemoryReplyVisual } from '../src/ports/memory-recall.ts';
+import { presentationText, type Presentation } from '../src/shared/presentation.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -1111,6 +1113,229 @@ test('memory corrections keep their evidence, type and dates and do not archive 
       ['unrelated'],
     );
   }
+});
+
+test('memory review separates supported visuals from revised prose without weakening rejected claims', async () => {
+  const pool = {} as pg.Pool;
+  const store = memoryObjectStore();
+  const memory = createMemoryService({ pool, ownerId: 'visual-owner', store });
+  const visual: MemoryReplyVisual = {
+    text: 'An unsupported introduction.',
+    presentation: {
+      version: 1,
+      type: 'diagram',
+      title: 'Lighting preference',
+      sources: [],
+      nodes: [{ id: 'lamp', label: 'Warm amber light' }],
+      edges: [],
+    },
+  };
+  let draft = `${visual.text}\n\n${presentationText(visual.presentation)}`;
+  let verdict: unknown;
+  let expectedVisual: MemoryReplyVisual | undefined = visual;
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'visual-owner',
+    memory,
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ task, input, instructions }) {
+        assert.equal(task, 'memory_check');
+        const templates = [...instructions.matchAll(/Return (\{[^\n]+?\})\./g)];
+        assert.equal(templates.length, 1);
+        assert.deepEqual(
+          [...templates[0][1].matchAll(/"(\w+)":/g)].map((match) => match[1]),
+          expectedVisual
+            ? [
+                'supported',
+                'presentationSupported',
+                'usedPaths',
+                'answer',
+                'correctedVisual',
+                'supported',
+                'text',
+                'presentation',
+              ]
+            : ['supported', 'usedPaths', 'answer'],
+        );
+        const packet = input as {
+          draft: string;
+          visual?: MemoryReplyVisual;
+          savedFacts: unknown[];
+        };
+        assert.equal(packet.draft, draft);
+        assert.deepEqual(packet.visual, expectedVisual);
+        assert.deepEqual(packet.savedFacts, []);
+        return verdict;
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Show the lighting preference.',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: { mode: 'recall', facts: [], messages: [], searches: [] },
+  };
+  for (const supported of [false, true])
+    for (const presentationSupported of [true, false, undefined]) {
+      const answer =
+        presentationSupported === true ? 'Corrected introduction.' : 'Warm amber light.';
+      verdict = { supported, usedPaths: [], answer, presentationSupported };
+      assert.deepEqual(
+        await recall.review(context, draft, visual),
+        supported && presentationSupported === true
+          ? draft
+          : { text: answer, presentationSupported: presentationSupported === true },
+      );
+    }
+  verdict = { supported: false, usedPaths: [], answer: '', presentationSupported: true };
+  assert.deepEqual(await recall.review(context, draft, visual), {
+    text: '',
+    presentationSupported: true,
+  });
+  const repaired: MemoryReplyVisual = {
+    text: '',
+    presentation: {
+      ...visual.presentation,
+      title: 'Supported lighting preference',
+    },
+  };
+  const fallback = 'The supported preference is warm amber light.';
+  verdict = {
+    supported: false,
+    presentationSupported: false,
+    usedPaths: [],
+    answer: fallback,
+    correctedVisual: { supported: true, ...repaired },
+  };
+  assert.deepEqual(await recall.review(context, draft, visual), {
+    text: fallback,
+    presentationSupported: false,
+    correctedVisual: repaired,
+  });
+  for (const correctedVisual of [
+    undefined,
+    null,
+    'Use this replacement',
+    { supported: false, ...repaired },
+    repaired,
+    { supported: true, presentation: repaired.presentation },
+    { supported: true, ...repaired, text: '4111 1111 1111 1111' },
+    { supported: true, ...repaired, presentation: { ...repaired.presentation, version: 2 } },
+    {
+      supported: true,
+      ...repaired,
+      presentation: { ...repaired.presentation, title: '4111 1111 1111 1111' },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: {
+        ...repaired.presentation,
+        sources: [{ label: 'Private', url: 'http://127.0.0.1' }],
+      },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: { ...repaired.presentation, edges: [{ from: 'missing', to: 'lamp' }] },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: {
+        version: 1,
+        type: 'image',
+        title: 'Unrelated image',
+        sources: [],
+        artifactId: randomUUID(),
+        alt: 'An unrelated image',
+      },
+    },
+  ]) {
+    verdict = {
+      supported: false,
+      presentationSupported: false,
+      usedPaths: [],
+      answer: fallback,
+      correctedVisual,
+    };
+    assert.deepEqual(await recall.review(context, draft, visual), {
+      text: fallback,
+      presentationSupported: false,
+    });
+  }
+  verdict = { supported: false, usedPaths: ['about/foreign'], answer: 'Unsupported replacement.' };
+  assert.equal(await recall.review(context, draft, visual), draft);
+  verdict = { supported: false, usedPaths: [], answer: '', presentationSupported: false };
+  assert.equal(await recall.review(context, draft, visual), draft);
+  verdict = { supported: false, usedPaths: [], answer: 'Corrected text-only answer.' };
+  expectedVisual = undefined;
+  assert.equal(await recall.review(context, draft), 'Corrected text-only answer.');
+  const flight: Presentation = {
+    version: 1,
+    type: 'flights',
+    title: 'Synthetic itinerary',
+    sources: [],
+    options: [
+      {
+        id: 'trip',
+        status: 'booked',
+        journeys: [
+          {
+            id: 'outbound',
+            label: 'Outbound',
+            segments: [
+              {
+                airline: 'Synthetic Air',
+                aircraft: 'An unsupported aircraft claim',
+                departure: { airport: 'AAA', time: '10:00' },
+                arrival: { airport: 'BBB', time: '12:00' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const corrected = structuredClone(flight);
+  delete corrected.options[0].journeys[0].segments[0].aircraft;
+  expectedVisual = { text: '', presentation: flight };
+  draft = presentationText(flight);
+  const flightFallback = 'Booked Synthetic Air flight from AAA at 10:00 to BBB at 12:00.';
+  verdict = {
+    supported: false,
+    presentationSupported: false,
+    usedPaths: [],
+    answer: flightFallback,
+    correctedVisual: { supported: true, text: '', presentation: corrected },
+  };
+  const flightContext = { ...context, prompt: 'Show my itinerary.' };
+  assert.deepEqual(await recall.review(flightContext, draft, expectedVisual), {
+    text: flightFallback,
+    presentationSupported: false,
+    correctedVisual: { text: '', presentation: corrected },
+  });
+  delete corrected.options[0].status;
+  assert.deepEqual(await recall.review(flightContext, draft, expectedVisual), {
+    text: flightFallback,
+    presentationSupported: false,
+  });
 });
 
 test('manual archive preserves facts and evidence, restores the note and stays separate from forgetting', async () => {

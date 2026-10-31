@@ -33,7 +33,6 @@ import {
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { FileActions, fileDrag, prepareFile } from './file-actions';
-import { ArtifactEdit } from './artifact-edit';
 import { apiResponse } from '../lib/api';
 import { Button } from './ui';
 import { Tooltip } from './tooltip';
@@ -240,7 +239,6 @@ function ArtifactDrawer({
       setDetails((values) => (values[id] === value ? values : { ...values, [id]: value })),
     [],
   );
-  const [editing, setEditing] = useState(false);
   const [copyError, setCopyError] = useState('');
   const viewed = useRef<ImagePreview[]>([]);
   const modesByFile = useRef(new Map<string, 'preview' | 'code'>());
@@ -321,7 +319,6 @@ function ArtifactDrawer({
   useEffect(() => {
     setMode('preview');
     setCopied(false);
-    setEditing(false);
     setCopyError('');
     setClosing(false);
   }, [current.id, visible]);
@@ -371,7 +368,7 @@ function ArtifactDrawer({
       if (window.getSelection()?.toString()) return;
       if (
         target.closest(
-          'input,textarea,select,audio,video,[contenteditable]:not([contenteditable="false"]),[role="separator"],[role="slider"],[role="tablist"],[role="listbox"],[role="menu"],[role="tree"],[role="grid"],.artifact-edit',
+          'input,textarea,select,audio,video,[contenteditable]:not([contenteditable="false"]),[role="separator"],[role="slider"],[role="tablist"],[role="listbox"],[role="menu"],[role="tree"],[role="grid"]',
         ) ||
         (target.closest('.artifact-drawer-body') && target.closest('button,a,[role="button"]'))
       )
@@ -485,9 +482,9 @@ function ArtifactDrawer({
             </span>
           </Tooltip>
           <div className="artifact-drawer-title">
-            <Tooltip content={current.name}>
-              <h2>
-                {items.length > 1 ? (
+            <h2>
+              {items.length > 1 ? (
+                <Tooltip content={current.name}>
                   <select
                     aria-label="Choose a file"
                     value={current.id}
@@ -499,11 +496,13 @@ function ArtifactDrawer({
                       </option>
                     ))}
                   </select>
-                ) : (
-                  current.name
-                )}
-              </h2>
-            </Tooltip>
+                </Tooltip>
+              ) : (
+                <Tooltip content={current.name}>
+                  <span>{current.name}</span>
+                </Tooltip>
+              )}
+            </h2>
             <span>{meta}</span>
           </div>
           <div className="artifact-drawer-actions">
@@ -564,18 +563,6 @@ function ArtifactDrawer({
               </Button>
             )}
             {!current.presentation && <FileActions item={current} />}
-            {['markdown', 'text'].includes(kind ?? '') &&
-              current.size <= 4000000 &&
-              ownedArtifactUrl(current.url) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditing((value) => !value)}
-                  aria-pressed={editing}
-                >
-                  Edit copy
-                </Button>
-              )}
             <Button
               variant="ghost"
               size="icon"
@@ -601,13 +588,10 @@ function ArtifactDrawer({
         </header>
         {copyError && <p role="status">{copyError}</p>}
         <div className="artifact-drawer-body">
-          {editing && (
-            <ArtifactEdit key={current.id} item={current} onClose={() => setEditing(false)} />
-          )}
           {viewed.current.map((item) => (
             <div
               key={`${item.id}:${item.url}`}
-              hidden={editing || item.id !== current.id}
+              hidden={item.id !== current.id}
               className="artifact-retained"
             >
               <RetainedArtifact

@@ -80,7 +80,9 @@ For totals and comparisons, Nod can select up to 100 facts. Other requests use u
 
 ### Check the answer
 
-When selected evidence, a configured memory model and spending capacity are available, the memory model checks each reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. For a visual presentation, the check receives its full text form with the accompanying message. If the check revises that answer, Nod delivers the revised text instead of the visual. It does not rewrite presentation fields or links.
+When selected evidence, a configured memory model and spending capacity are available, the memory model checks each reply before delivery. It can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads.
+
+For a visual presentation, the check receives its structured fields, full text form and accompanying message. It can correct the surrounding text while keeping a supported visual. When the visual itself needs correction, the same check can return a repaired presentation of the same type. Nod uses that repair only when the reviewer explicitly affirms its claims and it passes the normal presentation, link and private-data checks. Referenced images still have to belong to the conversation. A missing, rejected or invalid repair leaves the complete corrected plain-text answer as the fallback. The delivery receipt tells the agent whether the visual was included, corrected or omitted.
 
 The check must keep plans separate from completed events and possessions separate from purchases. It must also keep an earlier assistant statement separate from a verified correction. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
 
@@ -209,7 +211,7 @@ Nod writes a skill from what it did and read, so a web page or an email can shap
 
 ## Owner edits and archive
 
-Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive.
+Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive while space is available; the oldest archived notes are dropped first when memory reaches its 256 KB limit.
 
 **Archive note** moves the active entry into **Let go** with a manual reason. It preserves the text, source evidence, fact details and earlier versions, and works while saving new notes is off. **Bring back** restores it as confirmed, keeping an end date that is still valid. **Forget note** remains a separate deletion operation.
 

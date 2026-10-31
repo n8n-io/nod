@@ -4,6 +4,11 @@ import type { RuntimeContext } from '../ports/agent.ts';
 import type { Computer } from '../ports/computer.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 
+export interface ReplyDelivery {
+  delivered: boolean;
+  presentation: 'none' | 'original' | 'corrected' | 'omitted';
+}
+
 export interface Turn {
   context: RuntimeContext;
   computer: Computer;
@@ -13,7 +18,7 @@ export interface Turn {
     id?: string,
     replyToMessageId?: string,
     presentation?: Presentation,
-  ): Promise<unknown>;
+  ): Promise<ReplyDelivery>;
   pause(
     reason: 'question' | 'approval' | 'credentials' | 'browser',
     message?: string,

@@ -50,7 +50,7 @@ flowchart TD
 
 Open a schedule's **See details** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
 
-Each run shows its status and result. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
+Each run shows its status. When a saved web reply is available, select the result to open it in chat. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
 ## Work Nod starts on its own
 
@@ -76,7 +76,7 @@ Select **Edit schedule** to review its name, instructions and timing together. T
 
 ## Quiet hours
 
-Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → General → Quiet hours**.
+Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Notifications → Quiet hours**.
 
 During quiet hours, Nod keeps preparing from new mail and app activity. Its nudges wait until they end, except a high-impact one with strong evidence whose deadline comes first. Any task it starts on its own waits too, with its questions and approvals. Schedules you created still run and deliver on time.
 

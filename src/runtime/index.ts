@@ -1,10 +1,14 @@
-import { presentationText, type Presentation } from '../shared/presentation.ts';
+import {
+  presentationInputSchema,
+  presentationText,
+  type Presentation,
+} from '../shared/presentation.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
-import { Type } from '@sinclair/typebox';
+import { Kind, Type } from '@sinclair/typebox';
 import type {
   Agent,
   AgentEvent,
@@ -33,9 +37,9 @@ import {
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
 import { connectedTools, nodTools } from './tools.ts';
-import type { Turn } from './turn.ts';
+import type { ReplyDelivery, Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
-import type { MemoryBrief } from '../ports/memory-recall.ts';
+import type { MemoryBrief, MemoryReplyReview, MemoryReplyVisual } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
@@ -141,7 +145,8 @@ export function createAgentRuntime(dependencies: {
     context: RuntimeContext,
     text: string,
     execution: ExecutionScope & { onEvent(event: AgentEvent): void },
-  ): Promise<string>;
+    visual?: MemoryReplyVisual,
+  ): Promise<MemoryReplyReview>;
   withExecution?<T>(
     execution: ExecutionScope & { onEvent(event: AgentEvent): void },
     work: () => T,
@@ -246,10 +251,11 @@ export function createAgentRuntime(dependencies: {
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
-    const reviewedReplies = new Map<string, string>();
-    const reviewReply = async (text: string) => {
+    const reviewedReplies = new Map<string, MemoryReplyReview>();
+    const reviewReply = async (text: string, visual?: MemoryReplyVisual) => {
       const draft = text.trim();
-      if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
+      const key = JSON.stringify([draft, visual]);
+      if (reviewedReplies.has(key)) return reviewedReplies.get(key)!;
       if (
         !draft ||
         !context.memoryBrief ||
@@ -258,46 +264,76 @@ export function createAgentRuntime(dependencies: {
         overBudget()
       )
         return draft;
-      if (!reviewedReplies.has(draft)) {
-        let checked = draft;
+      if (!reviewedReplies.has(key)) {
+        let checked: MemoryReplyReview = draft;
         try {
           checked = await untilAborted(
-            dependencies.reviewMemoryReply(context, draft, { ...execution, onEvent: countUsage }),
+            dependencies.reviewMemoryReply(
+              context,
+              draft,
+              { ...execution, onEvent: countUsage },
+              visual,
+            ),
             signal,
           );
         } catch {
           signal.throwIfAborted();
         }
         signal.throwIfAborted();
-        reviewedReplies.set(draft, checked);
+        reviewedReplies.set(key, checked);
       }
-      return reviewedReplies.get(draft)!;
+      return reviewedReplies.get(key)!;
     };
     const deliverReply = async (
       text: string,
       id?: string,
       replyToMessageId?: string,
       presentation?: Presentation,
-    ) => {
+    ): Promise<ReplyDelivery> => {
       signal.throwIfAborted();
+      const requestedPresentation = Boolean(presentation);
       const draft = presentation
         ? `${text.trim()}\n\n${presentationText(presentation)}`.trim()
         : text.trim();
-      const checked = await reviewReply(draft);
-      if (checked !== draft) presentation = undefined;
-      const trimmed = presentation ? text.trim() : checked;
+      const checked = await reviewReply(
+        draft,
+        presentation ? { text: text.trim(), presentation } : undefined,
+      );
+      const correctedVisual =
+        typeof checked !== 'string' && checked.presentationSupported !== true
+          ? checked.correctedVisual
+          : undefined;
+      if (correctedVisual) presentation = correctedVisual.presentation;
+      else if (
+        typeof checked === 'string' ? checked !== draft : checked.presentationSupported !== true
+      )
+        presentation = undefined;
+      const trimmed = correctedVisual
+        ? correctedVisual.text.trim()
+        : typeof checked === 'string'
+          ? presentation
+            ? text.trim()
+            : checked
+          : checked.text.trim();
       const visual = presentation ? JSON.stringify(presentation) : '';
+      const outcome: ReplyDelivery['presentation'] = correctedVisual
+        ? 'corrected'
+        : presentation
+          ? 'original'
+          : requestedPresentation
+            ? 'omitted'
+            : 'none';
       if (
         (!trimmed && !visual) ||
         (trimmed === lastReply && (!visual || visual === lastPresentation))
       )
-        return false;
+        return { delivered: false, presentation: outcome };
       await context.reply(trimmed, id, replyToMessageId, presentation);
       lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
       replyOwed = false;
-      return true;
+      return { delivered: true, presentation: outcome };
     };
     const reply = deliverReply;
     let handoffBrowserId: string | undefined;
@@ -637,6 +673,14 @@ export function createAgentRuntime(dependencies: {
                     async () => {
                       if (!deferred && !Value.Check(parameters, params)) {
                         const error = Value.Errors(parameters, params).First();
+                        if (error?.schema[Kind] === 'NodPresentation') {
+                          const parsed = presentationInputSchema.safeParse(error.value);
+                          const issue = !parsed.success ? parsed.error.issues[0] : undefined;
+                          if (issue)
+                            throw new Error(
+                              `Invalid ${name} arguments at ${[error.path, ...issue.path].join('/')}: ${issue.message}. Correct the presentation and call ${name} again; read visual-replies for its current schema.`,
+                            );
+                        }
                         throw new Error(
                           `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
                         );
@@ -692,7 +736,7 @@ export function createAgentRuntime(dependencies: {
           replyToMessageId?: string,
           presentation?: Presentation,
         ) => {
-          await reply(text, id, replyToMessageId, presentation);
+          return reply(text, id, replyToMessageId, presentation);
         },
         pause,
         confirm,
@@ -1055,7 +1099,10 @@ export function createAgentRuntime(dependencies: {
       }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
-      if (context.taskContext && taskResult) taskResult = await reviewReply(taskResult);
+      if (context.taskContext && taskResult) {
+        const checked = await reviewReply(taskResult);
+        taskResult = typeof checked === 'string' ? checked : checked.text;
+      }
       const result =
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult

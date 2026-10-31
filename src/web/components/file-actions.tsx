@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
 import { Copy, Download, List, Plus } from './icons';
 import type { Artifact } from '../../shared/contracts';
 import type { ImagePreview } from './attachment-images';
@@ -7,6 +8,7 @@ import { copyImage, selectedText } from '../lib/clipboard';
 import { desktopFileAction, desktopFilesAvailable, nativeFileMenu } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
 import { Button } from './ui';
+import { actionMenuTabTarget } from './action-menu';
 
 export function reuseFile(item: ImagePreview) {
   const artifact = artifactFromPreview(item);
@@ -37,6 +39,10 @@ export function prepareFile(item: ImagePreview) {
 export function FileActions({ item }: { item: ImagePreview }) {
   const artifact = artifactFromPreview(item);
   const actions = useRef<HTMLSpanElement>(null);
+  const noticePanel = useRef<HTMLDivElement>(null);
+  const noticeTabTarget = useRef<HTMLElement | null>(null);
+  const focusNotice = useRef(false);
+  const returnFocus = useRef(true);
   const activeId = useRef(item.id);
   activeId.current = item.id;
   const [notice, setNotice] = useState('');
@@ -66,11 +72,12 @@ export function FileActions({ item }: { item: ImagePreview }) {
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  async function run(action: string) {
+  async function run(action: string, keyboard = false) {
     if (action === 'reuse') {
       reuseFile(item);
       return;
     }
+    focusNotice.current = action === 'save' && keyboard;
     const id = item.id;
     if (activeId.current === id) setBusy(true);
     try {
@@ -96,60 +103,128 @@ export function FileActions({ item }: { item: ImagePreview }) {
     }
   }
   return (
-    <span className="file-actions" ref={actions}>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={`Use ${item.name} in message`}
-        title="Add to message"
-        onClick={() => reuseFile(item)}
-      >
-        <Plus size={15} />
-      </Button>
-      {image && (
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={busy}
-          aria-label={`Copy image ${item.name}`}
-          title="Copy image"
-          onClick={() => void run('copy')}
+    <Popover.Root
+      open={Boolean(notice)}
+      onOpenChange={(open) => {
+        if (!open) setNotice('');
+      }}
+    >
+      <Popover.Anchor asChild>
+        <span className="file-actions" ref={actions}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Use ${item.name} in message`}
+            title="Add to message"
+            onClick={() => reuseFile(item)}
+          >
+            <Plus size={15} />
+          </Button>
+          {image && (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={busy}
+              aria-label={`Copy image ${item.name}`}
+              title="Copy image"
+              onClick={() => void run('copy')}
+            >
+              <Copy size={15} />
+            </Button>
+          )}
+          {desktopFilesAvailable() ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                aria-label={`Save ${item.name}`}
+                title="Save to Downloads"
+                onClick={(event) => void run('save', event.detail === 0)}
+              >
+                <Download size={15} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                aria-label={`File actions for ${item.name}`}
+                title="More file actions"
+                onClick={() => void menu()}
+              >
+                <List size={15} />
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="icon" title="Download file" asChild>
+              <a href={artifact.url} download={item.name} aria-label={`Download ${item.name}`}>
+                <Download size={15} />
+              </a>
+            </Button>
+          )}
+        </span>
+      </Popover.Anchor>
+      <Popover.Portal>
+        <Popover.Content
+          ref={noticePanel}
+          role="status"
+          className="file-action-notice"
+          data-analytics-private
+          side="bottom"
+          align="end"
+          sideOffset={4}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            noticeTabTarget.current = null;
+            returnFocus.current = true;
+            if (focusNotice.current)
+              (
+                noticePanel.current?.querySelector<HTMLElement>('button') ?? noticePanel.current
+              )?.focus({ preventScroll: true });
+            focusNotice.current = false;
+          }}
+          onInteractOutside={() => {
+            returnFocus.current = false;
+            noticeTabTarget.current = null;
+          }}
+          onKeyDownCapture={(event) => {
+            if (
+              event.key !== 'Tab' ||
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.nativeEvent.isComposing
+            )
+              return;
+            const items = Array.from(
+              noticePanel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a') ?? [],
+            );
+            if (document.activeElement !== (event.shiftKey ? items[0] : items.at(-1))) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const controls = Array.from(
+              actions.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a') ?? [],
+            );
+            noticeTabTarget.current = actionMenuTabTarget(
+              event.shiftKey ? controls[0] : controls.at(-1),
+              event.shiftKey,
+              noticePanel.current,
+            );
+            setNotice('');
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = noticeTabTarget.current;
+            noticeTabTarget.current = null;
+            if (!returnFocus.current) return;
+            if (target?.isConnected) target.focus({ preventScroll: true });
+            else if (document.activeElement === document.body)
+              actions.current
+                ?.querySelector<HTMLElement>('button:not(:disabled),a')
+                ?.focus({ preventScroll: true });
+          }}
         >
-          <Copy size={15} />
-        </Button>
-      )}
-      {desktopFilesAvailable() ? (
-        <>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={busy}
-            aria-label={`Save ${item.name}`}
-            title="Save to Downloads"
-            onClick={() => void run('save')}
-          >
-            <Download size={15} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={busy}
-            aria-label={`File actions for ${item.name}`}
-            title="More file actions"
-            onClick={() => void menu()}
-          >
-            <List size={15} />
-          </Button>
-        </>
-      ) : (
-        <Button variant="ghost" size="icon" title="Download file" asChild>
-          <a href={artifact.url} download={item.name} aria-label={`Download ${item.name}`}>
-            <Download size={15} />
-          </a>
-        </Button>
-      )}
-      {notice && (
-        <span role="status" className="file-action-notice">
           {notice}
           {notice === 'Saved to Downloads' && (
             <>
@@ -161,9 +236,9 @@ export function FileActions({ item }: { item: ImagePreview }) {
               </Button>
             </>
           )}
-        </span>
-      )}
-    </span>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 

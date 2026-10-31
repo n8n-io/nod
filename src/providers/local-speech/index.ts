@@ -117,7 +117,12 @@ export function createLocalSpeechProvider(options: {
       child = worker;
       const died = () => {
         if (child !== worker) return;
-        preparationStatus(false, { state: 'failed' });
+        const request = active?.request;
+        preparationStatus(
+          request?.method === 'transcribe' ||
+            (request?.method === 'prepare' && request.transcription),
+          { state: 'failed' },
+        );
         stop(new SpeechProviderError('Local speech stopped. Try again.'));
       };
       worker.on('error', died);
@@ -295,7 +300,13 @@ export function createLocalSpeechProvider(options: {
     if (closed) throw new SpeechProviderError('Local speech is closed.');
     if ((transcription ? inputStatus : status).state === 'ready') return;
     if (preparing) {
-      await waitForPreparation(preparing, signal);
+      const running = preparing;
+      try {
+        await waitForPreparation(running, signal);
+      } catch (error) {
+        if (running.transcription === transcription) throw error;
+        signal?.throwIfAborted();
+      }
       return prepare(transcription, signal);
     }
     preparationStatus(transcription, { state: 'downloading', progress: 0 });

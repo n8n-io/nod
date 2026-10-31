@@ -36,6 +36,22 @@
   opacity: 1;
 }
 
+.chat-page .message-trigger.message-menu-trigger {
+  position: absolute;
+  z-index: 3;
+  right: 8px;
+  bottom: 6px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chat-page .message-menu-trigger:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .chat-page .message-actions {
   position: absolute;
   z-index: 2;

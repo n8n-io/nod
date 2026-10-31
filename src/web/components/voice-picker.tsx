@@ -145,7 +145,7 @@ export function VoicePicker({
     );
   const matches = voices.filter((voice) =>
     matchesText(
-      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${sourceLabel(voice)}`,
+      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${voice.engine} ${sourceLabel(voice)}`,
     ),
   );
   const groups = [...new Set(matches.map(voiceProvider))];
@@ -278,7 +278,7 @@ export function VoicePicker({
               <ActionMenuItem
                 className="voice-choice"
                 checked={value === null}
-                disabled={disabled}
+                aria-disabled={disabled || undefined}
                 onClick={() => onChange(null)}
               >
                 <span className="voice-picker-label">
@@ -309,9 +309,10 @@ export function VoicePicker({
                     >
                       <ActionMenuItem
                         className="voice-choice"
+                        textValue={voice.name}
                         aria-label={`Choose ${voice.name}, ${voice.description}, ${sourceLabel(voice)}`}
                         checked={voice.id === value}
-                        disabled={disabled}
+                        aria-disabled={disabled || undefined}
                         onClick={() => onChange(voice.id)}
                       >
                         <span className="voice-picker-label">

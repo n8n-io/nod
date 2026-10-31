@@ -1124,24 +1124,6 @@
 .artifact-drawer[hidden] {
   display: none;
 }
-.artifact-edit {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-}
-.artifact-edit textarea {
-  flex: 1;
-  resize: none;
-  min-height: 200px;
-  font-family: monospace;
-}
-.artifact-edit > div {
-  display: flex;
-  gap: 8px;
-}
 .artifact-drawer-title select {
   max-width: 100%;
   font: inherit;

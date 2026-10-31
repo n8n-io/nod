@@ -192,7 +192,7 @@ export function AppAccountManager({
               );
             })}
           </div>
-          {!addAccount?.browserUrl && (
+          {!addAccount?.browserUrl && !addAccount?.savedLogin && (
             <div className="dialog-actions app-manage-actions">
               <Button
                 data-add-account

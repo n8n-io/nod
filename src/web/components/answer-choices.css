@@ -95,6 +95,24 @@
   opacity: 0.45;
   cursor: default;
 }
+.answer-choices .answer-choice[aria-disabled='true'] {
+  border-color: var(--border);
+  color: var(--foreground);
+  background: var(--surface);
+}
+.answer-choices .answer-choice[aria-disabled='true'][aria-pressed='true'] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+.answer-choices :is(.answer-choices-write, .answer-choices-secondary)[aria-disabled='true'] {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+.answer-choices .answer-choices-send[aria-disabled='true'] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
 .answer-choices .button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

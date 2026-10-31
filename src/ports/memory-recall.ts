@@ -1,4 +1,18 @@
 import type { MemoryNote } from '../shared/memory.ts';
+import type { Presentation } from '../shared/presentation.ts';
+
+export interface MemoryReplyVisual {
+  text: string;
+  presentation: Presentation;
+}
+
+export type MemoryReplyReview =
+  | string
+  | {
+      text: string;
+      presentationSupported?: boolean;
+      correctedVisual?: MemoryReplyVisual;
+    };
 
 export interface MemoryBrief {
   mode: 'personalize' | 'recall' | 'aggregate';

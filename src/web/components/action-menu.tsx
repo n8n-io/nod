@@ -134,7 +134,10 @@ export function useActionMenuNavigation(active = true) {
       .toLocaleLowerCase();
     const ordered = [...items.slice(index + 1), ...items.slice(0, index + 1)];
     const match = ordered.find((item) =>
-      (item.dataset.textValue ?? item.getAttribute('aria-label') ?? item.textContent ?? '')
+      (
+        item.dataset.textValue ??
+        (item.textContent?.trim() || item.getAttribute('aria-label') || '')
+      )
         .trim()
         .normalize('NFKD')
         .replace(/\p{M}/gu, '')

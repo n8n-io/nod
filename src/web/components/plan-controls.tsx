@@ -272,6 +272,7 @@ function ScheduleEditorForm({
   const timeZoneLabel = useId();
   const [nextRun, setNextRun] = useState<string | null>(schedule.nextRun);
   const [previewError, setPreviewError] = useState('');
+  const [previewing, setPreviewing] = useState(false);
   const timingDirty =
     draft.frequency !== initial.frequency ||
     draft.time !== initial.time ||
@@ -297,10 +298,12 @@ function ScheduleEditorForm({
     setPreviewError('');
     if (!timingDirty) {
       setNextRun(schedule.nextRun);
+      setPreviewing(false);
       return;
     }
     const controller = new AbortController();
     setNextRun(null);
+    setPreviewing(true);
     const timer = setTimeout(() => {
       try {
         void api<{ nextRun: string | null }>(`/api/schedules/${schedule.id}/preview`, {
@@ -309,13 +312,20 @@ function ScheduleEditorForm({
           signal: controller.signal,
         })
           .then((result) => {
-            if (!controller.signal.aborted) setNextRun(result.nextRun);
+            if (!controller.signal.aborted) {
+              setNextRun(result.nextRun);
+              setPreviewing(false);
+            }
           })
           .catch((cause) => {
-            if (!controller.signal.aborted) setPreviewError(errorMessage(cause));
+            if (!controller.signal.aborted) {
+              setPreviewError(errorMessage(cause));
+              setPreviewing(false);
+            }
           });
       } catch (cause) {
         setPreviewError(errorMessage(cause));
+        setPreviewing(false);
       }
     }, 250);
     return () => {
@@ -498,8 +508,10 @@ function ScheduleEditorForm({
                   {formatDateTime(nextRun, dateFormat, { timeZone: draft.timeZone })} (
                   {draft.timeZone})
                 </>
-              ) : timingDirty ? (
+              ) : previewing ? (
                 'Checking next run…'
+              ) : timingDirty ? (
+                'No upcoming run for this timing.'
               ) : null)}
           </div>
         </div>

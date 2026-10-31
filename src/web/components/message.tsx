@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Check, CornerUpLeft, SmilePlus } from './icons';
+import { Copy, Check, CornerUpLeft, Ellipsis, SmilePlus } from './icons';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -368,7 +368,8 @@ export function MessageBubble({
   const [panel, setPanel] = useState<MessagePanel | null>(null);
   const [position, setPosition] = useState({ left: 8, top: 8, width: 180, maxHeight: 360 });
   const articleElement = useRef<HTMLElement>(null);
-  const menuTrigger = useRef<HTMLDivElement>(null);
+  const messageBody = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const pickerTrigger = useRef<HTMLButtonElement>(null);
   const panelElement = useRef<HTMLDivElement>(null);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -389,8 +390,8 @@ export function MessageBubble({
       kind: 'menu',
       point,
       compact:
-        Boolean(menuTrigger.current) &&
-        getComputedStyle(menuTrigger.current!)
+        Boolean(messageBody.current) &&
+        getComputedStyle(messageBody.current!)
           .getPropertyValue('--compact-message-actions')
           .trim() === '1',
     });
@@ -624,10 +625,7 @@ export function MessageBubble({
           <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
             <div
               className="message-body"
-              ref={menuTrigger}
-              tabIndex={canOpenMenu ? 0 : undefined}
-              aria-haspopup={canOpenMenu ? 'menu' : undefined}
-              aria-expanded={canOpenMenu ? panel?.kind === 'menu' : undefined}
+              ref={messageBody}
               onPointerDown={(event) => {
                 cancelHold();
                 if (
@@ -662,16 +660,6 @@ export function MessageBubble({
                   cancelHold();
               }}
               onPointerLeave={cancelHold}
-              onKeyDown={(event) => {
-                if (
-                  canOpenMenu &&
-                  event.target === event.currentTarget &&
-                  (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
-                ) {
-                  event.preventDefault();
-                  openMenu();
-                }
-              }}
               onContextMenu={(event) => {
                 if (
                   !canOpenMenu ||
@@ -727,6 +715,28 @@ export function MessageBubble({
             </div>
             {!streaming && (
               <>
+                {canOpenMenu && (
+                  <button
+                    ref={menuTrigger}
+                    type="button"
+                    className="message-trigger message-menu-trigger"
+                    aria-label="Message actions"
+                    aria-haspopup="menu"
+                    aria-expanded={
+                      panel?.kind === 'menu' ||
+                      (panel?.kind === 'reactions' && panel.fromMenu === true)
+                    }
+                    onClick={() => openMenu()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                        event.preventDefault();
+                        openMenu();
+                      }
+                    }}
+                  >
+                    <Ellipsis size={17} aria-hidden="true" />
+                  </button>
+                )}
                 <Tooltip content={formatFullDateTime(message.createdAt, dateFormat)}>
                   <time className="message-time" dateTime={message.createdAt}>
                     {formatTime(message.createdAt, dateFormat)}

@@ -1792,7 +1792,7 @@ input[type='range']:disabled {
     font-size: var(--text-body);
     font-weight: 500;
   }
-  .mobile-section > svg {
+  .mobile-section .nav-icon > svg {
     flex: none;
     color: var(--text-secondary);
   }
@@ -1810,7 +1810,7 @@ input[type='range']:disabled {
   .mobile-section[aria-current='page'] {
     background: var(--accent-soft);
   }
-  .mobile-section[aria-current='page'] > svg {
+  .mobile-section[aria-current='page'] .nav-icon > svg {
     color: var(--accent);
   }
   .mobile-sheet-actions {

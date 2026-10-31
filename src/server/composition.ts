@@ -739,8 +739,8 @@ async function initializeApplication(
     withExecution: ledger.withExecution,
     prepareMemory: (context, execution, canContinue) =>
       ledger.withExecution(execution, () => memoryRecall.prepare(context, canContinue)),
-    reviewMemoryReply: (context, text, execution) =>
-      ledger.withExecution(execution, () => memoryRecall.review(context, text)),
+    reviewMemoryReply: (context, text, execution, visual) =>
+      ledger.withExecution(execution, () => memoryRecall.review(context, text, visual)),
     analyzeImages:
       analyzeImages &&
       ((images, request, signal, execution) =>

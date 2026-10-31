@@ -455,6 +455,8 @@ test(
           const { createLedger } = await import('../src/server/ledger.ts');
           const ledger = createLedger({ pool: db.pool, ownerId });
           await ledger.initialize();
+          let failCosts = false;
+          const costRequests: string[][] = [];
           const priced = createPersonalService({
             pool: db.pool,
             ownerId,
@@ -462,7 +464,11 @@ test(
             now: () => clock,
             enqueueTurn: thread.enqueueTurn,
             refresh() {},
-            sessionCosts: ledger.sessionCosts,
+            sessionCosts: async (ids) => {
+              costRequests.push(ids);
+              if (failCosts) throw new Error('Synthetic cost lookup unavailable');
+              return ledger.sessionCosts(ids);
+            },
           });
           const pricedApp = Fastify();
           priced.registerRoutes(pricedApp);
@@ -555,6 +561,46 @@ test(
               [randomUUID(), ownerId, turnId, index ? 0.3 : 0.1],
             );
           assert.deepEqual(await costs(schedule.id), { [turns[0]!]: 0.1, [turns[1]!]: 0.3 });
+          await t.test(
+            'history stays pageable when recorded cost lookup is unavailable',
+            async () => {
+              const path = `/api/schedule-runs?scheduleId=${schedule.id}&limit=1`;
+              const before = await pricedApp.inject({ method: 'GET', url: path });
+              assert.equal(before.statusCode, 200, before.body);
+              const expected = before.json<ScheduleHistory>();
+              assert.ok(expected.nextCursor);
+              const withoutCosts = expected.runs.map(({ costUsd: _cost, ...run }) => run);
+              const previousRequests = costRequests.length;
+              failCosts = true;
+              try {
+                const first = await pricedApp.inject({ method: 'GET', url: path });
+                assert.equal(first.statusCode, 200, first.body);
+                const firstPage = first.json<ScheduleHistory>();
+                assert.deepEqual(firstPage, {
+                  runs: withoutCosts,
+                  nextCursor: expected.nextCursor,
+                });
+                const second = await pricedApp.inject({
+                  method: 'GET',
+                  url: `${path}&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
+                });
+                assert.equal(second.statusCode, 200, second.body);
+                const secondPage = second.json<ScheduleHistory>();
+                assert.deepEqual(
+                  secondPage.runs.map((run) => run.turnId),
+                  [turns[1]],
+                );
+                assert.equal(Object.hasOwn(secondPage.runs[0]!, 'costUsd'), false);
+                assert.equal(secondPage.nextCursor, null);
+                assert.deepEqual(costRequests.slice(previousRequests), [[turns[0]], [turns[1]]]);
+              } finally {
+                failCosts = false;
+              }
+              const recovered = await pricedApp.inject({ method: 'GET', url: path });
+              assert.equal(recovered.statusCode, 200, recovered.body);
+              assert.deepEqual(recovered.json<ScheduleHistory>(), expected);
+            },
+          );
           assert.equal(await monthly(), null);
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
             turns,
