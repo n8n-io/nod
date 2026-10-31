@@ -12,12 +12,13 @@ type AnalyticsEvents = {
   };
   nod_onboarding_step_skipped: { step: 'email' };
   nod_settings_viewed: {
-    tab: 'general' | 'models' | 'app_connections' | 'memory';
+    tab:
+      'general' | 'notifications' | 'models' | 'voice' | 'app_connections' | 'memory' | 'privacy';
   };
   nod_chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
-    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply';
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
   };
   nod_chat_stop_requested: undefined;
   nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
@@ -49,9 +50,7 @@ type AnalyticsEvents = {
     count: '1' | '2-5' | '6+';
   };
   nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  nod_tab_viewed:
-    | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
-    | { page: 'apps'; tab: 'all' | 'connected' };
+  nod_tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
   nod_ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
@@ -70,12 +69,12 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_onboarding_step_skipped: { step: ['email'] },
   nod_settings_viewed: {
-    tab: ['general', 'models', 'app_connections', 'memory'],
+    tab: ['general', 'notifications', 'models', 'voice', 'app_connections', 'memory', 'privacy'],
   },
   nod_chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
-    source: ['composer', 'task_card', 'ask_nod', 'task_reply'],
+    source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
   },
   nod_chat_stop_requested: {},
   nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
@@ -108,8 +107,8 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
   nod_tab_viewed: {
-    page: ['tasks', 'apps'],
-    tab: ['current', 'scheduled', 'previous', 'all', 'connected'],
+    page: ['apps'],
+    tab: ['all', 'connected'],
   },
   nod_ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],

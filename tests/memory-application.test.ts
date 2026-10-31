@@ -497,6 +497,42 @@ test(
       assert.deepEqual([guess.status, guess.sources[0].text], ['tentative', null]);
       assert.deepEqual(await notices(), []);
 
+      const archivedResponse = await application.app.inject({
+        method: 'POST',
+        url: '/api/memory/notes/about/planted/archive',
+        headers,
+      });
+      assert.equal(archivedResponse.statusCode, 200, archivedResponse.body);
+      const archivedNote = archivedResponse
+        .json<MemoryView>()
+        .archive.find((note) => note.path === 'about/planted')!;
+      assert.equal(archivedNote.reason, 'manual');
+      assert.equal(archivedNote.sources[0].text, null);
+      assert.ok(!archivedNote.sources[0].canOpenInCurrentChat);
+      assert.ok(
+        !archivedResponse.json<MemoryView>().notes.some((note) => note.path === 'about/planted'),
+      );
+      assert.equal(
+        (
+          await application.app.inject({
+            method: 'POST',
+            url: '/api/memory/notes/about/planted/archive',
+            headers,
+          })
+        ).statusCode,
+        404,
+      );
+      const restoredResponse = await application.app.inject({
+        method: 'POST',
+        url: '/api/memory/archive/restore',
+        headers,
+        payload: { path: archivedNote.path, archived: archivedNote.archived },
+      });
+      assert.equal(restoredResponse.statusCode, 200, restoredResponse.body);
+      assert.ok(
+        restoredResponse.json<MemoryView>().notes.some((note) => note.path === archivedNote.path),
+      );
+
       const clear = 'Clear everything you saved about me.';
       await ask(clear, [personal('memory_control', { clear: true, quote: clear })]);
       assert.deepEqual((await view()).notes, []);
@@ -1077,6 +1113,60 @@ test('memory corrections keep their evidence, type and dates and do not archive 
   }
 });
 
+test('manual archive preserves facts and evidence, restores the note and stays separate from forgetting', async () => {
+  const original = entry({
+    slug: 'workshop',
+    text: 'Attended a print workshop on 2026-01-03.',
+    abstract: 'Print workshop',
+    origin: 'inferred',
+    expires: '2099-01-01',
+    quote: 'I attended a print workshop on 2026-01-03.',
+    fact: { kind: 'event', entities: ['Print workshop'], occurredOn: '2026-01-03' },
+  });
+  const tree = treeOf(original);
+  tree.enabled = false;
+  tree.archive.push({
+    ...entry({ slug: 'earlier', text: 'Planned a print workshop.' }),
+    reason: 'superseded',
+    by: 'about/workshop',
+    archived: when,
+  });
+  const store = memoryObjectStore();
+  await store.write('memory/MEMORY.md', render(tree), { expectedVersion: null });
+  const memory = createMemoryService({ pool: {} as pg.Pool, ownerId: 'archive-owner', store });
+  await memory.archiveNote('about/workshop');
+  const archived = await memory.load();
+  assert.equal(archived.enabled, false);
+  assert.equal(archived.entries.length, 0);
+  assert.equal(archived.archive.length, 2);
+  const last = archived.archive.at(-1)!;
+  assert.deepEqual(last, { ...original, reason: 'manual', archived: last.archived });
+  await assert.rejects(memory.archiveNote('about/workshop'), { statusCode: 404 });
+  await assert.rejects(memory.archiveNote('../workshop'));
+  const restoredPath = await memory.restore({ path: 'about/workshop', archived: last.archived });
+  assert.equal(restoredPath, 'about/workshop');
+  const restored = await memory.load();
+  assert.equal(restored.archive.length, 1);
+  assert.equal(restored.entries[0].text, original.text);
+  assert.deepEqual(restored.entries[0].fact, original.fact);
+  assert.deepEqual(restored.entries[0].sources, original.sources);
+  assert.equal(restored.entries[0].quote, original.quote);
+  assert.equal(restored.entries[0].abstract, original.abstract);
+  assert.equal(restored.entries[0].expires, original.expires);
+  await memory.change(restoredPath, { expires: '2099-02-01' });
+  assert.deepEqual((await memory.load()).entries[0].sources, original.sources);
+  await memory.change(restoredPath, { text: 'Prefers print workshops.' });
+  const rewritten = (await memory.load()).entries[0];
+  assert.deepEqual(rewritten.sources, []);
+  assert.equal(rewritten.fact, undefined);
+  assert.equal(rewritten.quote, undefined);
+  assert.equal(rewritten.abstract, undefined);
+  await memory.forget(restoredPath);
+  const forgotten = await memory.load();
+  assert.equal(forgotten.entries.length, 0);
+  assert.equal(forgotten.archive.length, 0);
+});
+
 test(
   'history pages keep every match and memory evidence stays within its owner and active conversation',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -1227,6 +1317,16 @@ test(
     });
     await memory.add({ area: 'about', text: 'A saved fact outside the selected packet.' });
     const ownView = await memory.view();
+    assert.deepEqual(
+      ownView.notes
+        .find((note) => note.path === 'about/maple')!
+        .sources.map((source) => Boolean(source.canOpenInCurrentChat)),
+      [true, false, false],
+    );
+    assert.equal(
+      ownView.notes.find((note) => note.path === 'about/amber')!.sources[0].canOpenInCurrentChat,
+      false,
+    );
     assert.ok(
       ownView.notes
         .find((note) => note.path === 'about/amber')!
@@ -1295,5 +1395,15 @@ test(
     const changed = await memory.read({ path: 'about/amber' });
     assert.ok('sources' in changed);
     assert.equal(changed.sources[0].text, null);
+    await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [active]);
+    const afterReset = await memory.view();
+    assert.equal(
+      afterReset.notes.find((note) => note.path === 'about/maple')!.sources[0].canOpenInCurrentChat,
+      false,
+    );
+    assert.equal(
+      afterReset.notes.find((note) => note.path === 'about/maple')!.sources[0].text,
+      records[0].text,
+    );
   },
 );

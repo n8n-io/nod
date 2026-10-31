@@ -110,6 +110,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneAccess, setMicrophoneAccess] = useState(false);
   const [microphoneId, setMicrophoneId] = useState(savedMicrophone);
   const [discovering, setDiscovering] = useState(false);
   const [microphoneFailure, setMicrophoneFailure] = useState('');
@@ -150,6 +151,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       if (value) localStorage.setItem(microphonePreference, value);
       else localStorage.removeItem(microphonePreference);
     } catch {}
+    window.dispatchEvent(new CustomEvent('nod:microphone-change', { detail: value }));
   }
 
   async function refreshMicrophones() {
@@ -162,6 +164,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       );
       if (operation !== discoveryGeneration.current || enumeration !== enumerationVersion.current)
         return;
+      setMicrophoneAccess(devices.some((device) => Boolean(device.label)));
       setMicrophones(devices.filter((device) => device.deviceId && device.deviceId !== 'default'));
       if (
         selectedInput.current &&
@@ -195,6 +198,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (operation !== discoveryGeneration.current || !currentEnabled.current) return;
       discoveryStream.current = stream;
+      setMicrophoneAccess(true);
       await refreshMicrophones();
     } catch (cause) {
       if (operation === discoveryGeneration.current) setMicrophoneFailure(microphoneError(cause));
@@ -236,10 +240,10 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     setError(message);
   }
 
-  async function prepare() {
+  async function prepare(format = currentFormat.current) {
     const value = recordingValue.current;
     if (!value) return null;
-    if (currentFormat.current !== 'wav' || value.file.type === 'audio/wav') {
+    if (format !== 'wav' || value.file.type === 'audio/wav') {
       changePhase('preview');
       return value.file;
     }
@@ -290,7 +294,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     }
   }
 
-  async function finish() {
+  async function finish(format = currentFormat.current) {
     const operation = generation.current;
     const account = requestAccountVersion();
     const scope = currentScope.current;
@@ -302,7 +306,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       });
       stop();
       file = await finished;
-    } else if (phaseRef.current === 'preview') file = await prepare();
+    } else if (phaseRef.current === 'preview') file = await prepare(format);
     else return null;
     return operation === generation.current &&
       account === requestAccountVersion() &&
@@ -488,11 +492,29 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
       cancelMicrophoneDiscovery();
     };
     const changed = () => void refreshMicrophones();
+    const preferenceChanged = (event: Event) => {
+      if (
+        event.type === 'storage' &&
+        (event as StorageEvent).key !== null &&
+        (event as StorageEvent).key !== microphonePreference
+      )
+        return;
+      const value =
+        event instanceof CustomEvent && typeof event.detail === 'string'
+          ? event.detail
+          : savedMicrophone();
+      selectedInput.current = value;
+      setMicrophoneId(value);
+    };
     navigator.mediaDevices?.addEventListener?.('devicechange', changed);
+    window.addEventListener('nod:microphone-change', preferenceChanged);
+    window.addEventListener('storage', preferenceChanged);
     window.addEventListener('pagehide', leave);
     return () => {
       cancelMicrophoneDiscovery();
       navigator.mediaDevices?.removeEventListener?.('devicechange', changed);
+      window.removeEventListener('nod:microphone-change', preferenceChanged);
+      window.removeEventListener('storage', preferenceChanged);
       window.removeEventListener('pagehide', leave);
       release();
     };
@@ -507,6 +529,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     notice,
     supported,
     microphones,
+    microphoneAccess,
     microphoneId,
     discovering,
     microphoneFailure,

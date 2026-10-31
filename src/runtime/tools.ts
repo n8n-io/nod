@@ -7,6 +7,8 @@ import {
   type TSchema,
 } from '@sinclair/typebox';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
+import { answerChoiceInputSchema, answerChoicesSchema } from '../shared/answer-choices.ts';
 import { presentationSchema, type Presentation } from '../shared/presentation.ts';
 import { Value } from '@sinclair/typebox/value';
 import {
@@ -176,7 +178,7 @@ const presentation = Type.Unsafe<Presentation>({
 export const toolDefinitions = {
   set_status: defineTool(
     'set_status',
-    "Set the live activity line, not a chat message. Use one short goal in the owner's language. Update only when useful; do not claim a result.",
+    "Replace the live activity line without a chat message. Name current work briefly in the owner's language; never claim completion.",
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
   ),
   skills: defineTool(
@@ -215,9 +217,9 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result or necessary decision now. Background final text is private. Do not repeat delivered text. Read visual-replies for the presentation schema when comparisons, locations, layouts or trends benefit from a native view, or to offer Connect buttons for apps. Text gives the conclusion, caveats and sources without repeating every value. Completion requires confirmed, inspectable output.',
+    'Deliver a checked result or necessary decision now. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
     Type.Object({
-      text: Type.String({ minLength: 1 }),
+      text: Type.String(),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
@@ -315,8 +317,23 @@ export const toolDefinitions = {
   ),
   ask_user: defineTool(
     'ask_user',
-    'Ask one necessary question and pause until the user answers.',
-    Type.Object({ question: Type.String() }),
+    'Ask one necessary question and pause. Offer useful known choices when they make answering easier, normally two to four. Descriptions may disambiguate options. The owner can always reply in their own words. Never use choices for action approvals, passwords, codes or other secrets.',
+    Type.Object({
+      question: Type.String(),
+      choices: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              label: Type.String({ minLength: 1, maxLength: 120 }),
+              description: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1, maxItems: 6 },
+        ),
+      ),
+      multiple: Type.Optional(Type.Boolean()),
+    }),
     true,
   ),
   react_to_message: defineTool(
@@ -871,9 +888,9 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       return context.manage(`skill_${action}`, { action, ...args });
     }),
     bind(toolDefinitions.send_message, async (p) => {
-      if (!p.text.trim()) throw new Error('A complete text answer is required.');
       const visual =
         p.presentation === undefined ? undefined : presentationSchema.parse(p.presentation);
+      if (!p.text.trim() && !visual) throw new Error('A text answer or visual is required.');
       return (
         (await turn.reply(p.text, undefined, p.replyToMessageId, visual)) ?? 'Message delivered.'
       );
@@ -884,7 +901,16 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
-      await pause('question', text);
+      const choices = p.choices
+        ? answerChoicesSchema.parse({
+            options: p.choices.map((choice) => ({
+              ...answerChoiceInputSchema.parse(choice),
+              id: randomUUID(),
+            })),
+            multiple: p.multiple ?? false,
+          })
+        : undefined;
+      await pause('question', text, choices);
       return 'Waiting for the user to reply.';
     }),
     bind(toolDefinitions.react_to_message, async (p) => {

@@ -42,7 +42,7 @@ flowchart TD
 
 - The **index** lists every entry's full text in the owner context, one line each as `area/slug: text`, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
-- An **entry** shows its full text, status, source messages and evidence count. Pi receives only the saved support quote, not the whole source message. An older note without a saved quote keeps its source reference. The Memory tab still shows the full message to its owner.
+- An **entry** shows its full text, status, source messages and evidence count. Pi receives only the saved support quote, not the whole source message. An older note without a saved quote keeps its source reference. Settings → Memory offers a link only when the server verifies that the source belongs to the owner’s active conversation. Historical sources keep their saved support quote or available message excerpt. Missing sources remain unavailable; message lookup is never widened to make a link work.
 
 `memory_find` matches words in the slug, abstract and text. This direct tool uses no model or embeddings. Before an owner request, Nod also uses the memory model to select relevant facts and expand search terms.
 
@@ -206,3 +206,11 @@ Nod writes a skill from what it did and read, so a web page or an email can shap
 - [Agent runtime](/how-it-works/agent-runtime/)
 - [Skill library](/how-it-works/skills/)
 - [Your data and privacy](/trust/privacy/)
+
+## Owner edits and archive
+
+Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive.
+
+**Archive note** moves the active entry into **Let go** with a manual reason. It preserves the text, source evidence, fact details and earlier versions, and works while saving new notes is off. **Bring back** restores it as confirmed, keeping an end date that is still valid. **Forget note** remains a separate deletion operation.
+
+The source-navigation flag is read-time metadata, not saved memory content. It never grants access to another owner’s message or a reset conversation. Learned skills expose their originating task text, not a chat-message navigation target.

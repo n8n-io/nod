@@ -880,6 +880,19 @@ test('flight journeys preserve every leg and distinguish connections from techni
   ])
     assert.ok(summary.includes(detail), detail);
   const option = parsed.options[0];
+  const booked = presentationSchema.parse({
+    ...parsed,
+    options: [{ ...option, status: 'booked', bookingReference: 'SYNTH42', price: undefined }],
+  });
+  const bookedText = presentationText(booked);
+  assert.match(bookedText, /Booked/);
+  assert.match(bookedText, /Booking reference: SYNTH42/);
+  assert.doesNotMatch(bookedText, /Option \d|undefined|EUR 740/);
+  assert.equal(
+    presentationSchema.safeParse({ ...parsed, options: [{ ...option, status: 'unverified' }] })
+      .success,
+    false,
+  );
   const outbound = option.journeys[0];
   const invalidJourneys = [
     [],

@@ -41,14 +41,18 @@ On a self-hosted server, leave that channel's environment variables blank or uns
 <Steps>
 
 1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_nod_bot`.
-2. Select **I have my token**. Paste BotFather's reply, or just the token, into **BotFather message or token**. Select **Connect bot**.
-3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, Nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
-4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message Nod.
-5. Select **Start conversation** and say hello. Nod must be running to reply.
+2. Select **I have my token**. Paste BotFather's reply, or just the token, into **Bot token**. Select **Connect bot**.
+3. In **Link your account**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, Nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
+4. In **Confirm account**, check your name and username, then select **Connect account**. Only this account can message Nod.
+5. Setup closes after your account connects. Open **Manage Telegram**. Under **Chat from Telegram**, select **Open on this computer** or **Scan on phone** to open your bot's chat. Nod must be running to reply.
 
 </Steps>
 
+The account panel shows your bot and the name and username of the person allowed to message it, when Telegram provides them. The phone QR code opens the existing chat; it does not pair another account. Select **Disconnect Telegram** to remove the connection; Nod asks you to confirm first.
+
 If the link doesn't work for you, select **Enter your user ID instead** and use the ID that [@userinfobot](https://t.me/userinfobot) sends you.
+
+This setup works without a public callback URL. If your bot already uses a webhook, remove it before connecting here. To keep webhook delivery, use [Telegram webhooks in server configuration](/deploy/configuration/#telegram-webhooks).
 
 </TabItem>
 <TabItem label="WhatsApp">

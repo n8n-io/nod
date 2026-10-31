@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   CalendarClock,
@@ -14,29 +14,20 @@ import {
   MessageCircle,
   MessageSquare,
 } from '../components/icons';
-import type {
-  Activity,
-  Schedule,
-  ScheduleRun,
-  Task,
-  TaskDetail,
-  TaskStatus,
-} from '../../shared/contracts';
+import type { Activity, Schedule, Task, TaskDetail } from '../../shared/contracts';
 import { taskHeadline, taskLabels } from '../../shared/task-status';
 import { InlineName } from '../components/inline-name';
 import { pageDataCache } from '../lib/page-data-cache';
 import { api } from '../lib/api';
 import { PageTitle } from '../components/page-title';
-import { AskNod, NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
-import { StatementValue } from '../components/statement-value';
+import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { MessageText } from '../components/message';
 import { usePageData } from '../hooks/use-page-data';
 import { captureAnalytics } from '../lib/analytics';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
-import { desktopSettingsAvailable } from '../lib/desktop';
 import { post, errorMessage } from '../lib/api';
-import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
+import { ScheduleRow } from './schedule';
 
 const icons = {
   queued: Clock,
@@ -49,17 +40,6 @@ const icons = {
   done: CircleCheck,
   cancelled: CircleSlash,
 };
-const order: TaskStatus[] = [
-  'needs_you',
-  'failed',
-  'working',
-  'queued',
-  'stalled',
-  'waiting',
-  'scheduled',
-];
-const views = ['current', 'scheduled', 'previous'] as const;
-const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
 
 function TaskActivity({ id }: { id: string }) {
@@ -204,154 +184,163 @@ export function TaskCard({
           )}
         </button>
       </h2>
-      <div className="task-preview-body" id={`${headingId}-body`} hidden={!expanded}>
-        {expanded && (
-          <InlineName
-            value={task.title}
-            label="task title"
-            save={async (title) => {
-              await api(`/api/tasks/${task.id}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ title }),
-              });
-              await pageDataCache.refresh('/api/tasks', true);
-            }}
-          />
-        )}
-        {!onReply && task.status === 'needs_you' && task.question && (
-          <div className="task-preview-question">
-            <MessageText text={task.question} />
-          </div>
-        )}
-        {closed(task) && task.result && (
-          <div className="task-preview-result">
-            <MessageText text={task.result} />
-          </div>
-        )}
-        {steps.length > 0 && (
-          <ol className="task-preview-steps">
-            {steps.map((step, index) => {
-              const progress = state(index);
-              const StepIcon =
-                progress === 'done' ? CircleCheck : progress === 'current' ? Icon : Circle;
-              return (
-                <li
-                  key={index}
-                  data-state={progress}
-                  aria-current={progress === 'current' ? 'step' : undefined}
+      <div
+        className="task-preview-disclosure"
+        id={`${headingId}-body`}
+        data-open={expanded}
+        aria-hidden={!expanded}
+        inert={!expanded}
+      >
+        <div className="task-preview-clip">
+          <div className="task-preview-body">
+            <InlineName
+              value={task.title}
+              label="task title"
+              save={async (title) => {
+                await api(`/api/tasks/${task.id}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({ title }),
+                });
+                await pageDataCache.refresh('/api/tasks', true);
+              }}
+            />
+            {!onReply && task.status === 'needs_you' && task.question && (
+              <div className="task-preview-question">
+                <MessageText text={task.question} />
+              </div>
+            )}
+            {closed(task) && task.result && (
+              <div className="task-preview-result">
+                <MessageText text={task.result} />
+              </div>
+            )}
+            {steps.length > 0 && (
+              <ol className="task-preview-steps">
+                {steps.map((step, index) => {
+                  const progress = state(index);
+                  const StepIcon =
+                    progress === 'done' ? CircleCheck : progress === 'current' ? Icon : Circle;
+                  return (
+                    <li
+                      key={index}
+                      data-state={progress}
+                      aria-current={progress === 'current' ? 'step' : undefined}
+                    >
+                      <StepIcon
+                        size={16}
+                        aria-hidden="true"
+                        className={
+                          progress === 'current' && task.status === 'working' ? 'spin' : undefined
+                        }
+                      />
+                      <span>{step}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+            <p className="task-preview-meta">
+              <Clock size={16} aria-hidden="true" />
+              <span>
+                {task.closedAt
+                  ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
+                  : `Started ${formatDateTime(task.createdAt, format)}`}
+              </span>
+            </p>
+            {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
+              <ul className="task-facts">
+                {task.waitingFor.map((wait) => (
+                  <li key={`${wait.who}:${wait.via}`}>
+                    <span>Waiting on</span>
+                    {wait.who} · {wait.via}
+                  </li>
+                ))}
+                {task.nextCheck && (
+                  <li>
+                    <span>Next check</span>
+                    {when(task.nextCheck)}
+                  </li>
+                )}
+                {task.doneWhen && (
+                  <li>
+                    <span>Done when</span>
+                    {task.doneWhen}
+                  </li>
+                )}
+              </ul>
+            )}
+            {(task.revision ?? 0) > (task.appliedRevision ?? 0) && !closed(task) && (
+              <p className="task-preview-meta">Owner update queued</p>
+            )}
+            <div className="task-preview-actions">
+              {onReply && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    captureAnalytics('nod_task_action', { action: 'reply' });
+                    onReply();
+                  }}
                 >
-                  <StepIcon
-                    size={16}
-                    aria-hidden="true"
-                    className={
-                      progress === 'current' && task.status === 'working' ? 'spin' : undefined
+                  Reply
+                </Button>
+              )}
+              {!onReply && task.messageId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    captureAnalytics('nod_task_action', { action: 'show_in_chat' });
+                    window.dispatchEvent(
+                      new window.CustomEvent('nod:focus-message', {
+                        detail: { messageId: task.messageId },
+                      }),
+                    );
+                  }}
+                >
+                  <MessageSquare size={16} aria-hidden="true" />
+                  Show in chat
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-expanded={showActivity}
+                onClick={() => {
+                  if (!showActivity)
+                    captureAnalytics('nod_task_action', { action: 'show_activity' });
+                  setShowActivity(!showActivity);
+                }}
+              >
+                {showActivity ? 'Hide activity' : 'Show activity'}
+              </Button>
+              {!closed(task) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={stopping}
+                  onClick={async () => {
+                    captureAnalytics('nod_task_action', { action: 'stop' });
+                    setStopping(true);
+                    setError('');
+                    try {
+                      await post(`/api/tasks/${task.id}/stop`);
+                    } catch (cause) {
+                      setError(errorMessage(cause));
+                    } finally {
+                      setStopping(false);
                     }
-                  />
-                  <span>{step}</span>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-        <p className="task-preview-meta">
-          <Clock size={16} aria-hidden="true" />
-          <span>
-            {task.closedAt
-              ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
-              : `Started ${formatDateTime(task.createdAt, format)}`}
-          </span>
-        </p>
-        {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
-          <ul className="task-facts">
-            {task.waitingFor.map((wait) => (
-              <li key={`${wait.who}:${wait.via}`}>
-                <span>Waiting on</span>
-                {wait.who} · {wait.via}
-              </li>
-            ))}
-            {task.nextCheck && (
-              <li>
-                <span>Next check</span>
-                {when(task.nextCheck)}
-              </li>
-            )}
-            {task.doneWhen && (
-              <li>
-                <span>Done when</span>
-                {task.doneWhen}
-              </li>
-            )}
-          </ul>
-        )}
-        {(task.revision ?? 0) > (task.appliedRevision ?? 0) && !closed(task) && (
-          <p className="task-preview-meta">Owner update queued</p>
-        )}
-        <div className="task-preview-actions">
-          {onReply && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                captureAnalytics('nod_task_action', { action: 'reply' });
-                onReply();
-              }}
-            >
-              Reply
-            </Button>
-          )}
-          {!onReply && task.messageId && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                captureAnalytics('nod_task_action', { action: 'show_in_chat' });
-                window.dispatchEvent(
-                  new window.CustomEvent('nod:focus-message', {
-                    detail: { messageId: task.messageId },
-                  }),
-                );
-              }}
-            >
-              <MessageSquare size={16} aria-hidden="true" />
-              Show in chat
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={showActivity}
-            onClick={() => {
-              if (!showActivity) captureAnalytics('nod_task_action', { action: 'show_activity' });
-              setShowActivity(!showActivity);
-            }}
-          >
-            {showActivity ? 'Hide activity' : 'Show activity'}
-          </Button>
-          {!closed(task) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={stopping}
-              onClick={async () => {
-                captureAnalytics('nod_task_action', { action: 'stop' });
-                setStopping(true);
-                setError('');
-                try {
-                  await post(`/api/tasks/${task.id}/stop`);
-                } catch (cause) {
-                  setError(errorMessage(cause));
-                } finally {
-                  setStopping(false);
-                }
-              }}
-            >
-              {stopping ? 'Stopping…' : 'Stop this task'}
-            </Button>
-          )}
+                  }}
+                >
+                  {stopping ? 'Stopping…' : 'Stop this task'}
+                </Button>
+              )}
+            </div>
+            {error && <Notice>{error}</Notice>}
+            {showActivity && <TaskActivity id={task.id} />}
+            {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
+          </div>
         </div>
-        {error && <Notice>{error}</Notice>}
-        {expanded && showActivity && <TaskActivity id={task.id} />}
-        {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
       </div>
     </article>
   );
@@ -384,282 +373,66 @@ function Pending({ label }: { label: string }) {
   );
 }
 
-function Ideas({
-  first,
-  ask,
-  onAsk,
-}: {
-  first: string;
-  ask: Array<'task' | 'schedule'>;
-  onAsk(text: string): void;
-}) {
-  return (
-    <div className="statement tasks-ideas">
-      <p className="statement-summary">
-        {first}
-        <br />
-        {ask.length > 1 ? 'Hand it ' : 'Hand Nod '}
-        {ask.map((kind, index) => (
-          <Fragment key={kind}>
-            {index > 0 && ', or '}
-            <StatementValue
-              text={kind === 'task' ? 'something that takes a while' : 'something that repeats'}
-              label={kind === 'task' ? 'New task' : 'New schedule'}
-            >
-              {(close) => <AskNod subject={{ kind }} onAsk={onAsk} onClose={close} />}
-            </StatementValue>
-          </Fragment>
-        ))}
-        .
-      </p>
-    </div>
-  );
-}
-
-export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity?: Activity[] }) {
-  const tasks = usePageData<Task[]>('/api/tasks');
+export function Scheduled({ onAsk }: { onAsk(text: string): void }) {
   const schedules = usePageData<Schedule[]>('/api/schedules');
-  const history = useScheduleHistory();
-  const [view, setView] = useState<(typeof views)[number]>('current');
-  const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: next });
-    setView(next);
-  };
-  const tabsId = useId();
-  const [interacting, setInteracting] = useState(false);
-  const stableOrder = useRef<string[]>([]);
-  const open = (tasks.data ?? [])
-    .filter((task) => !closed(task) || (interacting && stableOrder.current.includes(task.id)))
-    .sort(
-      (a, b) =>
-        order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
-    );
-  if (interacting) {
-    for (const task of open)
-      if (!stableOrder.current.includes(task.id)) stableOrder.current.push(task.id);
-    open.sort((a, b) => stableOrder.current.indexOf(a.id) - stableOrder.current.indexOf(b.id));
-  } else stableOrder.current = open.map((task) => task.id);
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
-  const inactive = (schedules.data ?? []).filter(
-    (schedule) =>
-      !upcoming.includes(schedule) &&
-      (schedule.kind !== 'once' || schedule.lastRun?.scheduledFor !== schedule.runAt),
-  );
-  const oldestRun = history.cursor ? history.runs.at(-1)?.createdAt : undefined;
-  const previous: Array<{ at: string; task: Task } | { at: string; run: ScheduleRun }> = [
-    ...(tasks.data ?? [])
-      .filter((task) => closed(task) && (!oldestRun || task.closedAt! >= oldestRun))
-      .map((task) => ({ at: task.closedAt!, task })),
-    ...history.runs
-      .filter((run) => run.status !== 'queued' && run.status !== 'running')
-      .map((run) => ({ at: run.createdAt, run })),
-  ].sort((a, b) => b.at.localeCompare(a.at));
-  const settled =
-    (tasks.data || tasks.error) &&
-    (schedules.data || schedules.error) &&
-    (history.data || history.error);
-  const fresh =
-    tasks.data?.length === 0 &&
-    schedules.data?.length === 0 &&
-    Boolean(history.data) &&
-    !history.runs.length;
-  const tabbed =
-    !fresh &&
-    Boolean(settled || tasks.data?.length || schedules.data?.length || history.runs.length);
-  const seen = useRef(false);
-  useEffect(() => {
-    if (!tabbed || seen.current) return;
-    seen.current = true;
-    captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view });
-  }, [tabbed]);
-  const counts = {
-    current: tasks.data ? open.length : null,
-    scheduled: schedules.data ? upcoming.length : null,
-    previous: null,
-  };
+  const inactive = (schedules.data ?? []).filter((schedule) => !upcoming.includes(schedule));
+  const empty = Boolean(schedules.data && !schedules.data.length);
   return (
-    <div
-      className="content-page secondary-page tasks-page"
-      onPointerEnter={() => setInteracting(true)}
-      onPointerLeave={() => {
-        if (!document.activeElement?.closest('.tasks-page')) setInteracting(false);
-      }}
-      onFocus={() => setInteracting(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setInteracting(false);
-      }}
-    >
+    <div className="content-page secondary-page tasks-page">
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />
-        {tabbed && view === 'scheduled' && (
+        {!empty && (
           <div className="secondary-heading-actions">
             <NewPlan onAsk={onAsk} />
           </div>
         )}
       </header>
-      {fresh ? (
-        <Ideas first="Nod has nothing on its plate." ask={['task', 'schedule']} onAsk={onAsk} />
-      ) : !tabbed ? (
-        <Pending label="Loading tasks…" />
+      {schedules.error && (
+        <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
+      )}
+      {!schedules.data ? (
+        schedules.loading && <Pending label="Loading schedules…" />
       ) : (
         <>
-          <div
-            className="secondary-tabs"
-            role="tablist"
-            aria-label="Task views"
-            onKeyDown={(event) => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-              event.preventDefault();
-              const index = views.indexOf(view);
-              const step = event.key === 'ArrowLeft' ? views.length - 1 : 1;
-              const next =
-                views[
-                  event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? views.length - 1
-                      : (index + step) % views.length
-                ];
-              selectView(next);
-              event.currentTarget
-                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
-                ?.focus();
-            }}
-          >
-            {views.map((item) => (
-              <button
-                key={item}
-                id={`${tabsId}-tab-${item}`}
-                data-view={item}
-                role="tab"
-                tabIndex={view === item ? 0 : -1}
-                aria-selected={view === item}
-                aria-controls={`${tabsId}-panel`}
-                onClick={() => selectView(item)}
-              >
-                {viewLabels[item]}
-                {counts[item] !== null && <span>{counts[item]}</span>}
-              </button>
-            ))}
-          </div>
-          <div
-            role="tabpanel"
-            id={`${tabsId}-panel`}
-            aria-labelledby={`${tabsId}-tab-${view}`}
-            tabIndex={0}
-          >
-            {view !== 'scheduled' && tasks.error && (
-              <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
-            )}
-            {view === 'scheduled' && schedules.error && (
-              <LoadError
-                what="schedules"
-                refreshing={schedules.refreshing}
-                retry={schedules.refresh}
-              />
-            )}
-            {view === 'previous' && history.error && (
-              <LoadError
-                what="scheduled runs"
-                refreshing={history.refreshing}
-                retry={history.refresh}
-              />
-            )}
-            {view === 'current' ? (
-              !tasks.data ? (
-                tasks.loading && <Pending label="Loading tasks…" />
-              ) : open.length ? (
-                <div className="saved-plan-list">
-                  {open.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      live={activity?.find((item) => item.taskId === task.id)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <Ideas first="Nothing in progress." ask={['task']} onAsk={onAsk} />
-              )
-            ) : view === 'scheduled' ? (
-              !schedules.data ? (
-                schedules.loading && <Pending label="Loading schedules…" />
-              ) : (
-                <>
-                  {upcoming.length ? (
-                    <div className="saved-plan-list">
-                      {upcoming.map((schedule) => (
-                        <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
-                      ))}
-                    </div>
-                  ) : (
-                    <Ideas
-                      first="Nothing runs on a schedule yet."
-                      ask={['schedule']}
-                      onAsk={onAsk}
-                    />
-                  )}
-                  {desktopSettingsAvailable() && (
-                    <p className="saved-plan-note schedule-availability">
-                      Scheduled tasks run only while your Mac is on and Nod is open.
-                    </p>
-                  )}
-                  {inactive.length > 0 && (
-                    <details className="schedule-inactive" open={!upcoming.length}>
-                      <summary>
-                        Not scheduled <span>{inactive.length}</span>
-                        <ChevronDown size={16} aria-hidden="true" />
-                      </summary>
-                      <div className="saved-plan-list">
-                        {inactive.map((schedule) => (
-                          <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
-                        ))}
-                      </div>
-                    </details>
-                  )}
-                </>
-              )
-            ) : (tasks.loading && !tasks.error) || (history.loading && !history.error) ? (
-              <Pending label="Loading previous tasks…" />
-            ) : previous.length ? (
-              <>
-                <div className="saved-plan-list">
-                  {previous.map((item) =>
-                    'task' in item ? (
-                      <TaskCard
-                        key={`task:${item.task.id}`}
-                        task={item.task}
-                        onScheduled={() => setView('scheduled')}
-                      />
-                    ) : (
-                      <ScheduleRunRow key={`run:${item.run.id}`} run={item.run} />
-                    ),
-                  )}
-                </div>
-                {history.earlierError && <Notice>{history.earlierError}</Notice>}
-                {history.cursor && (
-                  <Button
-                    variant="ghost"
-                    className="schedule-history-more"
-                    size="sm"
-                    disabled={history.loadingEarlier}
-                    onClick={() => void history.loadEarlier()}
-                  >
-                    {history.loadingEarlier ? 'Loading…' : 'Load earlier'}
-                  </Button>
-                )}
-              </>
-            ) : (
-              (tasks.data || history.data) && (
-                <div className="statement tasks-ideas">
-                  <p className="statement-summary">Nothing finished yet.</p>
-                </div>
-              )
-            )}
-          </div>
+          {upcoming.length ? (
+            <div className="saved-plan-list">
+              {upcoming.map((schedule) => (
+                <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+              ))}
+            </div>
+          ) : empty ? (
+            <section className="schedule-empty" aria-labelledby="schedule-empty-title">
+              <span className="schedule-empty-icon" aria-hidden="true">
+                <CalendarClock size={32} />
+              </span>
+              <h2 id="schedule-empty-title">Your first schedule</h2>
+              <p>
+                Set up a reminder, a regular summary or a check-in. Nod will help you work out what
+                to do and when.
+              </p>
+              <NewPlan onAsk={onAsk} />
+              <span className="schedule-empty-note">Start with a conversation.</span>
+            </section>
+          ) : (
+            <p className="muted">No upcoming schedules.</p>
+          )}
+          {inactive.length > 0 && (
+            <details className="schedule-inactive" open={!upcoming.length}>
+              <summary>
+                Inactive <span>{inactive.length}</span>
+                <ChevronDown size={16} aria-hidden="true" />
+              </summary>
+              <div className="saved-plan-list">
+                {inactive.map((schedule) => (
+                  <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                ))}
+              </div>
+            </details>
+          )}
         </>
       )}
     </div>

@@ -5,6 +5,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { LoaderCircle, Search, X } from './icons';
 import { cn } from '../lib/utils';
 import { PasswordInput } from './password-input';
+import { Tooltip, type TooltipProps } from './tooltip';
 
 const buttonVariants = cva('button', {
   variants: {
@@ -25,10 +26,24 @@ export function Button({
   variant,
   size,
   asChild = false,
+  title,
+  shortcut,
+  tooltipSide,
+  tooltipDelay,
   ...props
-}: React.ComponentProps<'button'> & VariantProps<typeof buttonVariants> & { asChild?: boolean }) {
+}: React.ComponentProps<'button'> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean;
+    shortcut?: string;
+    tooltipSide?: TooltipProps['side'];
+    tooltipDelay?: number;
+  }) {
   const Component = asChild ? Slot : 'button';
-  return <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+  return (
+    <Tooltip content={title} shortcut={shortcut} side={tooltipSide} delay={tooltipDelay}>
+      <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />
+    </Tooltip>
+  );
 }
 
 interface FieldContext {

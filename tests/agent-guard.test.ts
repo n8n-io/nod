@@ -33,6 +33,7 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserActionError } from '../src/ports/computer.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
+import type { Presentation } from '../src/shared/presentation.ts';
 
 async function fixture(
   run: (
@@ -117,6 +118,52 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
+test('answer choices remain ordinary questions with runtime-owned IDs and bounded public options', async () => {
+  const choices = [
+    { label: 'Work account', description: 'The shared project mailbox' },
+    { label: 'Personal account' },
+  ];
+  const asked = await fixture(async (tools) => {
+    for (const invalid of [
+      { choices: [{ label: ' ' }] },
+      { choices: Array.from({ length: 7 }, () => ({ label: 'Extra account' })) },
+      { choices: [{ label: 'Account', action: 'send_email' }] },
+      { choices: [{ label: 'Account', id: randomUUID() }] },
+    ])
+      await assert.rejects(call(tools, 'ask_user', { question: 'Which account?', ...invalid }));
+    await call(tools, 'ask_user', {
+      question: 'Which account should I use?',
+      choices,
+      multiple: true,
+    });
+  });
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.equal(asked.result.waitingFor, 'question');
+  assert.equal(asked.result.message, 'Which account should I use?');
+  assert.deepEqual(asked.replies, []);
+  assert.equal(asked.result.answerChoices?.multiple, true);
+  assert.deepEqual(
+    asked.result.answerChoices?.options.map(({ id, ...option }) => {
+      assert.match(id, /^[0-9a-f]{8}-[0-9a-f-]{27}$/);
+      return option;
+    }),
+    choices,
+  );
+  assert.equal(new Set(asked.result.answerChoices?.options.map(({ id }) => id)).size, 2);
+  const single = await fixture(async (tools) => {
+    await call(tools, 'ask_user', { question: 'Which account?', choices });
+  });
+  assert.equal(single.result.answerChoices?.multiple, false);
+  assert.notEqual(
+    single.result.answerChoices?.options[0]?.id,
+    asked.result.answerChoices?.options[0]?.id,
+  );
+  const plain = await fixture(async (tools) => {
+    await call(tools, 'ask_user', { question: 'What should the report cover?' });
+  });
+  assert.equal(plain.result.answerChoices, undefined);
+});
+
 test('live status stays out of chat replies and removes known secrets', async () => {
   const events: Array<{ type: string; summary: string }> = [];
   const statuses = ['Finding flights back from Copenhagen', 'Comparing flight prices'];
@@ -148,6 +195,46 @@ test('live status stays out of chat replies and removes known secrets', async ()
     },
     { background: true },
   );
+});
+
+test('native visual replies need no filler and deduplicate only identical content', async () => {
+  const visual: Presentation = {
+    version: 1,
+    type: 'diagram',
+    title: 'Synthetic process',
+    sources: [],
+    nodes: [{ id: 'start', label: 'Start' }],
+    edges: [],
+  };
+  const updated = { ...visual, nodes: [{ id: 'finish', label: 'Finish' }] };
+  for (const background of [false, true]) {
+    const delivered: Array<{ text: string; presentation?: Presentation }> = [];
+    const result = await fixture(
+      async (tools, emit) => {
+        await assert.rejects(call(tools, 'send_message', { text: '   ' }));
+        await assert.rejects(
+          call(tools, 'send_message', { text: '', presentation: { ...visual, nodes: [] } }),
+        );
+        await call(tools, 'send_message', { text: '', presentation: visual });
+        await call(tools, 'send_message', { text: '  ', presentation: visual });
+        await call(tools, 'send_message', { text: '', presentation: updated });
+        await call(tools, 'send_message', { text: 'A separate useful caveat.' });
+        emit({ type: 'final', text: '' });
+      },
+      {
+        background,
+        reply: async (text, _id, _replyTo, presentation) => {
+          delivered.push({ text, ...(presentation ? { presentation } : {}) });
+        },
+      },
+    );
+    assert.equal(result.result.status, 'succeeded');
+    assert.deepEqual(delivered, [
+      { text: '', presentation: visual },
+      { text: '', presentation: updated },
+      { text: 'A separate useful caveat.' },
+    ]);
+  }
 });
 
 test('a chosen audio reply reaches the speech tool without repeating an internal progress note', async () => {
@@ -1864,13 +1951,15 @@ test('memory reply checks finish before delivery, share new evidence and run onc
 });
 
 test('memory checks cover visual claims and keep the draft when a check fails', async () => {
-  for (const outcome of ['revise', 'keep', 'fail']) {
+  for (const { outcome, text } of ['revise', 'keep', 'fail'].flatMap((outcome) =>
+    ['Your preference is shown below.', ''].map((text) => ({ outcome, text })),
+  )) {
     const delivered: Array<{ text: string; presentation: unknown }> = [];
     let checks = 0;
     const { result } = await fixture(
       async (tools) => {
         await call(tools, 'send_message', {
-          text: 'Your preference is shown below.',
+          text,
           presentation: {
             version: 1,
             type: 'diagram',
@@ -1890,7 +1979,7 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
         prepareMemory: async () => ({ mode: 'personalize', facts: [], messages: [], searches: [] }),
         reviewMemoryReply: async (_context, draft) => {
           checks++;
-          assert.match(draft, /Your preference is shown below\./);
+          if (text) assert.match(draft, /Your preference is shown below\./);
           assert.match(draft, /You prefer cool white light\./);
           if (outcome === 'fail') throw new Error('The memory store is unavailable.');
           return outcome === 'revise' ? 'You prefer warm amber light.' : draft;
@@ -1900,10 +1989,7 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
     assert.equal(result.status, 'succeeded');
     assert.equal(checks, 1);
     assert.equal(delivered.length, 1);
-    assert.equal(
-      delivered[0].text,
-      outcome === 'revise' ? 'You prefer warm amber light.' : 'Your preference is shown below.',
-    );
+    assert.equal(delivered[0].text, outcome === 'revise' ? 'You prefer warm amber light.' : text);
     assert.equal(Boolean(delivered[0].presentation), outcome !== 'revise');
   }
 });

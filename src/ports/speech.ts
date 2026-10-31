@@ -40,6 +40,11 @@ import type { ProviderUsageEvent } from './provider-usage.ts';
 
 export interface LocalSpeechControls {
   prepare(signal?: AbortSignal): Promise<void>;
+  prepareTranscription(signal?: AbortSignal): Promise<void>;
   status(): { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
+  transcriptionStatus(): {
+    state: 'not_downloaded' | 'downloading' | 'ready' | 'failed';
+    progress?: number;
+  };
   close(): Promise<void>;
 }

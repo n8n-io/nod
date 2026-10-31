@@ -2160,14 +2160,16 @@ test('local speech setup keeps each caller cancellable and stops only after the 
     });
   `,
   );
-  for (const cancelledIndex of [1, 0, 'both', 'close'] as const) {
+  for (const [transcription, cancelledIndex] of [false, true].flatMap((input) =>
+    ([1, 0, 'both', 'close'] as const).map((cancelledIndex) => [input, cancelledIndex] as const),
+  )) {
     let started!: () => void;
     const running = new Promise<void>((resolve) => {
       started = resolve;
     });
     const children: ReturnType<typeof fork>[] = [];
     const provider = createLocalSpeechProvider({
-      cacheDir: join(root, String(cancelledIndex)),
+      cacheDir: join(root, `${transcription}-${cancelledIndex}`),
       fork: (_path, args, options) => {
         const child = fork(worker, args, options);
         children.push(child);
@@ -2178,7 +2180,10 @@ test('local speech setup keeps each caller cancellable and stops only after the 
     try {
       const controllers = [new AbortController(), new AbortController()];
       const results = controllers.map((controller) =>
-        provider.prepare(controller.signal).then(
+        (transcription
+          ? provider.prepareTranscription(controller.signal)
+          : provider.prepare(controller.signal)
+        ).then(
           () => 'ready',
           (error: Error) => error.name,
         ),
@@ -2193,7 +2198,10 @@ test('local speech setup keeps each caller cancellable and stops only after the 
         controllers[1].abort();
         assert.deepEqual(await Promise.all(results), ['AbortError', 'AbortError']);
         await exited;
-        assert.equal(provider.status().state, 'not_downloaded');
+        assert.equal(
+          (transcription ? provider.transcriptionStatus() : provider.status()).state,
+          'not_downloaded',
+        );
       } else {
         controllers[cancelledIndex].abort();
         assert.equal(
@@ -2206,13 +2214,69 @@ test('local speech setup keeps each caller cancellable and stops only after the 
         assert.equal(children[0].signalCode, null);
         children[0].send({ method: 'finish' });
         assert.equal(await results[1 - cancelledIndex], 'ready');
-        assert.equal(provider.configured, true);
+        assert.equal(provider.transcriptionConfigured, true);
+        assert.equal(provider.configured, !transcription);
       }
       assert.equal(children.length, 1);
     } finally {
       await provider.close();
     }
   }
+});
+
+test('local transcription prepares only input assets and keeps voice synthesis unavailable until requested', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-input-'));
+  const worker = join(root, 'worker.mjs');
+  await writeFile(
+    worker,
+    `
+    process.on('message', (message) => {
+      if (message.method === 'prepare') process.send({ id: message.id, type: 'ready' });
+      else if (message.method === 'transcribe') process.send({ id: message.id, type: 'text', text: 'Synthetic recorded words.' });
+    });
+  `,
+  );
+  const requests: { method: string; transcription?: boolean }[] = [];
+  const provider = createLocalSpeechProvider({
+    cacheDir: join(root, 'models'),
+    fork: (_path, args, options) => {
+      const child = fork(worker, args, options);
+      const send = child.send.bind(child);
+      child.send = ((message: { method: string; transcription?: boolean }, ...rest: unknown[]) => {
+        requests.push(message);
+        return Reflect.apply(send, child, [message, ...rest]);
+      }) as typeof child.send;
+      return child;
+    },
+  });
+  t.after(async () => {
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  await Promise.all([provider.prepareTranscription(), provider.prepareTranscription()]);
+  assert.deepEqual(
+    requests.map(({ method, transcription }) => ({ method, transcription })),
+    [{ method: 'prepare', transcription: true }],
+  );
+  assert.equal(provider.transcriptionConfigured, true);
+  assert.equal(provider.configured, false);
+  assert.equal(provider.status().state, 'not_downloaded');
+  assert.equal(provider.transcriptionStatus().state, 'ready');
+  assert.equal(
+    await provider.transcribe!({
+      bytes: new Uint8Array([1]),
+      mimeType: 'audio/wav',
+      name: 'synthetic.wav',
+    }),
+    'Synthetic recorded words.',
+  );
+  await assert.rejects(provider.synthesize('Synthetic reply.'));
+  await provider.prepare();
+  assert.equal(provider.configured, true);
+  assert.equal(requests.at(-1)?.transcription, false);
+  const count = requests.length;
+  await provider.prepareTranscription();
+  assert.equal(requests.length, count);
 });
 
 test('on-device speech starts only when enabled, isolates the worker environment, and kills cancelled work without replay', async (t) => {
@@ -2996,7 +3060,7 @@ async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};
     CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,answer_choices jsonb,reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;

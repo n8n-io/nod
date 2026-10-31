@@ -89,7 +89,9 @@ export const presentationSchema = z
           z.strictObject({
             id,
             label: text(120).optional(),
-            price: text(80),
+            status: z.enum(['booked', 'option']).optional(),
+            bookingReference: text(80).optional(),
+            price: text(80).optional(),
             baggage: text(200).optional(),
             url: url.optional(),
             recommended: z.boolean().optional(),
@@ -376,12 +378,13 @@ export function presentationText(value: Presentation) {
           .join(' · '),
       );
   if (value.type === 'flights') {
-    for (const [index, option] of value.options.entries()) {
+    for (const option of value.options) {
       lines.push(
         '',
         [
-          `Option ${index + 1}`,
           option.label,
+          option.status === 'booked' ? 'Booked' : undefined,
+          option.bookingReference ? `Booking reference: ${option.bookingReference}` : undefined,
           option.price,
           option.baggage,
           option.recommended ? 'Recommended' : undefined,

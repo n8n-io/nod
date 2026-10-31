@@ -8,7 +8,6 @@ import {
 import { errorMessage } from '../lib/api';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { sessionStore } from '../lib/session';
-import { Bell } from './icons';
 import { Button, Notice, Switch } from './ui';
 
 function useNotificationChoice(ownerId: string) {
@@ -129,16 +128,12 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   if (desktopSettingsAvailable()) return null;
   return (
     <section className="account-region" aria-label="Notifications">
-      <h2 data-analytics-public>Notifications</h2>
       <div className="account-preference-row">
-        <span data-analytics-public>
-          <Bell size={16} aria-hidden="true" />
-          Browser notifications
-        </span>
+        <span data-analytics-public>Notifications</span>
         <Switch
           checked={choice.enabled}
           disabled={choice.busy || !choice.available || choice.permission === 'denied'}
-          aria-label="Browser notifications"
+          aria-label="Notifications"
           onCheckedChange={(enabled) => void choice.change(enabled)}
         />
       </div>
@@ -148,10 +143,10 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
           : choice.permission === 'denied'
             ? 'Blocked by your browser. Allow notifications for this site in your browser settings.'
             : choice.permission === 'default'
-              ? 'Turn on to allow Nod to notify you about new replies.'
+              ? 'Allow notifications for new replies.'
               : choice.enabled
-                ? 'On in this browser. Nod will notify you about new replies while you’re away. Keep this tab open.'
-                : 'Get notified by Nod while you’re away. Keep this tab open to receive replies.'}
+                ? 'New replies appear while you’re away. Keep this tab open.'
+                : 'Get notified about new replies. Keep this tab open.'}
       </p>
       {choice.enabled && (
         <div className="account-settings-actions">

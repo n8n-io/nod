@@ -185,6 +185,7 @@ export function createAgentRuntime(dependencies: {
     let waitingForUser = false;
     let waitingFor: RuntimeResult['waitingFor'];
     let waitingMessage: string | undefined;
+    let answerChoices: RuntimeResult['answerChoices'];
     const sites = new Map<string, string>();
     let stopped = false;
     let modelError: string | undefined;
@@ -280,13 +281,16 @@ export function createAgentRuntime(dependencies: {
     ) => {
       signal.throwIfAborted();
       const draft = presentation
-        ? `${text.trim()}\n\n${presentationText(presentation)}`
+        ? `${text.trim()}\n\n${presentationText(presentation)}`.trim()
         : text.trim();
       const checked = await reviewReply(draft);
       if (checked !== draft) presentation = undefined;
       const trimmed = presentation ? text.trim() : checked;
       const visual = presentation ? JSON.stringify(presentation) : '';
-      if (!trimmed || (trimmed === lastReply && (!visual || visual === lastPresentation)))
+      if (
+        (!trimmed && !visual) ||
+        (trimmed === lastReply && (!visual || visual === lastPresentation))
+      )
         return false;
       await context.reply(trimmed, id, replyToMessageId, presentation);
       lastPresentation = visual;
@@ -297,7 +301,7 @@ export function createAgentRuntime(dependencies: {
     };
     const reply = deliverReply;
     let handoffBrowserId: string | undefined;
-    const pause: Turn['pause'] = async (reason, message) => {
+    const pause: Turn['pause'] = async (reason, message, choices) => {
       if (browsed) {
         const hold = computer.hold(browserId, true);
         if (reason === 'browser') await hold;
@@ -306,6 +310,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason === 'browser' ? 'question' : reason;
       waitingMessage = message;
+      answerChoices = reason === 'question' ? choices : undefined;
       if (reason === 'browser') handoffBrowserId = browserId;
       stopped = true;
       abortSession();
@@ -1064,6 +1069,7 @@ export function createAgentRuntime(dependencies: {
         ...(spokenReply ? { spokenReply } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
+        ...(answerChoices ? { answerChoices } : {}),
         ...(handoffBrowserId ? { handoffBrowserId } : {}),
       };
     } finally {

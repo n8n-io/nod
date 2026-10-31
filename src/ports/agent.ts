@@ -1,4 +1,5 @@
 import type { Presentation } from '../shared/presentation.ts';
+import type { AnswerChoices } from '../shared/answer-choices.ts';
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
@@ -261,6 +262,7 @@ export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
   message?: string;
+  answerChoices?: AnswerChoices;
   handoffBrowserId?: string;
   result?: string;
   spokenReply?: string;

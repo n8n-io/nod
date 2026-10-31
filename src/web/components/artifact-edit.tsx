@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, apiResponse, errorMessage } from '../lib/api';
 import { ownedArtifactUrl } from '../lib/attachment-url';
+import { isPrimaryModifier } from '../lib/navigation';
 import type { Artifact } from '../../shared/contracts';
 import type { ImagePreview } from './attachment-images';
 import { Button, Notice } from './ui';
@@ -54,12 +55,20 @@ export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose():
       className="artifact-edit"
       aria-label={`Edit a copy of ${item.name}`}
       onKeyDown={(event) => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229)
+          return;
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
           if (!busy || text === null) onClose();
         }
-        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        if (
+          event.key === 'Enter' &&
+          isPrimaryModifier(event) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          !event.repeat
+        ) {
           event.preventDefault();
           void save();
         }

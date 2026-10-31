@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import {
   useEffect,
   useId,
@@ -36,6 +37,7 @@ import {
   type FeedbackPoint as Point,
 } from '../lib/feedback-attachment';
 import { Button, Dialog, DialogContent, DialogTitle } from './ui';
+import { isPrimaryModifier } from '../lib/navigation';
 
 type Bounds = { x: number; y: number; width: number; height: number };
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
@@ -1024,6 +1026,9 @@ function AttachmentEditor({
           }}
           onKeyDown={(event) => {
             if (
+              event.defaultPrevented ||
+              event.nativeEvent.isComposing ||
+              event.keyCode === 229 ||
               event.target instanceof HTMLTextAreaElement ||
               event.target instanceof HTMLInputElement ||
               (event.target instanceof HTMLElement && event.target.isContentEditable)
@@ -1049,7 +1054,7 @@ function AttachmentEditor({
               return;
             }
             if (
-              (event.metaKey || event.ctrlKey) &&
+              isPrimaryModifier(event) &&
               !event.altKey &&
               ['+', '=', '-', '_', '0'].includes(event.key)
             ) {
@@ -1062,10 +1067,15 @@ function AttachmentEditor({
               );
               return;
             }
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+            if (
+              isPrimaryModifier(event) &&
+              !event.altKey &&
+              (event.key.toLowerCase() === 'z' ||
+                (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'y'))
+            ) {
               event.preventDefault();
               event.stopPropagation();
-              navigateHistory(event.shiftKey);
+              navigateHistory(event.shiftKey || event.key.toLowerCase() === 'y');
             }
           }}
           onKeyUp={(event) => {
@@ -1749,9 +1759,9 @@ function DocumentPreview({ file }: { file: File }) {
   return (
     <div className="feedback-document">
       <Icon size={25} strokeWidth={1.5} aria-hidden="true" />
-      <span className="feedback-document-name" title={file.name}>
-        {file.name}
-      </span>
+      <Tooltip content={file.name}>
+        <span className="feedback-document-name">{file.name}</span>
+      </Tooltip>
       <span className="feedback-document-meta">
         <span>{type}</span>
         <span>{size}</span>

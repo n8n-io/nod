@@ -54,6 +54,7 @@ const historySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).default(20),
     cursor: z.string().min(1).max(500).optional(),
+    scheduleId: z.uuid().optional(),
   })
   .strict();
 const columns =
@@ -372,7 +373,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     }
   }
 
-  async function history(raw: unknown = {}, scheduleId?: string) {
+  async function history(raw: unknown = {}, includeCosts = true) {
     const input = historySchema.parse(raw);
     let cursor: z.infer<typeof cursorSchema> | null = null;
     if (input.cursor) {
@@ -402,7 +403,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
          ORDER BY r.created_at DESC,r.id DESC LIMIT $5`,
         [
           ownerId,
-          scheduleId ?? null,
+          input.scheduleId ?? null,
           cursor?.createdAt ?? null,
           cursor?.id ?? null,
           input.limit + 1,
@@ -411,8 +412,14 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     ).rows;
     const page = rows.slice(0, input.limit);
     const last = page.at(-1);
+    const costs = includeCosts
+      ? ((await dependencies.sessionCosts?.(page.map((run) => run.turnId))) ?? {})
+      : undefined;
     return {
-      runs: page.map(runValue),
+      runs: page.map((row) => ({
+        ...runValue(row),
+        ...(costs ? { costUsd: costs[row.turnId] ?? null } : {}),
+      })),
       nextCursor:
         rows.length > input.limit && last
           ? Buffer.from(JSON.stringify({ createdAt: last.cursorAt, id: last.id })).toString(
@@ -518,7 +525,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       enabled: row.enabled,
       revision: row.revision,
       nextRun: row.nextRun?.toISOString() ?? null,
-      lastRun: (await history({ limit: 1 }, row.id)).runs[0] ?? null,
+      lastRun: (await history({ limit: 1, scheduleId: row.id }, false)).runs[0] ?? null,
       baselineObservation: row.baselineObservation,
       monthlyUsd: (monthly ?? (await monthlyCosts([row]))).get(row.id) ?? null,
     };

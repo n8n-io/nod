@@ -140,6 +140,8 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
   const reconciled =
     history?.scope === scope && history.cursor === cursor && history.messages === messages;
   return {
+    cursor,
+    unavailable: unavailable === scope && !cursor,
     count: reconciled ? history.count : count,
     pending: (!!scope && unavailable === scope) || (reconciled ? history.pending : missing),
     markRead,

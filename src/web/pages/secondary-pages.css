@@ -5,7 +5,7 @@
   width: 100%;
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: 40px var(--page-inline) 64px;
+  padding: var(--page-top) var(--page-inline) 64px;
 }
 .secondary-page .secondary-heading {
   display: flex;
@@ -17,7 +17,6 @@
 .page-title-row {
   display: flex;
   align-items: center;
-  padding-left: max(0px, calc(var(--sidebar-toggle-space, 0px) - var(--page-inline)));
 }
 .secondary-heading-actions {
   display: flex;
@@ -28,18 +27,6 @@
   min-height: var(--control-height);
   padding: 8px 16px;
   font-size: var(--text-control);
-}
-.connection-menu {
-  position: relative;
-  flex: none;
-}
-.connection-menu-options {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 268px;
-  max-width: calc(100vw - 48px);
 }
 .delete-plan-dialog {
   max-width: 440px;
@@ -58,19 +45,6 @@
   gap: 8px;
   margin-top: 24px;
 }
-.connection-account-menu .connection-menu-options {
-  width: 194px;
-}
-.connection-menu-options > button > img,
-.connection-menu-options > button > svg {
-  flex: none;
-}
-.connection-menu-options small {
-  display: block;
-  margin-top: 0;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
 .saved-plan-list {
   display: grid;
   gap: 12px;
@@ -81,8 +55,7 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
-.schedule-history-more,
-.schedule-availability {
+.schedule-history-more {
   margin-top: 12px;
 }
 .saved-plan {
@@ -139,10 +112,38 @@
 }
 .saved-plan-details {
   display: grid;
-  gap: 16px;
+  align-self: start;
+  grid-template-rows: 0fr;
+  margin-block: -4px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 220ms var(--ease-reveal),
+    margin 220ms var(--ease-reveal),
+    opacity 160ms ease,
+    visibility 0s 220ms;
 }
-.saved-plan-details[hidden] {
-  display: none;
+.saved-plan-details[data-open='true'] {
+  grid-template-rows: 1fr;
+  margin-block: 0;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.saved-plan-details-content {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+.saved-plan-more > svg {
+  transition: transform 220ms var(--ease-reveal);
+}
+@media (prefers-reduced-motion: reduce) {
+  .saved-plan-details,
+  .saved-plan-more > svg {
+    transition: none;
+  }
 }
 .saved-plan-description {
   color: var(--text-secondary);
@@ -176,8 +177,9 @@
 }
 .saved-plan-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   margin-left: auto;
 }
 @media (max-width: 550px) {
@@ -194,56 +196,6 @@
   .saved-plan {
     padding: 16px;
   }
-}
-.secondary-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-height: var(--secondary-tab-height);
-  margin-bottom: var(--secondary-section-gap);
-}
-.secondary-tabs > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--control-height);
-  padding: 8px 16px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  cursor: pointer;
-}
-.secondary-tabs > button:hover {
-  background: var(--nav-hover);
-  color: var(--foreground);
-}
-.secondary-tabs > button[aria-selected='true'] {
-  background: var(--accent-soft);
-  color: var(--foreground);
-  font-weight: 500;
-}
-.secondary-tabs > button > span {
-  min-width: 20px;
-  padding: 0 4px;
-  border-radius: var(--radius-full);
-  background: var(--control);
-  color: var(--muted-foreground);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 20px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.secondary-tabs > button[aria-selected='true'] > span {
-  background: var(--surface);
-  color: var(--accent);
-}
-.secondary-tabs > button:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
 }
 .statement-summary {
   color: var(--muted-foreground);
