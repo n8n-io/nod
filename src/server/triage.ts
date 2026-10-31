@@ -59,7 +59,7 @@ export function createTriage(options: {
     app.patch('/api/preferences', async (request) =>
       updatePreferences(
         request.body,
-        request.headers['x-nod-setting-source'] === 'automatic' ? 'system' : 'owner',
+        request.headers['x-nod-settings-source'] === 'automatic' ? 'system' : 'owner',
       ),
     );
   }

@@ -1146,6 +1146,102 @@ test(
       );
 
       await t.test(
+        'browser preference requests preserve automatic attribution and reject an owner change before delivery',
+        async () => {
+          const { createAnalytics } = await import('../src/server/analytics.ts');
+          const { savePreferences } = await import('../src/web/lib/preferences.ts');
+          const { setRequestAccount } = await import('../src/web/lib/api.ts');
+          const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const original = await preferences.get();
+          const captured: Array<{ setting: unknown; actor: unknown; state: unknown }> = [];
+          const analytics = await createAnalytics({
+            provider: {
+              capture: ({ properties }) =>
+                captured.push({
+                  setting: properties.setting,
+                  actor: properties.actor,
+                  state: properties.state,
+                }),
+              shutdown: async () => {},
+            },
+            environment: 'development',
+            dataRoot: '.',
+            installationId: randomUUID(),
+          });
+          analytics.setUsageData(ownerId, true);
+          const routed = Fastify();
+          createTriage({
+            analytics: analytics.forOwner(ownerId),
+            signal: async () => {},
+            due: async () => {},
+          }).registerRoutes(routed);
+          const previousFetch = globalThis.fetch;
+          let beforeDelivery: (() => Promise<void>) | undefined;
+          globalThis.fetch = async (path, options) => {
+            assert.equal(path, '/api/preferences');
+            assert.equal(options?.method, 'PATCH');
+            const headers = new Headers(options?.headers);
+            assert.equal(headers.get('x-nod-account'), ownerId);
+            await beforeDelivery?.();
+            options?.signal?.throwIfAborted();
+            const response = await routed.inject({
+              method: 'PATCH',
+              url: String(path),
+              headers: Object.fromEntries(headers),
+              payload: options?.body as string,
+            });
+            return new Response(response.body, {
+              status: response.statusCode,
+              headers: { 'content-type': 'application/json' },
+            });
+          };
+          setRequestAccount(ownerId);
+          try {
+            await preferences.update({ timeZone: null });
+            await savePreferences({ timeZone: 'Europe/Lisbon' }, undefined, 'automatic');
+            assert.deepEqual(captured, [
+              { setting: 'time_zone', actor: 'system', state: 'configured' },
+            ]);
+            assert.equal((await preferences.get()).timeZone, 'Europe/Lisbon');
+            await savePreferences({ timeZone: 'Europe/London' });
+            assert.deepEqual(captured.at(-1), {
+              setting: 'time_zone',
+              actor: 'owner',
+              state: 'configured',
+            });
+            await savePreferences({ timeZone: 'Europe/London' });
+            assert.equal(captured.length, 2);
+            let entered!: () => void;
+            let release!: () => void;
+            const started = new Promise<void>((resolve) => {
+              entered = resolve;
+            });
+            const blocked = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            beforeDelivery = async () => {
+              entered();
+              await blocked;
+            };
+            const late = savePreferences({ timeZone: 'Asia/Tokyo' }, undefined, 'automatic');
+            await started;
+            setRequestAccount('foreign-settings-owner');
+            release();
+            await assert.rejects(late, { name: 'AbortError' });
+            assert.equal((await preferences.get()).timeZone, 'Europe/London');
+            assert.equal(captured.length, 2);
+          } finally {
+            globalThis.fetch = previousFetch;
+            setRequestAccount(null);
+            pageDataCache.clear();
+            await routed.close();
+            await preferences.update(original);
+          }
+        },
+      );
+
+      await t.test(
         'web audio intake binds one transcription to an owned message and refuses uncertain replay',
         async () => {
           const message = {
