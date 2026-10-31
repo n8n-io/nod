@@ -120,8 +120,16 @@ function defineTool<const N extends string, P extends TSchema>(
   description: string,
   parameters: P,
   eager = false,
+  companions: readonly string[] = [],
 ) {
-  return { name, description, parameters: rootObject(parameters), strict: parameters, eager };
+  return {
+    name,
+    description,
+    parameters: rootObject(parameters),
+    strict: parameters,
+    eager,
+    companions,
+  };
 }
 
 const scheduleObservation = Type.Union([
@@ -387,6 +395,7 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1 })),
     }),
     true,
+    ['sign_in', 'browser_session', 'pay'],
   ),
   sign_in: defineTool(
     'sign_in',
@@ -631,6 +640,7 @@ interface NodTool<P extends TSchema = TSchema> {
   description: string;
   parameters: P;
   eager?: boolean;
+  companions?: readonly string[];
   execute(params: Static<P>): Promise<unknown>;
 }
 
@@ -641,6 +651,7 @@ function bind<P extends TSchema>(
     parameters: P;
     strict: TSchema;
     eager?: boolean;
+    companions?: readonly string[];
   },
   execute: (params: Static<P>) => Promise<unknown>,
 ): NodTool {

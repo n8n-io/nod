@@ -618,6 +618,7 @@ export function createAgentRuntime(dependencies: {
               description,
               parameters,
               ...(tool.eager ? { eager: true } : {}),
+              ...(tool.companions?.length ? { companions: tool.companions } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),
               execute: async (params, options) => {

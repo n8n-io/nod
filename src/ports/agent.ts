@@ -280,6 +280,7 @@ export interface AgentToolMetadata {
   description: string;
   parameters: Record<string, unknown>;
   eager?: boolean;
+  companions?: readonly string[];
   deferred?: { namespace: string; description: string };
 }
 export interface AgentTool extends AgentToolMetadata {
