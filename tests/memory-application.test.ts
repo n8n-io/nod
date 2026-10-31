@@ -18,8 +18,9 @@ import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createHistorySearch } from '../src/server/history.ts';
 import { createMemoryRecall } from '../src/server/memory-recall.ts';
-import type { MemoryReplyVisual } from '../src/ports/memory-recall.ts';
+import type { MemoryBrief, MemoryReplyVisual } from '../src/ports/memory-recall.ts';
 import { presentationText, type Presentation } from '../src/shared/presentation.ts';
+import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -1113,6 +1114,126 @@ test('memory corrections keep their evidence, type and dates and do not archive 
       ['unrelated'],
     );
   }
+});
+
+test('memory review excludes unsafe current-read text while retaining safe evidence and known memory paths', async () => {
+  const pool = {} as pg.Pool;
+  const memory = createMemoryService({ pool, ownerId: 'review-owner', store: memoryObjectStore() });
+  const path = 'preferences/lighting';
+  const retained = [
+    {
+      action: 'usage_get',
+      args: {},
+      result: untrustedBlock(
+        'usage_get',
+        JSON.stringify({ requests: 31, costUsd: 0.16345004999999999 }),
+      ),
+    },
+    { action: 'memory_read', args: { path }, result: { path, text: 'Prefers amber light.' } },
+    {
+      action: 'history_search',
+      args: { query: 'amber' },
+      result: { messages: [{ role: 'user', text: 'I prefer amber light.' }] },
+    },
+  ];
+  const unsafeValues = [
+    '4111111111111111',
+    '4111 1111 1111 1111',
+    '4111-1111-1111-1111',
+    '4111111111111111.0',
+    '4111111111111111.',
+    ['sk', 'synthetic', 'a'.repeat(20)].join('-'),
+  ];
+  const packets: MemoryBrief[] = [];
+  let beforeLoad = async () => {};
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'review-owner',
+    memory: {
+      ...memory,
+      load: async () => {
+        await beforeLoad();
+        return memory.load();
+      },
+    },
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        packets.push(structuredClone((input as { evidence: MemoryBrief }).evidence));
+        return { supported: false, usedPaths: [path], answer: 'You prefer amber light.' };
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Which light do I prefer?',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: {
+      mode: 'recall',
+      facts: [],
+      messages: [],
+      searches: [],
+      reads: [
+        ...retained,
+        ...unsafeValues.map((value) => ({
+          action: 'apps',
+          args: {},
+          result: untrustedBlock('apps', `A bare value: ${value}`),
+        })),
+      ],
+    },
+  };
+  assert.equal(await recall.review(context, 'You prefer blue light.'), 'You prefer amber light.');
+  assert.equal(packets.length, 1);
+  const evidence = packets[0];
+  assert.equal(evidence.readsTruncated, true);
+  assert.deepEqual(evidence.reads, retained);
+  for (const value of unsafeValues) assert.ok(!JSON.stringify(evidence).includes(value));
+
+  let started!: () => void;
+  let release!: () => void;
+  const loading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  beforeLoad = async () => {
+    started();
+    await held;
+  };
+  context.memoryBrief!.reads = [...retained];
+  const pending = recall.review(context, 'You prefer blue light.');
+  await loading;
+  context.memoryBrief!.reads.push({
+    action: 'apps',
+    args: {},
+    result: untrustedBlock('apps', unsafeValues[0]),
+  });
+  release();
+  await pending;
+  assert.equal(packets.length, 2);
+  assert.deepEqual(packets[1].reads, retained);
+  beforeLoad = async () => {};
+  await recall.review(context, 'You prefer blue light.');
+  assert.equal(packets.length, 3);
+  assert.deepEqual(packets[2].reads, retained);
+  assert.equal(packets[2].readsTruncated, true);
 });
 
 test('memory review separates supported visuals from revised prose without weakening rejected claims', async () => {

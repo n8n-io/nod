@@ -252,9 +252,18 @@ export function createAgentRuntime(dependencies: {
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const reviewedReplies = new Map<string, MemoryReplyReview>();
+    let evidenceRevision = 0;
+    const rememberRead = (read: NonNullable<MemoryBrief['reads']>[number]) => {
+      if (!context.memoryBrief) return;
+      const reads = (context.memoryBrief.reads ??= []);
+      if (JSON.stringify([...reads, read]).length <= 80_000) reads.push(read);
+      else context.memoryBrief.readsTruncated = true;
+      evidenceRevision++;
+      reviewedReplies.clear();
+    };
     const reviewReply = async (text: string, visual?: MemoryReplyVisual) => {
       const draft = text.trim();
-      const key = JSON.stringify([draft, visual]);
+      const key = JSON.stringify([draft, visual, evidenceRevision]);
       if (reviewedReplies.has(key)) return reviewedReplies.get(key)!;
       if (
         !draft ||
@@ -505,6 +514,48 @@ export function createAgentRuntime(dependencies: {
                 ? context.timeZone
                 : undefined,
             );
+          if (
+            context.memoryBrief &&
+            !stopped &&
+            output !== confirmationNotice &&
+            !('isError' in result && result.isError === true)
+          ) {
+            const personal =
+              name === 'manage_personal_context'
+                ? (params as { action: string; args: Record<string, unknown> })
+                : undefined;
+            if (
+              personal &&
+              ['memory_read', 'memory_find', 'history_search'].includes(personal.action)
+            ) {
+              rememberRead({ action: personal.action, args: personal.args, result: output });
+            } else if (
+              source.runId === execution.runId &&
+              ((personal &&
+                [
+                  'usage_get',
+                  'models_get',
+                  'notification_preferences_get',
+                  'schedule_list',
+                  'prepared_list',
+                ].includes(personal.action)) ||
+                (name === 'apps' && (params as { action?: unknown })?.action !== 'SEARCH_TOOLS') ||
+                name.startsWith('mcp__') ||
+                ['read', 'web_search', 'fetch_content', 'get_search_content'].includes(name))
+            ) {
+              const text = result.content
+                .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                .join('\n');
+              if (text) {
+                const action = personal?.action ?? name;
+                rememberRead({
+                  action,
+                  args: {},
+                  result: untrustedBlock(action, (dependencies.redactError ?? String)(text)),
+                });
+              }
+            }
+          }
           end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
@@ -714,16 +765,8 @@ export function createAgentRuntime(dependencies: {
             signal.throwIfAborted();
             if (action === 'memory_forget' || action === 'memory_control') {
               context.memoryBrief = undefined;
+              evidenceRevision++;
               reviewedReplies.clear();
-            }
-            if (
-              context.memoryBrief &&
-              ['memory_read', 'memory_find', 'history_search'].includes(action)
-            ) {
-              const read = { action, args, result };
-              const reads = (context.memoryBrief.reads ??= []);
-              if (JSON.stringify([...reads, read]).length <= 80_000) reads.push(read);
-              else context.memoryBrief.readsTruncated = true;
             }
             return result;
           },
@@ -956,6 +999,7 @@ export function createAgentRuntime(dependencies: {
             const incoming = await takeMessages();
             if (incoming.length) {
               context.memoryBrief = undefined;
+              evidenceRevision++;
               reviewedReplies.clear();
               checkInSpent = checkInStrikes = 0;
               replyOwed = true;
