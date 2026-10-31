@@ -155,6 +155,14 @@ The app's local assistant is separate. Connecting does not migrate its data. To 
 
 Model and app connections run on the server too. Use addresses the server can reach; `localhost` inside a Docker installation refers to its server container, not the device running the client. For ChatGPT subscription sign-in, follow the [remote callback instructions](/connect/models/#connect-a-service).
 
+## Connect apps on the server
+
+Open **Apps** and select **Connect**. For apps connected through Composio, Nod opens a sign-in page at your configured `NOD_PUBLIC_URL`. Select **Continue to sign in** and finish authorization in the window it opens. Keep the first page open until the connection finishes. Allow popups for Nod if your browser blocks the sign-in window.
+
+The sign-in page and callback use Nod's normal address and port. The [SSH tunnel](#open-a-remote-server-without-a-domain) or [HTTPS proxy](#add-public-https) you use to open Nod also carries app sign-in. You don't need to forward another port. With HTTPS, set `NOD_PUBLIC_URL` to the exact address you open, such as `https://nod.example.com`.
+
+After changing that address or restarting the server, start a fresh connection from **Apps**. Old sign-in pages cannot resume it. These steps also apply when your desktop app connects to the server. A desktop app running its own local assistant keeps its local sign-in flow.
+
 ## Connect Telegram or WhatsApp
 
 Open **Channels** in Nod and follow [Telegram and WhatsApp](/use/channels/). Leave that channel's environment variables blank or unset to configure it in the app. Both share the server's assistant.

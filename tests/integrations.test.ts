@@ -7,6 +7,7 @@ import {
   randomBytes,
   randomUUID,
   verify,
+  webcrypto,
 } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
+import { JSDOM } from 'jsdom';
 import pg from 'pg';
 import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
@@ -740,6 +742,386 @@ test('managed integration requests bind SDK calls to a private persisted install
   }
 });
 
+test('hosted app connection bridge keeps browser proof on the configured origin', async (t) => {
+  for (const [origin, service] of [
+    ['https://nod.customer.example', 'gmail'],
+    ['https://apps.customer.example:8443', 'slack'],
+    ['http://localhost:7310', 'outlook'],
+  ]) {
+    await t.test(origin, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-hosted-bridge-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const browser = createIntegrationBrowser({ origin });
+      t.after(() => browser.close());
+      const app = Fastify();
+      t.after(() => app.close());
+      registerLocalAccess(app, 4310, { key: 'synthetic-owner-key', origin });
+      browser.registerRoutes(app);
+      const brokerOrigin = 'https://proxy.example.test';
+      const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+      const proxy = createComposioProxy({
+        dataRoot: root,
+        ownerId: 'hosted-fixture-owner',
+        keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
+        browser,
+        url: brokerOrigin,
+        request: async (input, init) => {
+          const request = new Request(input, init);
+          const path = new URL(request.url).pathname;
+          const body = JSON.parse(await request.text());
+          calls.push({ path, body });
+          if (path === '/v2/access/enroll')
+            return Response.json({ state: 'enabled', userId: proxy.userId });
+          assert.equal(path, '/v2/connect/start');
+          assert.equal(body.toolkit, service);
+          assert.equal('native' in body, false);
+          return Response.json({
+            redirectUrl: brokerOrigin + '/v2/connect/pair?ticket=synthetic-hosted',
+            transactionId: body.transactionId,
+          });
+        },
+      });
+      const state = randomBytes(32).toString('base64url');
+      const callback = `${origin}/api/apps/callback?state=${state}`;
+      const attempt = await proxy.authorize(service, callback);
+      const url = new URL(attempt.url);
+      assert.equal(url.origin, origin);
+      assert.match(url.pathname, /^\/api\/apps\/connect\/[A-Za-z0-9_-]{43}$/);
+      assert.equal(browser.owns(attempt.url), true);
+      assert.equal(browser.remote(attempt.url), undefined);
+      const headers = { host: url.host };
+      assert.equal(
+        (await app.inject({ url: url.pathname, headers: { host: 'attacker.example.test' } }))
+          .statusCode,
+        403,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            url: url.pathname,
+            headers: { ...headers, origin: 'https://attacker.example.test' },
+          })
+        ).statusCode,
+        403,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            url: `/api/apps/connect/${randomBytes(32).toString('base64url')}`,
+            headers,
+          })
+        ).statusCode,
+        403,
+      );
+      const bootstrap = await app.inject({
+        url: url.pathname,
+        headers: {
+          ...headers,
+          'sec-fetch-site': 'cross-site',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-dest': 'document',
+        },
+      });
+      assert.equal(bootstrap.statusCode, 200, bootstrap.body);
+      assert.equal(bootstrap.headers['cache-control'], 'no-store');
+      assert.match(String(bootstrap.headers['content-security-policy']), /frame-ancestors 'none'/);
+      const { bridgeKey } = JSON.parse(
+        bootstrap.body.match(/const \{brokerOrigin,id,expiresAt,bridgeKey\}=(.+);/)![1],
+      );
+      assert.equal((await app.inject({ url: url.pathname, headers })).statusCode, 403);
+      const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
+        format: 'jwk',
+      });
+      const post = (extra: Record<string, string>, payload = { browserKey: key }) =>
+        app.inject({
+          method: 'POST',
+          url: url.pathname,
+          headers: { ...headers, 'content-type': 'application/json', ...extra },
+          payload,
+        });
+      for (const extra of [
+        {},
+        { origin },
+        { origin: 'https://attacker.example.test', 'x-nod-bridge': bridgeKey },
+        { origin, 'x-nod-bridge': bridgeKey, 'sec-fetch-site': 'cross-site' },
+      ] as Array<Record<string, string>>)
+        assert.equal((await post(extra)).statusCode, 403);
+      assert.equal(calls.length, 0);
+      const started = await post({ origin, 'x-nod-bridge': bridgeKey });
+      assert.equal(started.statusCode, 200, started.body);
+      assert.equal(started.json().id, state);
+      assert.deepEqual(
+        calls.map((call) => call.path),
+        ['/v2/access/enroll', '/v2/connect/start'],
+      );
+      const sent = calls.at(-1)!.body;
+      assert.equal(sent.transactionId, state);
+      assert.deepEqual(sent.browserKey, key);
+      assert.deepEqual(
+        sent.uiOrigin,
+        origin.startsWith('https:')
+          ? { type: 'https', url: origin }
+          : { type: 'loopback', host: 'localhost', port: 7310 },
+      );
+      assert.deepEqual(
+        sent.callback,
+        origin.startsWith('https:')
+          ? { type: 'https', url: callback }
+          : { type: 'loopback', host: 'localhost', port: 7310 },
+      );
+      assert.equal(
+        browser.remote(attempt.url),
+        brokerOrigin + '/v2/connect/pair?ticket=synthetic-hosted',
+      );
+      assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).statusCode, 403);
+      assert.equal(calls.length, 2);
+      browser.finish(state);
+      assert.equal(browser.owns(attempt.url), false);
+      assert.equal(browser.remote(attempt.url), undefined);
+      assert.equal((await app.inject({ url: url.pathname, headers })).statusCode, 403);
+      assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).statusCode, 403);
+    });
+  }
+});
+
+test('hosted connection attempts fail closed after expiry or invalid startup', async (t) => {
+  const origin = 'https://nod.customer.example';
+  const brokerOrigin = 'https://proxy.example.test';
+  const browser = createIntegrationBrowser({ origin });
+  t.after(() => browser.close());
+  const app = Fastify();
+  t.after(() => app.close());
+  registerLocalAccess(app, 4310, { key: 'synthetic-owner-key', origin });
+  browser.registerRoutes(app);
+  const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
+    format: 'jwk',
+  });
+  for (const variant of [
+    'expired',
+    'broker-failure',
+    'foreign-broker',
+    'invalid-key',
+    'cancelled-start',
+  ]) {
+    await t.test(variant, async () => {
+      const id = randomBytes(32).toString('base64url');
+      let starts = 0;
+      let markStarted = () => {};
+      let releaseStart = () => {};
+      const didStart = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const continueStart = new Promise<void>((resolve) => {
+        releaseStart = resolve;
+      });
+      const url = new URL(
+        await browser.open(id, brokerOrigin, async () => {
+          starts++;
+          if (variant === 'cancelled-start') {
+            markStarted();
+            await continueStart;
+          }
+          if (variant === 'broker-failure') throw new Error('Synthetic broker failure.');
+          return variant === 'foreign-broker'
+            ? 'https://attacker.example.test/v2/connect/pair?ticket=synthetic'
+            : brokerOrigin + '/v2/connect/pair?ticket=synthetic';
+        }),
+      );
+      const headers = { host: url.host };
+      const bootstrap = await app.inject({ url: url.pathname, headers });
+      assert.equal(bootstrap.statusCode, 200);
+      const { bridgeKey } = JSON.parse(
+        bootstrap.body.match(/const \{brokerOrigin,id,expiresAt,bridgeKey\}=(.+);/)![1],
+      );
+      let restoreClock = () => {};
+      if (variant === 'expired') {
+        const expired = Date.now() + 11 * 60_000;
+        const clock = t.mock.method(Date, 'now', () => expired);
+        restoreClock = () => clock.mock.restore();
+      }
+      try {
+        const pending = Promise.resolve(
+          app.inject({
+            method: 'POST',
+            url: url.pathname,
+            headers: { ...headers, origin, 'x-nod-bridge': bridgeKey },
+            payload: { browserKey: variant === 'invalid-key' ? { ...key, crv: 'P-384' } : key },
+          }),
+        );
+        if (variant === 'cancelled-start') {
+          await didStart;
+          browser.finish(id);
+          releaseStart();
+        }
+        const started = await pending;
+        assert.equal(started.statusCode, variant === 'expired' ? 403 : 400, started.body);
+        assert.equal(starts, ['expired', 'invalid-key'].includes(variant) ? 0 : 1);
+        assert.equal(browser.owns(url.href), false);
+        assert.equal(browser.remote(url.href), undefined);
+        assert.equal((await app.inject({ url: url.pathname, headers })).statusCode, 403);
+      } finally {
+        restoreClock();
+      }
+    });
+  }
+});
+
+test('hosted connection proof signs only the opened broker popup challenge for its exact attempt', async (t) => {
+  for (const variant of ['valid', 'expires-before-sign', 'expires-during-sign']) {
+    await t.test(variant, async (t) => {
+      const origin = 'https://nod.customer.example';
+      const brokerOrigin = 'https://proxy.example.test';
+      const id = randomBytes(32).toString('base64url');
+      const browser = createIntegrationBrowser({ origin });
+      t.after(() => browser.close());
+      const app = Fastify();
+      t.after(() => app.close());
+      registerLocalAccess(app, 4310, { key: 'synthetic-owner-key', origin });
+      browser.registerRoutes(app);
+      let browserKey: unknown;
+      const url = await browser.open(id, brokerOrigin, async (key, uiOrigin, native) => {
+        browserKey = key;
+        assert.equal(uiOrigin, origin);
+        assert.equal(native, undefined);
+        return brokerOrigin + '/v2/connect/pair?ticket=synthetic-proof';
+      });
+      const bootstrap = await app.inject({
+        url: new URL(url).pathname,
+        headers: { host: new URL(origin).host },
+      });
+      assert.equal(bootstrap.statusCode, 200, bootstrap.body);
+      const proofs: Array<{ message: Record<string, unknown>; origin: string }> = [];
+      const popup = {
+        closed: false,
+        location: {
+          href: '',
+          replace(value: string) {
+            this.href = value;
+          },
+        },
+        postMessage(message: Record<string, unknown>, targetOrigin: string) {
+          proofs.push({ message, origin: targetOrigin });
+        },
+        close() {
+          this.closed = true;
+        },
+      };
+      let signing = false;
+      let releaseSign = () => {};
+      const signGate = new Promise<void>((resolve) => {
+        releaseSign = resolve;
+      });
+      const browserCrypto = {
+        subtle: {
+          generateKey: webcrypto.subtle.generateKey.bind(webcrypto.subtle),
+          exportKey: webcrypto.subtle.exportKey.bind(webcrypto.subtle),
+          async sign(...args: Parameters<typeof webcrypto.subtle.sign>) {
+            signing = true;
+            if (variant === 'expires-during-sign') await signGate;
+            return webcrypto.subtle.sign(...args);
+          },
+        },
+      };
+      const dom = new JSDOM(bootstrap.body, {
+        url,
+        runScripts: 'dangerously',
+        beforeParse(window) {
+          Object.defineProperty(window, 'crypto', { value: browserCrypto });
+          Object.defineProperty(window, 'TextEncoder', { value: TextEncoder });
+          window.open = () => popup as unknown as Window;
+          window.fetch = async (input, init) => {
+            const response = await app.inject({
+              method: 'POST',
+              url: new URL(String(input), origin).pathname,
+              headers: {
+                ...Object.fromEntries(new Headers(init?.headers).entries()),
+                host: new URL(origin).host,
+                origin,
+              },
+              payload: String(init?.body),
+            });
+            return new Response(response.body, { status: response.statusCode });
+          };
+        },
+      });
+      t.after(() => dom.window.close());
+      const until = async (predicate: () => boolean) => {
+        for (let attempt = 0; attempt < 100 && !predicate(); attempt++) await delay(10);
+        assert.ok(predicate(), 'The browser protocol did not reach the expected step.');
+      };
+      (dom.window.document.getElementById('connect') as HTMLButtonElement).click();
+      await until(() => browserKey !== undefined && popup.location.href.startsWith(brokerOrigin));
+      const challenge = [
+        'nod-proxy-connect-v2',
+        id,
+        origin,
+        'a'.repeat(64),
+        randomBytes(32).toString('base64url'),
+      ].join('\n');
+      const message = { type: 'nod:proxy-connect:challenge', id, challenge };
+      const dispatch = (data: unknown, source: unknown = popup, from = brokerOrigin) =>
+        dom.window.dispatchEvent(
+          new dom.window.MessageEvent('message', { data, source: source as Window, origin: from }),
+        );
+      dispatch(message, popup, 'https://attacker.example.test');
+      dispatch(message, null);
+      dispatch({ ...message, id: randomBytes(32).toString('base64url') });
+      dispatch({
+        ...message,
+        challenge: challenge.replace(origin, 'https://attacker.example.test'),
+      });
+      dispatch({
+        ...message,
+        challenge: challenge.replace(id, randomBytes(32).toString('base64url')),
+      });
+      dispatch({ ...message, challenge: challenge.replace('a'.repeat(64), 'not-a-hash') });
+      await delay(25);
+      assert.equal(proofs.length, 0);
+      assert.equal(signing, false);
+      const expire = () => {
+        const expired = Date.now() + 11 * 60_000;
+        Object.defineProperty(dom.window.Date, 'now', { value: () => expired });
+      };
+      if (variant === 'expires-before-sign') expire();
+      dispatch(message);
+      if (variant === 'expires-during-sign') {
+        await until(() => signing);
+        expire();
+        releaseSign();
+      }
+      if (variant !== 'valid') {
+        await until(() => popup.closed);
+        assert.equal(proofs.length, 0);
+        return;
+      }
+      await until(() => proofs.length === 1);
+      assert.equal(proofs[0].origin, brokerOrigin);
+      assert.equal(proofs[0].message.type, 'nod:proxy-connect:proof');
+      assert.equal(proofs[0].message.id, id);
+      const signature = Buffer.from(String(proofs[0].message.signature), 'base64url');
+      assert.equal(signature.length, 64);
+      assert.ok(
+        verify(
+          'sha256',
+          Buffer.from(challenge),
+          {
+            key: createPublicKey({
+              key: browserKey as import('node:crypto').JsonWebKey,
+              format: 'jwk',
+            }),
+            dsaEncoding: 'ieee-p1363',
+          },
+          signature,
+        ),
+      );
+      dispatch(message);
+      await delay(25);
+      assert.equal(proofs.length, 1);
+    });
+  }
+});
+
 test('connection bridge binds a single browser bootstrap to one installation attempt and closes on completion', async (t) => {
   const browser = createIntegrationBrowser();
   t.after(() => browser.close());
@@ -754,6 +1136,7 @@ test('connection bridge binds a single browser bootstrap to one installation att
     calls++;
     assert.deepEqual(browserKey, key);
     assert.equal(origin, new URL(url).origin);
+    assert.ok(native);
     returnPath = native.returnPath;
     assert.match(returnPath, /^\/[A-Za-z0-9_-]{43}$/);
     return `${brokerOrigin}/v2/connect/pair?ticket=fixture`;
