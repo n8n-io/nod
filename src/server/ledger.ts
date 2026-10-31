@@ -15,7 +15,8 @@ import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
 import { transaction } from './transaction.ts';
-import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
+import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
 
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Usage to resume.';
@@ -548,13 +549,20 @@ export function createLedger({
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
-  async function setLimits(input: unknown) {
+  async function setLimits(input: unknown, actor: SettingActor = 'owner') {
     const body = limitsInput.parse(input);
-    await transaction(async (client) => {
+    const capture = snapshotAnalytics(analytics);
+    const change = await transaction(async (client) => {
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],
       );
+      const before = (
+        await client.query(
+          'SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1 FOR UPDATE',
+          [ownerId],
+        )
+      ).rows[0];
       for (const [key, column] of [
         ['monthlyUsd', 'monthly_usd'],
         ['taskUsd', 'task_usd'],
@@ -564,11 +572,21 @@ export function createLedger({
             ownerId,
             body[key],
           ]);
+      const after = (
+        await client.query('SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1', [
+          ownerId,
+        ])
+      ).rows[0];
       await client.query(
         `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
         [ownerId],
       );
+      return { before, after };
     }, pool);
+    captureSettingChanges(capture, actor, change.before, change.after, {
+      monthly_usd: 'monthly_spending_limit',
+      task_usd: 'task_spending_limit',
+    });
     return limits();
   }
 

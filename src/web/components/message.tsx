@@ -521,7 +521,7 @@ export function MessageBubble({
   }
   async function copy(method: 'button' | 'context_menu', markdown = false) {
     if (!canCopy) return;
-    captureAnalytics('nod_message_action', { action: 'copy', role: message.role, method });
+    const capture = analyticsForCurrentSession();
     setPanel(null);
     try {
       const visual = presentationSchema.safeParse(message.presentation);
@@ -535,6 +535,7 @@ export function MessageBubble({
             ? undefined
             : articleElement.current?.querySelector<HTMLElement>('.message-text'),
         );
+      capture('nod_message_action', { action: 'copy', role: message.role, method });
       setCopied(true);
       clearTimeout(copyTimeout.current);
       copyTimeout.current = setTimeout(() => setCopied(false), 2000);

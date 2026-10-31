@@ -26,7 +26,11 @@ export interface AnalyticsDelivery {
   runId?: string;
   replaySessionId?: string;
 }
-export type CaptureAnalytics = (event: AnalyticsEvent, delivery?: AnalyticsDelivery) => void;
+export type CaptureAnalytics = {
+  (event: AnalyticsEvent, delivery?: AnalyticsDelivery): void;
+  snapshot?: () => CaptureAnalytics;
+};
+export const snapshotAnalytics = (capture?: CaptureAnalytics) => capture?.snapshot?.() ?? capture;
 export type MemoryChange = Extract<AnalyticsEvent, { event: 'nod_memory_changed' }>['properties'];
 
 export function analyticsEnabled(env: Record<string, string | undefined>) {
@@ -310,10 +314,21 @@ export async function createAnalytics(options: {
       };
     },
     setUsageData,
-    forOwner:
-      (owner: string): CaptureAnalytics =>
-      (event, delivery) =>
-        capture(owner, event, delivery),
+    forOwner(owner: string): CaptureAnalytics {
+      const scoped: CaptureAnalytics = (event, delivery) => capture(owner, event, delivery);
+      scoped.snapshot = () => {
+        const initial = consent(owner);
+        return (event, delivery) => {
+          if (
+            initial.enabled &&
+            !initial.signal.aborted &&
+            initial.version === consent(owner).version
+          )
+            scoped(event, delivery);
+        };
+      };
+      return scoped;
+    },
     shutdown: async () => {
       closed = true;
       try {
@@ -344,7 +359,11 @@ const channel =
       .enum(['telegram', 'whatsapp'])
       .safeParse(
         (request.params as { provider?: string }).provider ??
-          (request.routeOptions.url?.includes('/telegram/') ? 'telegram' : undefined),
+          (request.routeOptions.url?.includes('/telegram/')
+            ? 'telegram'
+            : request.routeOptions.url?.includes('/whatsapp/')
+              ? 'whatsapp'
+              : undefined),
       ).data;
     if (!provider) return;
     return {
@@ -372,6 +391,8 @@ export const analyticsRoutes = new Map<
   ['POST /api/channel-settings/telegram/pairing', channel('connect_started')],
   ['POST /api/channel-settings/telegram/confirm', channel('update')],
   ['POST /api/channel-settings/telegram/user', channel('update')],
+  ['POST /api/channel-settings/whatsapp/pairing', channel('connect_started')],
+  ['DELETE /api/channel-settings/whatsapp/pairing', channel('disconnect')],
   ['DELETE /api/channel-settings/:provider', channel('disconnect')],
   ['POST /api/models/keys', settings('models', 'update')],
   ['POST /api/models/endpoints', settings('models', 'update')],
@@ -401,10 +422,15 @@ export const analyticsRoutes = new Map<
 ]);
 
 export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAnalytics) {
+  const captures = new WeakMap<FastifyRequest, CaptureAnalytics>();
+  app.addHook('onRequest', async (request) => {
+    if (analyticsRoutes.has(`${request.method} ${request.routeOptions.url}`))
+      captures.set(request, snapshotAnalytics(capture)!);
+  });
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode < 200 || reply.statusCode >= 300) return;
     const action = analyticsRoutes.get(`${request.method} ${request.routeOptions.url}`);
     const event = typeof action === 'function' ? action(request) : action;
-    if (event) capture(event);
+    if (event) captures.get(request)?.(event);
   });
 }

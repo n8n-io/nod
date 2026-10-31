@@ -14,6 +14,11 @@ type AnalyticsEvents = {
     direction: 'forward' | 'back';
   };
   nod_onboarding_step_skipped: { step: 'email' };
+  nod_local_setting_changed:
+    | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
+    | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
+    | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
+  nod_notification_opened: { kind: 'reply' };
   nod_app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
   nod_presentation_viewed: { kind: Presentation['type'] };
   nod_answer_choices_viewed: { multiple: boolean; option_count: number };
@@ -22,15 +27,16 @@ type AnalyticsEvents = {
   nod_artifact_action: {
     kind: AttachmentKind | 'file';
     location: 'message' | 'drawer';
-    action: 'copy' | 'download' | 'download_requested';
+    action: 'copy' | 'download' | 'download_requested' | 'open' | 'reveal' | 'reuse_requested';
   };
   nod_settings_viewed: {
-    tab: 'general' | 'models' | 'app_connections' | 'memory';
+    tab: 'general' | 'models' | 'memory';
   };
   nod_chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
     source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
+    input: 'text' | 'voice';
   };
   nod_chat_stop_requested: undefined;
   nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
@@ -99,6 +105,11 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     direction: ['forward', 'back'],
   },
   nod_onboarding_step_skipped: { step: ['email'] },
+  nod_local_setting_changed: {
+    setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
+    value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
+  },
+  nod_notification_opened: { kind: ['reply'] },
   nod_app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
   nod_presentation_viewed: {
     kind: ['image', 'map', 'flights', 'seats', 'booking', 'chart', 'apps', 'diagram'],
@@ -113,15 +124,16 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   nod_artifact_action: {
     kind: artifactKinds,
     location: ['message', 'drawer'],
-    action: ['copy', 'download', 'download_requested'],
+    action: ['copy', 'download', 'download_requested', 'open', 'reveal', 'reuse_requested'],
   },
   nod_settings_viewed: {
-    tab: ['general', 'models', 'app_connections', 'memory'],
+    tab: ['general', 'models', 'memory'],
   },
   nod_chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
     source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
+    input: ['text', 'voice'],
   },
   nod_chat_stop_requested: {},
   nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },

@@ -291,7 +291,7 @@ const server = createServer(async (request, response) => {
   else if (url.pathname === '/api/privacy')
     json({ content: 'Synthetic analytics validation. All requests stay on localhost.' });
   else if (url.pathname === '/api/memory' && request.method === 'GET')
-    json({ saving: false, sensitive: false, notes: [], archive: [] });
+    json({ saving: false, sensitive: false, notes: [], archive: [], skills: [] });
   else if (url.pathname === '/api/trust' && request.method === 'GET')
     json({
       entries: [],
@@ -307,6 +307,7 @@ const server = createServer(async (request, response) => {
         unpriced: false,
       },
       limit: null,
+      taskUsd: 5,
     });
   else if (
     request.method === 'GET' &&

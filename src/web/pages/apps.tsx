@@ -196,7 +196,12 @@ export function Apps({
   } = usePageData<Connection[]>('/api/apps/catalog');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
-  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view }), []);
+  const seen = useRef(false);
+  useEffect(() => {
+    if (seen.current) return;
+    seen.current = true;
+    captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view });
+  }, []);
   const selectView = (next: typeof view) => {
     if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'apps', tab: next });
     setView(next);

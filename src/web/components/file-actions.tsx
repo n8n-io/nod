@@ -13,8 +13,9 @@ import { attachmentKind } from '../lib/attachment-kind';
 
 export function reuseFile(item: ImagePreview) {
   const artifact = artifactFromPreview(item);
-  if (!ownedArtifactUrl(artifact.url)) return;
+  if (!ownedArtifactUrl(artifact.url)) return false;
   window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact }));
+  return true;
 }
 
 export function fileDrag(event: React.DragEvent, item: ImagePreview) {
@@ -121,9 +122,13 @@ export function FileActions({
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
+  function reuse(capture = analyticsForCurrentSession()) {
+    if (reuseFile(item))
+      capture('nod_artifact_action', { kind, location, action: 'reuse_requested' });
+  }
   async function run(action: string, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
-      reuseFile(item);
+      reuse(capture);
       return;
     }
     const id = item.id;
@@ -137,6 +142,12 @@ export function FileActions({
         await desktopFileAction(artifact.id, action as 'save' | 'open' | 'show' | 'prepare');
         if (action === 'save')
           capture('nod_artifact_action', { kind, location, action: 'download' });
+        else if (action === 'open' || action === 'show')
+          capture('nod_artifact_action', {
+            kind,
+            location,
+            action: action === 'open' ? 'open' : 'reveal',
+          });
         if (activeId.current === id) setNotice(action === 'save' ? 'Saved to Downloads' : '');
       }
     } catch (cause) {
@@ -174,7 +185,7 @@ export function FileActions({
         size="icon"
         aria-label={`Use ${item.name} in message`}
         data-tooltip="Add to message"
-        onClick={() => reuseFile(item)}
+        onClick={() => reuse()}
       >
         <Plus size={15} />
       </Button>

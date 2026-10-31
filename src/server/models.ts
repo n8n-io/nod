@@ -36,7 +36,8 @@ import {
   memoryModels,
 } from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
-import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
+import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import type { SettingActor } from './analytics-settings.ts';
 import { logFailure } from './failure-log.ts';
 
 const keySchema = z
@@ -874,9 +875,10 @@ export function createModelService(options: {
         return save('compatible', 'api_key', value, definitions);
       });
     },
-    async select(input: ModelSelection) {
+    async select(input: ModelSelection, actor: SettingActor = 'owner') {
       const value = modelSelectionInput.parse(input);
-      await store.change((state) => {
+      const capture = snapshotAnalytics(analytics);
+      const changed = await store.change((state) => {
         const row = state.connections.find((item) => item.id === value.connectionId);
         const model =
           row?.status === 'connected' &&
@@ -884,9 +886,26 @@ export function createModelService(options: {
         if (!row || !model || !model.choice.efforts.includes(value.effort))
           throw new ConnectionError('Choose an available model and effort.');
         if (model.choice.audio && !textCompanion(row)) throw missingTextCompanion();
+        const changed = {
+          model:
+            state.selection?.connectionId !== value.connectionId ||
+            state.selection?.modelId !== value.modelId,
+          effort: state.selection?.effort !== value.effort,
+        };
         state.selection = value;
         state.selectionSet = true;
+        return changed;
       });
+      if (changed.model)
+        capture?.({
+          event: 'nod_setting_changed',
+          properties: { setting: 'model_selection', actor, state: 'configured' },
+        });
+      if (changed.effort)
+        capture?.({
+          event: 'nod_setting_changed',
+          properties: { setting: 'model_effort', actor, state: value.effort },
+        });
       await reload();
     },
     async remove(id: string) {

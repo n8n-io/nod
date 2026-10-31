@@ -804,6 +804,7 @@ export function Chat({
       if (!privateVerification)
         captureAnalytics('nod_chat_message_sent', {
           has_attachments: attachments.length > 0 || Boolean(recording),
+          input: recording ? 'voice' : 'text',
           is_reply: Boolean(replyId),
           source,
         });

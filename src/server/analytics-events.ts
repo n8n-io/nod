@@ -159,6 +159,62 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('nod_setting_changed'),
+      properties: z
+        .object({
+          setting: z.enum([
+            'theme',
+            'conversation_traces',
+            'usage_data',
+            'speech_voice',
+            'speech_reply',
+            'notification_rule',
+            'rules',
+            'time_zone',
+            'locale',
+            'hour_cycle',
+            'quiet_hours',
+            'quiet_start',
+            'quiet_end',
+            'proactivity_paused',
+            'memory_enabled',
+            'memory_sensitive',
+            'monthly_spending_limit',
+            'task_spending_limit',
+            'model_selection',
+            'model_effort',
+          ]),
+          actor: z.enum(['owner', 'agent', 'system']),
+          state: z
+            .enum([
+              'on',
+              'off',
+              'configured',
+              'default',
+              'cleared',
+              'system',
+              'light',
+              'dark',
+              'auto',
+              'voice',
+              'always',
+              'never',
+              'h12',
+              'h23',
+              'minimal',
+              'low',
+              'medium',
+              'high',
+              'xhigh',
+              'max',
+            ])
+            .optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('nod_schedule_changed'),
       properties: z
         .object({

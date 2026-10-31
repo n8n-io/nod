@@ -6518,6 +6518,7 @@ async function feedbackFixture(t: TestContext) {
     content: JSON.stringify({ messages: ['Synthetic reviewed conversation'] }),
     envelopes: [] as FeedbackEnvelope[],
     statusRequests: [] as Array<{ action: 'status'; submissionId: string }>,
+    beforeDeliver: undefined as (() => Promise<void>) | undefined,
   };
   const delivery = createN8nFeedback({
     enabled: true,
@@ -6526,6 +6527,7 @@ async function feedbackFixture(t: TestContext) {
       const input = JSON.parse(String(options?.body));
       if (input.action === 'status') state.statusRequests.push(input);
       else state.envelopes.push(input);
+      await state.beforeDeliver?.();
       const receipt: FeedbackReceipt = {
         submissionId: input.submissionId,
         status: 'submitted',
@@ -6545,6 +6547,7 @@ async function feedbackFixture(t: TestContext) {
   const open = async (
     ownerId = randomUUID(),
     buildReport: Parameters<typeof registerFeedback>[1]['buildReport'] = async () => state.content,
+    analytics?: Parameters<typeof registerFeedback>[1]['analytics'],
   ) => {
     const app = Fastify();
     apps.push(app);
@@ -6554,6 +6557,7 @@ async function feedbackFixture(t: TestContext) {
       context,
       delivery,
       buildReport,
+      analytics,
     });
     return { app, ownerId };
   };
@@ -6568,6 +6572,59 @@ async function feedbackFixture(t: TestContext) {
   });
   return { pool, state, open, submission };
 }
+
+test(
+  'pending feedback telemetry cannot cross a revoked consent period',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const { createAnalytics } = await import('../src/server/analytics.ts');
+    const captured: string[] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: ({ event }) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const owner = randomUUID();
+    analytics.setUsageData(owner, true);
+    const f = await feedbackFixture(t);
+    const { app } = await f.open(owner, undefined, analytics.forOwner(owner));
+    const entered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const release = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    f.state.beforeDeliver = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const pending = app
+      .inject({ method: 'POST', url: '/api/feedback', payload: f.submission() })
+      .then((value) => value);
+    await entered.promise;
+    analytics.setUsageData(owner, false);
+    analytics.setUsageData(owner, true);
+    release.resolve();
+    assert.equal((await pending).json().status, 'submitted');
+    assert.deepEqual(captured, []);
+    f.state.beforeDeliver = undefined;
+    assert.equal(
+      (await app.inject({ method: 'POST', url: '/api/feedback', payload: f.submission() })).json()
+        .status,
+      'submitted',
+    );
+    assert.deepEqual(captured, ['nod_feedback_sent']);
+  },
+);
 
 test(
   'feedback reports and their delivery status stay with their owner',

@@ -83,24 +83,26 @@ Server events must pass a strict schema. UI events keep only allowed properties 
 
 ### Setup and app interaction
 
-| Event                                                     | What it records                                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `$pageview`, `$snapshot`                                  | Normalized app route or masked replay data. URLs become `https://nod.invalid` routes.       |
-| `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed. |
-| `nod_onboarding_step_skipped`                             | Skipped `email` step.                                                                       |
-| `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                         |
-| `nod_settings_viewed`, `nod_tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                  |
-| `nod_chat_message_sent`                                   | Attachment/reply booleans and composer/task-card/ask-Nod/task-reply/answer-choice source.   |
-| `nod_chat_stop_requested`                                 | Stop requested in the app.                                                                  |
-| `nod_task_card_started`, `nod_task_action`                | Card kind and bounded position, or fixed task control.                                      |
-| `nod_setup_link_clicked`, `nod_link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.       |
-| `nod_browser_handoff_action`                              | Done, back, reload, expand, or collapse.                                                    |
-| `nod_message_reaction_changed`, `nod_message_action`      | Fixed reaction/action, input method, and assistant/user role.                               |
-| `nod_attachment_added`                                    | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                |
-| `nod_app_connect_clicked`, `nod_app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.              |
-| `nod_model_selected`                                      | Provider, settings/onboarding entry, and whether the recommendation was chosen.             |
-| `nod_ui_error`                                            | Fixed area and action, without error text.                                                  |
-| `nod_feedback_sent`                                       | Bug/feature/other category and attachment/report booleans, without feedback content.        |
+| Event                                                     | What it records                                                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `$pageview`, `$snapshot`                                  | Normalized app route or masked replay data. URLs become `https://nod.invalid` routes.                        |
+| `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
+| `nod_onboarding_step_skipped`                             | Skipped `email` step.                                                                                        |
+| `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                                          |
+| `nod_settings_viewed`, `nod_tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                                   |
+| `nod_local_setting_changed`                               | Local theme, launch-at-login, or notification choice with a fixed value or permission outcome.               |
+| `nod_notification_opened`                                 | Clicked browser reply notification, without its content. Native notification clicks aren't observed.         |
+| `nod_chat_message_sent`                                   | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source. |
+| `nod_chat_stop_requested`                                 | Stop requested in the app.                                                                                   |
+| `nod_task_card_started`, `nod_task_action`                | Card kind and bounded position, or fixed task control.                                                       |
+| `nod_setup_link_clicked`, `nod_link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                        |
+| `nod_browser_handoff_action`                              | Successful done, back, reload, expand, or collapse operation.                                                |
+| `nod_message_reaction_changed`, `nod_message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                |
+| `nod_attachment_added`                                    | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                 |
+| `nod_app_connect_clicked`, `nod_app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                               |
+| `nod_model_selected`                                      | Provider, settings/onboarding entry, and whether the recommendation was chosen.                              |
+| `nod_ui_error`                                            | Fixed area and action, without error text.                                                                   |
+| `nod_feedback_sent`                                       | Bug/feature/other category and attachment/report booleans, without feedback content.                         |
 
 Connecting email is optional. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
@@ -119,7 +121,8 @@ Connecting email is optional. Model setup can be bypassed when already configure
 | `nod_source_read`                                                | Source category (`connected_app`, `tasks`, `other`), discovery/record-read operation, outcome, milliseconds, and bounded record/unavailable counts. |
 | `nod_confirmation_changed`                                       | Asked/approved/declined/executed/expired/uncertain, fixed action kind, and turn source.                                                             |
 | `nod_secure_entry_changed`                                       | Sign-in/payment/code kind and requested/superseded/approved/submitted/failed/uncertain state.                                                       |
-| `nod_settings_updated`                                           | Fixed section, operation, and optional channel.                                                                                                     |
+| `nod_settings_updated`                                           | Successful settings request by section, operation, and optional channel; can include unchanged writes.                                              |
+| `nod_setting_changed`                                            | Committed setting change by fixed setting, owner/agent/system actor, and bounded state when available. No free-form values.                         |
 | `nod_schedule_changed`                                           | Create/update/delete, once/recurring kind, bounded cadence, and user/agent actor.                                                                   |
 | `nod_memory_changed`                                             | Note/skill, save/forget/archive/clear, and owner/agent/background actor.                                                                            |
 | `nod_vault_changed`, `nod_vault_imported`                        | Login/card kind and operation, or number imported. No domains or inventory.                                                                         |
@@ -132,20 +135,28 @@ An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelle
 
 Saved connections don't prove access works. Successful service calls don't prove task success. Connection observations occur at startup, when sharing turns on, and after changes; they aren't a live account inventory. Source reads measure observed calls and bounded results, without source identifiers or content.
 
+Setting changes exclude rejected and unchanged writes. Turning usage sharing off prevents capture of that change too. Local browser notification choices are `enabled`, `disabled`, or `dismissed`. `dismissed` means saving **Not now**, not closing a delivered notification. Theme values are `light`, `dark`, or `system`. Launch-at-login and desktop notifications use `enabled` or `disabled`.
+
+Server settings cover theme, conversation traces, usage sharing, voice and speech replies, notification rules, personal rules, timezone, locale, hour cycle, quiet hours, paused proactivity, memory controls, spending limits, and model/effort selection. Values are bounded states such as on/off, configured/default/cleared, or a fixed mode. Voice names, rule text, exact times, locale/timezone values, and spending amounts are excluded.
+
+The `system` setting actor identifies the app initializing its timezone from the browser. It isn't an owner choice.
+
 ### Outputs and answer choices
 
-| Event                         | What it records                                                          |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `nod_output_created`          | Committed assistant presentation or file delivery, by kind and count.    |
-| `nod_presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation. |
-| `nod_artifact_viewed`         | Artifact kind and message/drawer location.                               |
-| `nod_artifact_action`         | Kind, location, and copy/download/download-request action.               |
-| `nod_answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                    |
-| `nod_answer_choices_selected` | The same context and number successfully selected (one to six).          |
+| Event                         | What it records                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `nod_output_created`          | Committed assistant presentation or file delivery, by kind and count.                |
+| `nod_presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation.             |
+| `nod_artifact_viewed`         | Artifact kind and message/drawer location.                                           |
+| `nod_artifact_action`         | Kind, location, and copy/download/download-request/open/reveal/reuse-request action. |
+| `nod_answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                                |
+| `nod_answer_choices_selected` | The same context and number successfully selected (one to six).                      |
 
 Views require a visible app and content intersecting its viewport. Repeated mounting doesn't count again within the current capture period. These observations aren't unique files or a linked conversion funnel.
 
 `download_requested` records a browser request. `download` records a native save that returned successfully. A request alone doesn't prove a local file exists.
+
+`open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted or sent.
 
 Answer-choice collectors and dashboards are ready for the separate answer-choice feature integration. They exclude option labels, selected text, and response content.
 

@@ -649,6 +649,17 @@ async function initializeApplication(
     )
       void observeConnections?.('models');
   };
+  captureAnalytics.snapshot = () => {
+    const consent = analytics.consent(ownerId);
+    return (event, delivery) => {
+      if (
+        consent.enabled &&
+        !consent.signal.aborted &&
+        consent.version === analytics.consent(ownerId).version
+      )
+        captureAnalytics(event, delivery);
+    };
+  };
   const analyticsConsent = () => analytics.consent(ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
@@ -801,7 +812,12 @@ async function initializeApplication(
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
-  const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const memory = createMemoryService({
+    pool,
+    ownerId,
+    store: memoryStore,
+    analytics: captureAnalytics,
+  });
   const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   const communication = createCommunication({
@@ -861,6 +877,7 @@ async function initializeApplication(
   let proactivity!: ReturnType<typeof createProactivity>;
   let privateReady = false;
   const triage = createTriage({
+    analytics: captureAnalytics,
     consumers,
     signal: async (sourceId, client, summary) => {
       if (!privateReady) throw new Error('Background sources are starting.');
@@ -1101,7 +1118,7 @@ async function initializeApplication(
         : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
-            ? ledger.setLimits(args)
+            ? ledger.setLimits(args, 'agent')
             : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
               ? withTurnLock(provenance.turnId, () =>
                   personal.manage(action.slice('NOD_'.length), args, provenance),

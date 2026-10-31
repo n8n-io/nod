@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { isSpeechVoiceId } from '../shared/speech.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
+import { transaction } from './transaction.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 const preferencesSchema = z
@@ -83,7 +86,7 @@ export function validatePreferences(raw: unknown) {
   }
   return patch;
 }
-export function createPreferencesStore(pool: Pool, ownerId: string) {
+export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: CaptureAnalytics) {
   const validate = validatePreferences;
   return {
     validate,
@@ -93,10 +96,12 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       ]);
       return result.rows[0] ?? { ...defaultPreferences };
     },
-    async update(raw: unknown): Promise<Preferences> {
+    async update(raw: unknown, actor: SettingActor = 'owner'): Promise<Preferences> {
       const patch = validate(raw);
-      const result = await pool.query(
-        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
+      const capture = snapshotAnalytics(analytics);
+      const save = async (connection: Pick<Pool, 'query'>) => {
+        const result = await connection.query(
+          `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
         VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'auto'),COALESCE($20::boolean,$21::boolean))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),
         time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
@@ -105,31 +110,58 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
         speech_voice=CASE WHEN $19 THEN $17 ELSE preferences.speech_voice END,
         proactive_paused=COALESCE($20,preferences.proactive_paused)
         RETURNING ${columns}`,
-        [
-          ownerId,
-          patch.notificationRule ?? null,
-          patch.timeZone ?? null,
-          patch.quietStart ?? null,
-          patch.quietEnd ?? null,
-          patch.quietHoursEnabled ?? null,
-          defaultPreferences.notificationRule,
-          defaultPreferences.quietStart,
-          defaultPreferences.quietEnd,
-          defaultPreferences.quietHoursEnabled,
-          patch.locale ?? null,
-          patch.hourCycle ?? null,
-          defaultPreferences.hourCycle,
-          patch.locale !== undefined,
-          patch.timeZone !== undefined,
-          patch.rules ?? null,
-          patch.speechVoice ?? null,
-          patch.speechReply ?? null,
-          patch.speechVoice !== undefined,
-          patch.proactivePaused ?? null,
-          defaultPreferences.proactivePaused,
-        ],
-      );
-      return result.rows[0];
+          [
+            ownerId,
+            patch.notificationRule ?? null,
+            patch.timeZone ?? null,
+            patch.quietStart ?? null,
+            patch.quietEnd ?? null,
+            patch.quietHoursEnabled ?? null,
+            defaultPreferences.notificationRule,
+            defaultPreferences.quietStart,
+            defaultPreferences.quietEnd,
+            defaultPreferences.quietHoursEnabled,
+            patch.locale ?? null,
+            patch.hourCycle ?? null,
+            defaultPreferences.hourCycle,
+            patch.locale !== undefined,
+            patch.timeZone !== undefined,
+            patch.rules ?? null,
+            patch.speechVoice ?? null,
+            patch.speechReply ?? null,
+            patch.speechVoice !== undefined,
+            patch.proactivePaused ?? null,
+            defaultPreferences.proactivePaused,
+          ],
+        );
+        return result.rows[0] as Preferences;
+      };
+      if (!analytics) return save(pool);
+      const change = await transaction(async (client) => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `preferences:${ownerId}`,
+        ]);
+        const previous = await client.query(
+          `SELECT ${columns} FROM preferences WHERE owner_id=$1`,
+          [ownerId],
+        );
+        const before: Preferences = previous.rows[0] ?? { ...defaultPreferences };
+        return { before, after: await save(client) };
+      }, pool);
+      captureSettingChanges(capture, actor, change.before, change.after, {
+        speechVoice: 'speech_voice',
+        speechReply: 'speech_reply',
+        notificationRule: 'notification_rule',
+        rules: 'rules',
+        timeZone: 'time_zone',
+        locale: 'locale',
+        hourCycle: 'hour_cycle',
+        quietHoursEnabled: 'quiet_hours',
+        quietStart: 'quiet_start',
+        quietEnd: 'quiet_end',
+        proactivePaused: 'proactivity_paused',
+      });
+      return change.after;
     },
   };
 }

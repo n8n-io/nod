@@ -45,7 +45,7 @@ Events fired while sharing is off are lost. Don't replay them when sharing turns
 
 ### Outputs
 
-Committed output delivery, visible presentation, artifact view, and artifact action are different events. `download_requested` means a browser request; `download` follows a successful native save. Answer-choice collectors report mode and bounded option/selection counts; they still require integration with that feature's actual renderer and successful submission.
+Committed output delivery, visible presentation, artifact view, and artifact action are different events. `download_requested` means a browser request; `download` follows a successful native save. `open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted. Answer-choice collectors report mode and bounded option/selection counts; they still require integration with that feature's actual renderer and successful submission.
 
 ## Keep recordings private
 
@@ -67,14 +67,15 @@ The current contract is `nod_v4`. It starts fresh. There is no historical migrat
 
 ## Read the dashboards
 
-The [Nod PostHog project](https://eu.posthog.com/project/231804) has four dashboards:
+The [Nod PostHog project](https://eu.posthog.com/project/231804) has five dashboards:
 
-| Dashboard                                                                                   | Questions                                                                                                                    |
-| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| [Nod · Product health](https://eu.posthog.com/project/231804/dashboard/1036780)             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                          |
-| [Nod · Activation and connections](https://eu.posthog.com/project/231804/dashboard/1036781) | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                  |
-| [Nod · Reliability and cost](https://eu.posthog.com/project/231804/dashboard/1037782)       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations. |
-| [Nod · Outputs and interaction](https://eu.posthog.com/project/231804/dashboard/1036782)    | Committed and shown output kinds, artifact actions, answer-choice use, schedules, and source-read outcomes.                  |
+| Dashboard                                                                                   | Questions                                                                                                                       |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| [Nod · Product health](https://eu.posthog.com/project/231804/dashboard/1036780)             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                             |
+| [Nod · Activation and connections](https://eu.posthog.com/project/231804/dashboard/1036781) | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
+| [Nod · Reliability and cost](https://eu.posthog.com/project/231804/dashboard/1037782)       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
+| [Nod · Outputs and interaction](https://eu.posthog.com/project/231804/dashboard/1036782)    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
+| [Nod · Navigation and controls](https://eu.posthog.com/project/231804/dashboard/1072707)    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
 All insights filter `analytics_schema=nod_v4` and `environment=production`, enable internal/test exclusions, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 
@@ -86,6 +87,10 @@ All insights filter `analytics_schema=nod_v4` and `environment=production`, enab
 - **Connection entry:** Connect clicks and confirmed completions retain their original `apps`, `chat`, `onboarding`, or `manage` entry. The counts don't join individual attempts and aren't a conversion rate.
 - **Costs:** Model estimates exclude unpriced usage, browser fees, and independent integration charges. Tool duration isn't billed browser runtime.
 - **Outputs:** Committed delivery, visibility, copying, and saving are separate observations. Their totals aren't a per-output conversion funnel.
+- **Navigation:** Page and tab views measure observed reach, not time spent or intent. An installation can appear in several rows.
+- **Settings:** `nod_setting_changed` follows a committed value change, attributed to owner, agent, or system. System means automatic browser-timezone initialization. `nod_settings_updated` counts successful requests and can include unchanged writes. Local browser notifications record `dismissed` when the owner saves **Not now**, not when a delivered notification closes.
+- **Memory and Vault:** Changes and import batches measure writes. They don't establish inventory, reading, successful sign-in, or usefulness.
+- **Interaction reach:** Distinct installations using reactions, copy/reply, task and browser controls, starter cards, feedback, browser notifications, or voice input. Rows overlap; reactions and feedback reports aren't satisfaction scores.
 
 These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. Audience characteristics such as role, company size, AI experience, and preferred tools are not collected. NPS and stopped-use surveys are outside this instrumentation. Use independent operational checks and separate user research for those questions.
 

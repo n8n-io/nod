@@ -4298,3 +4298,274 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
+
+test('local settings and successful UI actions preserve consent and owner boundaries', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 60_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const events=[];
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const config={enabled:true,distinctId:'local:synthetic-settings-owner',environment:'development'};
+const restore=()=>{setRequestAccount('synthetic-settings-owner');configureAnalytics(config,'web')};
+restore();
+const keepAlive=setInterval(()=>{},1000);
+const checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const count=(name)=>events.filter(item=>item.event===name).length;
+let root=createRoot(document.getElementById('root'));
+const render=element=>act(async()=>root.render(element));
+const settle=()=>act(async()=>new Promise(resolve=>setTimeout(resolve,5)));
+const waitFor=async condition=>{for(let at=0;at<60&&!condition();at++)await settle();assert.ok(condition(),'fixture settled')};
+const click=element=>act(async()=>element.click());
+const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+const remount=async element=>{await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await render(element)};
+let persisted={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false,onboardingPreferenceStep:'complete'};
+let nativeMode='ok',releaseNative;
+window.nodDesktop={getSettings:async()=>({...persisted}),onPreferences:()=>()=>{},saveSettings:async change=>{if(nativeMode==='fail')throw new Error('Synthetic native failure');if(nativeMode==='hold')await new Promise(resolve=>releaseNative=resolve);if(nativeMode!=='ignore')persisted={...persisted,...change};return {...persisted}}};
+const {useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
+let native;
+function Native(){native=useDesktopSettings();return null}
+await render(createElement(Native));await waitFor(()=>native.settings);
+for(const change of [{theme:'dark'},{launchAtLogin:true},{notifications:true}])await act(async()=>native.save(change));
+check('LS1-saved',count('nod_local_setting_changed')===3);
+const nativeCount=count('nod_local_setting_changed');
+await act(async()=>native.save({theme:'dark'}));
+nativeMode='fail';await act(async()=>native.save({theme:'light'}).catch(()=>{}));
+nativeMode='ignore';await act(async()=>native.save({theme:'light'}));
+check('LS2-no-op-failure-ignored',count('nod_local_setting_changed')===nativeCount);
+nativeMode='hold';let saved;
+await act(async()=>{saved=native.save({theme:'light'})});
+setRequestAccount('synthetic-another-owner');await act(async()=>{releaseNative();await saved});
+check('LS3-owner-fence',count('nod_local_setting_changed')===nativeCount);
+restore();await act(async()=>{saved=native.save({theme:'system'})});
+configureAnalytics(undefined);configureAnalytics(config,'web');
+await act(async()=>{releaseNative();await saved});
+check('LS3-consent-fence',count('nod_local_setting_changed')===nativeCount);
+nativeMode='ok';delete window.nodDesktop;
+let permission='granted',releasePermission;
+class SyntheticNotification{static get permission(){return permission}static requestPermission(){return new Promise(resolve=>releasePermission=resolve)}close(){this.onclose?.()}}
+window.Notification=SyntheticNotification;
+Object.defineProperty(window,'isSecureContext',{configurable:true,value:true});
+Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_key,...args)=>args.at(-1)({})}});
+let owner='synthetic-settings-owner';
+let handoffMode='fail',releaseHandoff;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ const path=new URL(url,window.location.href).pathname;
+ if(path==='/api/session')return Response.json({user:{id:owner,name:'',email:null,avatarUrl:null},settings:{theme:'system',onboardingCompleted:true,usageData:true,traces:false},capabilities:{developer:true,traces:true},analytics:config});
+ if(path==='/api/browser-handoff/stream')return new Promise((_resolve,reject)=>options.signal?.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+ if(path==='/api/browser-handoff/done'){if(handoffMode==='hold')await new Promise(resolve=>releaseHandoff=resolve);return Response.json(handoffMode==='fail'?{error:'Synthetic handoff failure'}:{ok:true},{status:handoffMode==='fail'?500:200})}
+ throw new Error('Unexpected fixture route '+path);
+};
+const {sessionStore}=await import('./src/web/lib/session.ts');
+await sessionStore.refresh();restore();
+const {BrowserNotificationSettings,BrowserNotificationPrompt}=await import('./src/web/components/browser-notifications.tsx');
+const notice=()=>document.querySelector('[role="switch"][aria-label="Browser notifications"]');
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+const startNotifications=count('nod_local_setting_changed');
+await click(notice());check('BN1-enabled',count('nod_local_setting_changed')===startNotifications+1);
+await click(button('Send test notification'));check('BN1-test-not-change',count('nod_local_setting_changed')===startNotifications+1);
+await click(notice());check('BN1-disabled',count('nod_local_setting_changed')===startNotifications+2);
+window.localStorage.removeItem('nod.browser-notifications.'+owner);
+await remount(createElement(BrowserNotificationPrompt,{ownerId:owner}));
+await click(button('Not now'));check('BN1-dismissed',count('nod_local_setting_changed')===startNotifications+3);
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+permission='default';await click(notice());await waitFor(()=>releasePermission);
+await act(async()=>releasePermission('denied'));
+check('BN2-denied',count('nod_local_setting_changed')===startNotifications+3);
+releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releasePermission('granted'));
+check('BN2-consent-fence',count('nod_local_setting_changed')===startNotifications+3);
+window.localStorage.removeItem('nod.browser-notifications.'+owner);
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+owner='synthetic-another-owner';await act(async()=>sessionStore.refresh());await act(async()=>releasePermission('granted'));
+check('BN2-owner-fence',count('nod_local_setting_changed')===startNotifications+3);
+owner='synthetic-settings-owner';await act(async()=>sessionStore.refresh());restore();
+const {MessageBubble}=await import('./src/web/components/message.tsx');
+const message={id:'00000000-0000-4000-8000-000000000711',role:'assistant',text:'SYNTHETIC_PRIVATE_COPY_89271',createdAt:new Date().toISOString(),attachments:[],reactions:[]};
+let copyMode='fail',releaseCopy;
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{if(copyMode==='fail')throw new Error('Synthetic clipboard failure');if(copyMode==='hold')await new Promise(resolve=>releaseCopy=resolve)}}});
+await remount(createElement(MessageBubble,{message}));
+const copy=()=>document.querySelector('button[aria-label="Copy message"],button[aria-label="Message copied"]')??document.querySelector('button[aria-label="Copy"]');
+assert.ok(copy(),'copy control exists');
+const copyStart=count('nod_message_action');
+await click(copy());check('CP1-rejected',count('nod_message_action')===copyStart);
+copyMode='hold';await click(copy());await waitFor(()=>releaseCopy);
+check('CP1-pending',count('nod_message_action')===copyStart);
+await act(async()=>releaseCopy());check('CP1-success',count('nod_message_action')===copyStart+1);
+await click(copy());configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseCopy());
+check('CP2-consent-fence',count('nod_message_action')===copyStart+1);
+await click(copy());setRequestAccount('synthetic-another-owner');await act(async()=>releaseCopy());
+check('CP2-owner-fence',count('nod_message_action')===copyStart+1);restore();
+const {BrowserHandoff}=await import('./src/web/components/browser-handoff.tsx');
+const handoff=()=>createElement(BrowserHandoff,{turnId:'00000000-0000-4000-8000-000000000712'});
+await remount(handoff());
+const startHandoff=count('nod_browser_handoff_action');
+await click(button('Return to Nod'));check('BH1-rejected',count('nod_browser_handoff_action')===startHandoff);
+handoffMode='hold';await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+check('BH1-pending',count('nod_browser_handoff_action')===startHandoff);
+await act(async()=>releaseHandoff());check('BH1-success',count('nod_browser_handoff_action')===startHandoff+1);
+await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseHandoff());
+check('BH2-consent-fence',count('nod_browser_handoff_action')===startHandoff+1);
+await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+setRequestAccount('synthetic-another-owner');await act(async()=>releaseHandoff());
+check('BH2-owner-fence',count('nod_browser_handoff_action')===startHandoff+1);restore();
+await remount(handoff());await click(document.querySelector('button[aria-label="Enlarge browser"]'));
+await click(document.querySelector('button[aria-label="Shrink browser"]'));
+check('BH3-resize',count('nod_browser_handoff_action')===startHandoff+3);
+const {deliverBrowserNotification}=await import('./src/web/lib/browser-notifications.ts');
+permission='granted';window.localStorage.setItem('nod.browser-notifications.'+owner,'enabled');window.focus=()=>{};
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+let notificationCurrent=true;
+const notification=await deliverBrowserNotification(owner,'private-thread',{id:'private-message',createdAt:'2026-10-31T00:00:00Z'},()=>notificationCurrent);
+assert.ok(notification);
+notificationCurrent=false;notification.onclick();check('NO1-stale-owner',count('nod_notification_opened')===0);
+notificationCurrent=true;configureAnalytics(undefined);notification.onclick();check('NO1-consent-off',count('nod_notification_opened')===0);
+configureAnalytics(config,'web');notification.onclick();check('NO1-current-click',count('nod_notification_opened')===1);
+const {FileActions}=await import('./src/web/components/file-actions.tsx');
+const artifact={id:'00000000-0000-4000-8000-000000000713',url:'/api/artifacts/00000000-0000-4000-8000-000000000713',name:'SYNTHETIC_PRIVATE_COPY_89271.txt',mimeType:'text/plain',size:12};
+let nativeAction='open',rejectFile=false;
+window.nodDesktop={fileMenu:async()=>nativeAction,fileAction:async()=>{if(rejectFile)throw new Error('Synthetic native action failure')}};
+await remount(createElement(FileActions,{item:artifact,location:'drawer'}));
+const fileMenu=()=>document.querySelector('button[aria-label^="File actions"]');
+const artifactStart=count('nod_artifact_action');
+rejectFile=true;await click(fileMenu());check('FA1-rejected',count('nod_artifact_action')===artifactStart);
+rejectFile=false;await click(fileMenu());nativeAction='show';await click(fileMenu());
+check('FA1-accepted',events.filter(event=>event.event==='nod_artifact_action').slice(-2).map(event=>event.properties.action).join(',')==='open,reveal');
+await click(document.querySelector('button[aria-label^="Use "]'));
+check('FA1-reuse-request',events.at(-1).event==='nod_artifact_action'&&events.at(-1).properties.action==='reuse_requested'&&events.at(-1).properties.location==='drawer');
+const {initializeTheme,setTheme}=await import('./src/web/lib/theme.ts');
+let quickTheme={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false};
+let rejectTheme=false,holdTheme=false,releaseTheme;
+window.nodDesktop={getSettings:async()=>quickTheme,getPreferences:async()=>quickTheme,onPreferences:()=>()=>{},setTheme:async theme=>{if(rejectTheme)throw new Error('Synthetic theme failure');if(holdTheme)await new Promise(resolve=>releaseTheme=resolve);quickTheme={...quickTheme,theme};return quickTheme}};
+const stopTheme=initializeTheme();await settle();
+const themeStart=count('nod_local_setting_changed');
+await setTheme('dark');await setTheme('dark');check('QT1-native-change-only',count('nod_local_setting_changed')===themeStart+1);
+rejectTheme=true;await setTheme('light').catch(()=>{});check('QT1-native-failure',count('nod_local_setting_changed')===themeStart+1);rejectTheme=false;
+holdTheme=true;const pendingTheme=setTheme('light');setRequestAccount('synthetic-another-owner');releaseTheme();await pendingTheme;check('QT1-owner-fence',count('nod_local_setting_changed')===themeStart+1);restore();
+stopTheme();delete window.nodDesktop;window.localStorage.setItem('nod.theme','light');
+await setTheme('dark');await setTheme('dark');check('QT1-browser-change-only',count('nod_local_setting_changed')===themeStart+2);
+check('private-data-excluded',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE_COPY_89271')&&!JSON.stringify(events).includes(message.id)&&!JSON.stringify(events).includes('00000000-0000-4000-8000-000000000712'));
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 33);
+});
+
+test('route analytics stay in the consent period that accepted the request', async () => {
+  const { createAnalytics, registerAnalyticsRoutes } = await import('../src/server/analytics.ts');
+  const captured: { event: string; properties: Record<string, unknown> }[] = [];
+  const analytics = await createAnalytics({
+    provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    environment: 'development',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  const owner = 'route-consent-owner';
+  const app = Fastify();
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+  const requests = new Map<
+    number,
+    {
+      entered: ReturnType<typeof deferred>;
+      released: ReturnType<typeof deferred>;
+      status: number;
+    }
+  >();
+  registerAnalyticsRoutes(app, analytics.forOwner(owner));
+  app.patch('/api/preferences', async (request, reply) => {
+    const { id } = request.body as { id: number };
+    const held = requests.get(id)!;
+    held.entered.resolve();
+    await held.released.promise;
+    return reply.status(held.status).send({ accepted: held.status === 200 });
+  });
+  let nextId = 0;
+  async function start(status = 200) {
+    const id = ++nextId;
+    const held = {
+      entered: deferred(),
+      released: deferred(),
+      status,
+    };
+    requests.set(id, held);
+    const response = app
+      .inject({
+        method: 'PATCH',
+        url: '/api/preferences',
+        payload: { id, private: 'SYNTHETIC_PRIVATE_ROUTE_5278' },
+      })
+      .then((result) => result);
+    await held.entered.promise;
+    return async () => {
+      held.released.resolve();
+      assert.equal((await response).statusCode, status);
+      requests.delete(id);
+    };
+  }
+  try {
+    analytics.setUsageData(owner, true);
+    const failed = await start(500);
+    await failed();
+    assert.equal(captured.length, 0);
+
+    analytics.setUsageData(owner, false);
+    const optedOut = await start();
+    analytics.setUsageData(owner, true);
+    const current = await start();
+    await current();
+    assert.equal(captured.length, 1);
+    await optedOut();
+    assert.equal(captured.length, 1);
+
+    const expired = await start();
+    analytics.setUsageData(owner, false);
+    analytics.setUsageData(owner, true);
+    const later = await start();
+    await expired();
+    assert.equal(captured.length, 1);
+    await later();
+    assert.equal(captured.length, 2);
+    assert.ok(
+      captured.every(
+        ({ event, properties }) =>
+          event === 'nod_settings_updated' &&
+          properties.section === 'preferences' &&
+          properties.operation === 'update',
+      ),
+    );
+    assert.ok(!JSON.stringify(captured).includes('SYNTHETIC_PRIVATE_ROUTE_5278'));
+  } finally {
+    for (const held of requests.values()) held.released.resolve();
+    await app.close();
+    await analytics.shutdown();
+  }
+});

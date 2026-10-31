@@ -5,6 +5,7 @@ import {
   subscribeDesktopPreferences,
   type DesktopPreferences,
 } from './desktop';
+import { analyticsForCurrentSession } from './analytics';
 
 type Theme = 'light' | 'dark';
 type ThemePreference = Theme | 'system';
@@ -14,6 +15,7 @@ const changeEvent = 'nod:theme';
 let chosenTheme: Theme | undefined;
 let accountTheme: ThemePreference | undefined;
 let desktopTheme: Theme | undefined;
+let desktopPreference: ThemePreference | undefined;
 
 function resolvedTheme(): Theme {
   const preference = desktopSettingsAvailable()
@@ -49,6 +51,7 @@ function applyTheme(theme: Theme) {
 }
 
 function applyDesktopPreferences(preferences: DesktopPreferences) {
+  desktopPreference = preferences.theme;
   desktopTheme = preferences.resolvedTheme;
   chosenTheme = preferences.theme === 'system' ? undefined : preferences.theme;
   try {
@@ -58,14 +61,23 @@ function applyDesktopPreferences(preferences: DesktopPreferences) {
 }
 
 export async function setTheme(theme: ThemePreference) {
+  const capture = analyticsForCurrentSession();
   if (desktopSettingsAvailable()) {
+    const previous = desktopPreference;
     const preferences = await setDesktopTheme(theme);
-    if (preferences) applyDesktopPreferences(preferences);
+    if (preferences) {
+      applyDesktopPreferences(preferences);
+      if (previous !== undefined && previous !== theme && preferences.theme === theme)
+        capture('nod_local_setting_changed', { setting: 'theme', value: theme });
+    }
     return;
   }
   chosenTheme = theme === 'system' ? undefined : theme;
   try {
+    const previous = window.localStorage.getItem(storageKey);
     window.localStorage.setItem(storageKey, theme);
+    if (previous !== theme && window.localStorage.getItem(storageKey) === theme)
+      capture('nod_local_setting_changed', { setting: 'theme', value: theme });
   } catch {}
   applyTheme(resolvedTheme());
 }
@@ -84,6 +96,7 @@ export function initializeTheme() {
   const system = window.matchMedia?.('(prefers-color-scheme: dark)');
   accountTheme = undefined;
   desktopTheme = undefined;
+  desktopPreference = undefined;
   if (desktopSettingsAvailable()) document.documentElement.dataset.desktop = 'true';
   const update = () => applyTheme(resolvedTheme());
   chosenTheme = savedTheme();

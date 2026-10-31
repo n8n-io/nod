@@ -341,9 +341,26 @@ describe('account routes', () => {
       await request({ theme: 'dark' });
       analytics.forOwner('local-owner')({ event: 'nod_chat_stopped' });
       assert.deepEqual(
+        captured
+          .filter(({ event }) => event === 'nod_setting_changed')
+          .map(({ properties }) => ({
+            setting: properties.setting,
+            actor: properties.actor,
+            state: properties.state,
+          })),
+        available
+          ? [
+              { setting: 'usage_data', actor: 'owner', state: 'on' },
+              { setting: 'theme', actor: 'owner', state: 'dark' },
+            ]
+          : [],
+      );
+      assert.deepEqual(
         captured.map((event) => [event.distinctId, event.event]),
         available
           ? [
+              [`local:${installationId}`, 'nod_setting_changed'],
+              [`local:${installationId}`, 'nod_setting_changed'],
               [`local:${installationId}`, 'nod_settings_updated'],
               [`local:${installationId}`, 'nod_chat_stopped'],
             ]
@@ -352,7 +369,7 @@ describe('account routes', () => {
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
       analytics.capture('local-owner', { event: 'nod_chat_stopped' });
-      assert.equal(captured.length, available ? 2 : 0);
+      assert.equal(captured.length, available ? 4 : 0);
     }
   });
 
@@ -1878,7 +1895,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const server = createServer((request, response) => {
       const found = request.url === '/v1/models';
       response.writeHead(found ? 200 : 404, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(found ? { data: [{ id: 'fixture-local' }] } : {}));
+      response.end(
+        JSON.stringify(
+          found ? { data: [{ id: 'fixture-local' }, { id: 'fixture-alternate' }] } : {},
+        ),
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
@@ -1943,6 +1964,41 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       url: address,
       key: 'fixture-rotated-key',
     });
+    const settingEvents = () => captured.filter(({ event }) => event === 'nod_setting_changed');
+    await owner.select({ connectionId: id, modelId: 'fixture-alternate', effort: 'off' });
+    assert.equal(settingEvents().length, 1);
+    assert.deepEqual(
+      Object.fromEntries(
+        ['setting', 'actor', 'state'].map((key) => [key, settingEvents()[0].properties[key]]),
+      ),
+      { setting: 'model_selection', actor: 'owner', state: 'configured' },
+    );
+    assert.equal(owner.view().selection?.modelId, 'fixture-alternate');
+    await owner.select({ connectionId: id, modelId: 'fixture-alternate', effort: 'off' });
+    await assert.rejects(
+      owner.select({ connectionId: id, modelId: 'fixture-unavailable', effort: 'off' }),
+    );
+    assert.equal(settingEvents().length, 1);
+    assert.doesNotMatch(JSON.stringify(settingEvents()), /fixture-|127\.0\.0\.1/);
+    analytics.setUsageData('fixture-owner', false);
+    await owner.select({ connectionId: id, modelId: 'fixture-local', effort: 'off' });
+    assert.equal(settingEvents().length, 1);
+    const effortOwner = await f.create('fixture-effort-owner');
+    analytics.setUsageData('fixture-effort-owner', true);
+    effortOwner.register(Fastify(), analytics.forOwner('fixture-effort-owner'));
+    await effortOwner.addKey('openai', 'fixture-effort-key');
+    const selected = effortOwner.view().selection!;
+    const alternative = effortOwner
+      .view()
+      .connections.flatMap((connection) => connection.models)
+      .find((model) => model.id === selected.modelId)!
+      .efforts.find((effort) => effort !== selected.effort)!;
+    assert.ok(alternative);
+    await effortOwner.select({ ...selected, effort: alternative }, 'agent');
+    assert.equal(settingEvents().length, 2);
+    assert.equal(settingEvents()[1].properties.setting, 'model_effort');
+    assert.equal(settingEvents()[1].properties.state, alternative);
+    assert.equal(settingEvents()[1].properties.actor, 'agent');
     const bootstrap = {
       provider: 'compatible' as const,
       credentials: {
@@ -3677,4 +3733,316 @@ test('feedback capture runs once for a fresh owned draft and skips restored or p
   });
   assert.equal(await createFeedbackCapture('web-owner').capture(), null);
   assert.equal(captures, 4);
+});
+
+describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABASE_URL }, () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const schema = `test_setting_analytics_${randomUUID().replaceAll('-', '')}`;
+    const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await root.query(`CREATE SCHEMA ${schema}`);
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 4,
+    });
+    t.after(async () => {
+      await database.end();
+      await root.query(`DROP SCHEMA ${schema} CASCADE`);
+      await root.end();
+    });
+    await database.query(`CREATE TABLE turns(id uuid PRIMARY KEY);
+      CREATE TABLE preferences(owner_id text PRIMARY KEY,notification_rule text NOT NULL DEFAULT '',rules text NOT NULL DEFAULT '',
+        time_zone text,quiet_start text NOT NULL DEFAULT '22:00',quiet_end text NOT NULL DEFAULT '08:00',
+        quiet_hours_enabled boolean NOT NULL DEFAULT true,locale text,hour_cycle text NOT NULL DEFAULT 'auto',
+        speech_voice text,speech_reply text NOT NULL DEFAULT 'auto',proactive_paused boolean NOT NULL DEFAULT false)`);
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const owner = 'synthetic-settings-owner';
+    analytics.setUsageData(owner, true);
+    const changes = () =>
+      captured
+        .filter(({ event }) => event === 'nod_setting_changed')
+        .map(({ properties }) => ({
+          setting: properties.setting,
+          actor: properties.actor,
+          state: properties.state,
+        }));
+    return { database, captured, analytics, owner, changes };
+  }
+
+  test('preferences and spending expose committed bounded states across actors, owners and consent periods', async (t) => {
+    const { createPreferencesStore } = await import('../src/server/preferences.ts');
+    const f = await fixture(t);
+    const preferences = createPreferencesStore(f.database, f.owner, f.analytics.forOwner(f.owner));
+    const privatePatch = {
+      notificationRule: 'Synthetic private notification rule',
+      rules: 'Synthetic private standing rule',
+      timeZone: 'Europe/Lisbon',
+      locale: 'pt-pt',
+      quietStart: '20:15',
+      quietEnd: '07:45',
+      quietHoursEnabled: false,
+      proactivePaused: true,
+      speechReply: 'always' as const,
+    };
+    const saved = await preferences.update(privatePatch, 'agent');
+    assert.equal(saved.locale, 'pt-PT');
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    assert.equal(f.changes().length, 9);
+    assert.ok(f.changes().every(({ actor }) => actor === 'agent'));
+    for (const privateValue of ['Synthetic private', 'Europe/Lisbon', '20:15', 'pt-PT'])
+      assert.ok(!JSON.stringify(f.captured).includes(privateValue));
+    await preferences.update(privatePatch);
+    await assert.rejects(preferences.update({ locale: 'not_a_locale' }));
+    assert.equal(f.changes().length, 9);
+    await f.database.query(
+      "ALTER TABLE preferences ADD CONSTRAINT refuse_synthetic_rule CHECK(rules <> 'rejected synthetic rule')",
+    );
+    await assert.rejects(preferences.update({ rules: 'rejected synthetic rule' }));
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    assert.equal(f.changes().length, 9);
+    await Promise.all([
+      preferences.update({ proactivePaused: false }),
+      preferences.update({ proactivePaused: false }),
+    ]);
+    assert.equal(f.changes().length, 10);
+    await Promise.all([
+      preferences.update({ proactivePaused: true }),
+      preferences.update({ proactivePaused: false }),
+    ]);
+    const paused = (await preferences.get()).proactivePaused;
+    assert.deepEqual(
+      f
+        .changes()
+        .slice(10)
+        .map(({ state }) => state),
+      paused ? ['on'] : ['on', 'off'],
+    );
+    const preferenceCount = f.changes().length;
+    const foreign = createPreferencesStore(
+      f.database,
+      'foreign-owner',
+      f.analytics.forOwner('foreign-owner'),
+    );
+    await foreign.update({ rules: 'Foreign private rule' });
+    assert.equal(f.changes().length, preferenceCount);
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    const lock = await f.database.connect();
+    await lock.query('BEGIN');
+    await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `preferences:${f.owner}`,
+    ]);
+    const late = preferences.update({ rules: 'Late synthetic private rule' });
+    f.analytics.setUsageData(f.owner, false);
+    f.analytics.setUsageData(f.owner, true);
+    await lock.query('COMMIT');
+    lock.release();
+    await late;
+    assert.equal((await preferences.get()).rules, 'Late synthetic private rule');
+    assert.equal(f.changes().length, preferenceCount);
+    const ledger = createLedger({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+    });
+    await ledger.initialize();
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 }, 'agent');
+    assert.deepEqual(f.changes().slice(-2), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'configured' },
+      { setting: 'task_spending_limit', actor: 'agent', state: 'configured' },
+    ]);
+    const count = f.changes().length;
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 });
+    await assert.rejects(ledger.setLimits({ monthlyUsd: -1 }));
+    assert.equal(f.changes().length, count);
+    await ledger.setLimits({ monthlyUsd: null, taskUsd: null });
+    assert.deepEqual(
+      f
+        .changes()
+        .slice(-2)
+        .map(({ state }) => state),
+      ['off', 'off'],
+    );
+    for (const privateValue of ['37.42', '8.53'])
+      assert.ok(!JSON.stringify(f.captured).includes(privateValue));
+    await preferences.update({ timeZone: null }, 'system');
+    assert.deepEqual(f.changes().at(-1), {
+      setting: 'time_zone',
+      actor: 'system',
+      state: 'default',
+    });
+  });
+
+  test('memory settings emit successful CAS transitions and retain the starting consent period', async (t) => {
+    const { createMemoryService } = await import('../src/server/memory.ts');
+    const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');
+    const f = await fixture(t);
+    const store = createPostgresObjectStore({ database: f.database, ownerId: f.owner });
+    await store.initialize();
+    let fail = false;
+    let hold: (() => Promise<void>) | undefined;
+    const memory = createMemoryService({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+      store: {
+        ...store,
+        async write(...args) {
+          if (fail) throw new Error('Synthetic private store failure');
+          await hold?.();
+          return store.write(...args);
+        },
+      },
+    });
+    await memory.settings({ saving: false, sensitive: true });
+    assert.deepEqual(f.changes(), [
+      { setting: 'memory_enabled', actor: 'owner', state: 'off' },
+      { setting: 'memory_sensitive', actor: 'owner', state: 'on' },
+    ]);
+    await memory.settings({ saving: false, sensitive: true });
+    assert.equal(f.changes().length, 2);
+    fail = true;
+    await assert.rejects(memory.settings({ saving: true }), /Synthetic private store failure/);
+    assert.equal(f.changes().length, 2);
+    fail = false;
+    await Promise.all([memory.control({ enabled: true }), memory.control({ enabled: true })]);
+    assert.deepEqual(f.changes().slice(2), [
+      { setting: 'memory_enabled', actor: 'agent', state: 'on' },
+    ]);
+    const entered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const release = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    hold = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const late = memory.settings({ sensitive: false });
+    await entered.promise;
+    f.analytics.setUsageData(f.owner, false);
+    f.analytics.setUsageData(f.owner, true);
+    release.resolve();
+    await late;
+    assert.equal(f.changes().length, 3);
+  });
+
+  test('account changes follow saved values and do not cross queued opt-out or failed writes', async (t) => {
+    const { createAccountStore } = await import('../src/server/account-store.ts');
+    const f = await fixture(t);
+    const accounts = createAccountStore(f.database);
+    await accounts.initialize();
+    await accounts.update(f.owner, { usageData: false });
+    const origin = 'http://localhost:4399';
+    const app = Fastify();
+    t.after(() => app.close());
+    let hold: (() => Promise<void>) | undefined;
+    let holdAll = false;
+    createAccountSession({
+      accounts: {
+        ...accounts,
+        async update(owner, input) {
+          if (holdAll || input.theme !== undefined) await hold?.();
+          return accounts.update(owner, input);
+        },
+      },
+      analytics: f.analytics,
+      origin,
+      traces: true,
+      localUser: { id: f.owner, name: 'Synthetic Owner', email: null, avatarUrl: null },
+    }).register(app);
+    await app.inject({ method: 'GET', url: '/api/session' });
+    const update = (payload: object) =>
+      app.inject({ method: 'PATCH', url: '/api/account', headers: { origin }, payload });
+    assert.equal((await update({ usageData: true })).statusCode, 200);
+    assert.deepEqual(f.changes(), [{ setting: 'usage_data', actor: 'owner', state: 'on' }]);
+    await update({ theme: 'dark', traces: true });
+    assert.deepEqual(f.changes().slice(1), [
+      { setting: 'theme', actor: 'owner', state: 'dark' },
+      { setting: 'conversation_traces', actor: 'owner', state: 'on' },
+    ]);
+    await update({ theme: 'dark', traces: true });
+    assert.equal(f.changes().length, 3);
+    await f.database.query(
+      "ALTER TABLE account_settings ADD CONSTRAINT refuse_synthetic_light CHECK(theme <> 'light')",
+    );
+    assert.equal((await update({ theme: 'light' })).statusCode, 500);
+    assert.equal(f.changes().length, 3);
+    const entered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const release = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    hold = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const theme = update({ theme: 'system' }).then((response) => response);
+    await entered.promise;
+    const off = update({ usageData: false }).then((response) => response);
+    for (let i = 0; i < 100 && f.analytics.consent(f.owner).enabled; i++)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    assert.equal(f.analytics.consent(f.owner).enabled, false);
+    const on = update({ usageData: true }).then((response) => response);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    release.resolve();
+    await Promise.all([theme, off, on]);
+    assert.equal((await accounts.read(f.owner)).theme, 'system');
+    assert.deepEqual(f.changes().slice(3), [
+      { setting: 'usage_data', actor: 'owner', state: 'on' },
+    ]);
+    await update({ usageData: false, traces: false });
+    assert.equal(f.changes().length, 4);
+    assert.equal(f.analytics.consent(f.owner).enabled, false);
+    holdAll = true;
+    for (const tail of [{ usageData: true }, { theme: 'light' }]) {
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      hold = async () => {
+        entered();
+        await blocked;
+      };
+      const count = f.changes().length;
+      const enable = update({ usageData: true }).then((response) => response);
+      await started;
+      const later = update(tail).then((response) => response);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      release();
+      assert.equal((await enable).statusCode, 200);
+      assert.equal((await later).statusCode, 'theme' in tail ? 500 : 200);
+      assert.deepEqual(f.changes().slice(count), [
+        { setting: 'usage_data', actor: 'owner', state: 'on' },
+      ]);
+      await update({ usageData: false });
+    }
+  });
 });
