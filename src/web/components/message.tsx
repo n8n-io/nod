@@ -622,7 +622,7 @@ export function MessageBubble({
                 !streaming &&
                 message.presentation &&
                 message.presentation.type !== 'apps' && (
-                  <MessagePresentation value={message.presentation} />
+                  <MessagePresentation value={message.presentation} messageId={message.id} />
                 )}
               {message.role === 'assistant' && message.attachments.length > 0 && (
                 <MessageAttachments
@@ -750,7 +750,7 @@ export function MessageBubble({
           </div>
         </div>
         {message.role === 'assistant' && !streaming && message.presentation?.type === 'apps' && (
-          <MessagePresentation value={message.presentation} />
+          <MessagePresentation value={message.presentation} messageId={message.id} />
         )}
         {quote &&
           onReply &&

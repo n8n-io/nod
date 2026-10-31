@@ -1,6 +1,15 @@
 import { PostHog } from 'posthog-node';
 import type { ProductAnalytics } from '../../ports/analytics.ts';
 import { posthogConfig } from '../../shared/analytics.ts';
+import {
+  analyticsProfileProperties,
+  analyticsProfileSchema,
+} from '../../shared/analytics-profile.ts';
+import {
+  churnLabels,
+  productSurveys,
+  productSurveyEventSchema,
+} from '../../shared/product-surveys.ts';
 
 export function createPostHogAnalytics(): ProductAnalytics {
   const clients = new Map<
@@ -55,9 +64,71 @@ export function createPostHogAnalytics(): ProductAnalytics {
         );
       }
       const { consentRevision: _revision, ...event } = input;
+      const profile =
+        input.event === 'nod_profile_updated'
+          ? analyticsProfileSchema.safeParse(
+              Object.fromEntries(
+                ['role', 'company_size', 'ai_experience', 'ai_tools']
+                  .filter((key) => input.properties[key] !== undefined)
+                  .map((key) => [key, input.properties[key]]),
+              ),
+            )
+          : undefined;
+      const properties = profile?.success ? analyticsProfileProperties(profile.data) : undefined;
+      const survey =
+        input.event === 'nod_survey_changed'
+          ? productSurveyEventSchema.safeParse(
+              Object.fromEntries(
+                ['survey', 'submission_id', 'status', 'score', 'reason']
+                  .filter((key) => input.properties[key] !== undefined)
+                  .map((key) => [key, input.properties[key]]),
+              ),
+            )
+          : undefined;
+      if (input.event === 'nod_survey_changed' && !survey?.success) return;
+      const response = survey?.success ? survey.data : undefined;
+      const definition = response ? productSurveys[response.survey] : undefined;
       binding.client.capture({
         ...event,
-        properties: { ...input.properties, $process_person_profile: false },
+        ...(response ? { event: `survey ${response.status}` } : {}),
+        properties: {
+          ...input.properties,
+          $process_person_profile: Boolean(properties || response),
+          ...(response && definition
+            ? {
+                $survey_id: definition.id,
+                $survey_iteration: 0,
+                $set:
+                  response.status === 'shown'
+                    ? { $survey_last_seen_date: new Date().toISOString() }
+                    : {
+                        [`$survey_${response.status === 'sent' ? 'responded' : 'dismissed'}/${definition.id}`]: true,
+                      },
+                ...(response.status === 'sent'
+                  ? {
+                      $survey_submission_id: response.submission_id,
+                      $survey_completed: true,
+                      $survey_questions: [
+                        { id: definition.questionId, question: definition.question },
+                      ],
+                      [`$survey_response_${definition.questionId}`]:
+                        response.survey === 'nps' ? response.score : churnLabels[response.reason],
+                    }
+                  : {}),
+              }
+            : {}),
+          ...(properties
+            ? {
+                $set: properties,
+                $unset: [
+                  'profile_role',
+                  'profile_company_size',
+                  'profile_ai_experience',
+                  'profile_ai_tools',
+                ].filter((key) => properties[key] === undefined),
+              }
+            : {}),
+        },
         sendFeatureFlags: false,
       });
     },

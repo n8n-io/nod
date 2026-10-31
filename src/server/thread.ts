@@ -12,7 +12,7 @@ import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
-import { afterRollback, transaction } from './transaction.ts';
+import { afterCommit, afterRollback, transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
@@ -39,6 +39,7 @@ import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import { analyticsModel, type AnalyticsEvent, type CaptureAnalytics } from './analytics.ts';
+import { attachmentKind } from '../shared/attachment-kind.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
@@ -303,6 +304,7 @@ export async function insertAssistantMessage(
   streamId?: string,
   replyToMessageId?: string,
   presentation?: Presentation,
+  analytics?: CaptureAnalytics,
 ) {
   const visual = presentation === undefined ? undefined : presentationSchema.parse(presentation);
   if (visual && !text.trim()) throw new Error('A complete text answer is required.');
@@ -351,6 +353,22 @@ export async function insertAssistantMessage(
       visual ? JSON.stringify(visual) : null,
     ],
   );
+  if (analytics) {
+    const kinds = new Map<NonNullable<ReturnType<typeof attachmentKind>> | 'file', number>();
+    for (const attachment of new Map(attachments.map((item) => [item.id, item])).values()) {
+      const kind = attachmentKind(attachment.mimeType, attachment.name) ?? 'file';
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    afterCommit(client, () => {
+      if (visual)
+        analytics({
+          event: 'nod_output_created',
+          properties: { presentation_kind: visual.type, count: 1 },
+        });
+      for (const [artifact_kind, count] of kinds)
+        analytics({ event: 'nod_output_created', properties: { artifact_kind, count } });
+    });
+  }
   return id;
 }
 
@@ -1199,6 +1217,36 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   };
 }
 
+async function analyticsWork(turn: any) {
+  const chain = await pool.query<{
+    source: TurnSource;
+    background: boolean;
+    session_id: string;
+    depth: number;
+  }>(
+    `WITH RECURSIVE chain AS (
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,0 AS depth,ARRAY[u.id] AS path
+      FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
+      UNION ALL
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,c.depth+1,c.path||u.id
+      FROM chain c JOIN turns u ON u.id=c.parent_turn_id AND u.owner_id=$2 AND u.thread_id=$3
+      WHERE NOT u.id=ANY(c.path)
+    ) SELECT source,background,session_id,depth FROM chain WHERE session_id=$4 ORDER BY depth`,
+    [turn.id, ownerId, turn.thread_id, turn.session_id],
+  );
+  const root = chain.rows.at(-1) ?? turn;
+  const request = chain.rows.find((row) => row.source !== 'resume');
+  return {
+    work_type: (root.source === 'schedule'
+      ? 'scheduled'
+      : root.background || root.source === 'event' || root.source === 'task'
+        ? 'background'
+        : 'immediate') as 'immediate' | 'scheduled' | 'background',
+    owner_requested:
+      turn.source === 'user' || (turn.source === 'resume' && request?.source === 'user'),
+  };
+}
+
 async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
@@ -1206,7 +1254,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const model = selectedModel?.configured
     ? analyticsModel(selectedModel.provider, selectedModel.name)
     : undefined;
+  const work = dependencies.analytics
+    ? await analyticsWork(turn).catch(() => undefined)
+    : undefined;
   const analyticsProperties = {
+    ...work,
     source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel
@@ -1221,7 +1273,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   let limited = false;
   let failure: 'model' | 'unknown' = 'unknown';
-  dependencies.analytics?.({ event: 'nod_turn_started', properties: analyticsProperties });
+  if (work)
+    dependencies.analytics?.({
+      event: 'nod_turn_started',
+      properties: { ...analyticsProperties, ...work },
+    });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
   const ref: TurnRef = { threadId, turnId, browserId: turn.session_id };
@@ -1295,6 +1351,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           streamId,
           replyToMessageId,
           presentation,
+          dependencies.analytics,
         );
       });
       if (text.trim()) replies.push({ id, text, source });
@@ -1435,7 +1492,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ...(await artifacts.storeArtifact(Buffer.from(bytes), name, mimeType, threadId, client)),
           ...(source ? { source } : {}),
         };
-        if (publish) await insertAssistantMessage(client, ref, text, [artifact]);
+        if (publish)
+          await insertAssistantMessage(
+            client,
+            ref,
+            text,
+            [artifact],
+            undefined,
+            undefined,
+            undefined,
+            dependencies.analytics,
+          );
         return artifact;
       });
       refresh();
@@ -1726,7 +1793,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
                 threadId,
                 client,
               );
-              await insertAssistantMessage(client, ref, '', [artifact], undefined, finalReply.id);
+              await insertAssistantMessage(
+                client,
+                ref,
+                '',
+                [artifact],
+                undefined,
+                finalReply.id,
+                undefined,
+                dependencies.analytics,
+              );
             });
             refresh();
           }
@@ -1761,6 +1837,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ref,
           result.message,
           shared.splice(0),
+          undefined,
+          undefined,
+          undefined,
+          dependencies.analytics,
         );
         if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
           await dependencies.bindVerificationQuestion?.(turnId, messageId, client);
@@ -1787,19 +1867,21 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
-    dependencies.analytics?.({
-      event: 'nod_turn_completed',
-      properties: {
-        ...analyticsProperties,
-        outcome,
-        duration_ms: Math.max(0, Date.now() - startedAt),
-        queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
-        ...(waitingReason ? { waiting_reason: waitingReason } : {}),
-        ...(outcome === 'failed'
-          ? { failure_reason: limited ? ('spending_limit' as const) : failure }
-          : {}),
-      },
-    });
+    if (work)
+      dependencies.analytics?.({
+        event: 'nod_turn_completed',
+        properties: {
+          ...analyticsProperties,
+          ...work,
+          outcome,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
+          ...(waitingReason ? { waiting_reason: waitingReason } : {}),
+          ...(outcome === 'failed'
+            ? { failure_reason: limited ? ('spending_limit' as const) : failure }
+            : {}),
+        },
+      });
     running.delete(turnId);
   }
 }

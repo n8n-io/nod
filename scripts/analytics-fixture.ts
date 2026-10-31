@@ -1,12 +1,23 @@
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { createServer as createViteServer } from 'vite';
+import { analyticsProfileSchema, type AnalyticsProfile } from '../src/shared/analytics-profile';
+import {
+  productSurveyEventSchema,
+  type ProductSurveyEvent,
+  type ProductSurveyOffer,
+} from '../src/shared/product-surveys';
 
-const port = 4358;
-const origin = `http://127.0.0.1:${port}`;
-const output = resolve('.local/analytics-fixture.json');
+const port = Number(process.env.NOD_ANALYTICS_FIXTURE_PORT ?? '0');
+if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid fixture port.');
+let origin = 'http://127.0.0.1';
+const output = resolve(
+  process.env.NOD_ANALYTICS_FIXTURE_OUTPUT ?? join(tmpdir(), `nod-analytics-${randomUUID()}.json`),
+);
 const events: unknown[] = [];
 const privateText = 'SYNTHETIC_PRIVATE_CANARY_89271';
 function decode(value: unknown): unknown {
@@ -17,9 +28,23 @@ function decode(value: unknown): unknown {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, decode(item)]));
   return value;
 }
+function hasGeneratedNode(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasGeneratedNode);
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  const attributes = entry.attributes;
+  if (attributes && typeof attributes === 'object' && 'class' in attributes) {
+    const classes = String(attributes.class).split(/\s+/);
+    if (classes.some((name) => ['chart-bars-plot', 'diagram-node'].includes(name))) return true;
+  }
+  return Object.values(entry).some(hasGeneratedNode);
+}
 let completed = false;
 let usageData = false;
 let traces = false;
+let analyticsProfile: AnalyticsProfile = {};
+let surveyOffer: ProductSurveyOffer | null = null;
+const surveyRequests: ProductSurveyEvent[] = [];
 let user = 'fixture-owner-one';
 const configuration = {
   provider: 'fixture',
@@ -30,14 +55,42 @@ const configuration = {
   conversationResetEnabled: false,
 };
 const messages: unknown[] = [];
+const file = {
+  id: '00000000-0000-4000-8000-000000000701',
+  name: `${privateText}.txt`,
+  mimeType: 'text/plain',
+  size: privateText.length,
+  url: '/api/artifacts/00000000-0000-4000-8000-000000000701',
+};
+const visuals = [
+  {
+    type: 'chart',
+    chart: 'bar',
+    series: [
+      { id: 'private-series', label: privateText, points: [{ label: privateText, value: 89271 }] },
+    ],
+  },
+  {
+    type: 'diagram',
+    nodes: [{ id: 'private-node', label: privateText, detail: privateText }],
+    edges: [],
+  },
+];
 const session = () => ({
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
-  settings: { theme: 'system', onboardingCompleted: completed, usageData, traces },
+  settings: {
+    theme: 'system',
+    onboardingCompleted: completed,
+    usageData,
+    traces,
+    analyticsProfile,
+  },
   capabilities: { developer: true, traces: true },
   analytics: {
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
     environment: 'development',
+    profile: analyticsProfile,
   },
 });
 const preferences = {
@@ -72,7 +125,7 @@ const models = {
   selection: { connectionId: 'fixture-model', modelId: 'fixture-model', effort: 'high' },
   local: false,
 };
-await mkdir(resolve('.local'), { recursive: true });
+await mkdir(dirname(output), { recursive: true });
 await writeFile(output, '[]\n');
 const vite = await createViteServer({
   server: { middlewareMode: true, hmr: false, ws: false },
@@ -133,12 +186,15 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === '/__fixture__/summary') {
-    const serialized = JSON.stringify(decode(events));
+    const decoded = decode(events);
+    const serialized = JSON.stringify(decoded);
     json({
       enabled: usageData,
       count: events.length,
       privateDataLeaked: serialized.includes(privateText),
-      events,
+      generatedContentLeaked: hasGeneratedNode(decoded),
+      surveyRequests,
+      ...(url.searchParams.get('compact') === '1' ? {} : { events: decoded }),
     });
     return;
   }
@@ -146,6 +202,39 @@ const server = createServer(async (request, response) => {
     user = 'fixture-owner-two';
     usageData = false;
     traces = false;
+    analyticsProfile = {};
+    surveyOffer = null;
+    json({ ok: true });
+    return;
+  }
+  if (url.pathname === '/__fixture__/prepare') {
+    completed = url.searchParams.get('onboarding') !== 'on';
+    usageData = url.searchParams.get('sharing') === 'on';
+    analyticsProfile = {};
+    const survey = url.searchParams.get('survey');
+    surveyOffer =
+      survey === 'nps' || survey === 'churn' ? { survey, submission_id: randomUUID() } : null;
+    messages.splice(
+      0,
+      messages.length,
+      ...visuals.map((visual, index) => ({
+        id: `00000000-0000-4000-8000-00000000070${index + 2}`,
+        role: 'assistant',
+        text: `Synthetic result ${privateText}`,
+        createdAt: new Date().toISOString(),
+        attachments: [],
+        reactions: [],
+        presentation: { version: 1, title: privateText, sources: [], ...visual },
+      })),
+      {
+        id: '00000000-0000-4000-8000-000000000704',
+        role: 'assistant',
+        text: `Synthetic file ${privateText}`,
+        createdAt: new Date().toISOString(),
+        attachments: [file],
+        reactions: [],
+      },
+    );
     json({ ok: true });
     return;
   }
@@ -163,10 +252,36 @@ const server = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
   if (url.pathname === '/api/session') json(session());
-  else if (url.pathname === '/api/account') {
+  else if (url.pathname === '/api/product-survey' && request.method === 'GET')
+    json({ offer: usageData ? surveyOffer : null });
+  else if (url.pathname === '/api/product-survey' && request.method === 'POST') {
+    const parsed = productSurveyEventSchema.safeParse(body);
+    const accepted =
+      parsed.success &&
+      usageData &&
+      surveyOffer?.survey === parsed.data.survey &&
+      surveyOffer.submission_id === parsed.data.submission_id;
+    if (accepted && parsed.success) {
+      surveyRequests.push(parsed.data);
+      if (parsed.data.status !== 'shown') surveyOffer = null;
+    }
+    json({ accepted });
+  } else if (url.pathname === file.url) {
+    response.setHeader('content-type', file.mimeType);
+    response.end(privateText);
+  } else if (url.pathname === '/api/account') {
     completed = body.onboardingCompleted ?? completed;
     if (typeof body.usageData === 'boolean') usageData = body.usageData;
     if (typeof body.traces === 'boolean') traces = body.traces;
+    if (body.analyticsProfile !== undefined) {
+      const parsed = analyticsProfileSchema.safeParse(body.analyticsProfile);
+      if (!parsed.success) {
+        response.statusCode = 400;
+        json({ error: 'Invalid profile.' });
+        return;
+      }
+      analyticsProfile = parsed.data;
+    }
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });
@@ -251,7 +366,11 @@ const server = createServer(async (request, response) => {
     json({ error: 'Synthetic fixture route unavailable.' });
   }
 });
-server.listen(port, '127.0.0.1', () => console.log(`Synthetic analytics fixture: ${origin}`));
+await new Promise<void>((ready) => server.listen(port, '127.0.0.1', ready));
+const address = server.address();
+if (!address || typeof address === 'string') throw new Error('Fixture listener unavailable.');
+origin = `http://127.0.0.1:${address.port}`;
+console.log(`Synthetic analytics fixture: ${origin}\nCaptured events: ${output}`);
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
   process.on(signal, () => {
     server.closeAllConnections();

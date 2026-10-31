@@ -1,6 +1,13 @@
 import type { Connection } from './contracts.ts';
 
-export const onboardingSteps = ['welcome', 'email', 'brain', 'privacy'] as const;
+export const onboardingSteps = [
+  'welcome',
+  'email',
+  'brain',
+  'privacy',
+  'profile',
+  'community',
+] as const;
 export const onboardingEmailProviders = ['gmail', 'outlook'] as const;
 export const onboardingCalendarProviders = ['googlecalendar', 'outlook'] as const;
 export const onboardingVersion = 3;

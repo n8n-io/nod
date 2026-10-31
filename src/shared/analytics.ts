@@ -1,7 +1,9 @@
+import type { AnalyticsProfile } from './analytics-profile';
+
 export const posthogConfig = {
   key: 'phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV',
   host: 'https://eu.i.posthog.com',
-  schemaVersion: 'nod_v3',
+  schemaVersion: 'nod_v4',
   docsUrl: 'https://nod-docs.pages.dev/deploy/analytics/',
 } as const;
 
@@ -10,4 +12,5 @@ export interface AnalyticsConfiguration {
   distinctId: string | null;
   environment: 'development' | 'production';
   appVersion?: string;
+  profile?: AnalyticsProfile;
 }

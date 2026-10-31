@@ -37,6 +37,8 @@ const blocked = [
   '[data-analytics-private]',
   '.ph-no-capture',
   '.message-text',
+  '.message-presentation',
+  '.answer-choices',
   '.browser-window',
   '.browser-handoff',
   '.vault-inset-value',

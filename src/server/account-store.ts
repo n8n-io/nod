@@ -11,13 +11,21 @@ export interface AccountStore {
   ): Promise<AccountSettings & { onboardingCompletedNow?: boolean }>;
 }
 
+type StoredAccount = Omit<AccountSettings, 'analyticsProfile'> & {
+  analyticsProfile: AccountSettings['analyticsProfile'] | null;
+};
+
+function accountSettings({ analyticsProfile, ...settings }: StoredAccount): AccountSettings {
+  return { ...settings, ...(analyticsProfile === null ? {} : { analyticsProfile }) };
+}
+
 export function createAccountStore(database: Pool): AccountStore & {
   initialize(): Promise<void>;
 } {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
-    const result = await connection.query<AccountSettings>(
-      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision,traces)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,true),CASE WHEN COALESCE($4,true) THEN 1 ELSE 2 END,COALESCE($5,false))
+    const result = await connection.query<StoredAccount>(
+      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision,traces,analytics_profile)
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,true),CASE WHEN COALESCE($4,true) THEN 1 ELSE 2 END,COALESCE($5,false),$6::jsonb)
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),
@@ -25,17 +33,19 @@ export function createAccountStore(database: Pool): AccountStore & {
          usage_data_revision=account_settings.usage_data_revision +
            CASE WHEN $4 IS NOT NULL AND $4 IS DISTINCT FROM account_settings.usage_data THEN 1 ELSE 0 END,
          traces=COALESCE($5,account_settings.traces),
+         analytics_profile=COALESCE($6::jsonb,account_settings.analytics_profile),
          updated_at=now()
-       RETURNING theme,onboarding_completed AS "onboardingCompleted",usage_data AS "usageData",traces`,
+       RETURNING theme,onboarding_completed AS "onboardingCompleted",usage_data AS "usageData",traces,analytics_profile AS "analyticsProfile"`,
       [
         ownerId,
         input.theme ?? null,
         input.onboardingCompleted ?? null,
         input.usageData ?? null,
         input.traces ?? null,
+        input.analyticsProfile === undefined ? null : JSON.stringify(input.analyticsProfile),
       ],
     );
-    return result.rows[0];
+    return accountSettings(result.rows[0]);
   }
   return {
     async initialize() {
@@ -47,7 +57,8 @@ export function createAccountStore(database: Pool): AccountStore & {
       );
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0;
-      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS traces boolean NOT NULL DEFAULT false`);
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS traces boolean NOT NULL DEFAULT false;
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS analytics_profile jsonb`);
     },
     async readConsent(ownerId) {
       const result = await database.query<{ enabled: boolean; revision: string }>(
@@ -58,13 +69,13 @@ export function createAccountStore(database: Pool): AccountStore & {
       return result.rows[0] ?? { enabled: true, revision: '1' };
     },
     async read(ownerId) {
-      const result = await database.query<AccountSettings>(
-        `SELECT theme, onboarding_completed AS "onboardingCompleted", usage_data AS "usageData",traces
+      const result = await database.query<StoredAccount>(
+        `SELECT theme, onboarding_completed AS "onboardingCompleted", usage_data AS "usageData",traces,analytics_profile AS "analyticsProfile"
          FROM account_settings WHERE owner_id=$1`,
         [ownerId],
       );
       return (
-        result.rows[0] ?? {
+        (result.rows[0] && accountSettings(result.rows[0])) ?? {
           theme: 'system',
           onboardingCompleted: false,
           usageData: true,

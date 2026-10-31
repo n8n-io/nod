@@ -6,6 +6,7 @@ import { ConnectApps } from './presentation-apps';
 import { Booking } from './presentation-booking';
 import { PresentationChart } from './presentation-chart';
 import { Flights, Seats } from './presentation-travel';
+import { useAnalyticsView } from '../hooks/use-analytics-view';
 
 type Visual<T extends Presentation['type']> = Extract<Presentation, { type: T }>;
 
@@ -18,9 +19,15 @@ function SourceLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-export function MessagePresentation({ value }: { value: unknown }) {
+export function MessagePresentation({ value, messageId }: { value: unknown; messageId?: string }) {
   const parsed = presentationSchema.safeParse(value);
   const titleId = useId();
+  const root = useAnalyticsView<HTMLElement, 'nod_presentation_viewed'>(
+    'nod_presentation_viewed',
+    { kind: parsed.success ? parsed.data.type : 'image' },
+    messageId ?? titleId,
+    parsed.success,
+  );
   if (!parsed.success)
     return (
       <p className="presentation-unavailable" role="status">
@@ -28,9 +35,11 @@ export function MessagePresentation({ value }: { value: unknown }) {
       </p>
     );
   const visual = parsed.data;
-  if (visual.type === 'apps') return <ConnectApps visual={visual} />;
+  if (visual.type === 'apps') return <ConnectApps visual={visual} analyticsRef={root} />;
   return (
     <section
+      ref={root}
+      data-analytics-private
       className={`message-presentation presentation-${visual.type}`}
       aria-labelledby={titleId}
     >

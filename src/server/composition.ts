@@ -26,7 +26,7 @@ import {
   type CaptureAnalytics,
 } from './analytics.ts';
 import { clearConversationAnalytics } from './conversation-analytics.ts';
-import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
+import { captureConnectionInventory } from './analytics-connections.ts';
 import {
   BrowserActionError,
   type BrowserAction,
@@ -132,6 +132,7 @@ import { createChannelMedia } from './channel-media.ts';
 import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
+import { createProductSurveys } from './product-surveys.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
@@ -648,7 +649,6 @@ async function initializeApplication(
       void observeConnections?.('models');
   };
   const analyticsConsent = () => analytics.consent(ownerId);
-  const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const closing = new AbortController();
@@ -729,7 +729,6 @@ async function initializeApplication(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
   );
-  const fetches = new Map<string, string[]>();
   const analyzeImages =
     adapters.imageCurator && createImageAnalysis(ledger.curator(adapters.imageCurator));
   const runtime = createAgentRuntime({
@@ -747,7 +746,6 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
-    pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
     keepWarm: async (threadId) =>
       !(await ledger.limitReached()) && (await activeThread(pool, ownerId)).id === threadId,
     observe: (turnId, event) => {
@@ -771,28 +769,7 @@ async function initializeApplication(
           callId: id,
         },
       );
-      if (event.type === 'tool_end') {
-        captureAnalytics(toolUsed(event));
-        const fetched = fetches.get(event.id);
-        fetches.delete(event.id);
-        if (fetched && event.status === 'succeeded')
-          for (const address of fetched)
-            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
-      }
-      if (
-        event.type === 'tool_start' &&
-        ['fetch_content', 'get_search_content'].includes(event.name) &&
-        event.input &&
-        typeof event.input === 'object'
-      ) {
-        const { url, urls } = event.input as { url?: unknown; urls?: unknown };
-        fetches.set(
-          event.id,
-          [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])].filter(
-            (address): address is string => typeof address === 'string',
-          ),
-        );
-      }
+      if (event.type === 'tool_end') captureAnalytics(toolUsed(event));
       adapters.observe?.(turnId, event);
     },
   });
@@ -949,7 +926,11 @@ async function initializeApplication(
     readWorkspaceFile: (turn, path, maxBytes) =>
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
-    writingStyle,
+    writingStyle: {
+      ...writingStyle,
+      learn: (...args) =>
+        analytics.withSystemWork(ownerId, 'writing_style', () => writingStyle.learn(...args)),
+    },
     wake: triage.recordEvent,
     settle: () => proactivity.due(),
     lockActivity: (client) => lockProactivity(client, ownerId),
@@ -1151,7 +1132,6 @@ async function initializeApplication(
                       mailCheck,
                     );
                   })());
-      analytics.actionExecuted(ownerId, action);
       return result;
     },
     async (action, args, expectedRevision, client) => {
@@ -1186,6 +1166,8 @@ async function initializeApplication(
       .filter(connectedGmail)
       .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
+  const productSurveys = createProductSurveys(pool);
+  await productSurveys.initialize();
   const appReads = {
     accounts: async (client?: import('pg').PoolClient) => {
       const connected = (await integrations.list(ownerId, { refresh: false, client })).filter(
@@ -1256,6 +1238,7 @@ async function initializeApplication(
   };
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
+    observe: (run) => analytics.withSystemWork(ownerId, 'onboarding', run),
     curator: onboardingCurator,
     timeZone: async () => (await getPreferences()).timeZone,
     mailCheck,
@@ -1282,6 +1265,7 @@ async function initializeApplication(
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
+  analytics.setProfile(ownerId, (await localAccounts.read(ownerId)).analyticsProfile ?? {});
   const ownerProfile = async () => {
     const [connections, preferences] = await Promise.all([
       integrations.list(ownerId, { refresh: false }),
@@ -1407,7 +1391,7 @@ async function initializeApplication(
       createTaskObservations(pool, ownerId, createRedactor(secrets)),
       ...(adapters.observations ?? []),
     ],
-    { secrets, check: mailCheck },
+    { secrets, check: mailCheck, analytics: captureAnalytics },
   );
   proactivity = createProactivity({
     pool,
@@ -1480,7 +1464,11 @@ async function initializeApplication(
   };
   if (options.workers !== false) {
     if (options.heartbeat !== false) await triage.initializeHeartbeat();
-    await initializeMemoryLearning({ boss, consumers, run: learning.run });
+    await initializeMemoryLearning({
+      boss,
+      consumers,
+      run: () => analytics.withSystemWork(ownerId, 'memory_learning', learning.run),
+    });
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
@@ -1846,7 +1834,6 @@ async function initializeApplication(
         if (action === 'SEARCH_TOOLS') {
           await options.admit?.(false);
           const result = await integrations.execute(ownerId, action, args, turn, options.signal);
-          analytics.actionExecuted(ownerId, action);
           return result;
         }
         const verdict = await trust.check(turn, action, args);
@@ -1878,7 +1865,6 @@ async function initializeApplication(
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
             );
-            analytics.actionExecuted(ownerId, action);
             return result;
           },
           details: {
@@ -1971,6 +1957,7 @@ async function initializeApplication(
     analytics,
     model: () => adapters.model,
     accounts: localAccounts,
+    surveys: productSurveys,
     origin: publicOrigin,
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),

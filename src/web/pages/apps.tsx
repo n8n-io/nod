@@ -20,7 +20,11 @@ import {
   removeConnection,
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
-import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
+import {
+  analyticsForCurrentSession,
+  appConnectionAnalytics,
+  captureAnalytics,
+} from '../lib/analytics';
 import { Button, Checkbox, Loading, Notice, SearchField } from '../components/ui';
 
 function accountLabel(account: Connection) {
@@ -216,6 +220,7 @@ export function Apps({
       connection: Connection;
       entry: 'apps' | 'manage';
       addAccount: boolean;
+      report(): void;
     }
   >();
   const [manageService, setManageService] = useState<string | null>(null);
@@ -320,6 +325,7 @@ export function Apps({
     const settle = (outcome: NonNullable<AppSignIn['outcome']>) => {
       if (controller.signal.aborted) return;
       controller.abort();
+      if (outcome === 'connected') signIn.report();
       actionRequest.current?.abort();
       actionRequest.current = null;
       setBusy('');
@@ -437,6 +443,7 @@ export function Apps({
   ) {
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
+    const completion = appConnectionAnalytics(entry);
     capture('nod_app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
@@ -470,6 +477,7 @@ export function Apps({
       entry,
       addAccount,
       opened: false,
+      report: completion.complete,
     };
     setSignIn(context);
     try {
@@ -504,6 +512,7 @@ export function Apps({
         )
           throw new Error('The app sign-in could not be opened. Try again.');
         popup?.close();
+        completion.transfer(proposal.searchParams.get('connect')!);
         window.history.pushState(null, '', `${proposal.pathname}${proposal.search}`);
         setManageService(null);
         setSignIn(undefined);

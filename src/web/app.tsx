@@ -20,6 +20,7 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
+import { ProductSurveyPrompt } from './components/product-survey';
 import { createFeedbackCapture } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
 import { appPagePath, preparedWorkId } from '../shared/app-links';
@@ -209,6 +210,11 @@ function Workspace({
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
             <div className="chat-route" hidden={path !== '/'}>
+              <ProductSurveyPrompt
+                ownerId={session.user!.id}
+                enabled={Boolean(session.analytics?.enabled)}
+                visible={path === '/'}
+              />
               {state ? (
                 <Chat
                   ownerId={session.user!.id}
@@ -526,6 +532,8 @@ function AuthenticatedApp({
           user={session.user!}
           onFeedback={openFeedback}
           usageShared={Boolean(session.analytics?.enabled)}
+          profile={session.settings?.analyticsProfile}
+          onProfile={(analyticsProfile) => onAccountUpdate({ analyticsProfile })}
           traces={account.traces}
           onTraces={account.onTraces}
           onComplete={async () => {

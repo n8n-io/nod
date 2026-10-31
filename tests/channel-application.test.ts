@@ -430,6 +430,100 @@ test('analytics drops revoked owner queues while preserving another owner and re
   );
 });
 
+test('analytics sends bounded person profiles and native survey response contracts through PostHog', async (t) => {
+  const { productSurveys, churnLabels } = await import('../src/shared/product-surveys.ts');
+  const received: Array<{ event: string; properties: Record<string, any> }> = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
+    const raw =
+      typeof options.body === 'string'
+        ? options.body
+        : gunzipSync(options.body as Uint8Array).toString();
+    received.push(...JSON.parse(raw).batch);
+    return Response.json({ status: 1 });
+  });
+  const analytics = await createAnalytics({
+    provider: createPostHogAnalytics(),
+    environment: 'development',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  t.after(() => analytics.shutdown());
+  const owner = 'synthetic-survey-owner';
+  analytics.setUsageData(owner, true);
+  const profile = { role: 'employee', ai_tools: ['claude', 'n8n'] } as const;
+  analytics.setProfile(owner, { ...profile, ai_tools: [...profile.ai_tools] });
+  analytics.capture(owner, {
+    event: 'nod_profile_updated',
+    properties: { ...profile, ai_tools: [...profile.ai_tools] },
+  });
+  const nps = randomUUID();
+  const churn = randomUUID();
+  analytics.capture(owner, {
+    event: 'nod_survey_changed',
+    properties: { survey: 'nps', submission_id: nps, status: 'shown' },
+  });
+  analytics.capture(owner, {
+    event: 'nod_survey_changed',
+    properties: { survey: 'nps', submission_id: nps, status: 'sent', score: 8 },
+  });
+  analytics.capture(owner, {
+    event: 'nod_survey_changed',
+    properties: { survey: 'churn', submission_id: churn, status: 'sent', reason: 'setup' },
+  });
+  analytics.capture(owner, { event: 'nod_chat_stopped' });
+  analytics.setProfile(owner, {});
+  analytics.capture(owner, { event: 'nod_profile_updated', properties: {} });
+  analytics.capture(owner, {
+    event: 'nod_profile_updated',
+    properties: { role: 'private-company-name' },
+  } as never);
+  analytics.capture(owner, {
+    event: 'nod_survey_changed',
+    properties: {
+      survey: 'churn',
+      submission_id: churn,
+      status: 'sent',
+      reason: 'private free text',
+    },
+  } as never);
+  await analytics.shutdown();
+  assert.equal(received.length, 6);
+  const profiles = received.filter((event) => event.event === 'nod_profile_updated');
+  assert.deepEqual(profiles[0]!.properties.$set, {
+    profile_role: 'employee',
+    profile_ai_tools: ['claude', 'n8n'],
+  });
+  assert.deepEqual(profiles[0]!.properties.$unset, [
+    'profile_company_size',
+    'profile_ai_experience',
+  ]);
+  assert.equal(profiles[0]!.properties.$process_person_profile, true);
+  assert.deepEqual(profiles[1]!.properties.$set, {});
+  assert.equal(profiles[1]!.properties.$unset.length, 4);
+  const shown = received.find((event) => event.event === 'survey shown')!;
+  assert.equal(shown.properties.$survey_id, productSurveys.nps.id);
+  assert.ok(shown.properties.$set.$survey_last_seen_date);
+  const sent = received.filter((event) => event.event === 'survey sent');
+  assert.equal(sent.length, 2);
+  for (const [event, survey, submission, answer] of [
+    [sent[0]!, 'nps', nps, 8],
+    [sent[1]!, 'churn', churn, churnLabels.setup],
+  ] as const) {
+    const definition = productSurveys[survey];
+    assert.equal(event.properties.$survey_id, definition.id);
+    assert.equal(event.properties.$survey_submission_id, submission);
+    assert.equal(event.properties.$survey_completed, true);
+    assert.equal(event.properties[`$survey_response_${definition.questionId}`], answer);
+    assert.equal(event.properties.$survey_questions[0].id, definition.questionId);
+    assert.equal(event.properties.$set[`$survey_responded/${definition.id}`], true);
+  }
+  const ordinary = received.find((event) => event.event === 'nod_chat_stopped')!;
+  assert.equal(ordinary.properties.$process_person_profile, false);
+  assert.equal(ordinary.properties.$set, undefined);
+  for (const value of ['private-company-name', 'private free text', owner])
+    assert.equal(JSON.stringify(received).includes(value), false);
+});
+
 test(
   'saved voice changes reach the next explicit and automatic audio delivery',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },

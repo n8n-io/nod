@@ -1,5 +1,6 @@
 import type { Preferences } from './contracts';
 import type { AnalyticsConfiguration } from './analytics';
+import type { AnalyticsProfile } from './analytics-profile';
 
 export type AccountTheme = 'system' | 'light' | 'dark';
 
@@ -15,6 +16,7 @@ export interface AccountSettings {
   onboardingCompleted: boolean;
   usageData: boolean;
   traces: boolean;
+  analyticsProfile?: AnalyticsProfile;
 }
 
 export interface SessionResponse {
@@ -29,6 +31,7 @@ export interface AccountUpdate {
   onboardingCompleted?: boolean;
   usageData?: boolean;
   traces?: boolean;
+  analyticsProfile?: AnalyticsProfile;
 }
 
 export interface AccountPreparationResponse {

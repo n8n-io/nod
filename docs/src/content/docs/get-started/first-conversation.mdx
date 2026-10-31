@@ -20,7 +20,9 @@ flowchart TD
   start[Welcome] --> email[Email or skip]:::muted
   email --> model[Connect a model<br/>if needed]:::accent
   model --> privacy[Conversation<br/>traces]:::muted
-  privacy --> chat([Why Nod and<br/>first ideas in chat]):::go
+  privacy --> profile[Optional audience<br/>questions]:::muted
+  profile --> community[Community or skip]:::muted
+  community --> chat([Why Nod and<br/>first ideas in chat]):::go
 ```
 
 ## Go through onboarding
@@ -39,9 +41,13 @@ flowchart TD
 
 4. **Help improve Nod.** Nod explains conversation traces and asks whether you'll share them. Select **Share traces** or **Not now**; either one saves your choice and continues. Traces stay off unless you choose to share them. Nod also says that it shares basic usage data, which is on by default. You can change both later in **Settings → General**. Traces appear only where they're available; see [Conversation traces](/trust/conversation-traces/).
 
+5. **Tell us a little about yourself (optional).** Choose your role, company size, experience with AI, and the AI tools you use. You can leave questions blank or select **Not now**. Answers are shared with usage analytics only while usage sharing is on; otherwise they stay on this installation.
+
+6. **Join the community (optional).** **Join the discussion** opens the [n8n Labs community](https://community.n8n.io/c/n8n-labs/48). Continue to finish setup without joining or signing up for email.
+
 </Steps>
 
-Setup finishes after the privacy step in the web app or a desktop client connected to a server. For a local assistant, Nod also turns on **Open at login** so it's ready when you sign in to your computer. You can turn it off in **Settings → General**. If its computer is still preparing, Nod shows a loading screen and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
+Setup finishes after the community step in the web app or a desktop client connected to a server. For a local assistant, Nod also turns on **Open at login** so it's ready when you sign in to your computer. You can turn it off in **Settings → General**. If its computer is still preparing, Nod shows a loading screen and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 

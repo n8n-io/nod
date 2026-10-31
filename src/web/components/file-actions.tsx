@@ -8,6 +8,8 @@ import { copyImage, selectedText } from '../lib/clipboard';
 import { desktopFileAction, desktopFilesAvailable, nativeFileMenu } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
 import { Button } from './ui';
+import { analyticsForCurrentSession } from '../lib/analytics';
+import { attachmentKind } from '../lib/attachment-kind';
 
 export function reuseFile(item: ImagePreview) {
   const artifact = artifactFromPreview(item);
@@ -35,8 +37,15 @@ export function prepareFile(item: ImagePreview) {
     void desktopFileAction(artifact.id, 'prepare').catch(() => {});
 }
 
-export function FileActions({ item }: { item: ImagePreview }) {
+export function FileActions({
+  item,
+  location = 'message',
+}: {
+  item: ImagePreview;
+  location?: 'message' | 'drawer';
+}) {
   const artifact = artifactFromPreview(item);
+  const kind = attachmentKind(item.mimeType ?? '', item.name) ?? 'file';
   const actions = useRef<HTMLSpanElement>(null);
   const activeId = useRef(item.id);
   activeId.current = item.id;
@@ -112,7 +121,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  async function run(action: string) {
+  async function run(action: string, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
       reuseFile(item);
       return;
@@ -122,9 +131,12 @@ export function FileActions({ item }: { item: ImagePreview }) {
     try {
       if (action === 'copy') {
         await copyImage(artifact.url);
+        capture('nod_artifact_action', { kind, location, action: 'copy' });
         if (activeId.current === id) setNotice('Image copied');
       } else {
         await desktopFileAction(artifact.id, action as 'save' | 'open' | 'show' | 'prepare');
+        if (action === 'save')
+          capture('nod_artifact_action', { kind, location, action: 'download' });
         if (activeId.current === id) setNotice(action === 'save' ? 'Saved to Downloads' : '');
       }
     } catch (cause) {
@@ -134,9 +146,10 @@ export function FileActions({ item }: { item: ImagePreview }) {
     }
   }
   async function menu() {
+    const capture = analyticsForCurrentSession();
     try {
       const action = await nativeFileMenu(artifact.id, image);
-      if (action) await run(action);
+      if (action) await run(action, capture);
     } catch (cause) {
       setNotice(errorMessage(cause));
     }

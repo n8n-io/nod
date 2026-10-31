@@ -399,6 +399,7 @@ test(
     };
 
     const runs: RuntimeContext[] = [];
+    const analyticsRuns = new Map<string, string>();
     let inspectAudioContext: ((context: RuntimeContext) => Promise<void>) | undefined;
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<
@@ -432,7 +433,11 @@ test(
         configured: true,
       }),
       present: (...input) => presentInterruption(...input),
-      observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
+      observeTurn: (turnId, operation) =>
+        analytics.withRun(ownerId, () => {
+          analyticsRuns.set(turnId, analytics.currentRun(ownerId)!.id);
+          return operation();
+        }),
       executeConfirmation: async () => undefined,
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
@@ -837,14 +842,58 @@ test(
               ])
             ).rows[0].count;
           try {
-            await thread.reply(
-              ref,
-              'The aisle separates the two columns.',
-              [image],
-              undefined,
-              undefined,
-              { ...visual, artifactId: image.id.toUpperCase() },
+            const before = analyticsEvents.length;
+            await assert.rejects(
+              thread.withTurnLock(turnId, async (client) => {
+                await thread.insertAssistantMessage(
+                  client,
+                  ref,
+                  'Rolled back visual.',
+                  [image],
+                  undefined,
+                  undefined,
+                  visual,
+                  captureAnalytics,
+                );
+                assert.equal(analyticsEvents.length, before);
+                throw new Error('Synthetic rollback');
+              }),
+              /Synthetic rollback/,
             );
+            assert.equal(analyticsEvents.length, before);
+            assert.equal(await count(), 0);
+            await thread.withTurnLock(turnId, (client) =>
+              thread.insertAssistantMessage(
+                client,
+                ref,
+                'The aisle separates the two columns.',
+                [image],
+                undefined,
+                undefined,
+                { ...visual, artifactId: image.id.toUpperCase() },
+                captureAnalytics,
+              ),
+            );
+            const outputs = analyticsEvents.slice(before).map(({ event, properties }) => ({
+              event,
+              presentation_kind: properties.presentation_kind,
+              artifact_kind: properties.artifact_kind,
+              count: properties.count,
+            }));
+            assert.deepEqual(outputs, [
+              {
+                event: 'nod_output_created',
+                presentation_kind: 'image',
+                artifact_kind: undefined,
+                count: 1,
+              },
+              {
+                event: 'nod_output_created',
+                presentation_kind: undefined,
+                artifact_kind: 'image',
+                count: 1,
+              },
+            ]);
             const saved = (await db.pool.query('SELECT * FROM messages WHERE turn_id=$1', [turnId]))
               .rows[0];
             assert.deepEqual(saved.presentation, visual);
@@ -1440,10 +1489,108 @@ test(
       });
 
       await t.test(
+        'analytics separate automatic work from owner requests across resumed sessions',
+        async () => {
+          const completed = async (
+            id: string,
+            work_type: string,
+            owner_requested: boolean,
+            outcome = 'succeeded',
+          ) => {
+            await waitFor(settled(id));
+            await waitFor(() =>
+              analyticsEvents.some(
+                (event) =>
+                  event.event === 'nod_turn_completed' &&
+                  event.properties.run_id === analyticsRuns.get(id),
+              ),
+            );
+            const events = analyticsEvents.filter(
+              (event) => event.properties.run_id === analyticsRuns.get(id),
+            );
+            const starts = events.filter((event) => event.event === 'nod_turn_started');
+            const ends = events.filter((event) => event.event === 'nod_turn_completed');
+            assert.equal(starts.length, 1);
+            assert.equal(ends.length, 1);
+            for (const event of [...starts, ...ends]) {
+              assert.equal(event.properties.work_type, work_type);
+              assert.equal(event.properties.owner_requested, owner_requested);
+              assert.notEqual(event.properties.run_id, id);
+              assert.equal(JSON.stringify(event).includes(id), false);
+            }
+            assert.equal(ends[0]!.properties.outcome, outcome);
+            assert.ok(Number(ends[0]!.properties.duration_ms) >= 0);
+          };
+          const requested = await thread.submitUserMessage('Synthetic analytics request');
+          await completed(requested.turnId, 'immediate', true);
+          const schedule = await thread.enqueueTurn('Synthetic analytics schedule', {
+            source: 'schedule',
+          });
+          await completed(schedule, 'scheduled', false);
+          const resumed = await thread.enqueueTurn('Synthetic analytics continuation', {
+            source: 'resume',
+            sessionId: schedule,
+            parentTurnId: schedule,
+            background: true,
+          });
+          await completed(resumed, 'scheduled', false);
+          const task = await thread.enqueueTurn('Synthetic analytics delegated task', {
+            source: 'task',
+            parentTurnId: schedule,
+          });
+          await completed(task, 'background', false);
+          const question = await thread.enqueueTurn('ask-question', { source: 'schedule' });
+          await completed(question, 'scheduled', false, 'waiting_user');
+          const message = (
+            await db.pool.query(
+              "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",
+              [question],
+            )
+          ).rows[0];
+          const answer = await thread.submitUserMessage('Synthetic analytics answer', [], {
+            replyToMessageId: message.id,
+          });
+          await completed(answer.turnId, 'scheduled', true);
+          const ownerResume = await thread.enqueueTurn('Synthetic analytics answer continuation', {
+            source: 'resume',
+            sessionId: question,
+            parentTurnId: answer.turnId,
+            background: true,
+          });
+          await completed(ownerResume, 'scheduled', true);
+          assert.equal(
+            new Set(
+              [requested.turnId, schedule, resumed, task, question, answer.turnId, ownerResume].map(
+                (id) => analyticsRuns.get(id),
+              ),
+            ).size,
+            7,
+          );
+        },
+      );
+
+      await t.test(
         'visual facts reach owned reply and rebuilt history context without changing stored text',
         async () => {
           const source = await thread.submitUserMessage('presentation-source-fixture');
           await waitFor(settled(source.turnId));
+          await waitFor(() =>
+            analyticsEvents.some(
+              (event) =>
+                event.event === 'nod_output_created' &&
+                event.properties.run_id === analyticsRuns.get(source.turnId),
+            ),
+          );
+          const outputs = analyticsEvents.filter(
+            (event) =>
+              event.event === 'nod_output_created' &&
+              event.properties.run_id === analyticsRuns.get(source.turnId),
+          );
+          assert.equal(outputs.length, 1);
+          assert.equal(outputs[0]!.properties.presentation_kind, 'diagram');
+          assert.equal(outputs[0]!.properties.count, 1);
+          assert.equal(outputs[0]!.properties.owner_requested, true);
+          assert.equal(outputs[0]!.properties.work_type, 'immediate');
           const shown = (
             await db.pool.query(
               "SELECT id,text FROM messages WHERE turn_id=$1 AND role='assistant'",

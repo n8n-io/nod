@@ -530,8 +530,9 @@ describe('account routes', () => {
 });
 
 describe('analytics privacy', () => {
-  test('visited websites and secure entries send only the registrable domain of an address', async () => {
-    const { createWebsiteVisits } = await import('../src/server/analytics-connections.ts');
+  test('secure entries and custom connections omit website and purchase details', async () => {
+    const { captureConnection, withServiceAnalytics } =
+      await import('../src/server/analytics-connections.ts');
     const { captureSecureEntry } = await import('../src/server/vault-use.ts');
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -549,13 +550,6 @@ describe('analytics privacy', () => {
       'http://localhost:4310/vault',
       'https://printer.local/status',
     ];
-    analytics.withRun('owner-fixture', () => {
-      const visited = createWebsiteVisits(analytics, 'owner-fixture');
-      for (const address of addresses) {
-        visited(address, 'browser', false);
-        visited(address, 'fetch', true);
-      }
-    });
     for (const origin of addresses) {
       captureSecureEntry(capture, { kind: 'password', origin }, 'requested');
       captureSecureEntry(
@@ -564,45 +558,175 @@ describe('analytics privacy', () => {
         'submitted',
       );
       captureSecureEntry(capture, { kind: 'otp', origin }, 'requested');
+      const connection = {
+        app: 'private_customer',
+        endpoint: origin,
+        connection_method: 'mcp' as const,
+      };
+      captureConnection(capture, connection, 'connected');
+      await withServiceAnalytics(capture, connection, async () => ({ private: origin }));
     }
-    const sent = captured.map(({ event, properties }) => {
-      const { analytics_schema, deployment, environment, capture_source, run_id, ...rest } =
-        properties;
-      return { event, ...rest };
-    });
-    assert.deepEqual(
-      sent.filter(({ event }) => event === 'nod_website_visited'),
-      [{ event: 'nod_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
-    );
-    const entries = sent.filter(({ event }) => event === 'nod_secure_entry_changed');
+    const entries = captured.filter(({ event }) => event === 'nod_secure_entry_changed');
     assert.equal(entries.length, 15);
     assert.deepEqual(
-      new Set(entries.map((entry) => JSON.stringify(entry))),
+      new Set(entries.map(({ properties: { kind, status } }) => JSON.stringify({ kind, status }))),
       new Set(
         [
-          { kind: 'sign_in', status: 'requested', domain: 'example.co.uk' },
           { kind: 'sign_in', status: 'requested' },
-          {
-            kind: 'payment',
-            status: 'submitted',
-            domain: 'example.co.uk',
-            currency: 'EUR',
-            amount: 1234.568,
-          },
-          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.568 },
+          { kind: 'payment', status: 'submitted' },
           { kind: 'code', status: 'requested' },
-        ].map((properties) => JSON.stringify({ event: 'nod_secure_entry_changed', ...properties })),
+        ].map((entry) => JSON.stringify(entry)),
+      ),
+    );
+    const connections = captured.filter(({ event }) => event === 'nod_connection_changed');
+    assert.equal(connections.length, addresses.length);
+    assert.ok(connections.every(({ properties }) => properties.app === 'custom'));
+    const services = captured.filter(({ event }) => event === 'nod_service_used');
+    assert.equal(services.length, addresses.length);
+    assert.ok(
+      services.every(
+        ({ properties }) =>
+          properties.outcome === 'succeeded' && Number(properties.duration_ms) >= 0,
       ),
     );
     for (const value of [
-      'checkout',
-      'shop.',
-      'private-person',
-      'person%40',
-      '192.168',
-      'localhost',
+      ...addresses,
+      'example.co.uk',
+      'private_customer',
+      '1234',
+      'EUR',
+      'domain',
+      'endpoint',
     ])
       assert.ok(!JSON.stringify(captured).includes(value), value);
+    const count = captured.length;
+    for (const event of [
+      {
+        event: 'nod_website_visited',
+        properties: { domain: 'example.com', via: 'browser', subagent: false },
+      },
+      {
+        event: 'nod_secure_entry_changed',
+        properties: { kind: 'payment', status: 'submitted', amount: 42 },
+      },
+      {
+        event: 'nod_connection_changed',
+        properties: {
+          app: 'custom',
+          connection_method: 'mcp',
+          status: 'connected',
+          domain: 'example.com',
+        },
+      },
+      { event: 'nod_vault_imported', properties: { count: 1, domains: ['example.com'] } },
+    ])
+      capture(event as never);
+    assert.equal(captured.length, count);
+    analytics.setUsageData('owner-fixture', false);
+    captureSecureEntry(capture, { kind: 'password', origin: addresses[0]! }, 'requested');
+    captureConnection(
+      capture,
+      { connection_method: 'managed_app', app: 'gmail', publicApp: true },
+      'connected',
+    );
+    assert.equal(captured.length, count);
+  });
+
+  test('system work attributes model and service costs without creating owner run activity', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const owner = 'system-work-owner';
+    analytics.setUsageData(owner, true);
+    analytics.setUsageData('foreign-system-owner', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: owner,
+      analytics: analytics.forOwner(owner),
+    });
+    const curator = ledger.curator({
+      id: 'fixture',
+      configured: true,
+      async curate(_request, _signal, report) {
+        await Promise.resolve();
+        report?.({
+          id: randomUUID(),
+          provider: 'openai',
+          model: 'fixture-small',
+          costUsd: 0.02,
+          inputTokens: 10,
+          outputTokens: 2,
+          durationMs: 8,
+        });
+        return {};
+      },
+    });
+    const model = () =>
+      curator.curate({ task: 'reflect', instructions: 'Synthetic task', input: {} });
+    await Promise.all(
+      (['memory_learning', 'onboarding', 'writing_style'] as const).map((activity) =>
+        analytics.withSystemWork(owner, activity, async () => {
+          await model();
+          analytics.capture(owner, {
+            event: 'nod_service_used',
+            properties: {
+              app: 'gmail',
+              connection_method: 'managed_app',
+              outcome: 'succeeded',
+              duration_ms: 4,
+            },
+          });
+        }),
+      ),
+    );
+    for (const activity of ['memory_learning', 'onboarding', 'writing_style']) {
+      const events = captured.filter((event) => event.properties.system_activity === activity);
+      assert.deepEqual(events.map((event) => event.event).sort(), [
+        'nod_model_used',
+        'nod_service_used',
+      ]);
+      assert.ok(
+        events.every(
+          (event) =>
+            event.properties.work_type === 'background' &&
+            event.properties.owner_requested === false &&
+            event.properties.run_id === undefined,
+        ),
+      );
+    }
+    await model();
+    assert.equal(captured.at(-1)!.properties.work_type, 'unclassified');
+    await analytics.withRun(owner, async () => {
+      analytics.capture(owner, {
+        event: 'nod_turn_started',
+        properties: {
+          source: 'user',
+          channel: 'web',
+          background: false,
+          work_type: 'immediate',
+          owner_requested: true,
+        },
+      });
+      await analytics.withSystemWork(owner, 'memory_learning', model);
+    });
+    assert.equal(captured.at(-1)!.properties.work_type, 'immediate');
+    assert.equal(captured.at(-1)!.properties.owner_requested, true);
+    assert.equal(captured.at(-1)!.properties.system_activity, undefined);
+    assert.ok(captured.at(-1)!.properties.run_id);
+    const before = captured.length;
+    await analytics.withSystemWork(owner, 'onboarding', async () => {
+      analytics.capture('foreign-system-owner', { event: 'nod_chat_stopped' });
+      analytics.setUsageData(owner, false);
+      analytics.setUsageData(owner, true);
+      await model();
+    });
+    assert.equal(captured.length, before);
+    assert.equal(captured.filter((event) => event.event === 'nod_turn_started').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'nod_turn_completed').length, 0);
   });
 
   test('agent model usage analytics carry the request duration and cached input', async (t) => {
@@ -653,8 +777,24 @@ describe('analytics privacy', () => {
       dispose() {},
     });
     const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
-    await opened.prompt('Synthetic', []);
+    await analytics.withRun('owner-fixture', async () => {
+      analytics.capture('owner-fixture', {
+        event: 'nod_turn_started',
+        properties: {
+          source: 'event',
+          channel: 'web',
+          background: true,
+          work_type: 'background',
+          owner_requested: false,
+        },
+      });
+      await opened.prompt('Synthetic', []);
+    });
     const used = captured.find((event) => event.event === 'nod_model_used')!;
+    const started = captured.find((event) => event.event === 'nod_turn_started')!;
+    assert.equal(used.properties.run_id, started.properties.run_id);
+    assert.equal(used.properties.work_type, 'background');
+    assert.equal(used.properties.owner_requested, false);
     assert.equal(used.properties.input_tokens, 2020);
     assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
@@ -3537,4 +3677,315 @@ test('feedback capture runs once for a fresh owned draft and skips restored or p
   });
   assert.equal(await createFeedbackCapture('web-owner').capture(), null);
   assert.equal(captures, 4);
+});
+
+describe('analytics profiles and product surveys', { skip: !process.env.TEST_DATABASE_URL }, () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const { createAccountStore } = await import('../src/server/account-store.ts');
+    const { createProductSurveys } = await import('../src/server/product-surveys.ts');
+    const schema = `test_analytics_${randomUUID().replaceAll('-', '')}`;
+    const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await root.query(`CREATE SCHEMA ${schema}`);
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 6,
+    });
+    const accounts = createAccountStore(database);
+    const surveys = createProductSurveys(database);
+    await accounts.initialize();
+    await database.query(
+      'CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,status text NOT NULL,parent_turn_id uuid,created_at timestamptz NOT NULL,started_at timestamptz,finished_at timestamptz)',
+    );
+    await surveys.initialize();
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const apps: ReturnType<typeof Fastify>[] = [];
+    const app = async (owner: string, store: AccountStore = accounts, surveyService = surveys) => {
+      const server = Fastify();
+      server.setErrorHandler((_error, _request, reply) =>
+        reply.code(400).send({ error: 'Invalid account request.' }),
+      );
+      createAccountSession({
+        accounts: store,
+        surveys: surveyService,
+        analytics,
+        origin: 'http://localhost:4399',
+        localUser: { id: owner, name: 'Synthetic owner', email: null, avatarUrl: null },
+      }).register(server);
+      await server.ready();
+      apps.push(server);
+      return {
+        get: (url: string) => server.inject({ method: 'GET', url }),
+        post: (payload: Record<string, unknown>, account = owner) =>
+          server.inject({
+            method: 'POST',
+            url: '/api/product-survey',
+            headers: { origin: 'http://localhost:4399', 'x-nod-account': account },
+            payload,
+          }),
+        patch: (payload: Record<string, unknown>, account = owner) =>
+          server.inject({
+            method: 'PATCH',
+            url: '/api/account',
+            headers: { origin: 'http://localhost:4399', 'x-nod-account': account },
+            payload,
+          }),
+      };
+    };
+    const turn = async (
+      owner: string,
+      age: number,
+      source = 'user',
+      parent: string | null = null,
+      status = 'succeeded',
+    ) => {
+      const id = randomUUID();
+      await database.query(
+        "INSERT INTO turns(id,owner_id,source,status,parent_turn_id,created_at,started_at,finished_at) VALUES($1,$2,$3,$4,$5,now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day')",
+        [id, owner, source, status, parent, age],
+      );
+      return id;
+    };
+    const history = async (owner: string, ages = [10, 6, 1]) => {
+      for (const age of ages) await turn(owner, age);
+    };
+    t.after(async () => {
+      await Promise.all(apps.map((app) => app.close()));
+      await analytics.shutdown();
+      await database.end();
+      await root.query(`DROP SCHEMA ${schema} CASCADE`);
+      await root.end();
+    });
+    return { accounts, surveys, analytics, database, captured, app, turn, history };
+  }
+
+  test('bounded profiles persist for their owner and respect opt-in and racing revocation', async (t) => {
+    const f = await fixture(t);
+    const owner = 'profile-owner';
+    const app = await f.app(owner);
+    const profile = {
+      role: 'employee',
+      company_size: '11_50',
+      ai_experience: 'regular',
+      ai_tools: ['claude', 'n8n'],
+    };
+    await app.get('/api/session');
+    assert.equal(
+      (await app.patch({ usageData: false, analyticsProfile: profile })).statusCode,
+      200,
+    );
+    assert.deepEqual((await f.accounts.read(owner)).analyticsProfile, profile);
+    assert.equal(f.captured.length, 0);
+    assert.deepEqual((await app.get('/api/session')).json().settings.analyticsProfile, profile);
+    assert.equal((await app.get('/api/session')).json().analytics.profile, undefined);
+    const foreign = await f.app('profile-foreign');
+    assert.equal((await foreign.patch({ usageData: true })).statusCode, 200);
+    assert.equal(f.captured.length, 0);
+    assert.equal((await foreign.get('/api/session')).json().settings.analyticsProfile, undefined);
+    assert.equal((await app.patch({ analyticsProfile: {} }, 'profile-foreign')).statusCode, 401);
+    for (const invalid of [
+      { role: 'private-company' },
+      { email: 'synthetic@example.test' },
+      { ai_tools: ['other tool'] },
+      { ai_tools: ['none', 'claude'] },
+      { ai_tools: ['n8n', 'n8n'] },
+    ])
+      assert.equal((await app.patch({ analyticsProfile: invalid })).statusCode, 400);
+    assert.deepEqual((await f.accounts.read(owner)).analyticsProfile, profile);
+    assert.equal((await app.patch({ usageData: true })).statusCode, 200);
+    assert.equal(f.captured.length, 1);
+    assert.equal(f.captured[0]!.event, 'nod_profile_updated');
+    assert.equal(f.captured[0]!.properties.profile_role, 'employee');
+    assert.deepEqual(f.captured[0]!.properties.ai_tools, ['claude', 'n8n']);
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const racing = await f.app(owner, {
+      ...f.accounts,
+      update: async (id, input) => {
+        if (input.analyticsProfile) {
+          entered();
+          await held;
+        }
+        return f.accounts.update(id, input);
+      },
+    });
+    await racing.get('/api/session');
+    const update = racing.patch({ analyticsProfile: { role: 'individual' } });
+    await reached;
+    const revoke = racing.patch({ usageData: false });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    assert.equal((await update).statusCode, 200);
+    assert.equal((await revoke).statusCode, 200);
+    assert.equal(f.captured.length, 1);
+    assert.equal(f.analytics.configuration(owner).enabled, false);
+    assert.deepEqual((await f.accounts.read(owner)).analyticsProfile, { role: 'individual' });
+    await racing.patch({ usageData: true });
+    assert.equal(f.captured.length, 2);
+    await racing.patch({ analyticsProfile: {} });
+    assert.equal(f.captured.length, 3);
+    assert.equal(f.captured[2]!.event, 'nod_profile_updated');
+    assert.equal(f.captured[2]!.properties.profile_role, undefined);
+    await racing.patch({ analyticsProfile: { role: 'business_owner' } });
+    await racing.patch({ usageData: false });
+    await racing.patch({ analyticsProfile: {} });
+    assert.equal(f.captured.length, 4);
+    await racing.patch({ usageData: true });
+    assert.equal(f.captured.length, 5);
+    assert.equal(f.captured[4]!.event, 'nod_profile_updated');
+    assert.equal(f.captured[4]!.properties.role, undefined);
+    assert.equal(f.captured[4]!.properties.profile_role, undefined);
+  });
+
+  test('survey eligibility uses completed owner requests and excludes automatic work', async (t) => {
+    const f = await fixture(t);
+    await f.history('active');
+    assert.equal((await f.surveys.offer('active'))?.survey, 'nps');
+    await f.history('inactive', [12, 10, 8]);
+    await f.turn('inactive', 0, 'schedule');
+    assert.equal((await f.surveys.offer('inactive'))?.survey, 'churn');
+    for (const status of ['queued', 'running', 'waiting', 'failed', 'cancelled']) {
+      const owner = `recent-${status}`;
+      await f.history(owner, [12, 10, 8]);
+      const recent = await f.turn(owner, 0, 'user', null, status);
+      if (['queued', 'running', 'waiting'].includes(status))
+        await f.database.query(
+          "UPDATE turns SET finished_at=NULL,started_at=CASE WHEN status='queued' THEN NULL ELSE started_at END WHERE id=$1",
+          [recent],
+        );
+      assert.equal(await f.surveys.offer(owner), null, status);
+    }
+    await f.history('recent-resume', [12, 10, 8]);
+    const waiting = await f.turn('recent-resume', 9, 'user', null, 'waiting');
+    await f.turn('recent-resume', 0, 'resume', waiting, 'failed');
+    assert.equal(await f.surveys.offer('recent-resume'), null);
+    for (const age of [10, 6, 1]) {
+      const automatic = await f.turn('automatic', age, 'schedule');
+      await f.turn('automatic', age, 'resume', automatic);
+      await f.turn('automatic', age, 'event');
+      await f.turn('automatic', age, 'task');
+    }
+    assert.equal(await f.surveys.offer('automatic'), null);
+    await f.history('new', [2, 1, 0]);
+    await f.history('one-day', [1, 1, 1]);
+    await f.history('gap', [10, 6, 4]);
+    for (const owner of ['new', 'one-day', 'gap']) assert.equal(await f.surveys.offer(owner), null);
+    await f.history('failed', [10, 1]);
+    await f.turn('failed', 6, 'user', null, 'failed');
+    assert.equal(await f.surveys.offer('failed'), null);
+    const parent = await f.turn('resumed', 10, 'user', null, 'waiting');
+    const resume = await f.turn('resumed', 10, 'resume', parent, 'waiting');
+    await f.turn('resumed', 10, 'resume', resume);
+    await f.history('resumed', [6, 1]);
+    assert.equal((await f.surveys.offer('resumed'))?.survey, 'nps');
+    await f.history('foreign-parent', [6, 1]);
+    await f.turn('foreign-parent', 10, 'resume', parent);
+    assert.equal(await f.surveys.offer('foreign-parent'), null);
+    const cycle = await f.turn('cycle', 10, 'resume');
+    await f.database.query('UPDATE turns SET parent_turn_id=id WHERE id=$1', [cycle]);
+    assert.equal(await f.surveys.offer('cycle'), null);
+  });
+
+  test('survey routes acknowledge retries once, fence owner and consent, and keep the first terminal answer', async (t) => {
+    const f = await fixture(t);
+    const owner = 'survey-owner';
+    await f.accounts.update(owner, { onboardingCompleted: true, usageData: true });
+    await f.history(owner);
+    const app = await f.app(owner);
+    const offers = await Promise.all(
+      Array.from({ length: 4 }, () => app.get('/api/product-survey')),
+    );
+    const offer = offers[0]!.json().offer;
+    assert.equal(offer.survey, 'nps');
+    assert.equal(new Set(offers.map((response) => response.json().offer.submission_id)).size, 1);
+    const sent = { ...offer, status: 'sent', score: 8 };
+    assert.deepEqual((await app.post(sent)).json(), { accepted: false });
+    assert.equal((await app.post({ ...sent, score: 11 })).statusCode, 400);
+    assert.equal((await app.post({ ...sent, reason: 'free text' })).statusCode, 400);
+    assert.equal((await app.post(sent, 'another-owner')).statusCode, 401);
+    const shown = { ...offer, status: 'shown' };
+    const showing = await Promise.all([app.post(shown), app.post(shown)]);
+    assert.ok(showing.every((response) => response.json().accepted));
+    assert.equal(f.captured.filter((event) => event.event === 'nod_survey_changed').length, 1);
+    const sending = await Promise.all([app.post(sent), app.post(sent)]);
+    assert.ok(sending.every((response) => response.json().accepted));
+    assert.equal(f.captured.filter((event) => event.event === 'nod_survey_changed').length, 2);
+    assert.deepEqual((await app.post({ ...sent, score: 3 })).json(), { accepted: false });
+    assert.deepEqual((await app.post({ ...offer, status: 'dismissed' })).json(), {
+      accepted: false,
+    });
+    assert.deepEqual((await app.post(shown)).json(), { accepted: false });
+    assert.equal((await app.get('/api/product-survey')).json().offer, null);
+    assert.deepEqual(
+      (await f.database.query('SELECT answer FROM product_surveys WHERE owner_id=$1', [owner]))
+        .rows[0].answer,
+      { score: 8 },
+    );
+    const other = 'survey-other';
+    await f.accounts.update(other, { onboardingCompleted: true, usageData: true });
+    await f.history(other);
+    const foreign = await f.app(other);
+    assert.deepEqual((await foreign.post(shown)).json(), { accepted: false });
+    const closing = (await foreign.get('/api/product-survey')).json().offer;
+    assert.deepEqual((await foreign.post({ ...closing, status: 'dismissed' })).json(), {
+      accepted: true,
+    });
+    assert.deepEqual((await foreign.post({ ...closing, status: 'shown' })).json(), {
+      accepted: false,
+    });
+    assert.deepEqual((await foreign.post({ ...closing, status: 'dismissed' })).json(), {
+      accepted: true,
+    });
+    await app.patch({ usageData: false });
+    assert.equal((await app.get('/api/product-survey')).json().offer, null);
+    const count = f.captured.length;
+    assert.equal((await app.post(sent)).statusCode, 409);
+    assert.equal(f.captured.length, count);
+    const unready = 'survey-onboarding';
+    await f.history(unready);
+    assert.equal((await (await f.app(unready)).get('/api/product-survey')).json().offer, null);
+    const raceOwner = 'survey-race';
+    await f.accounts.update(raceOwner, { onboardingCompleted: true, usageData: true });
+    await f.history(raceOwner);
+    const raceOffer = await f.surveys.offer(raceOwner);
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const raceApp = await f.app(raceOwner, f.accounts, {
+      ...f.surveys,
+      respond: async (...args) => {
+        entered();
+        await held;
+        return f.surveys.respond(...args);
+      },
+    });
+    const surveyCount = f.captured.filter((event) => event.event === 'nod_survey_changed').length;
+    const pending = raceApp.post({ ...raceOffer, status: 'shown' });
+    await reached;
+    await raceApp.patch({ usageData: false });
+    await raceApp.patch({ usageData: true });
+    release();
+    assert.deepEqual((await pending).json(), { accepted: true });
+    assert.equal(
+      f.captured.filter((event) => event.event === 'nod_survey_changed').length,
+      surveyCount,
+    );
+  });
 });

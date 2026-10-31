@@ -4009,3 +4009,479 @@ test(
       });
   },
 );
+
+test('visible outputs keep private content out of analytics and fence delayed file actions', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 60_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const observers=new Set();
+globalThis.IntersectionObserver=class{
+ constructor(callback){this.callback=callback;this.targets=new Set();observers.add(this)}
+ observe(target){this.targets.add(target)}
+ disconnect(){this.targets.clear();observers.delete(this)}
+};
+const visible=(selector)=>{for(const observer of observers){const targets=[...observer.targets].filter(target=>target.matches(selector));if(targets.length)observer.callback(targets.map(target=>({target,isIntersecting:true})))}};
+const events=[];
+const client={
+ init(_key,options){this.options=options;options.loaded?.()},
+ capture(event,properties={}){const value=this.options.before_send({event,properties});if(value)events.push(value)},
+ reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){},
+};
+const {setAnalyticsClient,configureAnalytics,analyticsForCurrentSession}=await import('./src/web/lib/analytics.ts');
+const {recordingOptions}=await import('./src/web/lib/analytics-privacy.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {MessagePresentation}=await import('./src/web/components/message-presentation.tsx');
+const {ArtifactWorkspace}=await import('./src/web/components/artifact-drawer.tsx');
+const {MessageAttachments}=await import('./src/web/components/attachment-card.tsx');
+const {FileActions}=await import('./src/web/components/file-actions.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+setRequestAccount('synthetic-owner-one');
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:synthetic-owner-one',environment:'development'};
+configureAnalytics(configuration,'web');
+const checks=[];
+const check=(id,condition)=>checks.push({id,status:condition?'pass':'fail'});
+const privateValue='SYNTHETIC_PRIVATE_CANARY_89271';
+const common={version:1,title:privateValue,sources:[]};
+const chart={...common,type:'chart',chart:'bar',series:[{id:'private-series',label:privateValue,points:[{label:privateValue,value:89271}]}]};
+const diagram={...common,type:'diagram',nodes:[{id:'private-node',label:privateValue}],edges:[]};
+let root=createRoot(document.getElementById('root'));
+const render=element=>act(async()=>root.render(element));
+const count=name=>events.filter(event=>event.event===name).length;
+await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
+check('UI1-chart-blocked',document.querySelector('.message-presentation').matches(recordingOptions.blockSelector));
+check('UI2-not-mounted',count('nod_presentation_viewed')===0);
+await act(async()=>visible('.message-presentation'));
+await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
+await act(async()=>visible('.message-presentation'));
+check('UI2-once',count('nod_presentation_viewed')===1);
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+await render(createElement(MessagePresentation,{value:diagram,messageId:'private-other-message'}));
+await act(async()=>visible('.message-presentation'));
+check('UI2-hidden-tab',count('nod_presentation_viewed')===1);
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
+check('UI1-diagram-blocked',document.querySelector('.message-presentation').matches(recordingOptions.blockSelector));
+check('UI2-holdout',events.filter(event=>event.event==='nod_presentation_viewed').map(event=>event.properties.kind).join(',')==='chart,diagram');
+const file={id:'00000000-0000-4000-8000-000000000001',url:'/api/artifacts/00000000-0000-4000-8000-000000000001',name:privateValue+'.txt',size:12,mimeType:'text/plain'};
+window.fetch=globalThis.fetch=async()=>new Response('Private file', {headers:{'content-type':'text/plain'}});
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}});
+const files=()=>createElement(ArtifactWorkspace,{files:[file],className:'test-workspace'},createElement(MessageAttachments,{attachments:[file]}));
+await render(files());
+await act(async()=>visible('.attachment-card'));
+check('UI3-message-exposure',events.filter(event=>event.event==='nod_artifact_viewed'&&event.properties.location==='message').length===1);
+await act(async()=>document.querySelector('.attachment-card-open').click());
+await act(async()=>visible('.artifact-drawer'));
+check('UI3-drawer-open',events.filter(event=>event.event==='nod_artifact_viewed'&&event.properties.location==='drawer').length===1);
+await act(async()=>document.querySelector('button[aria-label="Copy contents"]').click());
+check('UI4-copy',events.some(event=>event.event==='nod_artifact_action'&&event.properties.action==='copy'&&event.properties.kind==='text'));
+await act(async()=>document.querySelector('.artifact-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
+const drawer=document.querySelector('.artifact-drawer');
+check('UI3-retained-hidden',drawer?.hidden===true);
+const beforeHidden=count('nod_artifact_viewed');
+await act(async()=>visible('.artifact-drawer'));
+check('UI3-hidden-no-exposure',count('nod_artifact_viewed')===beforeHidden);
+let rejectSave=false;
+let release;
+window.nodDesktop={fileAction:async()=>{if(rejectSave)throw new Error('Synthetic save failed');if(release===null)await new Promise(resolve=>{release=resolve})}};
+await render(createElement(FileActions,{item:file}));
+const save=()=>document.querySelector('button[aria-label^="Save "]');
+await act(async()=>save().click());
+check('UI4-native-save',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+rejectSave=true;
+await act(async()=>save().click());
+check('UI4-rejected-save',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+rejectSave=false;release=null;
+await act(async()=>save().click());
+configureAnalytics(undefined);
+configureAnalytics(configuration,'web');
+await act(async()=>release());
+check('UI5-consent-fence',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+release=null;
+await act(async()=>save().click());
+setRequestAccount('synthetic-owner-two');
+await act(async()=>release());
+check('UI5-owner-fence',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+check('UI2-content-free',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(file.id)&&!JSON.stringify(events).includes('private-message'));
+setRequestAccount('synthetic-owner-one');
+configureAnalytics({...configuration,profile:{role:'employee',ai_tools:['n8n']}},'web');
+client.capture('nod_artifact_action',{kind:'text',location:'drawer',action:'copy',title:privateValue});
+check('UI6-profile-bounded',events.at(-1).properties.profile_role==='employee'&&events.at(-1).properties.profile_ai_tools.join(',')==='n8n'&&!('title' in events.at(-1).properties));
+configureAnalytics({...configuration,profile:{role:privateValue,ai_tools:['n8n']}},'web');
+client.capture('nod_artifact_action',{kind:'text',location:'drawer',action:'copy'});
+check('UI6-invalid-profile-dropped',!Object.keys(events.at(-1).properties).some(key=>key.startsWith('profile_')));
+client.capture('nod_answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
+check('UI7-choices-bounded',events.at(-1).properties.option_count===3&&events.at(-1).properties.selected_count===2&&!JSON.stringify(events.at(-1)).includes(privateValue)&&!JSON.stringify(events.at(-1)).includes(file.id));
+await act(async()=>root.unmount());
+configureAnalytics(undefined);
+dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('optional product surveys require visible user choice and fence declined or stale submissions', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,getComputedStyle:dom.window.getComputedStyle.bind(dom.window),requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
+for(const name of ['Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','KeyboardEvent','CustomEvent','MutationObserver','NodeFilter','DocumentFragment'])globalThis[name]=dom.window[name];
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {ProductSurveyPrompt}=await import('./src/web/components/product-survey.tsx');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const {recordingOptions}=await import('./src/web/lib/analytics-privacy.ts');
+const submission='00000000-0000-4000-8000-000000000888';
+let survey='nps',failShown=true,failSend=false,delay=false,release;
+const calls=[];
+window.fetch=globalThis.fetch=async(path,options)=>{
+ assert.equal(path,'/api/product-survey');
+ if(options.method!=='POST')return Response.json({offer:{survey,submission_id:submission}});
+ const body=JSON.parse(options.body);calls.push({body,signal:options.signal});
+ if(body.status==='shown'&&failShown)return Response.json({error:'Synthetic shown failure'},{status:503});
+ if(body.status==='sent'&&failSend)return Response.json({error:'Synthetic send failure'},{status:503});
+ if(delay)return new Promise(resolve=>{release=()=>resolve(Response.json({accepted:true}))});
+ return Response.json({accepted:true});
+};
+const root=createRoot(document.getElementById('root'));
+let props={ownerId:'survey-owner-one',enabled:true,visible:true};
+setRequestAccount(props.ownerId);
+const render=()=>act(async()=>root.render(createElement(ProductSurveyPrompt,props)));
+const settle=async condition=>{for(let i=0;i<60&&!condition();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
+const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
+const click=async text=>act(async()=>button(text).click());
+await render();
+await settle(()=>button('One question about Nod'));
+assert.equal(document.querySelector('[role="dialog"]'),null);
+assert.equal(calls.length,0);
+await click('One question about Nod');
+await settle(()=>button('Try again'));
+assert.ok(document.querySelector('[role="dialog"]').matches(recordingOptions.blockSelector));
+assert.ok(document.querySelector('fieldset').disabled);
+assert.equal(calls.filter(call=>call.body.status==='shown').length,1);
+failShown=false;
+await click('Try again');
+await settle(()=>!document.querySelector('fieldset').disabled);
+await act(async()=>document.querySelector('input[value="8"]').click());
+failSend=true;
+await click('Send');
+await settle(()=>document.body.textContent.includes('Synthetic send failure'));
+assert.equal(document.querySelector('input[value="8"]').checked,true);
+assert.deepEqual(calls.at(-1).body,{survey:'nps',submission_id:submission,status:'sent',score:8});
+failSend=false;
+await click('Send');
+await settle(()=>document.body.textContent.includes('Thanks for your feedback.'));
+assert.equal(calls.some(call=>call.body.status==='dismissed'),false);
+props={...props,ownerId:'survey-owner-two'};setRequestAccount(props.ownerId);survey='churn';
+await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
+await settle(()=>!document.querySelector('fieldset').disabled);
+assert.equal(document.querySelectorAll('textarea,input[type="text"]').length,0);
+await act(async()=>document.querySelector('input[value="unreliable"]').click());
+await click('Send');
+await settle(()=>document.body.textContent.includes('Thanks for your feedback.'));
+assert.deepEqual(calls.at(-1).body,{survey:'churn',submission_id:submission,status:'sent',reason:'unreliable'});
+props={...props,ownerId:'survey-owner-three'};setRequestAccount(props.ownerId);delay=true;
+await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
+await settle(()=>release);const pending=calls.at(-1);
+props={...props,enabled:false};await render();
+assert.equal(pending.signal.aborted,true);assert.equal(document.querySelector('[role="dialog"]'),null);
+await act(async()=>release());
+assert.equal(document.querySelector('[role="dialog"]'),null);
+delay=false;props={...props,enabled:true,ownerId:'survey-owner-four'};setRequestAccount(props.ownerId);
+await render();await settle(()=>button('One question about Nod'));await click('One question about Nod');
+await settle(()=>!document.querySelector('fieldset').disabled);delay=true;release=undefined;
+await click('Not now');
+assert.equal(document.querySelector('[role="dialog"]'),null);
+assert.equal(calls.at(-1).body.status,'dismissed');
+const dismiss=calls.at(-1);props={...props,visible:false};await render();assert.equal(dismiss.signal.aborted,true);
+await act(async()=>release());
+delay=false;props={...props,ownerId:'survey-owner-five',enabled:true,visible:true};setRequestAccount(props.ownerId);
+await render();await settle(()=>button('One question about Nod'));
+const beforeHidden=calls.length;
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+await click('One question about Nod');
+assert.equal(calls.length,beforeHidden);
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
+await settle(()=>document.querySelector('fieldset')&&!document.querySelector('fieldset').disabled);
+assert.equal(calls.length,beforeHidden+1);
+await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
+assert.equal(calls.length,beforeHidden+1);
+await act(async()=>root.unmount());dom.window.close();
+console.log(JSON.stringify({result:'pass',checks:['explicit-open','shown-ack','private-replay','shown-retry','preserved-answer','nps-send','churn-send','no-free-text','consent-abort','offline-dismiss','unmount-abort','hidden-dialog-return'],requests:calls.map(call=>call.body)},null,2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('app completion analytics preserve the originating entry and require an owned confirmed result', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
+for(const name of ['Node','Element','HTMLElement','Event','CustomEvent'])globalThis[name]=dom.window[name];
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+const channels=[];
+globalThis.BroadcastChannel=class{constructor(){channels.push(this)}close(){}};
+window.open=()=>({opener:null,closed:false,close(){this.closed=true},location:{href:''}});
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {useAppSignIn}=await import('./src/web/hooks/use-app-sign-in.ts');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+setRequestAccount('connection-owner');
+const captured=[];
+const client={init(_key,options){this.options=options},capture(event,properties={}){const value=this.options.before_send({event,properties});if(value)captured.push(value)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);configureAnalytics({enabled:true,distinctId:'local:connection-owner',environment:'development'},'web');
+const attempt='a'.repeat(43);
+let connected=false,checks=0,delay=false,release;
+window.fetch=globalThis.fetch=async(path,options)=>{
+ if(path==='/api/apps/gmail/connect')return Response.json({url:'https://example.test/sign-in',attempt});
+ if(path==='/api/apps/setup-cancel')return Response.json({ok:true});
+ assert.equal(path,'/api/apps/setup-status');checks++;
+ const hash=JSON.parse(options.body).hashes[0];
+ const response=()=>Response.json({completed:connected?[hash]:[],apps:[{hash,available:true}]});
+ if(delay)return new Promise(resolve=>{release=()=>resolve(response())});
+ return response();
+};
+let signIn;
+function Test(){signIn=useAppSignIn({entry:'onboarding',name:()=> 'Private account',onSettled(){}});return createElement('button',{onClick:()=>void signIn.connect({service:'gmail'})},'Connect')}
+const root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(Test)));
+const settle=async condition=>{for(let i=0;i<60&&!condition();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
+const start=()=>act(async()=>document.querySelector('button').click());
+const completions=()=>captured.filter(event=>event.event==='nod_app_connection_completed');
+await start();await settle(()=>checks===1);assert.equal(completions().length,0);
+await act(async()=>channels[0].onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await settle(()=>checks===2);assert.equal(completions().length,0,'an unverified broadcast must not become a successful conversion');
+await start();await settle(()=>checks===3);await act(async()=>signIn.cancel());assert.equal(completions().length,0);
+connected=true;await start();await settle(()=>completions().length===1);
+assert.deepEqual(completions()[0].properties.entry,'onboarding');
+delay=true;release=undefined;await start();await settle(()=>release);
+setRequestAccount('other-owner');await act(async()=>release());assert.equal(completions().length,1);
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({result:'pass',checks:['confirmed-success','original-entry','unverified-broadcast','cancelled-attempt','owner-fence'],events:captured},null,2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('optional analytics profile edits preserve failed answers and explicitly clear saved answers', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
+Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
+for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLSelectElement', 'Event', 'CustomEvent']) globalThis[name] = dom.window[name];
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+const { createElement, act, useState } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { Profile } = await import('./src/web/pages/onboarding/steps/profile.tsx');
+const { analyticsProfileSchema } = await import('./src/shared/analytics-profile.ts');
+const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
+let saved = {}, fail = true, advanced = 0, skipped = 0;
+const writes = [];
+function Host() {
+  const [step, setStep] = useState('profile');
+  if (step === 'next') return createElement('button', { onClick: () => setStep('profile') }, 'Return to profile');
+  return createElement(Profile, {
+    arrived: 'back', usageShared: true,
+    onBack() {}, onSkip() { skipped++; },
+    onNext() { advanced++; setStep('next'); },
+    profile: { value: saved, async onChange(value) {
+      const body = JSON.parse(JSON.stringify(value));
+      assert.equal(analyticsProfileSchema.safeParse(body).success, true);
+      writes.push(body);
+      if (fail) throw new Error('Synthetic save rejected');
+      saved = body;
+    } },
+  });
+}
+const root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(Host)));
+const button = (text) => [...document.querySelectorAll('button')].find((value) => value.textContent.trim() === text);
+const click = async (text) => act(async () => button(text).click());
+const select = async (index, value) => act(async () => {
+  const control = document.querySelectorAll('select')[index];
+  control.value = value;
+  control.dispatchEvent(new Event('change', { bubbles: true }));
+});
+assert.ok(document.querySelector('.ob-profile').matches(recordingOptions.blockSelector));
+await select(0, 'business_owner');
+await select(1, '2_10');
+await select(2, 'technical');
+await click('ChatGPT');
+await click('Claude');
+await click('None yet');
+assert.equal(button('ChatGPT').getAttribute('aria-pressed'), 'false');
+assert.equal(button('Claude').getAttribute('aria-pressed'), 'false');
+assert.equal(button('None yet').getAttribute('aria-pressed'), 'true');
+await click('ChatGPT');
+assert.equal(button('None yet').getAttribute('aria-pressed'), 'false');
+await click('Continue');
+assert.equal(advanced, 0);
+assert.ok(document.querySelector('[role="alert"]'));
+assert.deepEqual([...document.querySelectorAll('select')].map((input) => input.value), ['business_owner', '2_10', 'technical']);
+assert.equal(button('ChatGPT').getAttribute('aria-pressed'), 'true');
+fail = false;
+await click('Continue');
+assert.equal(advanced, 1);
+assert.deepEqual(saved, { role: 'business_owner', company_size: '2_10', ai_experience: 'technical', ai_tools: ['chatgpt'] });
+await click('Return to profile');
+assert.deepEqual([...document.querySelectorAll('select')].map((input) => input.value), ['business_owner', '2_10', 'technical']);
+for (let index = 0; index < 3; index++) await select(index, '');
+await click('ChatGPT');
+await click('Continue');
+assert.equal(advanced, 2);
+assert.equal(skipped, 0);
+assert.deepEqual(saved, {});
+assert.deepEqual(writes.at(-1), {});
+await act(async () => root.unmount());
+dom.window.close();
+console.log(JSON.stringify({ result: 'pass', checks: ['bounded-save', 'failed-save-retains', 'none-exclusive', 'clear-saved-answers'], writes }, null, 2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('app discovery redirects and managed chat links preserve confirmed connection attribution', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
+Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
+for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment', 'FormData']) globalThis[name] = dom.window[name];
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+window.open = () => ({ opener: null, closed: false, close() { this.closed = true; }, document: { title: '', body: { textContent: '' } }, location: { href: '' } });
+globalThis.BroadcastChannel = class { close() {} };
+const { createElement, act, useState, StrictMode } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { useAppSignIn } = await import('./src/web/hooks/use-app-sign-in.ts');
+const { AppDiscoveryDialog } = await import('./src/web/components/app-discovery-dialog.tsx');
+const { SetupActions } = await import('./src/web/components/setup-link.tsx');
+const { setAnalyticsClient, configureAnalytics, appConnectionAnalytics } = await import('./src/web/lib/analytics.ts');
+const { setRequestAccount } = await import('./src/web/lib/api.ts');
+const captured = [];
+const client = { init(_key, options) { this.options = options; }, capture(event, properties = {}) { const value = this.options.before_send({ event, properties }); if (value) captured.push(value); }, reset() {}, set_config() {}, stopSessionRecording() {}, startSessionRecording() {} };
+setAnalyticsClient(client);
+function owner(id) { setRequestAccount(id); configureAnalytics({ enabled: true, distinctId: 'local:' + id, environment: 'development' }, 'web'); }
+owner('discovery-one');
+const id = '00000000-0000-4000-8000-000000000811';
+let reject = true, delayed = false, release, statusCalls = 0, completed = false, wrongHash = false;
+window.fetch = globalThis.fetch = async (path, options) => {
+  if (path === '/api/apps/gmail/connect') return Response.json({ url: 'http://127.0.0.1:51000/apps?connect=' + id });
+  if (path === '/api/apps/discovery/' + id) return Response.json({ name: 'Synthetic app', paths: [{ kind: 'http', endpoint: 'https://example.test', auth: 'token', testPath: '/me' }] });
+  if (path === '/api/apps/discovery/' + id + '/complete') {
+    if (delayed) return new Promise((resolve) => { release = () => resolve(Response.json({})); });
+    return reject ? Response.json({ error: 'Synthetic rejection' }, { status: 503 }) : Response.json({});
+  }
+  assert.equal(path, '/api/apps/setup-status');
+  statusCalls++;
+  const hashes = JSON.parse(options.body).hashes;
+  return Response.json({ completed: completed ? (wrongHash ? ['unmatched-hash'] : hashes) : [], apps: hashes.map((hash) => ({ hash, slug: 'gmail', name: 'Synthetic app', available: true })) });
+};
+function Redirect() {
+  const [discovery, setDiscovery] = useState();
+  const signIn = useAppSignIn({ entry: 'chat', name: () => 'Synthetic app', onSettled() {}, onSetup: (url) => setDiscovery(new URL(url, window.location.origin).searchParams.get('connect')) });
+  return discovery ? createElement(AppDiscoveryDialog, { id: discovery, onClose: () => setDiscovery(undefined), onConnected: () => setDiscovery(undefined) }) : createElement('button', { onClick: () => void signIn.connect({ service: 'gmail' }) }, 'Start connection');
+}
+const root = createRoot(document.getElementById('root'));
+const render = (value) => act(async () => root.render(createElement(StrictMode, null, value)));
+const settle = async (condition) => { for (let i = 0; i < 80 && !condition(); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); assert.ok(Boolean(condition()), 'observable condition did not occur'); };
+const button = (text) => [...document.querySelectorAll('button')].find((value) => value.textContent.trim() === text);
+const completions = () => captured.filter((event) => event.event === 'nod_app_connection_completed');
+const submit = () => act(async () => {
+  document.querySelector('[name="accountName"]').value = 'Synthetic account';
+  document.querySelector('[name="token"]').value = 'synthetic-token';
+  document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+});
+await render(createElement(Redirect));
+await act(async () => button('Start connection').click());
+await settle(() => document.querySelector('form'));
+assert.equal(completions().length, 0);
+await submit();
+assert.equal(completions().length, 0);
+assert.ok(document.body.textContent.includes('Synthetic rejection'));
+reject = false;
+await submit();
+assert.equal(completions().length, 1);
+assert.equal(completions()[0].properties.entry, 'chat');
+await render(null);
+appConnectionAnalytics('manage').transfer('00000000-0000-4000-8000-000000000812');
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+await submit();
+assert.equal(completions().at(-1).properties.entry, 'apps');
+await render(null);
+const href = 'https://example.test/owned-setup';
+await render(createElement(SetupActions, { actions: [{ href, setup: 'app', label: 'Synthetic app' }] }));
+await settle(() => statusCalls > 0 && button('Connect'));
+const beforeManaged = completions().length;
+await act(async () => button('Connect').click());
+assert.equal(completions().length, beforeManaged);
+completed = true; wrongHash = true;
+await act(async () => window.dispatchEvent(new Event('focus')));
+assert.equal(completions().length, beforeManaged);
+wrongHash = false;
+await act(async () => window.dispatchEvent(new Event('focus')));
+await settle(() => completions().length === beforeManaged + 1);
+assert.equal(completions().at(-1).properties.entry, 'chat');
+await act(async () => window.dispatchEvent(new Event('focus')));
+assert.equal(completions().length, beforeManaged + 1);
+await render(null);
+appConnectionAnalytics('manage').transfer(id);
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+delayed = true; await submit(); await settle(() => release);
+const beforeOwner = completions().length;
+owner('discovery-two');
+await act(async () => release());
+assert.equal(completions().length, beforeOwner);
+await render(null);
+appConnectionAnalytics('manage').transfer(id);
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+release = undefined; await submit(); await settle(() => release);
+configureAnalytics(undefined);
+await act(async () => release());
+assert.equal(completions().length, beforeOwner);
+await act(async () => root.unmount()); dom.window.close();
+console.log(JSON.stringify({ result: 'pass', checks: ['chat-discovery-origin', 'rejected-discovery', 'wrong-discovery-id', 'managed-chat-confirmed', 'wrong-completion-hash', 'completion-once', 'owner-fence', 'consent-fence'], events: captured }, null, 2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});

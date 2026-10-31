@@ -1896,16 +1896,23 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (input.revision !== undefined && input.revision !== activityRevision(row))
       throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
     const { connectionId: _, revision: _revision, ...query } = input;
-    const result = await reader.read(row.account_id!, query, signal);
-    signal.throwIfAborted();
-    const latest = await current();
-    if (
-      !latest ||
-      latest.account_id !== row.account_id ||
-      activityRevision(latest) !== activityRevision(row)
-    )
-      throw new Error('The connection changed during the source check.');
-    return result;
+    return withServiceAnalytics(
+      options.analytics,
+      connectionAnalytics(row.slug),
+      async () => {
+        const result = await reader.read(row.account_id!, query, signal);
+        signal.throwIfAborted();
+        const latest = await current();
+        if (
+          !latest ||
+          latest.account_id !== row.account_id ||
+          activityRevision(latest) !== activityRevision(row)
+        )
+          throw new Error('The connection changed during the source check.');
+        return result;
+      },
+      signal,
+    );
   }
 
   function pollActivityChanges() {

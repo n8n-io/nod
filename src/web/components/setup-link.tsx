@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2 } from './icons';
 import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api, ApiError } from '../lib/api';
-import { captureAnalytics } from '../lib/analytics';
+import { appConnectionAnalytics, captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
 import { setupLinkHash } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -244,6 +244,7 @@ export function SetupActions({
   const [error, setError] = useState('');
   const [announcement, setAnnouncement] = useState('');
   const request = useRef<AbortController | null>(null);
+  const completion = useRef<{ href: string; complete(): void } | undefined>(undefined);
   const timer = useRef<number | undefined>(undefined);
   const opened = useRef(new Set<string>());
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -251,6 +252,7 @@ export function SetupActions({
   function close() {
     request.current?.abort();
     request.current = null;
+    completion.current = undefined;
     window.clearTimeout(timer.current);
     if (signIn?.outcome === 'connected') setAnnouncement(`${signIn.name} connected.`);
     setSignIn(undefined);
@@ -259,6 +261,7 @@ export function SetupActions({
     setError('');
   }
   function confirmed(href: string) {
+    if (completion.current?.href === href) completion.current.complete();
     request.current?.abort();
     request.current = null;
     window.clearTimeout(timer.current);
@@ -286,7 +289,10 @@ export function SetupActions({
     if (!navigate && request.current) return;
     setAnnouncement('');
     captureAnalytics('nod_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    const analytics = appConnectionAnalytics('chat');
+    completion.current = { href, complete: analytics.complete };
     if (navigate) {
+      analytics.transfer(appLink.exec(href)![1]);
       setDiscoveryHref(href);
       return;
     }

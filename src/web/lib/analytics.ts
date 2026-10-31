@@ -4,20 +4,35 @@ import { modelProviders, type ModelProvider } from '../../shared/models';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 import { feedbackActivity } from './feedback-activity';
+import { requestAccountVersion } from './api';
+import type { AttachmentKind } from '../../shared/attachment-kind';
+import type { Presentation } from '../../shared/presentation';
+import { analyticsProfileProperties, analyticsProfileSchema } from '../../shared/analytics-profile';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
-    step: 'welcome' | 'email' | 'brain' | 'privacy';
+    step: 'welcome' | 'email' | 'brain' | 'privacy' | 'profile' | 'community';
     direction: 'forward' | 'back';
   };
-  nod_onboarding_step_skipped: { step: 'email' };
+  nod_onboarding_step_skipped: { step: 'email' | 'profile' | 'community' };
+  nod_community_opened: { destination: 'forum' };
+  nod_app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
+  nod_presentation_viewed: { kind: Presentation['type'] };
+  nod_answer_choices_viewed: { multiple: boolean; option_count: number };
+  nod_answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
+  nod_artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
+  nod_artifact_action: {
+    kind: AttachmentKind | 'file';
+    location: 'message' | 'drawer';
+    action: 'copy' | 'download' | 'download_requested';
+  };
   nod_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
   nod_chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
-    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply';
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
   };
   nod_chat_stop_requested: undefined;
   nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
@@ -63,19 +78,53 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
+const artifactKinds = [
+  'image',
+  'sticker',
+  'audio',
+  'video',
+  'pdf',
+  'markdown',
+  'html',
+  'csv',
+  'spreadsheet',
+  'document',
+  'presentation',
+  'archive',
+  'n8n-workflow',
+  'text',
+  'file',
+];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   nod_onboarding_step_viewed: {
-    step: ['welcome', 'email', 'brain', 'privacy'],
+    step: ['welcome', 'email', 'brain', 'privacy', 'profile', 'community'],
     direction: ['forward', 'back'],
   },
-  nod_onboarding_step_skipped: { step: ['email'] },
+  nod_onboarding_step_skipped: { step: ['email', 'profile', 'community'] },
+  nod_community_opened: { destination: ['forum'] },
+  nod_app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
+  nod_presentation_viewed: {
+    kind: ['image', 'map', 'flights', 'seats', 'booking', 'chart', 'apps', 'diagram'],
+  },
+  nod_answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
+  nod_answer_choices_selected: {
+    multiple: [true, false],
+    option_count: [1, 2, 3, 4, 5, 6],
+    selected_count: [1, 2, 3, 4, 5, 6],
+  },
+  nod_artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
+  nod_artifact_action: {
+    kind: artifactKinds,
+    location: ['message', 'drawer'],
+    action: ['copy', 'download', 'download_requested'],
+  },
   nod_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },
   nod_chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
-    source: ['composer', 'task_card', 'ask_nod', 'task_reply'],
+    source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
   },
   nod_chat_stop_requested: {},
   nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
@@ -127,6 +176,9 @@ let recordingFrame: number | undefined;
 let generation = 0;
 const eventGenerations = new WeakMap<object, number>();
 const guardedClients = new WeakSet<PostHog>();
+const viewed = new Set<string>();
+const viewListeners = new Set<() => void>();
+const discoveryConnections = new Map<string, () => void>();
 
 type AnalyticsRequest = Parameters<PostHog['_send_request']>[0];
 
@@ -162,6 +214,8 @@ export function setAnalyticsClient(client: PostHog) {
 
 function suspendAnalytics() {
   generation++;
+  viewed.clear();
+  discoveryConnections.clear();
   configuration = undefined;
   identity = undefined;
   lastPage = undefined;
@@ -262,6 +316,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
   );
+  const profile = analyticsProfileSchema.safeParse(configuration.profile ?? {});
   const sanitized = {
     uuid: event.uuid,
     event: event.event,
@@ -271,6 +326,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       analytics_schema: posthogConfig.schemaVersion,
       ...(configuration.appVersion ? { app_version: configuration.appVersion } : {}),
       environment: configuration.environment,
+      ...(profile.success ? analyticsProfileProperties(profile.data) : {}),
       surface,
       route,
       $current_url: sanitizedAnalyticsUrl(route),
@@ -297,6 +353,7 @@ export function configureAnalytics(
       suspendAnalytics();
     } catch {}
   }
+  for (const listener of viewListeners) listener();
 }
 
 function applyConfiguration(
@@ -375,9 +432,16 @@ export function captureAnalytics<Event extends keyof AnalyticsEvents>(
   event: Event,
   ...args: AnalyticsEvents[Event] extends undefined ? [] : [AnalyticsEvents[Event]]
 ) {
+  captureEvent(event, args[0]);
+}
+
+function captureEvent(
+  event: keyof AnalyticsEvents,
+  properties?: AnalyticsEvents[keyof AnalyticsEvents],
+) {
   try {
-    feedbackActivity.record(event, args[0]);
-    if (configuration?.enabled) posthog?.capture(event, args[0]);
+    feedbackActivity.record(event, properties);
+    if (configuration?.enabled) posthog?.capture(event, properties);
   } catch {}
 }
 
@@ -391,8 +455,69 @@ export function analyticsReplaySession() {
 
 export function analyticsForCurrentSession(): typeof captureAnalytics {
   const current = generation;
+  const account = requestAccountVersion();
   return (event, ...args) => {
-    if (current === generation) captureAnalytics(event, ...args);
+    if (current === generation && account === requestAccountVersion())
+      captureAnalytics(event, ...args);
+  };
+}
+
+export function appConnectionAnalytics(
+  entry: AnalyticsEvents['nod_app_connection_completed']['entry'],
+) {
+  const capture = analyticsForCurrentSession();
+  let reported = false;
+  const complete = () => {
+    if (reported) return;
+    reported = true;
+    capture('nod_app_connection_completed', { entry });
+  };
+  return { complete, transfer: (id: string) => discoveryConnections.set(id, complete) };
+}
+
+export function takeAppConnectionAnalytics(id: string) {
+  const complete = discoveryConnections.get(id);
+  discoveryConnections.delete(id);
+  return complete;
+}
+
+export function observeAnalyticsView<
+  Event extends 'nod_presentation_viewed' | 'nod_artifact_viewed' | 'nod_answer_choices_viewed',
+>(element: HTMLElement, key: string, event: Event, properties: AnalyticsEvents[Event]) {
+  const account = requestAccountVersion();
+  let intersecting = false;
+  let disposed = false;
+  const capture = () => {
+    if (
+      disposed ||
+      !intersecting ||
+      !configuration?.enabled ||
+      account !== requestAccountVersion() ||
+      document.visibilityState !== 'visible' ||
+      !element.isConnected ||
+      element.closest('[hidden]')
+    )
+      return;
+    const identity = `${event}:${key}:${JSON.stringify(properties)}`;
+    if (viewed.has(identity)) return;
+    viewed.add(identity);
+    captureEvent(event, properties);
+  };
+  const observer =
+    typeof IntersectionObserver === 'undefined'
+      ? undefined
+      : new IntersectionObserver((entries) => {
+          intersecting = entries.some((entry) => entry.target === element && entry.isIntersecting);
+          capture();
+        });
+  observer?.observe(element);
+  document.addEventListener('visibilitychange', capture);
+  viewListeners.add(capture);
+  return () => {
+    disposed = true;
+    observer?.disconnect();
+    document.removeEventListener('visibilitychange', capture);
+    viewListeners.delete(capture);
   };
 }
 

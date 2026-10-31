@@ -40,6 +40,11 @@ import { Button } from './ui';
 import { SharedMessageCard } from './shared-message-card';
 import { StickerPlayer } from './sticker-player';
 import { AudioPlayer } from './audio-player';
+import {
+  analyticsForCurrentSession,
+  captureAnalytics,
+  observeAnalyticsView,
+} from '../lib/analytics';
 
 const minimumWidth = 360;
 const minimumChat = 360;
@@ -257,6 +262,13 @@ function ArtifactDrawer({
   const [stage, setStage] = useState('#f1f1f1');
   const index = items.indexOf(current);
   const kind = attachmentKind(current.mimeType ?? '', current.name);
+  useEffect(() => {
+    if (!visible || !root.current) return;
+    return observeAnalyticsView(root.current, `${current.id}:drawer`, 'nod_artifact_viewed', {
+      kind: kind ?? 'file',
+      location: 'drawer',
+    });
+  }, [current.id, kind, visible]);
   const vector = kind === 'image' && vectorImage(current.mimeType ?? '', current.name);
   const modes =
     kind === 'markdown' || kind === 'html' || kind === 'csv' || kind === 'n8n-workflow' || vector;
@@ -399,11 +411,13 @@ function ArtifactDrawer({
     handle.addEventListener('pointercancel', stop, { once: true });
   }
   async function copy() {
+    const capture = analyticsForCurrentSession();
     try {
       setCopyError('');
       const response = await apiResponse(current.url);
       if (!response.ok) throw new Error('The file could not be loaded.');
       await navigator.clipboard.writeText(await response.text());
+      capture('nod_artifact_action', { kind: kind ?? 'file', location: 'drawer', action: 'copy' });
       setCopied(true);
     } catch {
       setCopyError('Could not copy. Select the text or download the file.');
@@ -536,7 +550,7 @@ function ArtifactDrawer({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
               </Button>
             )}
-            <FileActions item={current} />
+            <FileActions item={current} location="drawer" />
             {['markdown', 'text'].includes(kind ?? '') &&
               current.size <= 4000000 &&
               ownedArtifactUrl(current.url) && (
@@ -628,7 +642,24 @@ export function ArtifactWorkspace({
   );
   return (
     <ArtifactDrawerContext.Provider value={value}>
-      <div className={className}>
+      <div
+        className={className}
+        onClick={(event) => {
+          if (event.defaultPrevented || !(event.target instanceof Element)) return;
+          const link = event.target.closest<HTMLAnchorElement>('a[download]');
+          const url = link?.getAttribute('href');
+          if (!url || !ownedArtifactUrl(url)) return;
+          const file = [...files, ...drafts].find(
+            (item) => item.url === url || item.downloadUrl === url,
+          );
+          if (!file) return;
+          captureAnalytics('nod_artifact_action', {
+            kind: attachmentKind(file.mimeType ?? '', file.name) ?? 'file',
+            location: link?.closest('.artifact-drawer') ? 'drawer' : 'message',
+            action: 'download_requested',
+          });
+        }}
+      >
         {children}
         {displayed && (
           <ArtifactDrawer

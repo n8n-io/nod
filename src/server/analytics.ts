@@ -7,6 +7,11 @@ import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 import { apiKeyModelProviders } from '../shared/models.ts';
+import {
+  analyticsProfileSchema,
+  analyticsProfileProperties,
+  type AnalyticsProfile,
+} from '../shared/analytics-profile.ts';
 
 import {
   analyticsEvent,
@@ -16,7 +21,6 @@ import {
   type AnalyticsEvent,
 } from './analytics-events.ts';
 import type { RuntimeObservation } from '../ports/agent.ts';
-import { analyticsDomain } from './analytics-connections.ts';
 
 export type { AnalyticsEvent } from './analytics-events.ts';
 export interface AnalyticsDelivery {
@@ -76,6 +80,7 @@ async function installationId(root: string, supplied?: string) {
 }
 
 const hostedProvider = z.enum([...apiKeyModelProviders, 'typesafe']);
+const systemActivity = z.enum(['memory_learning', 'onboarding', 'writing_style']);
 
 export function analyticsModel(provider: string, model?: string) {
   const hosted = hostedProvider.safeParse(provider).data;
@@ -96,33 +101,6 @@ type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model
 
 function turnModel(provider: TurnModel['model_provider'], model?: string): TurnModel {
   return { model_provider: provider, ...(model ? { model } : {}) };
-}
-
-const readVerbs = new Set([
-  'get',
-  'list',
-  'fetch',
-  'search',
-  'find',
-  'read',
-  'retrieve',
-  'query',
-  'lookup',
-  'view',
-  'describe',
-  'download',
-]);
-
-function sideEffect(action: string) {
-  if (action === 'NOD_vault_allow' || action === 'NOD_read_source' || action === 'SEARCH_TOOLS')
-    return;
-  if (action === 'NOD_browser') return 'action';
-  if (action.startsWith('NOD_')) return 'settings';
-  return action
-    .split(/[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
-    .some((word) => readVerbs.has(word.toLowerCase()))
-    ? undefined
-    : 'action';
 }
 
 const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
@@ -169,14 +147,15 @@ export async function createAnalytics(options: {
     turnId?: string;
     consent: ReturnType<typeof consent>;
     model?: TurnModel;
+    work?: { work_type: 'immediate' | 'scheduled' | 'background'; owner_requested: boolean };
+  }>();
+  const systems = new AsyncLocalStorage<{
+    owner: string;
+    activity: z.infer<typeof systemActivity>;
+    consent: ReturnType<typeof consent>;
   }>();
   const replaySessions = new Map<string, string>();
-  const actedRuns = new Map<string, 'action' | 'settings'>();
-  function acted(runId: string, kind: 'action' | 'settings') {
-    if (actedRuns.get(runId) === 'action') return;
-    if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.keys().next().value!);
-    actedRuns.set(runId, kind);
-  }
+  const profiles = new Map<string, AnalyticsProfile>();
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -204,6 +183,7 @@ export async function createAnalytics(options: {
       distinctId: enabled ? `local:${localId}` : null,
       environment: options.environment,
       ...(appVersion ? { appVersion } : {}),
+      ...(enabled && owner && profiles.has(owner) ? { profile: profiles.get(owner) } : {}),
     };
   }
   function capture(owner: string, event: AnalyticsEvent, delivery: AnalyticsDelivery = {}) {
@@ -211,12 +191,14 @@ export async function createAnalytics(options: {
     if (!config.enabled || !config.distinctId) return;
     const current = consent(owner);
     const run = runs.getStore();
+    const system = systems.getStore();
+    const context = run ?? system;
     if (
-      run &&
-      (run.owner !== owner ||
-        !run.consent.enabled ||
-        run.consent.signal.aborted ||
-        run.consent.version !== current.version)
+      context &&
+      (context.owner !== owner ||
+        !context.consent.enabled ||
+        context.consent.signal.aborted ||
+        context.consent.version !== current.version)
     )
       return;
     const runId = delivery.runId ?? run?.id;
@@ -231,17 +213,16 @@ export async function createAnalytics(options: {
       ).data;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
-    if (
-      runId &&
-      parsed.data.event === 'nod_secure_entry_changed' &&
-      parsed.data.properties.kind === 'payment' &&
-      parsed.data.properties.status === 'submitted'
-    )
-      acted(runId, 'action');
     if (run) {
       const { data } = parsed;
-      if (data.event === 'nod_turn_started' && data.properties.model_provider)
-        run.model ??= turnModel(data.properties.model_provider, data.properties.model);
+      if (data.event === 'nod_turn_started') {
+        run.work = {
+          work_type: data.properties.work_type,
+          owner_requested: data.properties.owner_requested,
+        };
+        if (data.properties.model_provider)
+          run.model ??= turnModel(data.properties.model_provider, data.properties.model);
+      }
       if (data.event === 'nod_model_used' && data.properties.purpose === 'agent')
         run.model = turnModel(data.properties.provider, data.properties.model);
       if (data.event === 'nod_turn_completed' && run.model) {
@@ -262,8 +243,19 @@ export async function createAnalytics(options: {
             analytics_schema: posthogConfig.schemaVersion,
             environment: options.environment,
             capture_source: 'server',
+            ...(config.profile ? analyticsProfileProperties(config.profile) : {}),
             ...(version ? { app_version: version } : {}),
             ...(runId ? { run_id: runId } : {}),
+            ...(run?.work ??
+              (system
+                ? {
+                    work_type: 'background',
+                    owner_requested: false,
+                    system_activity: system.activity,
+                  }
+                : parsed.data.event === 'nod_model_used'
+                  ? { work_type: 'unclassified', owner_requested: false }
+                  : {})),
             ...(replaySession ? { $session_id: replaySession } : {}),
             ...('properties' in parsed.data ? parsed.data.properties : {}),
           },
@@ -291,6 +283,15 @@ export async function createAnalytics(options: {
     withRun<T>(owner: string, operation: () => T, turnId?: string): T {
       return runs.run({ owner, id: randomUUID(), turnId, consent: consent(owner) }, operation);
     },
+    withSystemWork<T>(
+      owner: string,
+      activity: z.infer<typeof systemActivity>,
+      operation: () => T,
+    ): T {
+      const parsed = systemActivity.safeParse(activity);
+      if (runs.getStore() || systems.getStore() || !parsed.success) return operation();
+      return systems.run({ owner, activity: parsed.data, consent: consent(owner) }, operation);
+    },
     linkReplay(turnId: string, sessionId: string) {
       if (!z.uuid().safeParse(sessionId).success) return;
       if (replaySessions.size >= 1000) replaySessions.delete(replaySessions.keys().next().value!);
@@ -298,14 +299,6 @@ export async function createAnalytics(options: {
     },
     replaySession(turnId: string) {
       return replaySessions.get(turnId);
-    },
-    sideEffect(runId: string) {
-      return actedRuns.get(runId);
-    },
-    actionExecuted(owner: string, action: string) {
-      const run = runs.getStore();
-      const kind = sideEffect(action);
-      if (run?.owner === owner && run.consent.enabled && kind) acted(run.id, kind);
     },
     currentRun(owner: string) {
       const run = runs.getStore();
@@ -325,6 +318,12 @@ export async function createAnalytics(options: {
       };
     },
     setUsageData,
+    setProfile(owner: string, profile: unknown) {
+      const parsed = analyticsProfileSchema.safeParse(profile);
+      if (!parsed.success) return false;
+      profiles.set(owner, parsed.data);
+      return true;
+    },
     forOwner:
       (owner: string): CaptureAnalytics =>
       (event, delivery) =>
@@ -400,18 +399,13 @@ export const analyticsRoutes = new Map<
   [
     'POST /api/link-preview/opened',
     (request) => {
-      const body = request.body as {
-        url: string;
-        source: 'text' | 'preview' | 'tooltip' | 'player';
-        position?: number;
-      };
-      const domain = analyticsDomain(body.url);
-      return domain
+      const body = request.body as { source: string; position?: number };
+      const source = z.enum(['text', 'tooltip']).safeParse(body.source).data;
+      return source
         ? {
             event: 'nod_link_opened',
             properties: {
-              domain,
-              source: body.source,
+              source,
               ...(body.position && body.position <= 20 ? { position: body.position } : {}),
             },
           }

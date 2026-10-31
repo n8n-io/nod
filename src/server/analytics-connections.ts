@@ -1,4 +1,3 @@
-import { parse } from 'tldts';
 import type { Analytics, AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 
 type ConnectionProperties = Extract<
@@ -17,28 +16,6 @@ export type AnalyticsConnection = {
   consentRevision?: string;
 };
 
-const domains: Record<string, string> = {
-  gmail: 'google.com',
-  googlecalendar: 'google.com',
-  googledrive: 'google.com',
-  googlesheets: 'google.com',
-  googledocs: 'google.com',
-  slack: 'slack.com',
-  notion: 'notion.so',
-  linear: 'linear.app',
-};
-
-export function analyticsDomain(endpoint: string) {
-  try {
-    const url = new URL(endpoint);
-    if (!['https:', 'http:'].includes(url.protocol)) return undefined;
-    const parsed = parse(url.hostname, { allowPrivateDomains: false });
-    return parsed.isIcann && !parsed.isIp && parsed.domain ? parsed.domain : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function properties(connection: AnalyticsConnection) {
   const app =
     connection.connection_method === 'managed_app' &&
@@ -47,13 +24,7 @@ function properties(connection: AnalyticsConnection) {
     /^[a-z][a-z0-9_-]{0,79}$/.test(connection.app)
       ? connection.app
       : 'custom';
-  const domain =
-    connection.connection_method === 'managed_app'
-      ? domains[app]
-      : connection.connection_method !== 'cli' && connection.endpoint
-        ? analyticsDomain(connection.endpoint)
-        : undefined;
-  return { app, ...(domain ? { domain } : {}), connection_method: connection.connection_method };
+  return { app, connection_method: connection.connection_method };
 }
 
 export function captureConnection(
@@ -176,23 +147,6 @@ export async function withServiceAnalytics<T>(
     capture(signal?.aborted ? 'cancelled' : 'failed', error);
     throw error;
   }
-}
-
-export function createWebsiteVisits(analytics: Analytics, ownerId: string) {
-  const visits = new WeakMap<object, Set<string>>();
-  return (url: string, via: 'browser' | 'fetch', subagent: boolean) => {
-    const run = analytics.currentRun(ownerId);
-    const domain = analyticsDomain(url);
-    if (!run || !domain) return;
-    const seen = visits.get(run) ?? new Set<string>();
-    visits.set(run, seen);
-    if (seen.has(domain)) return;
-    seen.add(domain);
-    analytics.capture(ownerId, {
-      event: 'nod_website_visited',
-      properties: { domain, via, subagent },
-    });
-  };
 }
 
 export async function captureConnectionInventory(
