@@ -1223,27 +1223,31 @@ async function analyticsWork(turn: any) {
     background: boolean;
     session_id: string;
     depth: number;
+    owner_requested: boolean;
   }>(
     `WITH RECURSIVE chain AS (
-      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,0 AS depth,ARRAY[u.id] AS path
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,u.message_id,0 AS depth,ARRAY[u.id] AS path
       FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
       UNION ALL
-      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,c.depth+1,c.path||u.id
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,u.message_id,c.depth+1,c.path||u.id
       FROM chain c JOIN turns u ON u.id=c.parent_turn_id AND u.owner_id=$2 AND u.thread_id=$3
       WHERE NOT u.id=ANY(c.path)
-    ) SELECT source,background,session_id,depth FROM chain WHERE session_id=$4 ORDER BY depth`,
+    ) SELECT source,background,session_id,depth,
+      source='user' OR (source IN ('task','resume') AND EXISTS (
+        SELECT 1 FROM messages m WHERE m.id=chain.message_id AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='user'
+      )) AS owner_requested
+      FROM chain WHERE session_id=$4 ORDER BY depth`,
     [turn.id, ownerId, turn.thread_id, turn.session_id],
   );
   const root = chain.rows.at(-1) ?? turn;
-  const request = chain.rows.find((row) => row.source !== 'resume');
+  const request = chain.rows.find((row) => row.source !== 'resume' || row.owner_requested);
   return {
     work_type: (root.source === 'schedule'
       ? 'scheduled'
       : root.background || root.source === 'event' || root.source === 'task'
         ? 'background'
         : 'immediate') as 'immediate' | 'scheduled' | 'background',
-    owner_requested:
-      turn.source === 'user' || (turn.source === 'resume' && request?.source === 'user'),
+    owner_requested: request?.owner_requested ?? turn.source === 'user',
   };
 }
 

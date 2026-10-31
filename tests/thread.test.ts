@@ -1490,7 +1490,7 @@ test(
 
       await t.test(
         'analytics separate automatic work from owner requests across resumed sessions',
-        async () => {
+        async (t) => {
           const completed = async (
             id: string,
             work_type: string,
@@ -1558,6 +1558,96 @@ test(
             background: true,
           });
           await completed(ownerResume, 'scheduled', true);
+          const previousObserver = inspectObserver;
+          const previousConfirmation = dependencies.executeConfirmation;
+          let confirmedActions = 0;
+          const analyticsApprovals = await createApprovals(
+            async () => {
+              confirmedActions++;
+              return {};
+            },
+            undefined,
+            async (reply) => (reply === 'Yes' ? true : undefined),
+            async () => 'Confirm the synthetic action?',
+          );
+          const confirmingMessages = thread.createUserMessageService({
+            confirmAction: analyticsApprovals.chat,
+          });
+          dependencies.executeConfirmation = analyticsApprovals.executeConfirmed;
+          t.after(() => {
+            inspectObserver = previousObserver;
+            dependencies.executeConfirmation = previousConfirmation;
+          });
+          let taskId: string | undefined;
+          inspectObserver = async (context) => {
+            if (context.prompt === 'Synthetic analytics approval') {
+              await analyticsApprovals.request(
+                { turnId: context.turnId, threadId: context.threadId },
+                'NOD_synthetic_action',
+                {},
+              );
+              return { status: 'waiting_user', waitingFor: 'approval' };
+            }
+            if (context.background) return;
+            if (context.prompt === 'Synthetic owner task creation') {
+              const task = (await context.task!({
+                action: 'start',
+                title: 'Synthetic analytics task',
+                message: 'Working on the synthetic request.',
+                doneWhen: 'Synthetic result is ready',
+                now: 'Collecting synthetic data',
+              })) as Task;
+              taskId = task.id;
+              return { status: 'succeeded' };
+            }
+            if (context.prompt === 'Synthetic owner task update') {
+              await context.task!({ action: 'reply', ids: [taskId] });
+              return { status: 'succeeded' };
+            }
+          };
+          const start = await thread.submitUserMessage('Synthetic owner task creation');
+          await completed(start.turnId, 'immediate', true);
+          const taskTurn = async (messageId: string) =>
+            (
+              await db.pool.query<{ id: string }>(
+                "SELECT id FROM turns WHERE source='task' AND message_id=$1",
+                [messageId],
+              )
+            ).rows[0]!.id;
+          const created = await taskTurn(start.messageId);
+          await completed(created, 'background', true);
+          const input = await thread.submitUserMessage('Synthetic owner task update');
+          await completed(input.turnId, 'immediate', true);
+          const delivered = await taskTurn(input.messageId);
+          await completed(delivered, 'background', true);
+          const continued = await thread.enqueueTurn('Synthetic task continuation', {
+            source: 'resume',
+            sessionId: taskId,
+            parentTurnId: delivered,
+            background: true,
+          });
+          await completed(continued, 'background', true);
+          const waitingApproval = await thread.enqueueTurn('Synthetic analytics approval', {
+            source: 'event',
+            background: true,
+          });
+          await completed(waitingApproval, 'background', false, 'waiting_user');
+          const confirmation = (
+            await db.pool.query<{ confirmation_message_id: string }>(
+              'SELECT confirmation_message_id FROM approvals WHERE turn_id=$1',
+              [waitingApproval],
+            )
+          ).rows[0]!;
+          const confirmed = await confirmingMessages.submit('Yes', [], {
+            replyToMessageId: confirmation.confirmation_message_id,
+          });
+          await completed(confirmed.turnId, 'background', true);
+          assert.equal(confirmedActions, 1);
+          assert.equal(
+            (await db.pool.query('SELECT source FROM turns WHERE id=$1', [confirmed.turnId]))
+              .rows[0]!.source,
+            'resume',
+          );
           assert.equal(
             new Set(
               [requested.turnId, schedule, resumed, task, question, answer.turnId, ownerResume].map(

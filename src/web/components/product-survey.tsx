@@ -200,7 +200,11 @@ function SurveyPrompt() {
         >
           <DialogTitle>{productSurveys[offer.survey].question}</DialogTitle>
           <DialogDescription>Your answer is optional and helps us improve Nod.</DialogDescription>
-          <fieldset className="product-survey-answers" disabled={!shown || busy}>
+          <fieldset
+            className="product-survey-answers"
+            disabled={!shown || busy}
+            aria-describedby={offer.survey === 'nps' ? `${id}-scale` : undefined}
+          >
             <legend className="sr-only">Your answer</legend>
             {offer.survey === 'nps' ? (
               <>
@@ -218,9 +222,9 @@ function SurveyPrompt() {
                     </label>
                   ))}
                 </div>
-                <div className="product-survey-scale">
-                  <span>Not likely</span>
-                  <span>Very likely</span>
+                <div id={`${id}-scale`} className="product-survey-scale">
+                  <span>0 — Not likely</span>
+                  <span>10 — Very likely</span>
                 </div>
               </>
             ) : (

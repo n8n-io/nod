@@ -17,19 +17,33 @@ export function createProductSurveys(pool: Pool) {
       last_success: number | null;
     }>(
       `WITH RECURSIVE lineage AS (
-         SELECT id,source,parent_turn_id,status,created_at,started_at,finished_at,ARRAY[id] AS visited
-         FROM turns WHERE owner_id=$1 AND source IN ('user','resume')
+         SELECT u.id,u.source,u.parent_turn_id,u.thread_id,u.session_id,m.id AS message_id,u.status,u.finished_at,
+           COALESCE(m.created_at,u.created_at) AS requested_at,ARRAY[u.id] AS visited
+         FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=$1
+           AND m.thread_id=u.thread_id AND m.role='user'
+         WHERE u.owner_id=$1 AND u.source IN ('user','task','resume')
          UNION ALL
-         SELECT p.id,p.source,p.parent_turn_id,l.status,l.created_at,l.started_at,l.finished_at,l.visited||p.id
+         SELECT p.id,p.source,p.parent_turn_id,p.thread_id,p.session_id,m.id,l.status,l.finished_at,
+           COALESCE(m.created_at,p.created_at),l.visited||p.id
          FROM lineage l JOIN turns p ON p.id=l.parent_turn_id AND p.owner_id=$1
-         WHERE l.source='resume' AND NOT p.id=ANY(l.visited)
+           AND p.thread_id=l.thread_id AND p.session_id=l.session_id
+         LEFT JOIN messages m ON m.id=p.message_id AND m.owner_id=$1 AND m.thread_id=p.thread_id AND m.role='user'
+         WHERE l.source='resume' AND l.message_id IS NULL AND NOT p.id=ANY(l.visited)
+       ), requests AS (
+         SELECT COALESCE(message_id,id) AS request_id,
+           min(finished_at) FILTER (WHERE status='succeeded') AS first_success,
+           max(finished_at) FILTER (WHERE status='succeeded') AS last_success,
+           max(requested_at) AS last_activity
+         FROM lineage
+         WHERE source='user' OR (source IN ('task','resume') AND message_id IS NOT NULL)
+         GROUP BY COALESCE(message_id,id)
        )
-       SELECT count(*) FILTER (WHERE status='succeeded')::integer AS count,
-         count(DISTINCT finished_at::date) FILTER (WHERE status='succeeded')::integer AS days,
-         extract(epoch FROM now()-(min(finished_at) FILTER (WHERE status='succeeded')))/86400 AS age,
-         extract(epoch FROM now()-(max(finished_at) FILTER (WHERE status='succeeded')))/86400 AS last_success,
-         extract(epoch FROM now()-max(GREATEST(created_at,started_at,finished_at)))/86400 AS inactive
-       FROM lineage WHERE source='user'`,
+       SELECT count(first_success)::integer AS count,
+         count(DISTINCT first_success::date)::integer AS days,
+         extract(epoch FROM now()-min(first_success))/86400 AS age,
+         extract(epoch FROM now()-max(last_success))/86400 AS last_success,
+         extract(epoch FROM now()-max(last_activity))/86400 AS inactive
+       FROM requests`,
       [owner],
     );
     const activity = result.rows[0];

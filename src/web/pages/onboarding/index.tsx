@@ -100,11 +100,14 @@ export function Onboarding({
     if (replay || welcomed || nativePreferences)
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     const stored = readStep<{ owner: string; step: string; version?: number }>();
-    const savedStep = stored?.step;
+    const previousVersion =
+      stored?.version === 3 && ['email', 'brain', 'privacy', 'preferences'].includes(stored.step);
+    const savedStep =
+      previousVersion && desktop && stored.step === 'preferences' ? 'profile' : stored?.step;
     const step: SetupStep = nativePreferences
       ? 'preferences'
       : stored?.owner === user.id &&
-          stored.version === onboardingVersion &&
+          (stored.version === onboardingVersion || previousVersion) &&
           (onboardingSteps.includes(savedStep as OnboardingStep) ||
             (desktop && savedStep === 'preferences')) &&
           savedStep !== 'welcome'

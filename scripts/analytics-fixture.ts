@@ -253,12 +253,16 @@ const server = createServer(async (request, response) => {
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
   if (url.pathname === '/api/session') json(session());
   else if (url.pathname === '/api/product-survey' && request.method === 'GET')
-    json({ offer: usageData ? surveyOffer : null });
+    json({ offer: usageData && completed ? surveyOffer : null });
   else if (url.pathname === '/api/product-survey' && request.method === 'POST') {
     const parsed = productSurveyEventSchema.safeParse(body);
+    if (!usageData || !completed) {
+      response.statusCode = 409;
+      json({ error: 'This survey is no longer available.' });
+      return;
+    }
     const accepted =
       parsed.success &&
-      usageData &&
       surveyOffer?.survey === parsed.data.survey &&
       surveyOffer.submission_id === parsed.data.submission_id;
     if (accepted && parsed.success) {
@@ -270,18 +274,19 @@ const server = createServer(async (request, response) => {
     response.setHeader('content-type', file.mimeType);
     response.end(privateText);
   } else if (url.pathname === '/api/account') {
+    const profile =
+      body.analyticsProfile === undefined
+        ? undefined
+        : analyticsProfileSchema.safeParse(body.analyticsProfile);
+    if (profile && !profile.success) {
+      response.statusCode = 400;
+      json({ error: 'Invalid profile.' });
+      return;
+    }
     completed = body.onboardingCompleted ?? completed;
     if (typeof body.usageData === 'boolean') usageData = body.usageData;
     if (typeof body.traces === 'boolean') traces = body.traces;
-    if (body.analyticsProfile !== undefined) {
-      const parsed = analyticsProfileSchema.safeParse(body.analyticsProfile);
-      if (!parsed.success) {
-        response.statusCode = 400;
-        json({ error: 'Invalid profile.' });
-        return;
-      }
-      analyticsProfile = parsed.data;
-    }
+    if (profile?.success) analyticsProfile = profile.data;
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });

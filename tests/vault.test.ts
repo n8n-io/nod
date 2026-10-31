@@ -4179,6 +4179,11 @@ await click('One question about Nod');
 await settle(()=>button('Try again'));
 assert.ok(document.querySelector('[role="dialog"]').matches(recordingOptions.blockSelector));
 assert.ok(document.querySelector('fieldset').disabled);
+const describedBy=document.querySelector('fieldset').getAttribute('aria-describedby');
+assert.ok(describedBy,'NPS scale must describe its radio group');
+const scale=document.getElementById(describedBy);
+assert.ok(scale,'NPS description must exist');
+assert.match(scale.textContent,/0/);assert.match(scale.textContent,/10/);
 assert.equal(calls.filter(call=>call.body.status==='shown').length,1);
 failShown=false;
 await click('Try again');
@@ -4229,7 +4234,7 @@ assert.equal(calls.length,beforeHidden+1);
 await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
 assert.equal(calls.length,beforeHidden+1);
 await act(async()=>root.unmount());dom.window.close();
-console.log(JSON.stringify({result:'pass',checks:['explicit-open','shown-ack','private-replay','shown-retry','preserved-answer','nps-send','churn-send','no-free-text','consent-abort','offline-dismiss','unmount-abort','hidden-dialog-return'],requests:calls.map(call=>call.body)},null,2));
+console.log(JSON.stringify({result:'pass',checks:['explicit-open','shown-ack','private-replay','shown-retry','preserved-answer','nps-send','churn-send','no-free-text','consent-abort','offline-dismiss','unmount-abort','hidden-dialog-return','nps-accessible-scale'],requests:calls.map(call=>call.body)},null,2));
 process.exit(0);
 `,
   });
@@ -4481,6 +4486,71 @@ assert.equal(completions().length, beforeOwner);
 await act(async () => root.unmount()); dom.window.close();
 console.log(JSON.stringify({ result: 'pass', checks: ['chat-discovery-origin', 'rejected-discovery', 'wrong-discovery-id', 'managed-chat-confirmed', 'wrong-completion-hash', 'completion-once', 'owner-fence', 'consent-fence'], events: captured }, null, 2));
 process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('interrupted onboarding preserves owned progress and includes newly added optional steps', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
+Object.assign(globalThis, { window: dom.window, document: dom.window.document, location: dom.window.location, IS_REACT_ACT_ENVIRONMENT: true, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
+for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment']) globalThis[name] = dom.window[name];
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+window.nodDesktop = { getSettings: () => new Promise(() => {}), ready: async () => {} };
+let ready = true, complete = 0;
+window.fetch = globalThis.fetch = async (path) => {
+  if (path === '/api/models') return Response.json(ready ? { connections: [{ id: 'synthetic-model', status: 'connected', models: [{ id: 'synthetic-model', efforts: ['high'] }] }], selection: { connectionId: 'synthetic-model', modelId: 'synthetic-model', effort: 'high' } } : { connections: [], selection: null });
+  if (path === '/api/preferences') return Response.json({ timeZone: 'Europe/Lisbon' });
+  if (path === '/api/account/prepare') return Response.json({ ok: true });
+  if (['/api/apps', '/api/apps/catalog'].includes(path)) return Response.json([]);
+  throw new Error('Unexpected synthetic request: ' + path);
+};
+const { createElement, act } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
+const { DesktopPreferencesSetup } = await import('./src/web/pages/onboarding/steps/desktop-preferences.tsx');
+const { onboardingSteps } = await import('./src/shared/onboarding.ts');
+const { writeStep, clearStored, readStep } = await import('./src/web/pages/onboarding/storage.ts');
+const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+const root = createRoot(document.getElementById('root'));
+const checks = [];
+const check = (id, run) => { try { run(); checks.push({ id, status: 'pass' }); } catch (error) { checks.push({ id, status: 'fail', error: error.message }); } };
+async function mount(stored) {
+  await act(async () => root.render(null));
+  pageDataCache.clear(); clearStored(); writeStep(stored);
+  await act(async () => root.render(createElement(Onboarding, { user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null }, onComplete: async () => { complete++; } })));
+}
+await mount({ owner: 'synthetic-owner', step: 'preferences', version: 3 });
+check('old-preferences-visits-profile', () => { assert.equal(document.querySelector('.ob')?.dataset.step, 'profile'); assert.equal(complete, 0); });
+check('migrated-progress-saved', () => assert.deepEqual(readStep(), { owner: 'synthetic-owner', step: 'profile', version: 4 }));
+for (const step of ['email', 'privacy']) {
+  await mount({ owner: 'synthetic-owner', step, version: 3 });
+  check('preserves-' + step, () => { assert.equal(document.querySelector('.ob')?.dataset.step, step); assert.equal(readStep().version, 4); });
+}
+ready = false;
+await mount({ owner: 'synthetic-owner', step: 'brain', version: 3 });
+check('preserves-unconfigured-brain', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'brain'));
+ready = true;
+await mount({ owner: 'synthetic-owner', step: 'preferences', version: 4 });
+check('current-preferences-terminal', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'community'));
+await mount({ owner: 'another-owner', step: 'privacy', version: 3 });
+check('owner-progress-isolation', () => assert.equal(document.querySelector('.ob')?.dataset.step, 'welcome'));
+await act(async () => root.render(createElement(DesktopPreferencesSetup, { steps: onboardingSteps, onReady() {} })));
+check('terminal-progress', () => {
+  const dots = [...document.querySelectorAll('.ob-dots span')];
+  assert.equal(dots.at(-1)?.dataset.state, 'current');
+  assert.equal(dots.filter((dot) => dot.dataset.state === 'next').length, 0);
+});
+await act(async () => root.unmount()); pageDataCache.clear(); dom.window.close();
+console.log(JSON.stringify({ result: checks.every((check) => check.status === 'pass') ? 'pass' : 'fail', checks }, null, 2));
+process.exit(checks.every((check) => check.status === 'pass') ? 0 : 1);
 `,
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);

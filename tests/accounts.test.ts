@@ -3695,7 +3695,7 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
     const surveys = createProductSurveys(database);
     await accounts.initialize();
     await database.query(
-      'CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,status text NOT NULL,parent_turn_id uuid,created_at timestamptz NOT NULL,started_at timestamptz,finished_at timestamptz)',
+      'CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL,role text NOT NULL,created_at timestamptz NOT NULL); CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL,session_id uuid NOT NULL,message_id uuid,source text NOT NULL,status text NOT NULL,parent_turn_id uuid,created_at timestamptz NOT NULL,started_at timestamptz,finished_at timestamptz)',
     );
     await surveys.initialize();
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
@@ -3738,17 +3738,38 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
           }),
       };
     };
+    const threads = new Map<string, string>();
+    const threadFor = (owner: string) => {
+      if (!threads.has(owner)) threads.set(owner, randomUUID());
+      return threads.get(owner)!;
+    };
+    const message = async (
+      owner: string,
+      age: number,
+      role = 'user',
+      threadId = threadFor(owner),
+    ) => {
+      const id = randomUUID();
+      await database.query(
+        "INSERT INTO messages(id,owner_id,thread_id,role,created_at) VALUES($1,$2,$3,$4,now()-$5::float8*interval '1 day')",
+        [id, owner, threadId, role, age],
+      );
+      return id;
+    };
     const turn = async (
       owner: string,
       age: number,
       source = 'user',
       parent: string | null = null,
       status = 'succeeded',
+      messageId?: string,
     ) => {
       const id = randomUUID();
+      const thread = threadFor(owner);
+      if (source === 'user' && !messageId) messageId = await message(owner, age);
       await database.query(
-        "INSERT INTO turns(id,owner_id,source,status,parent_turn_id,created_at,started_at,finished_at) VALUES($1,$2,$3,$4,$5,now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day')",
-        [id, owner, source, status, parent, age],
+        "INSERT INTO turns(id,owner_id,source,status,parent_turn_id,created_at,started_at,finished_at,thread_id,session_id,message_id) VALUES($1,$2,$3,$4,$5,now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day',now()-$6::float8*interval '1 day',$7,$7,$8)",
+        [id, owner, source, status, parent, age, thread, messageId ?? null],
       );
       return id;
     };
@@ -3762,7 +3783,7 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
       await root.query(`DROP SCHEMA ${schema} CASCADE`);
       await root.end();
     });
-    return { accounts, surveys, analytics, database, captured, app, turn, history };
+    return { accounts, surveys, analytics, database, captured, app, turn, message, history };
   }
 
   test('bounded profiles persist for their owner and respect opt-in and racing revocation', async (t) => {
@@ -3943,7 +3964,7 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
     await f.history('recent-resume', [12, 10, 8]);
     const waiting = await f.turn('recent-resume', 9, 'user', null, 'waiting');
     await f.turn('recent-resume', 0, 'resume', waiting, 'failed');
-    assert.equal(await f.surveys.offer('recent-resume'), null);
+    assert.equal((await f.surveys.offer('recent-resume'))?.survey, 'churn');
     for (const age of [10, 6, 1]) {
       const automatic = await f.turn('automatic', age, 'schedule');
       await f.turn('automatic', age, 'resume', automatic);
@@ -3969,6 +3990,99 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
     const cycle = await f.turn('cycle', 10, 'resume');
     await f.database.query('UPDATE turns SET parent_turn_id=id WHERE id=$1', [cycle]);
     assert.equal(await f.surveys.offer('cycle'), null);
+  });
+
+  test('surveys count each owner request once across task and resume descendants', async (t) => {
+    const f = await fixture(t);
+    const message = async (turn: string) =>
+      (
+        await f.database.query<{ message_id: string }>('SELECT message_id FROM turns WHERE id=$1', [
+          turn,
+        ])
+      ).rows[0]!.message_id;
+    const one = await f.turn('one-request', 10, 'user');
+    const retry = await f.turn('one-request', 6, 'resume', one);
+    await f.turn('one-request', 1, 'resume', retry);
+    assert.equal(await f.surveys.offer('one-request'), null);
+    const main = await f.turn('one-delegation', 10, 'user');
+    const child = await f.turn('one-delegation', 6, 'task', main, 'succeeded', await message(main));
+    await f.turn('one-delegation', 1, 'resume', child);
+    assert.equal(await f.surveys.offer('one-delegation'), null);
+  });
+
+  test('surveys include owned task activity and exclude foreign or unrelated turns', async (t) => {
+    const f = await fixture(t);
+    const message = async (turn: string) =>
+      (
+        await f.database.query<{ message_id: string }>('SELECT message_id FROM turns WHERE id=$1', [
+          turn,
+        ])
+      ).rows[0]!.message_id;
+    await f.history('active-task', [12, 10, 8]);
+    const request = await f.turn('active-task', 8, 'user', null, 'failed');
+    await f.turn('active-task', 0, 'task', request, 'failed', await f.message('active-task', 0));
+    assert.equal(await f.surveys.offer('active-task'), null);
+    await f.history('active-task-resume', [12, 10, 8]);
+    const original = await f.turn('active-task-resume', 8, 'user', null, 'failed');
+    const task = await f.turn(
+      'active-task-resume',
+      8,
+      'task',
+      original,
+      'waiting',
+      await message(original),
+    );
+    await f.turn('active-task-resume', 0, 'resume', task, 'failed');
+    assert.equal((await f.surveys.offer('active-task-resume'))?.survey, 'churn');
+    await f.turn(
+      'active-task-resume',
+      0,
+      'resume',
+      task,
+      'failed',
+      await f.message('active-task-resume', 0),
+    );
+    assert.equal(await f.surveys.offer('active-task-resume'), null);
+    for (const age of [10, 6, 1]) {
+      const background = await f.turn('confirmed-background', age, 'event', null, 'waiting');
+      await f.turn(
+        'confirmed-background',
+        age,
+        'resume',
+        background,
+        'succeeded',
+        await f.message('confirmed-background', age),
+      );
+    }
+    assert.equal((await f.surveys.offer('confirmed-background'))?.survey, 'nps');
+    for (const age of [10, 6, 1]) {
+      const request = await f.turn('task-completions', age, 'user', null, 'failed');
+      await f.turn('task-completions', age, 'task', request, 'succeeded', await message(request));
+    }
+    assert.equal((await f.surveys.offer('task-completions'))?.survey, 'nps');
+    const source = await f.turn('foreign-task-source', 0, 'user');
+    await f.history('foreign-task', [12, 10, 8]);
+    await f.turn('foreign-task', 0, 'task', null, 'failed', await message(source));
+    assert.equal((await f.surveys.offer('foreign-task'))?.survey, 'churn');
+    for (const binding of ['assistant', 'other-thread']) {
+      await f.history(binding, [12, 10, 8]);
+      const id =
+        binding === 'assistant'
+          ? await f.message(binding, 0, 'assistant')
+          : await f.message(binding, 0, 'user', randomUUID());
+      await f.turn(binding, 0, 'task', null, 'succeeded', id);
+      assert.equal((await f.surveys.offer(binding))?.survey, 'churn');
+    }
+    await f.history('changed-session', [12, 10, 8]);
+    const before = await f.turn('changed-session', 8, 'user', null, 'failed');
+    const after = await f.turn('changed-session', 0, 'resume', before, 'failed');
+    await f.database.query('UPDATE turns SET session_id=$2 WHERE id=$1', [after, randomUUID()]);
+    assert.equal((await f.surveys.offer('changed-session'))?.survey, 'churn');
+    await f.history('missing-message', [12, 10, 8]);
+    const missing = await f.turn('missing-message', 8, 'user', null, 'failed');
+    await f.database.query('UPDATE turns SET message_id=NULL WHERE id=$1', [missing]);
+    await f.turn('missing-message', 0, 'resume', missing, 'failed');
+    assert.equal((await f.surveys.offer('missing-message'))?.survey, 'churn');
   });
 
   test('survey routes acknowledge retries once, fence owner and consent, and keep the first terminal answer', async (t) => {

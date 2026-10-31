@@ -29,7 +29,7 @@ Don't infer completed tasks or frustration from conversations. Execution success
 3. For a simple successful API mutation, use the existing `analyticsRoutes` map when it fits.
 4. Let the capture boundary attach schema, environment, version, optional profile categories, and runtime context.
 
-Within a turn, `run_id`, `work_type`, and `owner_requested` link model, tool, service, source-read, and output measurements. Resumes retain the origin's category. Use installation identity plus analytics `run_id` for joins; never send private turn or message IDs.
+Server events captured within a turn carry `run_id`, `work_type`, and `owner_requested` for model, tool, service, source-read, and committed-output measurements. Resumes retain the origin's category. Use installation identity plus analytics `run_id` to join these server events. UI presentation and artifact events don't carry `run_id` and can't be joined this way. Never send private turn or message IDs.
 
 Wrap autonomous memory maintenance, onboarding preparation, and writing-style learning with `withSystemWork`. These operations carry `work_type=background`, `owner_requested=false`, and a bounded `system_activity`, without creating a run. An existing turn context takes precedence. Model usage without either context carries `work_type=unclassified`; keep it visible in cost reporting rather than guessing its origin from model purpose.
 
@@ -86,9 +86,9 @@ All insights filter `analytics_schema=nod_v4` and `environment=production`, enab
 
 ### Denominators and limits
 
-- **Active use:** A user-originated turn, excluding automatic/background activity. Identity counts represent sharing installations, not all installations or individual humans.
+- **Active use:** An owner-authored message in chat or Tasks: `owner_requested=true` and `source` equal to `user` or `task`. These saved charts exclude all `resume` events, including genuine confirmation messages. Identity counts represent sharing installations, not all installations or individual humans.
 - **Execution:** Outcomes describe segments. Waiting isn't success or failure; a completed segment doesn't verify the whole task.
-- **Retention:** The first observed user-originated turn under `nod_v4` starts the cohort, including for existing installations. D0 is cohort size. D1 and W1/W2/W4 measure another user-originated turn in elapsed, noncumulative windows. Wait until each window matures; W4 needs the full fourth return window. The 30% W4 reference is a target, not a forecast.
+- **Retention:** The first observed owner-authored message in chat or Tasks under `nod_v4` starts the cohort, including for existing installations. D0 is cohort size. D1 and W1/W2/W4 measure another owner-authored message in elapsed, noncumulative windows, using the same `user`/`task` source filter as active use. Wait until each window matures; W4 needs the full fourth return window. The 30% W4 reference is a target, not a forecast.
 - **Recommendation:** NPS uses unique completed submissions. Scores nine and 10 are promoters; zero through six are detractors. The score is blank below 30 responses. Check the adjacent response-count tile.
 - **Stopped use:** Responses come only from eligible installations that reopen the app. They exclude people who never return.
 - **Audience:** Categories are self-reported and optional. Unknown isn't a category to infer. Multi-select AI tools aren't additive.
@@ -110,7 +110,7 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 
 1. Run focused regression tests, then `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`.
 2. Run `pnpm exec tsx scripts/analytics-fixture.ts`. It selects an available port and prints its URL. Use synthetic data, exercise the changed UI, and inspect `/__fixture__/summary`.
-3. Confirm the expected event/properties and that `privateDataLeaked` stays `false`. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
+3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
 4. Check opt-out, account changes, stale callbacks, retries, hidden views, and private content. Tests must intercept transport rather than send synthetic production events.
 5. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
 

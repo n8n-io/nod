@@ -69,7 +69,9 @@ Events use `analytics_schema=nod_v4`, `environment`, and `app_version` when avai
 
 UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`. Submitted profile categories appear as `profile_role`, `profile_company_size`, `profile_ai_experience`, and `profile_ai_tools` on both.
 
-Events within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. Web turns can also carry the sending tab's PostHog `$session_id`. Private turn and message IDs are excluded.
+Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. Web turns can also carry the sending tab's PostHog `$session_id`. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
+
+Owner-authored messages in Tasks are owner-requested background work. Work category and owner request are separate dimensions; automatic task activity isn't owner-requested.
 
 Autonomous work outside a turn uses `work_type=background`, `owner_requested=false`, and `system_activity` (`memory_learning`, `onboarding`, or `writing_style`). It has no run ID. Model requests without an established context use `work_type=unclassified` so their usage remains visible; this doesn't mean they were owner-requested or free.
 
@@ -159,10 +161,10 @@ These answers describe the installation's audience. They don't identify an emplo
 
 Eligible installations see **One question about Nod**. Selecting it opens an optional survey. Closing it dismisses that survey. Submitting or dismissing prevents another offer of that kind on the installation.
 
-- **Recommendation:** A score from zero to 10 after at least three successful owner-initiated runs across three active days. The first must be at least seven days ago; the latest within three days.
-- **Stopped use:** One fixed reason after at least three successful owner-initiated runs and seven days without owner-requested activity. Recent queued, running, failed, cancelled, or waiting work prevents the offer. Reasons cover no useful task, setup, reliability, speed, cost, privacy, another tool, or other. There is no free-text field.
+- **Recommendation:** A score from zero to 10 after at least three distinct owner requests have succeeded across three days. The first successful request must be at least seven days ago; the latest success within three days. The installation must also have an owner message within the last seven days.
+- **Stopped use:** One fixed reason after at least three distinct owner requests have succeeded and seven days without a new owner message. Recent messages prevent the offer even when their work is queued, running, failed, cancelled, or waiting. Reasons cover no useful task, setup, reliability, speed, cost, privacy, another tool, or other. There is no free-text field.
 
-Only successful owner-initiated runs count towards the eligibility threshold. Automatic activity doesn't reset inactivity. The stopped-use question appears only when someone reopens the app; it can't reach people who never return. No email or other outreach is sent.
+Survey eligibility counts messages in chat and Tasks, including genuine owner confirmation messages on resume turns. Automatic resumes of the same request count once towards the successful-request threshold; its first successful completion determines the activity day. Fresh owner messages reset inactivity; automatic resumes and work without an owner request don't. The saved active-use and retention charts use the narrower `user`/`task` source filter. The stopped-use question appears only when someone reopens the app; it can't reach people who never return. No email or other outreach is sent.
 
 The server translates validated actions into PostHog `survey shown`, `survey sent`, and `survey dismissed` events. They contain fixed survey/question identifiers, a random submission ID, and the numeric score or fixed reason. Survey participation metadata can be stored on the pseudonymous profile. Sharing must be on.
 

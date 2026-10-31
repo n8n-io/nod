@@ -10,7 +10,7 @@ export const onboardingSteps = [
 ] as const;
 export const onboardingEmailProviders = ['gmail', 'outlook'] as const;
 export const onboardingCalendarProviders = ['googlecalendar', 'outlook'] as const;
-export const onboardingVersion = 3;
+export const onboardingVersion = 4;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 export function connectedGmail(connection: Connection) {
   return (
