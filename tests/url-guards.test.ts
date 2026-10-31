@@ -18,6 +18,7 @@ import {
 import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
 import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
+import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 import { ownerAddress } from '../src/providers/discovered/remote.ts';
 
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -196,6 +197,15 @@ test('connection navigation permits secure providers and same-origin app consent
   assert.equal(connectionUrl('/e2e/connect/example', origin), origin + '/e2e/connect/example');
   const bridge = `http://127.0.0.1:54321/${'a'.repeat(43)}`;
   assert.equal(connectionUrl(bridge, origin), bridge);
+  for (const hosted of [
+    `https://nod.example.test/api/apps/connect/${'b'.repeat(43)}`,
+    `${origin}/api/apps/connect/${'b'.repeat(43)}`,
+  ]) {
+    assert.equal(connectionUrl(hosted, origin), hosted);
+    assert.deepEqual(messageSetupLinks(`[Connect Gmail](${hosted})`, origin), [
+      { href: hosted, setup: 'app', label: 'Connect Gmail' },
+    ]);
+  }
   for (const suffix of ['?', '#', '?#', '?unexpected=yes', '#unexpected'])
     assert.throws(() => connectionUrl(bridge + suffix, origin));
   for (const value of [

@@ -12,10 +12,12 @@ function sameInstance(url: URL, instance?: string) {
 
 export function isConnectionBridge(url: URL) {
   return (
-    url.protocol === 'http:' &&
-    url.hostname === '127.0.0.1' &&
-    Boolean(url.port) &&
-    /^\/[A-Za-z0-9_-]{43}$/.test(url.pathname) &&
+    ((url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      Boolean(url.port) &&
+      /^\/[A-Za-z0-9_-]{43}$/.test(url.pathname)) ||
+      ((url.protocol === 'https:' || (url.protocol === 'http:' && loopback.has(url.hostname))) &&
+        /^\/api\/apps\/connect\/[A-Za-z0-9_-]{43}$/.test(url.pathname))) &&
     !url.username &&
     !url.password &&
     !url.href.includes('?') &&

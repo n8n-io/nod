@@ -52,6 +52,8 @@ For a direct source install, stop and start the Nod process. The desktop app doe
 | `NOD_PUBLIC_URL`          | The exact origin you open Nod at. Remote origins require HTTPS and `NOD_AUTH_TOKEN`. No path, query, fragment, or user credentials. Loopback origins can use HTTP.   | `http://localhost:<PORT>`                           |
 | `NOD_PRIVACY_NOTICE_FILE` | A Markdown privacy notice served at `/privacy`.                                                                                                                      | No notice                                           |
 
+App sign-in pages and callbacks use `NOD_PUBLIC_URL`, including through an SSH tunnel. See [Connect apps on the server](/deploy/self-host/#connect-apps-on-the-server).
+
 The access token grants full access to this server's assistant. `setup.sh` generates it from 32 cryptographically random bytes. For manual setup, use `openssl rand -hex 32`; a long word or repeated character is not a secure token. Keep it separate from `NOD_VAULT_KEY`.
 
 Omit `NOD_AUTH_TOKEN` and `NOD_PUBLIC_URL` from a local source configuration when you don't set them. An explicitly empty value is invalid. The Docker setup fills both in.

@@ -6,7 +6,11 @@ export interface IntegrationConnectionBrowser {
   open(
     id: string,
     brokerOrigin: string,
-    start: (browserKey: unknown, origin: string, native: { returnPath: string }) => Promise<string>,
+    start: (
+      browserKey: unknown,
+      origin: string,
+      native?: { returnPath: string },
+    ) => Promise<string>,
   ): Promise<string>;
   owns(url: string): boolean;
   remote(url: string): string | undefined;

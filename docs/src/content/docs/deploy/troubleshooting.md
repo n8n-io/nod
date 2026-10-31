@@ -89,9 +89,19 @@ ChatGPT sign-in receives its callback on port 1455. Another Nod app or another s
 
 ### An app connection fails
 
-Return to **Apps** and select **Connect** again. Complete the authorization in the same browser tab; a copied, expired or already used link cannot finish a connection. If the system's encrypted storage is locked, unlock it and restart Nod.
+Return to **Apps** and select **Connect** again. Keep the sign-in page and any window it opens until authorization finishes. A copied, expired or already used link cannot finish a connection. If the system's encrypted storage is locked, unlock it and restart Nod.
 
 If the connection service is unavailable or reports a limit, try again later. If the problem persists, [send feedback with a diagnostic report](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+
+### App sign-in opens an unreachable address on a remote server
+
+Update the server to a version with [remote app sign-in](/deploy/self-host/#connect-apps-on-the-server). Set `NOD_PUBLIC_URL` to the exact address you open Nod at, then [apply the configuration](/deploy/configuration/#apply-configuration-changes).
+
+For HTTPS, use your public origin, such as `https://nod.example.com`. For an SSH tunnel, keep the tunnel open and use its local Nod address, such as `http://localhost:4310`. App sign-in uses that same port.
+
+Start a fresh connection from **Apps**. Keep its first page open and select **Continue to sign in**. Allow popups for Nod if no sign-in window opens. A page opened before a server restart or URL change cannot complete the connection.
+
+ChatGPT model sign-in uses a separate flow. Follow its [remote callback instructions](/connect/models/#connect-a-service); you don't need to expose port `1455` publicly.
 
 ## Channels
 

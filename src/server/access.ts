@@ -123,8 +123,13 @@ export function registerLocalAccess(
       ['/api/apps/callback', '/api/models/oauth/callback'].includes(path) &&
       state.length === 1 &&
       token.test(state[0]);
+    const connectionBridge =
+      !desktop &&
+      ['GET', 'POST'].includes(request.method) &&
+      /^\/api\/apps\/connect\/[A-Za-z0-9_-]{43}$/.test(request.url);
     const open =
       appCallback ||
+      connectionBridge ||
       (!desktop &&
         ((request.method === 'POST' && path === '/api/access') ||
           (request.method === 'GET' && path === '/api/privacy')));
@@ -142,7 +147,17 @@ export function registerLocalAccess(
             ? 'Enter your server authentication token.'
             : 'Open Nod from the link in your terminal.',
       });
-    if (request.headers['sec-fetch-site'] === 'cross-site' && !appCallback && !pageNavigation)
+    if (
+      request.headers['sec-fetch-site'] === 'cross-site' &&
+      !appCallback &&
+      !pageNavigation &&
+      !(
+        connectionBridge &&
+        request.method === 'GET' &&
+        request.headers['sec-fetch-mode'] === 'navigate' &&
+        request.headers['sec-fetch-dest'] === 'document'
+      )
+    )
       return reply.code(403).send({ error: 'Cross-site requests are not permitted.' });
   });
   if (!desktop)
