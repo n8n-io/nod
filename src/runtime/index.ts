@@ -84,6 +84,7 @@ const delimitedTools = new Set([
   'delegate',
   'browser',
   'browser_session',
+  'sign_in',
   'web_search',
   'fetch_content',
   'get_search_content',
