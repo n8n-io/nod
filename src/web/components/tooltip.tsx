@@ -59,6 +59,15 @@ export function Tooltip({
     dismissed.current = true;
     hide();
   }
+  function hasKeyboardFocus() {
+    const focused = document.activeElement;
+    return Boolean(
+      focused instanceof Element &&
+      focused.matches(':focus-visible') &&
+      anchor.current?.contains(focused) &&
+      focused.closest('[data-tooltip-trigger]') === anchor.current,
+    );
+  }
   function show(wait: number) {
     clearTimeout(timer.current);
     if (!content || dismissed.current || (forcedHints.size && !forceOpen)) return;
@@ -68,7 +77,7 @@ export function Tooltip({
       if (
         !element?.isConnected ||
         !element.getClientRects().length ||
-        (!element.matches(':hover') && !element.matches(':focus-visible'))
+        (!element.matches(':hover') && !hasKeyboardFocus())
       )
         return;
       const bounds = element.getBoundingClientRect();
@@ -87,8 +96,7 @@ export function Tooltip({
   function leave() {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      if (!hovered.current && !panelHovered.current && !anchor.current?.matches(':focus-visible'))
-        hide();
+      if (!hovered.current && !panelHovered.current && !hasKeyboardFocus()) hide();
     }, 120);
   }
   useEffect(() => {
@@ -125,6 +133,17 @@ export function Tooltip({
     const trigger = anchor.current;
     const element = panel.current;
     if (!visible || !trigger || !element) return;
+    let frame = 0;
+    let disposed = false;
+    let observed: DOMRect | undefined;
+    let movement: IntersectionObserver | undefined;
+    const schedule = () => {
+      if (disposed || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        place();
+      });
+    };
     const place = () => {
       if (!trigger.isConnected || !trigger.getClientRects().length) {
         hide();
@@ -157,14 +176,49 @@ export function Tooltip({
       if (element.style.top !== top) element.style.top = top;
       element.style.visibility = 'visible';
       element.dataset.side = position;
+      if (
+        typeof IntersectionObserver !== 'undefined' &&
+        (!observed ||
+          bounds.left !== observed.left ||
+          bounds.top !== observed.top ||
+          bounds.width !== observed.width ||
+          bounds.height !== observed.height)
+      ) {
+        observed = bounds;
+        movement?.disconnect();
+        const width = document.documentElement.clientWidth || window.innerWidth;
+        const height = document.documentElement.clientHeight || window.innerHeight;
+        const margins = [bounds.top, width - bounds.right, height - bounds.bottom, bounds.left];
+        movement = new IntersectionObserver(
+          ([entry]) => {
+            if (
+              entry &&
+              (entry.boundingClientRect.left !== bounds.left ||
+                entry.boundingClientRect.top !== bounds.top ||
+                entry.boundingClientRect.width !== bounds.width ||
+                entry.boundingClientRect.height !== bounds.height)
+            )
+              schedule();
+          },
+          { rootMargin: margins.map((value) => `${-Math.floor(value)}px`).join(' '), threshold: 1 },
+        );
+        movement.observe(trigger);
+      }
     };
-    let frame: number;
-    const track = () => {
-      place();
-      frame = requestAnimationFrame(track);
+    const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : undefined;
+    resize?.observe(trigger);
+    resize?.observe(element);
+    window.addEventListener('resize', schedule);
+    document.addEventListener('scroll', schedule, true);
+    place();
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      movement?.disconnect();
+      resize?.disconnect();
+      window.removeEventListener('resize', schedule);
+      document.removeEventListener('scroll', schedule, true);
     };
-    track();
-    return () => cancelAnimationFrame(frame);
   }, [visible, content, shortcut, side, hide]);
   const child = children as ReactElement<{ title?: string; 'aria-describedby'?: string }>;
   const description = [child.props['aria-describedby'], visible && content ? id : undefined]
@@ -195,7 +249,7 @@ export function Tooltip({
         onPointerDown={dismiss}
         onPointerCancel={dismiss}
         onFocus={() => {
-          if (!anchor.current?.matches(':focus-visible')) return;
+          if (!hasKeyboardFocus()) return;
           dismissed.current = false;
           show(0);
         }}

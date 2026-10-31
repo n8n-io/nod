@@ -148,15 +148,15 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 
 ## Troubleshooting
 
-| Problem                                                       | Fix                                                                                                                                            |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models. |
-| **This server has no models Nod can use**                     | Nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                    |
-| Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
-| A new model doesn't appear                                    | Open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                          |
-| **Can’t load its models** next to a server set in `.env`      | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                        |
-| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                |
-| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
+| Problem                                                       | Fix                                                                                                                                                      |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models.           |
+| **This server has no models Nod can use**                     | Nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                              |
+| Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                               |
+| A new model doesn't appear on a server added in Settings      | Open **Manage** next to the connection, choose **Add connection**, then enter the same server address and API key, if used. This updates its model list. |
+| **Can’t load its models** next to a server set in `.env`      | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                  |
+| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                          |
+| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                                    |
 
 ## Related resources
 

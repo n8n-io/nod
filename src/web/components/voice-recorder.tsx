@@ -15,6 +15,9 @@ import {
 export function MicrophonePicker({
   recorder,
   disabled,
+  triggerDisabled,
+  hint,
+  shortcut,
   children,
   setup,
   setupOpen = false,
@@ -22,6 +25,9 @@ export function MicrophonePicker({
 }: {
   recorder: ReturnType<typeof useVoiceRecorder>;
   disabled: boolean;
+  triggerDisabled: boolean;
+  hint: string;
+  shortcut?: string;
   children: ReactNode;
   setup?: ReactNode;
   setupOpen?: boolean;
@@ -62,6 +68,10 @@ export function MicrophonePicker({
     if (setupOpen) changeOpen(false);
   }, [setupOpen]);
   useEffect(() => {
+    if (!triggerDisabled && document.activeElement === anchor.current)
+      anchor.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [triggerDisabled]);
+  useEffect(() => {
     if (
       !open ||
       setupOpen ||
@@ -87,32 +97,36 @@ export function MicrophonePicker({
         else changeOpen(value);
       }}
     >
-      <Popover.Anchor asChild>
-        <span
-          ref={anchor}
-          className="composer-microphone"
-          onContextMenu={(event) => {
-            if (disabled) return;
-            event.preventDefault();
-            onSetupOpenChange?.(false);
-            changeOpen(true);
-          }}
-          onKeyDown={(event) => {
-            if (
-              !disabled &&
-              (event.key === 'ContextMenu' ||
-                (event.shiftKey && event.key === 'F10') ||
-                (event.altKey && event.key === 'ArrowDown'))
-            ) {
+      <Tooltip content={hint} shortcut={shortcut}>
+        <Popover.Anchor asChild>
+          <span
+            ref={anchor}
+            className="composer-microphone tooltip-disabled-trigger"
+            tabIndex={triggerDisabled ? 0 : undefined}
+            aria-label={triggerDisabled ? hint : undefined}
+            onContextMenu={(event) => {
+              if (disabled) return;
               event.preventDefault();
               onSetupOpenChange?.(false);
               changeOpen(true);
-            }
-          }}
-        >
-          {children}
-        </span>
-      </Popover.Anchor>
+            }}
+            onKeyDown={(event) => {
+              if (
+                !disabled &&
+                (event.key === 'ContextMenu' ||
+                  (event.shiftKey && event.key === 'F10') ||
+                  (event.altKey && event.key === 'ArrowDown'))
+              ) {
+                event.preventDefault();
+                onSetupOpenChange?.(false);
+                changeOpen(true);
+              }
+            }}
+          >
+            {children}
+          </span>
+        </Popover.Anchor>
+      </Tooltip>
       <Popover.Portal>
         <Popover.Content
           ref={observePanel}

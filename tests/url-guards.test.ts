@@ -905,7 +905,16 @@ test('flight journeys preserve every leg and distinguish connections from techni
   const bookedText = presentationText(booked);
   assert.match(bookedText, /Booked/);
   assert.match(bookedText, /Booking reference: SYNTH42/);
-  assert.doesNotMatch(bookedText, /Option \d|undefined|EUR 740/);
+  assert.doesNotMatch(bookedText, /Option \d|undefined|EUR 740|Recommended/);
+  const unconfirmed = presentationSchema.parse({
+    ...parsed,
+    options: [{ ...option, status: 'unknown' }],
+  });
+  assert.match(presentationText(unconfirmed), /Booking status unknown/);
+  assert.doesNotMatch(presentationText(unconfirmed), /Recommended/);
+  assert.match(summary, /Recommended/);
+  assert.doesNotMatch(summary, /Booking status unknown/);
+  assert.doesNotMatch(bookedText, /Booking status unknown/);
   assert.equal(
     presentationSchema.safeParse({ ...parsed, options: [{ ...option, status: 'unverified' }] })
       .success,

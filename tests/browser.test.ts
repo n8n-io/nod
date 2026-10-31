@@ -5657,6 +5657,7 @@ test('shared controls retain reachable tabs, visible-label typeahead and disable
         const tooltip = document.querySelector('[role="tooltip"]');
         const first = Number.parseFloat(tooltip.style.left);
         left += 120;
+        window.dispatchEvent(new Event('resize'));
         await tick();
         assert.equal(Number.parseFloat(tooltip.style.left), first + 120);
         let clicked = 0;

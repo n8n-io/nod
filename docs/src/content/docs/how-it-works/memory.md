@@ -211,7 +211,7 @@ Nod writes a skill from what it did and read, so a web page or an email can shap
 
 ## Owner edits and archive
 
-Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive while space is available; the oldest archived notes are dropped first when memory reaches its 256 KB limit.
+Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive while space is available; the oldest archived notes are dropped first when memory reaches its 256 KiB limit.
 
 **Archive note** moves the active entry into **Let go** with a manual reason. It preserves the text, source evidence, fact details and earlier versions, and works while saving new notes is off. **Bring back** restores it as confirmed, keeping an end date that is still valid. **Forget note** remains a separate deletion operation.
 

@@ -42,6 +42,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
   const noticePanel = useRef<HTMLDivElement>(null);
   const noticeTabTarget = useRef<HTMLElement | null>(null);
   const focusNotice = useRef(false);
+  const focusOrigin = useRef<HTMLElement | null>(null);
   const returnFocus = useRef(true);
   const activeId = useRef(item.id);
   activeId.current = item.id;
@@ -50,7 +51,26 @@ export function FileActions({ item }: { item: ImagePreview }) {
   useEffect(() => {
     setNotice('');
     setBusy(false);
+    focusNotice.current = false;
+    focusOrigin.current = null;
   }, [item.id]);
+  useEffect(() => {
+    if (!busy || !focusNotice.current) return;
+    const cancel = () => {
+      focusNotice.current = false;
+    };
+    const moved = (event: FocusEvent) => {
+      if (event.target !== focusOrigin.current) cancel();
+    };
+    document.addEventListener('focusin', moved, true);
+    document.addEventListener('pointerdown', cancel, true);
+    document.addEventListener('keydown', cancel, true);
+    return () => {
+      document.removeEventListener('focusin', moved, true);
+      document.removeEventListener('pointerdown', cancel, true);
+      document.removeEventListener('keydown', cancel, true);
+    };
+  }, [busy]);
   const image = /^image\/(png|jpeg|webp|gif|avif|bmp)$/.test(item.mimeType ?? '');
   useEffect(() => {
     const target =
@@ -72,12 +92,13 @@ export function FileActions({ item }: { item: ImagePreview }) {
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  async function run(action: string, keyboard = false) {
+  async function run(action: string, origin?: HTMLElement) {
     if (action === 'reuse') {
       reuseFile(item);
       return;
     }
-    focusNotice.current = action === 'save' && keyboard;
+    focusOrigin.current = origin ?? null;
+    focusNotice.current = action === 'save' && origin === document.activeElement;
     const id = item.id;
     if (activeId.current === id) setBusy(true);
     try {
@@ -140,7 +161,9 @@ export function FileActions({ item }: { item: ImagePreview }) {
                 disabled={busy}
                 aria-label={`Save ${item.name}`}
                 title="Save to Downloads"
-                onClick={(event) => void run('save', event.detail === 0)}
+                onClick={(event) =>
+                  void run('save', event.detail === 0 ? event.currentTarget : undefined)
+                }
               >
                 <Download size={15} />
               </Button>
@@ -178,11 +201,17 @@ export function FileActions({ item }: { item: ImagePreview }) {
             event.preventDefault();
             noticeTabTarget.current = null;
             returnFocus.current = true;
-            if (focusNotice.current)
+            const origin = focusOrigin.current;
+            if (
+              focusNotice.current &&
+              (document.activeElement === origin ||
+                (document.activeElement === document.body && origin && !origin.isConnected))
+            )
               (
                 noticePanel.current?.querySelector<HTMLElement>('button') ?? noticePanel.current
               )?.focus({ preventScroll: true });
             focusNotice.current = false;
+            focusOrigin.current = null;
           }}
           onInteractOutside={() => {
             returnFocus.current = false;

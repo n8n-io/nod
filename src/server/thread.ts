@@ -13,6 +13,7 @@ import {
   type QuestionAnswer,
 } from '../shared/answer-choices.ts';
 import { logFailure } from './failure-log.ts';
+import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -304,14 +305,7 @@ async function assertReplyTarget(client: PoolClient, threadId: string, messageId
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
 }
 
-export const pendingAnswerChoicesSql = `m.role='assistant' AND m.answer_choices IS NOT NULL AND EXISTS (
-  SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-  WHERE u.id=m.turn_id AND u.owner_id=m.owner_id AND u.thread_id=m.thread_id AND th.archived_at IS NULL
-    AND u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NULL
-    AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant'
-      ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
-    AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
-      AND (n.created_at,n.id)>(u.created_at,u.id)))`;
+export { pendingAnswerChoicesSql };
 
 export async function insertAssistantMessage(
   client: PoolClient,

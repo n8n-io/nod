@@ -23,7 +23,7 @@ import type {
 import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
 import { appPagePath, appPages, appPageUrl } from '../shared/app-links.ts';
-import { pendingAnswerChoicesSql } from './thread.ts';
+import { pendingAnswerChoicesSql } from './answer-choices.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 const taskCommand = /^\/(tasks|status|stop)(?:@[A-Za-z0-9_]+)?$/i;

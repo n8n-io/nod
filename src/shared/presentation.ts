@@ -410,11 +410,17 @@ export function presentationText(value: Presentation) {
         '',
         [
           option.label,
-          option.status === 'booked' ? 'Booked' : undefined,
+          option.status === 'booked'
+            ? 'Booked'
+            : option.status === 'unknown'
+              ? 'Booking status unknown'
+              : undefined,
           option.bookingReference ? `Booking reference: ${option.bookingReference}` : undefined,
           option.price,
           option.baggage,
-          option.recommended ? 'Recommended' : undefined,
+          option.recommended && option.status !== 'booked' && option.status !== 'unknown'
+            ? 'Recommended'
+            : undefined,
           option.url,
         ]
           .filter(Boolean)

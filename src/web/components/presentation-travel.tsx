@@ -66,6 +66,7 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
     <div className="flight-options">
       {visual.options.map((flight, optionIndex) => {
         const booked = flight.status === 'booked';
+        const bookingUnknown = flight.status === 'unknown';
         const airlines = [
           ...new Set(
             flight.journeys.flatMap((journey) =>
@@ -93,7 +94,7 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
         const hasDetails = Boolean(
           flight.label ||
           flight.bookingReference ||
-          (booked && flight.price) ||
+          ((booked || bookingUnknown) && flight.price) ||
           flight.baggage ||
           flight.url ||
           visual.asOf ||
@@ -115,7 +116,7 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
         );
         return (
           <article
-            className={`flight-option${flight.recommended && !booked ? ' is-recommended' : ''}`}
+            className={`flight-option${flight.recommended && !booked && !bookingUnknown ? ' is-recommended' : ''}`}
             key={flight.id}
             aria-label={airlines}
           >
@@ -129,9 +130,10 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
                   <span>{airlines}</span>
                 </span>
                 <div className="flight-summary-meta">
-                  {booked ? (
+                  {booked || bookingUnknown ? (
                     <span className="flight-status">
-                      <Check size={12} aria-hidden="true" /> Booked
+                      {booked && <Check size={12} aria-hidden="true" />}
+                      {booked ? 'Booked' : 'Booking status unknown'}
                     </span>
                   ) : (
                     <>
@@ -201,7 +203,9 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
                   </summary>
                   <div className="flight-details">
                     {flight.label && <p className="flight-description">{flight.label}</p>}
-                    {(flight.bookingReference || (booked && flight.price) || flight.baggage) && (
+                    {(flight.bookingReference ||
+                      ((booked || bookingUnknown) && flight.price) ||
+                      flight.baggage) && (
                       <dl className="flight-facts">
                         {flight.bookingReference && (
                           <div>
@@ -209,7 +213,7 @@ export function Flights({ visual, action }: { visual: FlightsVisual; action?: Re
                             <dd>{flight.bookingReference}</dd>
                           </div>
                         )}
-                        {booked && flight.price && (
+                        {(booked || bookingUnknown) && flight.price && (
                           <div>
                             <dt>Price</dt>
                             <dd>{flight.price}</dd>

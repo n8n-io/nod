@@ -770,6 +770,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return () => window.removeEventListener('keydown', key);
   }, [active, ready, recorder.supported, recorder.phase, sendingAudio, canRecord, editor, mac]);
   const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
+  const microphoneDisabled =
+    !active || !ready || !recorder.supported || recordingPending || sendingAudio;
   const audioProgress =
     speech?.localInput?.progress === undefined
       ? undefined
@@ -1013,6 +1015,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <MicrophonePicker
               recorder={recorder}
               disabled={!active || !ready || !recorder.supported || hasRecording}
+              triggerDisabled={microphoneDisabled}
+              hint={microphoneTitle}
+              shortcut={shortcutLabel('d', mac)}
               setupOpen={showAudioSetup}
               onSetupOpenChange={setShowAudioSetup}
               setup={<VoiceSetup error={recorder.error} onRetry={retryAudio} />}
@@ -1027,11 +1032,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 aria-haspopup={canRecord ? 'menu' : 'dialog'}
                 aria-expanded={showAudioSetup || undefined}
                 aria-keyshortcuts={`${mac ? 'Meta+D' : 'Control+D'} Shift+F10 Alt+ArrowDown`}
-                title={microphoneTitle}
-                shortcut={shortcutLabel('d', mac)}
-                disabled={
-                  !active || !ready || !recorder.supported || recordingPending || sendingAudio
-                }
+                disabled={microphoneDisabled}
                 onPointerDown={(event) => {
                   heldMicrophoneClick.current = false;
                   if (

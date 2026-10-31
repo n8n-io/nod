@@ -147,7 +147,7 @@
 }
 
 .artifact-drawer-title h2,
-.artifact-drawer-title span {
+.artifact-drawer-title > span {
   overflow: hidden;
   margin: 0;
   font-size: var(--text-control);
@@ -160,7 +160,7 @@
   font-weight: 500;
 }
 
-.artifact-drawer-title span {
+.artifact-drawer-title > span {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }

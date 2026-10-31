@@ -92,10 +92,10 @@
   align-items: center;
   gap: var(--chat-action-gap);
 }
-.app-account-actions > .button {
+.app-account-actions .button {
   color: var(--muted-foreground);
 }
-.app-account-actions > .account-reconnect {
+.app-account-actions .account-reconnect {
   color: var(--accent);
 }
 .app-manage-dialog .account-disconnect:hover:not(:disabled) {
@@ -130,7 +130,7 @@
   visibility: hidden;
 }
 @media (pointer: coarse) {
-  .app-account-actions > .button {
+  .app-account-actions .button {
     width: 40px;
     height: 40px;
   }
