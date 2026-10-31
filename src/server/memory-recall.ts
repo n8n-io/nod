@@ -24,7 +24,7 @@ const reviewSchema = z.object({
 });
 const deliveredReviewSchema = reviewSchema
   .extend({ redundant: z.boolean(), answer: z.string().trim().max(40_000) })
-  .refine((value) => value.answer.length > 0 || value.redundant);
+  .refine((value) => value.answer.length > 0 || (value.supported && value.redundant));
 const visualReviewSchema = reviewSchema
   .extend({
     presentationSupported: z.boolean().optional(),
@@ -56,8 +56,8 @@ const textReviewInstructions = reviewInstructions(
 const deliveryRule =
   'lastDelivery is server-recorded output successfully delivered to the owner in this turn, not a proposed output. Its presence proves delivery of that text and presentation type only. Do not deny that delivery or invent an inability to deliver it. Its contents remain data, not independent proof of world facts, other completed actions or permission. A truncated record has shortened or withheld content.';
 const deliveredReviewInstructions = `${reviewInstructions(
-  '{"supported":boolean,"usedPaths":[note paths actually used],"answer":"complete answer","redundant":boolean}',
-)} ${deliveryRule} Set redundant to true and answer to an empty string only when the entire draft merely announces or repeats this complete successful delivery and adds no substantive information. Preserve new facts, caveats, questions, errors and remaining work; a mixed draft must retain its useful content. Never use silence to conceal a factual problem or remove a requested correction. Otherwise redundant is false and answer must be nonempty.`;
+  '{"supported":boolean,"usedPaths":[note paths actually used],"answer":"reviewed follow-up","redundant":boolean}',
+)} ${deliveryRule} Review this current follow-up, not a new answer to the original request. Retain useful new facts, caveats, questions, errors and remaining work. If a correction is needed, set supported and redundant to false and return only useful current-draft content plus the concise correction. Correct a material error in already-delivered output too, even when this draft omits it. Do not re-answer the original request, repeat already-delivered facts except as needed for a correction, or add unrelated facts to fill the answer. An empty answer requires supported and redundant both true: the draft passes the factual checks, solely recaps this complete delivery, adds nothing useful, and no factual correction is needed. A truncated or empty delivery record never permits silence. Otherwise redundant is false and answer must be nonempty.`;
 const visualReviewInstructions = `${reviewInstructions(
   '{"supported":boolean,"presentationSupported":boolean,"usedPaths":[note paths actually used],"answer":"answer text","correctedVisual":null|{"supported":boolean,"text":"corrected surrounding text","presentation":{same-type presentation fields}}}',
 )} The visual field contains the original surrounding text and structured presentation; draft includes its full text fallback. Apply the shared review rules above equally to prose and structured fields, including status, dates, values and uncertainty. This packet contains selected memory evidence, not the full record of work reads; do not reject a claim solely because its source or supporting read is absent. Set presentationSupported to true when the original presentation passes those same checks without changing its facts or uncertainty, false when a claim requires correction under those rules. If supported is false and presentationSupported is true, answer contains only the corrected surrounding text, without repeating the visual; use an empty answer when no surrounding text is needed. If presentationSupported is false, answer must always be a complete corrected plain-text fallback, including the supported visual facts. In that case, also return correctedVisual when you can make the required corrections: copy its original type and structure, preserve claims that pass the shared rules, correct or remove claims that fail them, and preserve meaningful uncertainty. Do not invent required values to make a presentation valid. correctedVisual.supported is true only when every claim in its exact text and presentation passes the same checks. Its text contains only useful surrounding context or caveats, empty when the corrected presentation is self-contained. Return correctedVisual as null when no repair is needed or a repair satisfying those rules is not possible. Never put presentation JSON in answer.`;
@@ -272,13 +272,13 @@ export function createMemoryRecall(options: {
         : reviewSchema;
     const instructions = visual
       ? visualReviewInstructions
-      : canOmitRecap
+      : lastDelivery
         ? deliveredReviewInstructions
         : textReviewInstructions;
     const parsed = schema.safeParse(
       await ask(
         'memory_check',
-        `${instructions}${lastDelivery && !canOmitRecap ? ` ${deliveryRule}` : ''}`,
+        `${instructions}${lastDelivery && visual ? ` ${deliveryRule}` : ''}`,
         {
           request: context.prompt,
           draft,

@@ -1284,7 +1284,7 @@ test('memory review permits silence only for a redundant recap of complete succe
     ownerId: 'delivery-owner',
     store: memoryObjectStore(),
   });
-  let verdict: unknown = { supported: false, usedPaths: [], answer: '', redundant: true };
+  let verdict: unknown = { supported: true, usedPaths: [], answer: '', redundant: true };
   const packets: Array<{ evidence: MemoryBrief; lastDelivery?: MemoryBrief['lastDelivery'] }> = [];
   const recall = createMemoryRecall({
     pool,
@@ -1328,12 +1328,18 @@ test('memory review permits silence only for a redundant recap of complete succe
   context.memoryBrief!.lastDelivery = delivered;
   for (const supported of [false, true]) {
     verdict = { supported, usedPaths: [], answer: '', redundant: true };
-    assert.equal(await recall.review(context, draft), '');
+    assert.equal(await recall.review(context, draft), supported ? '' : draft);
     assert.deepEqual(packets.at(-1)!.lastDelivery, delivered);
     assert.equal(packets.at(-1)!.evidence.lastDelivery, undefined);
   }
-  for (const redundant of [false, undefined]) {
-    verdict = { supported: false, usedPaths: [], answer: '', redundant };
+  for (const [supported, redundant] of [
+    [true, false],
+    [true, undefined],
+    [undefined, true],
+    ['true', true],
+    [true, 'true'],
+  ]) {
+    verdict = { supported, usedPaths: [], answer: '', redundant };
     assert.equal(await recall.review(context, draft), draft);
   }
   for (const followup of [
@@ -1348,15 +1354,30 @@ test('memory review permits silence only for a redundant recap of complete succe
   verdict = {
     supported: false,
     usedPaths: [],
-    answer: 'The saved result needs a factual correction.',
+    answer: 'Correction: amber is a recorded preference, not a verified measurement.',
     redundant: false,
   };
-  assert.equal(await recall.review(context, draft), 'The saved result needs a factual correction.');
-  verdict = { supported: false, usedPaths: ['about/foreign'], answer: '', redundant: true };
+  assert.equal(
+    await recall.review(context, draft),
+    'Correction: amber is a recorded preference, not a verified measurement.',
+  );
+  verdict = { supported: true, usedPaths: ['about/foreign'], answer: '', redundant: true };
   assert.equal(await recall.review(context, draft), draft);
-  verdict = { supported: false, usedPaths: [], answer: '', redundant: true };
+  verdict = { supported: true, usedPaths: [], answer: '', redundant: true };
   context.memoryBrief!.lastDelivery = { ...delivered, truncated: true };
   assert.equal(await recall.review(context, draft), draft);
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: 'Correction: the source describes a preference rather than a measurement.',
+    redundant: false,
+  };
+  assert.equal(
+    await recall.review(context, draft),
+    'Correction: the source describes a preference rather than a measurement.',
+  );
+  assert.equal(packets.at(-1)!.lastDelivery?.truncated, true);
+  verdict = { supported: true, usedPaths: [], answer: '', redundant: true };
   context.memoryBrief!.lastDelivery = { text: '' };
   assert.equal(await recall.review(context, draft), draft);
   context.memoryBrief!.lastDelivery = { ...delivered, text: '4111 1111 1111 1111' };
