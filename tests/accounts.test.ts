@@ -3849,6 +3849,79 @@ describe('analytics profiles and product surveys', { skip: !process.env.TEST_DAT
     assert.equal(f.captured[4]!.properties.profile_role, undefined);
   });
 
+  test('profile publication follows the latest queued profile and fences consent epochs', async (t) => {
+    const f = await fixture(t);
+    const owner = 'profile-queue-owner';
+    let entered!: () => void;
+    let release!: () => void;
+    let held: Promise<void> | undefined;
+    let reached: Promise<void>;
+    const block = () => {
+      reached = new Promise<void>((resolve) => (entered = resolve));
+      held = new Promise<void>((resolve) => (release = resolve));
+    };
+    let failTheme = false;
+    const app = await f.app(owner, {
+      ...f.accounts,
+      update: async (id, input) => {
+        if (held) {
+          const wait = held;
+          held = undefined;
+          entered();
+          await wait;
+        }
+        if (failTheme && input.theme !== undefined) throw new Error('Synthetic settings failure');
+        return f.accounts.update(id, input);
+      },
+    });
+    await app.get('/api/session');
+    const profiles = () => f.captured.filter((event) => event.event === 'nod_profile_updated');
+    block();
+    const first = app.patch({ analyticsProfile: { role: 'employee' } });
+    await reached!;
+    const theme = app.patch({ theme: 'dark' });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await Promise.all([first, theme]);
+    assert.equal(profiles().length, 1);
+    assert.equal(profiles()[0]!.properties.role, 'employee');
+    block();
+    const earlier = app.patch({ analyticsProfile: { role: 'individual' } });
+    await reached!;
+    const later = app.patch({ analyticsProfile: { role: 'business_owner' } });
+    const tail = app.patch({ theme: 'light' });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await Promise.all([earlier, later, tail]);
+    assert.equal(profiles().length, 2);
+    assert.equal(profiles()[1]!.properties.role, 'business_owner');
+    block();
+    const stale = app.patch({ analyticsProfile: { role: 'agency_owner' } });
+    await reached!;
+    const staleTail = app.patch({ theme: 'dark' });
+    await new Promise((resolve) => setImmediate(resolve));
+    f.analytics.setUsageData(owner, false);
+    f.analytics.setUsageData(owner, true);
+    release();
+    await Promise.all([stale, staleTail]);
+    assert.equal(profiles().length, 2);
+    assert.equal((await f.accounts.read(owner)).analyticsProfile?.role, 'agency_owner');
+    await app.patch({ usageData: true });
+    assert.equal(profiles().length, 3);
+    assert.equal(profiles()[2]!.properties.role, 'agency_owner');
+    block();
+    const saved = app.patch({ analyticsProfile: { role: 'employee' } });
+    await reached!;
+    failTheme = true;
+    const rejected = app.patch({ theme: 'system' });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    assert.equal((await saved).statusCode, 200);
+    assert.equal((await rejected).statusCode, 400);
+    assert.equal(profiles().length, 4);
+    assert.equal(profiles()[3]!.properties.role, 'employee');
+  });
+
   test('survey eligibility uses completed owner requests and excludes automatic work', async (t) => {
     const f = await fixture(t);
     await f.history('active');

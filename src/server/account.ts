@@ -40,7 +40,35 @@ export function createAccountSession(options: {
   const user = options.localUser;
   const owner = user.id;
   let accountVersion = 0;
+  let consentVersion = 0;
+  let profilePublication:
+    | { consent: ReturnType<Analytics['consent']> | undefined; version: number; enabling: boolean }
+    | undefined;
   let pending: Promise<unknown> | undefined;
+  function applyAccount(account: AccountSettings, consent: { enabled: boolean; revision: string }) {
+    const previousConsent = options.analytics?.consent(owner);
+    options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+    options.analytics?.setProfile(owner, account.analyticsProfile ?? {});
+    options.onTraces?.(account.traces);
+    const publication = profilePublication;
+    profilePublication = undefined;
+    const currentConsent = options.analytics?.consent(owner);
+    if (
+      publication &&
+      publication.version === consentVersion &&
+      account.analyticsProfile !== undefined &&
+      currentConsent?.enabled &&
+      ((publication.enabling && publication.consent?.version === previousConsent?.version) ||
+        (publication.consent?.enabled &&
+          !publication.consent.signal.aborted &&
+          publication.consent.version === currentConsent.version) ||
+        (publication.consent?.version === 0 && previousConsent?.version === 0))
+    )
+      options.analytics?.capture(owner, {
+        event: 'nod_profile_updated',
+        properties: account.analyticsProfile,
+      });
+  }
   async function readAccount() {
     for (;;) {
       await pending?.catch(() => {});
@@ -48,14 +76,15 @@ export function createAccountSession(options: {
       const account = await options.accounts.read(owner);
       const consent = await options.accounts.readConsent(owner);
       if (accountVersion !== version || pending) continue;
-      options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
-      options.analytics?.setProfile(owner, account.analyticsProfile ?? {});
-      options.onTraces?.(account.traces);
+      applyAccount(account, consent);
       return { ...account, usageData: consent.enabled };
     }
   }
   async function updateAccount(input: AccountUpdate) {
     const version = ++accountVersion;
+    if (input.usageData !== undefined) consentVersion++;
+    const publicationVersion = consentVersion;
+    const originalConsent = options.analytics?.consent(owner);
     if (input.usageData === false) options.analytics?.setUsageData(owner, false);
     if (input.traces === false) options.onTraces?.(false);
     const update = (pending ?? Promise.resolve())
@@ -63,10 +92,14 @@ export function createAccountSession(options: {
       .then(async () => {
         const account = await options.accounts.update(owner, input);
         const consent = await options.accounts.readConsent(owner);
+        if (input.analyticsProfile !== undefined || input.usageData === true)
+          profilePublication = {
+            consent: originalConsent,
+            version: publicationVersion,
+            enabling: input.usageData === true,
+          };
         if (accountVersion === version) {
-          options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
-          options.analytics?.setProfile(owner, account.analyticsProfile ?? {});
-          options.onTraces?.(account.traces);
+          applyAccount(account, consent);
         }
         return { ...account, usageData: consent.enabled };
       });
@@ -170,11 +203,9 @@ export function createAccountSession(options: {
     app.patch('/api/account', async (request, reply) => {
       if (!guard(request, reply)) return;
       const input = accountUpdate.parse(request.body);
-      const version = accountVersion + 1;
       if (input.traces === true && options.traces !== true)
         return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
-      let updated: AccountSettings | undefined;
       if (input.onboardingCompleted) {
         if (
           options.onboardingMissing &&
@@ -197,23 +228,11 @@ export function createAccountSession(options: {
         if (
           !(await start(reply, async () => {
             const account = await updateAccount(input);
-            updated = account;
             onboardingCompletedNow = account.onboardingCompletedNow === true;
           }))
         )
           return;
-      } else updated = await updateAccount(input);
-      const profile = updated?.analyticsProfile;
-      if (
-        (input.analyticsProfile !== undefined ||
-          (input.usageData === true && profile !== undefined)) &&
-        accountVersion === version &&
-        options.analytics?.consent(owner).enabled
-      )
-        options.analytics.capture(owner, {
-          event: 'nod_profile_updated',
-          properties: profile ?? {},
-        });
+      } else await updateAccount(input);
       if (onboardingCompletedNow) {
         const model = options.model?.();
         options.analytics?.capture(owner, {
