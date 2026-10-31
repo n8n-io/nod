@@ -1888,6 +1888,94 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(calls, { signIn: 2, authorize: 0, catalog: 1 });
   });
 
+  test('removing a selected model records only committed clearing within its consent period', async (t) => {
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const { lockKey } = await import('../src/server/locks.ts');
+    const f = await fixture(t);
+    let catalogs = 0;
+    const backend = {
+      ...f.backend,
+      catalog: (...args: Parameters<typeof f.backend.catalog>) => {
+        catalogs++;
+        return f.backend.catalog(...args);
+      },
+    };
+    const ownerId = 'fixture-remove-owner';
+    const owner = await f.create(ownerId, backend);
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData(ownerId, true);
+    owner.register(Fastify(), analytics.forOwner(ownerId));
+    const selected = await owner.addKey('openai', 'fixture-removal-key');
+    assert.equal(owner.view().selection?.connectionId, selected);
+    const selection = owner.view().selection!;
+    const alternative = owner
+      .view()
+      .connections.flatMap((connection) => connection.models)
+      .find((model) => model.id === selection.modelId)!
+      .efforts.find((effort) => effort !== selection.effort)!;
+    assert.ok(alternative);
+    await owner.select({ ...selection, effort: alternative });
+    captured.length = 0;
+    const store = createDatabaseModelStore({ database: f.database, ownerId, keyStore: f.keyStore });
+    await store.initialize();
+    const unselected = randomUUID();
+    await store.change((state) => {
+      state.connections.push({ ...structuredClone(state.connections[0]), id: unselected });
+    });
+    const calls = catalogs;
+    const settings = () => captured.filter(({ event }) => event === 'nod_setting_changed');
+    await owner.remove(unselected);
+    assert.equal(settings().length, 0);
+    assert.equal(owner.view().selection?.connectionId, selected);
+    await f.database.query(
+      "ALTER TABLE model_settings ADD CONSTRAINT retain_fixture_selection CHECK (selection IS NOT NULL AND selection <> 'null'::jsonb)",
+    );
+    const beforeFailure = captured.length;
+    await assert.rejects(owner.remove(selected));
+    assert.equal(captured.length, beforeFailure);
+    assert.equal((await store.read()).selection?.connectionId, selected);
+    assert.ok((await store.read()).connections.some(({ id }) => id === selected));
+    await f.database.query('ALTER TABLE model_settings DROP CONSTRAINT retain_fixture_selection');
+    await owner.remove(selected);
+    assert.equal((await store.read()).selection, null);
+    assert.deepEqual(
+      settings().map(({ properties }) => ({
+        setting: properties.setting,
+        actor: properties.actor,
+        state: properties.state,
+      })),
+      [
+        { setting: 'model_selection', actor: 'owner', state: 'cleared' },
+        { setting: 'model_effort', actor: 'owner', state: 'cleared' },
+      ],
+    );
+    await owner.remove(selected);
+    assert.equal(settings().length, 2);
+    assert.equal(catalogs, calls);
+    const next = await owner.addKey('openai', 'fixture-removal-next-key');
+    const beforeRevoke = captured.length;
+    const beforeCatalogs = catalogs;
+    const client = await f.database.connect();
+    await client.query('BEGIN');
+    await lockKey(client, `models:${ownerId}`);
+    const pending = owner.remove(next);
+    analytics.setUsageData(ownerId, false);
+    analytics.setUsageData(ownerId, true);
+    await client.query('COMMIT');
+    client.release();
+    await pending;
+    assert.equal((await store.read()).selection, null);
+    assert.equal(captured.length, beforeRevoke);
+    assert.equal(catalogs, beforeCatalogs);
+    assert.doesNotMatch(JSON.stringify(settings()), /fixture-|connectionId|modelId/);
+  });
+
   test('OpenAI-compatible servers connect from Models or server settings, and keep their key out of storage', async (t) => {
     const f = await fixture(t);
     const { createServer } = await import('node:http');

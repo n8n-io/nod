@@ -4306,7 +4306,7 @@ test('local settings and successful UI actions preserve consent and owner bounda
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
-for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+for(const name of ['window','document','Node','NodeFilter','DocumentFragment','Element','HTMLElement','HTMLInputElement','HTMLTextAreaElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
 globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
 globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
@@ -4326,6 +4326,7 @@ const config={enabled:true,distinctId:'local:synthetic-settings-owner',environme
 const restore=()=>{setRequestAccount('synthetic-settings-owner');configureAnalytics(config,'web')};
 restore();
 const keepAlive=setInterval(()=>{},1000);
+try {
 const checks=[];
 const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
 const count=(name)=>events.filter(item=>item.event===name).length;
@@ -4359,8 +4360,8 @@ configureAnalytics(undefined);configureAnalytics(config,'web');
 await act(async()=>{releaseNative();await saved});
 check('LS3-consent-fence',count('nod_local_setting_changed')===nativeCount);
 nativeMode='ok';delete window.nodDesktop;
-let permission='granted',releasePermission;
-class SyntheticNotification{static get permission(){return permission}static requestPermission(){return new Promise(resolve=>releasePermission=resolve)}close(){this.onclose?.()}}
+let permission='granted',releasePermission,permissionRequests=0;
+class SyntheticNotification{static get permission(){return permission}static requestPermission(){permissionRequests++;return new Promise(resolve=>releasePermission=value=>{permission=value;resolve(value)})}close(){this.onclose?.()}}
 window.Notification=SyntheticNotification;
 Object.defineProperty(window,'isSecureContext',{configurable:true,value:true});
 Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_key,...args)=>args.at(-1)({})}});
@@ -4387,16 +4388,22 @@ await remount(createElement(BrowserNotificationPrompt,{ownerId:owner}));
 await click(button('Not now'));check('BN1-dismissed',count('nod_local_setting_changed')===startNotifications+3);
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 permission='default';await click(notice());await waitFor(()=>releasePermission);
+check('BN2-denied-trigger',permissionRequests===1&&notice().disabled);
 await act(async()=>releasePermission('denied'));
-check('BN2-denied',count('nod_local_setting_changed')===startNotifications+3);
+check('BN2-denied',permission==='denied'&&notice().disabled&&count('nod_local_setting_changed')===startNotifications+3);
+permission='default';await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+assert.equal(notice().disabled,false);
 releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+check('BN2-consent-trigger',permissionRequests===2&&permission==='default'&&notice().disabled);
 configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releasePermission('granted'));
-check('BN2-consent-fence',count('nod_local_setting_changed')===startNotifications+3);
-window.localStorage.removeItem('nod.browser-notifications.'+owner);
+check('BN2-consent-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.'+owner)==='enabled'&&count('nod_local_setting_changed')===startNotifications+3);
+permission='default';window.localStorage.removeItem('nod.browser-notifications.'+owner);
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+assert.equal(notice().disabled,false);
 releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+check('BN2-owner-trigger',permissionRequests===3&&permission==='default'&&notice().disabled);
 owner='synthetic-another-owner';await act(async()=>sessionStore.refresh());await act(async()=>releasePermission('granted'));
-check('BN2-owner-fence',count('nod_local_setting_changed')===startNotifications+3);
+check('BN2-owner-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.synthetic-settings-owner')===null&&count('nod_local_setting_changed')===startNotifications+3);
 owner='synthetic-settings-owner';await act(async()=>sessionStore.refresh());restore();
 const {MessageBubble}=await import('./src/web/components/message.tsx');
 const message={id:'00000000-0000-4000-8000-000000000711',role:'assistant',text:'SYNTHETIC_PRIVATE_COPY_89271',createdAt:new Date().toISOString(),attachments:[],reactions:[]};
@@ -4440,7 +4447,9 @@ assert.ok(notification);
 notificationCurrent=false;notification.onclick();check('NO1-stale-owner',count('nod_notification_opened')===0);
 notificationCurrent=true;configureAnalytics(undefined);notification.onclick();check('NO1-consent-off',count('nod_notification_opened')===0);
 configureAnalytics(config,'web');notification.onclick();check('NO1-current-click',count('nod_notification_opened')===1);
-const {FileActions}=await import('./src/web/components/file-actions.tsx');
+const {FileActions,reuseFile}=await import('./src/web/components/file-actions.tsx');
+const reused=[];window.addEventListener('nod:attach-artifact',event=>reused.push(event.detail));
+const reuseEvents=()=>events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='reuse_requested');
 const artifact={id:'00000000-0000-4000-8000-000000000713',url:'/api/artifacts/00000000-0000-4000-8000-000000000713',name:'SYNTHETIC_PRIVATE_COPY_89271.txt',mimeType:'text/plain',size:12};
 let nativeAction='open',rejectFile=false;
 window.nodDesktop={fileMenu:async()=>nativeAction,fileAction:async()=>{if(rejectFile)throw new Error('Synthetic native action failure')}};
@@ -4450,8 +4459,54 @@ const artifactStart=count('nod_artifact_action');
 rejectFile=true;await click(fileMenu());check('FA1-rejected',count('nod_artifact_action')===artifactStart);
 rejectFile=false;await click(fileMenu());nativeAction='show';await click(fileMenu());
 check('FA1-accepted',events.filter(event=>event.event==='nod_artifact_action').slice(-2).map(event=>event.properties.action).join(',')==='open,reveal');
+const buttonReuseStart=reuseEvents().length;
 await click(document.querySelector('button[aria-label^="Use "]'));
-check('FA1-reuse-request',events.at(-1).event==='nod_artifact_action'&&events.at(-1).properties.action==='reuse_requested'&&events.at(-1).properties.location==='drawer');
+check('FA1-reuse-request',reused.length===1&&reuseEvents().length===buttonReuseStart+1&&reuseEvents().at(-1).properties.location==='drawer');
+nativeAction='reuse';await click(fileMenu());
+check('FA2-native-reuse-once',reused.length===2&&reuseEvents().length===buttonReuseStart+2&&reuseEvents().at(-1).properties.location==='drawer');
+const invalidStart=reuseEvents().length;
+check('FA2-unowned-rejected',reuseFile({...artifact,url:'https://private.example.test/file'},'drawer')===false&&reused.length===2&&reuseEvents().length===invalidStart);
+delete window.nodDesktop;
+const {ChatTools}=await import('./src/web/components/chat-tools.tsx');
+const {ArtifactDrawerContext}=await import('./src/web/components/artifact-context.tsx');
+await remount(createElement(ArtifactDrawerContext.Provider,{value:{selectedId:artifact.id,open(){},setDrafts(){}}},createElement(ChatTools,{files:[artifact]})));
+await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true,cancelable:true})));
+await waitFor(()=>button('Use selected file in message'));
+const commandStart=reuseEvents().length;
+await click(button('Use selected file in message'));
+check('FA3-command-reuse',reused.length===3&&reuseEvents().length===commandStart+1&&reuseEvents().at(-1).properties.location==='commands');
+const {ArtifactEdit}=await import('./src/web/components/artifact-edit.tsx');
+const previousFetch=globalThis.fetch;
+let uploadMode='fail',uploads=0,releaseUpload,closedCopies=0;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ const path=new URL(url,window.location.href).pathname;
+ if(path===artifact.url)return new Response('SYNTHETIC_PRIVATE_COPY_89271');
+ if(path==='/api/uploads'){
+  uploads++;
+  if(uploadMode==='hold')await new Promise(resolve=>releaseUpload=resolve);
+  return Response.json(uploadMode==='fail'?{error:'Synthetic upload failure'}:{...artifact,id:'00000000-0000-4000-8000-000000000714',url:'/api/artifacts/00000000-0000-4000-8000-000000000714'},{status:uploadMode==='fail'?500:200});
+ }
+ return previousFetch(url,options);
+};
+const edit=()=>createElement(ArtifactEdit,{item:artifact,onClose:()=>closedCopies++});
+await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
+const editStart=reuseEvents().length;
+await click(button('Save copy to message'));
+check('FA4-edit-rejected',uploads===1&&closedCopies===0&&reused.length===3&&reuseEvents().length===editStart);
+uploadMode='hold';await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
+check('FA4-edit-pending',uploads===2&&button('Saving…').disabled&&closedCopies===0&&reused.length===3&&reuseEvents().length===editStart);
+await act(async()=>releaseUpload());await waitFor(()=>closedCopies===1);
+check('FA4-edit-reuse',reused.length===4&&reuseEvents().length===editStart+1&&reuseEvents().at(-1).properties.location==='drawer');
+await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
+releaseUpload=undefined;await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
+const consentReuseStart=reuseEvents().length;
+configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseUpload());await waitFor(()=>closedCopies===2);
+check('FA4-edit-consent-fence',uploads===3&&reused.length===5&&reuseEvents().length===consentReuseStart);
+await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
+const ownerReuseStart=reuseEvents().length;
+releaseUpload=undefined;await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
+setRequestAccount('synthetic-another-owner');await act(async()=>releaseUpload());await waitFor(()=>button('Save copy to message'));
+check('FA4-edit-owner-fence',uploads===4&&closedCopies===2&&reused.length===5&&reuseEvents().length===ownerReuseStart);restore();
 const {initializeTheme,setTheme}=await import('./src/web/lib/theme.ts');
 let quickTheme={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false};
 let rejectTheme=false,holdTheme=false,releaseTheme;
@@ -4467,11 +4522,195 @@ check('private-data-excluded',!JSON.stringify(events).includes('SYNTHETIC_PRIVAT
 await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
 console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
 assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
 process.exit(0);
 `,
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-  assert.equal(JSON.parse(result.stdout).checks.length, 33);
+  assert.equal(JSON.parse(result.stdout).checks.length, 44);
+});
+
+test('internal file drops record reuse intent without changing attachment acceptance', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'https://nod.fixture.invalid',pretendToBeVisual:true});
+for(const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MutationObserver','DOMParser','localStorage','getComputedStyle'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=window.requestAnimationFrame.bind(window);
+globalThis.cancelAnimationFrame=window.cancelAnimationFrame.bind(window);
+globalThis.location=window.location;
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+globalThis.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
+globalThis.IntersectionObserver=class{observe(){}unobserve(){}disconnect(){}};
+const rect={x:0,y:0,left:0,top:0,right:0,bottom:0,width:0,height:0};
+HTMLElement.prototype.getBoundingClientRect=()=>rect;
+HTMLElement.prototype.getClientRects=()=>[];
+HTMLElement.prototype.scrollIntoView=()=>{};
+HTMLElement.prototype.scrollTo=()=>{};
+dom.window.Range.prototype.getBoundingClientRect=()=>rect;
+dom.window.Range.prototype.getClientRects=()=>[];
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const {act,createElement}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const events=[],dispatches=[],renewals=[],uploads=[],checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:drop-owner',environment:'development'};
+setRequestAccount('drop-owner');configureAnalytics(configuration,'web');
+const artifact=number=>({id:'00000000-0000-4000-8000-'+String(number).padStart(12,'0'),name:'SYNTHETIC_PRIVATE_DROP_'+number+'.txt',mimeType:'text/plain',size:12,url:'/api/artifacts/00000000-0000-4000-8000-'+String(number).padStart(12,'0')});
+const available=[artifact(721),artifact(722),artifact(724),artifact(725)];
+let holdRenewals=false,releaseRenewal;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ if(url==='/api/speech')return Response.json({transcription:false});
+ if(url==='/api/apps')return Response.json([]);
+ if(url==='/api/trust')return Response.json({});
+ if(url==='/api/onboarding/introduction')return Response.json({messageId:null});
+ if(url==='/api/uploads/renew'){
+  const ids=JSON.parse(options.body).ids;renewals.push({ids,owner:options.headers.get('X-nod-Account')});
+  if(holdRenewals)await new Promise(resolve=>releaseRenewal=resolve);
+  return Response.json(available.filter(item=>ids.includes(item.id)));
+ }
+ if(url==='/api/uploads'){
+  uploads.push(options.body.get('file'));
+  return Response.json(artifact(730+uploads.length));
+ }
+ throw new Error('Unexpected fixture route '+url);
+};
+window.addEventListener('nod:attach-artifact',event=>dispatches.push(event.detail));
+const {Chat}=await import('./src/web/pages/chat.tsx');
+const root=createRoot(document.getElementById('root'));
+const state={threadId:'drop-thread',turns:[],activity:[],tasks:[],verificationRequests:[],configuration:{llmReady:true},messages:[{id:'drop-message',role:'assistant',text:'Synthetic message',turnId:null,createdAt:'2026-10-31T12:00:00Z',attachments:[]}]};
+const keepAlive=setInterval(()=>{},1000);
+try {
+await act(async()=>root.render(createElement(Chat,{ownerId:'drop-owner',state,streams:{},refresh:async()=>{},resetConversation:async()=>state.threadId})));
+const settle=()=>act(async()=>new Promise(resolve=>setTimeout(resolve,5)));
+const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition(),'drop fixture settled')};
+const editor=()=>document.querySelector('.composer [contenteditable]');
+const conversation=()=>document.querySelector('.conversation-scroll');
+const reuseEvents=()=>events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='reuse_requested');
+const attachmentEvents=()=>events.filter(event=>event.event==='nod_attachment_added');
+const drop=async(target,value,files=[])=>{
+ const event=new Event('drop',{bubbles:true,cancelable:true});
+ Object.defineProperty(event,'dataTransfer',{value:{types:value?['application/x-nod-artifact']:['Files'],files,getData:type=>type==='application/x-nod-artifact'?value:''}});
+ await act(async()=>target.dispatchEvent(event));
+ assert.equal(event.defaultPrevented,true);
+};
+await waitFor(()=>editor());
+await drop(editor(),JSON.stringify(artifact(721)));
+await waitFor(()=>renewals.length===1&&!document.querySelector('.composer-file-status')?.textContent.includes('Checking'));
+check('DROP1-editor',dispatches.length===1&&reuseEvents().length===1&&reuseEvents()[0].properties.location==='composer'&&renewals[0].owner==='drop-owner');
+await drop(editor(),JSON.stringify(artifact(721)));
+check('DROP1-duplicate-intent',dispatches.length===2&&reuseEvents().length===2&&renewals.length===1&&document.querySelectorAll('.composer-file').length===1);
+await drop(conversation(),JSON.stringify(artifact(722)));
+await waitFor(()=>renewals.length===2);
+check('DROP2-conversation',dispatches.length===3&&reuseEvents().length===3&&reuseEvents().at(-1).properties.location==='composer'&&document.querySelectorAll('.composer-file').length===2);
+const invalidEvents=reuseEvents().length,invalidRenewals=renewals.length;
+for(const target of [editor(),conversation()]){
+ await drop(target,'{invalid');
+ await drop(target,JSON.stringify({...artifact(723),url:'https://private.example.test/secret'}));
+}
+check('DROP3-invalid',reuseEvents().length===invalidEvents&&renewals.length===invalidRenewals&&document.querySelectorAll('.composer-file').length===2);
+const staleEvents=reuseEvents().length;
+await drop(conversation(),JSON.stringify(artifact(723)));
+await waitFor(()=>document.querySelector('.composer-file.is-failed'));
+check('DROP4-stale-request',reuseEvents().length===staleEvents+1&&document.querySelector('.composer-file.is-failed').textContent.includes('SYNTHETIC_PRIVATE_DROP_723'));
+holdRenewals=true;releaseRenewal=undefined;
+await drop(editor(),JSON.stringify(artifact(724)));await waitFor(()=>releaseRenewal);
+const pendingEvents=reuseEvents().length;
+check('DROP5-pending-request',pendingEvents===staleEvents+2&&document.querySelectorAll('.composer-file').length===4);
+setRequestAccount('other-drop-owner');await act(async()=>releaseRenewal());holdRenewals=false;
+await waitFor(()=>[...document.querySelectorAll('.composer-file.is-failed')].some(item=>item.textContent.includes('SYNTHETIC_PRIVATE_DROP_724')));
+check('DROP5-owner-change',reuseEvents().length===pendingEvents);
+configureAnalytics(undefined);
+await drop(editor(),JSON.stringify(artifact(725)));await waitFor(()=>renewals.at(-1).owner==='other-drop-owner');
+check('DROP6-consent-off',reuseEvents().length===pendingEvents);
+setRequestAccount('drop-owner');configureAnalytics(configuration,'web');
+const externalReuse=reuseEvents().length,externalAttachments=attachmentEvents().length;
+for(const target of [editor(),conversation()])await drop(target,'',[new File(['SYNTHETIC_PRIVATE_DROP_CONTENT'],'SYNTHETIC_PRIVATE_EXTERNAL.txt',{type:'text/plain'})]);
+await waitFor(()=>uploads.length===2);
+check('DROP7-external-files',reuseEvents().length===externalReuse&&attachmentEvents().length===externalAttachments+2&&attachmentEvents().slice(-2).every(event=>event.properties.method==='drop'));
+check('DROP8-private-data',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE')&&!JSON.stringify(events).includes('private.example.test')&&!JSON.stringify(events).includes(artifact(721).id));
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_')),renewals:renewals.map(item=>({count:item.ids.length,owner:item.owner})),dispatchCount:dispatches.length,uploadCount:uploads.length},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 10);
+});
+
+test('desktop startup theme changes use the persisted preference without stale reads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 15_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html>',{url:'https://nod.fixture.invalid',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,Event:dom.window.Event,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
+window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const {setAnalyticsClient,configureAnalytics,captureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const {initializeTheme,setTheme,currentTheme}=await import('./src/web/lib/theme.ts');
+const events=[],checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:theme-owner',environment:'development'};
+const restore=()=>{setRequestAccount('theme-owner');configureAnalytics(configuration,'desktop')};
+restore();captureAnalytics('nod_settings_viewed',{tab:'general'});assert.equal(events.length,1,'analytics capture is enabled');
+const settings=theme=>({theme,resolvedTheme:theme==='system'?'dark':theme,notifications:false,launchAtLogin:false});
+let releaseRead,rejectRead,listener,readCalls,saveCalls,persisted,rejectSave;
+function bridge(theme){
+ readCalls=0;saveCalls=0;persisted=settings(theme);rejectSave=false;
+ window.nodDesktop={getSettings:async()=>persisted,getPreferences:()=>{readCalls++;return new Promise((resolve,reject)=>{releaseRead=resolve;rejectRead=reject})},onPreferences:callback=>{listener=callback;return()=>{}},setTheme:async next=>{saveCalls++;if(rejectSave)throw new Error('Synthetic theme save failure');persisted=settings(next);return persisted}};
+ return initializeTheme();
+}
+const settle=async()=>{await Promise.resolve();await Promise.resolve()};
+const themeEvents=()=>events.filter(event=>event.event==='nod_local_setting_changed');
+const keepAlive=setInterval(()=>{},1000);
+try {
+ let cleanup=bridge('light');
+ const changed=setTheme('dark');await settle();
+ check('THEME1-read-before-save',readCalls===1&&saveCalls===0);
+ releaseRead(settings('light'));await changed;
+ check('THEME1-startup-change',saveCalls===1&&themeEvents().length===1&&themeEvents()[0].properties.value==='dark'&&currentTheme()==='dark');cleanup();
+ const noOpStart=themeEvents().length;cleanup=bridge('dark');
+ const noOp=setTheme('dark');releaseRead(settings('dark'));await noOp;
+ check('THEME2-no-op',saveCalls===1&&themeEvents().length===noOpStart);cleanup();
+ cleanup=bridge('light');rejectSave=true;
+ const failed=setTheme('dark').catch(error=>error);releaseRead(settings('light'));
+ check('THEME3-save-failed',(await failed) instanceof Error&&saveCalls===1&&themeEvents().length===noOpStart&&currentTheme()==='light');cleanup();
+ cleanup=bridge('light');
+ const consent=setTheme('dark');configureAnalytics(undefined);configureAnalytics(configuration,'desktop');releaseRead(settings('light'));await consent;
+ check('THEME4-consent-fence',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===noOpStart);cleanup();
+ cleanup=bridge('light');
+ const owner=setTheme('dark');setRequestAccount('other-theme-owner');releaseRead(settings('light'));await owner;
+ check('THEME5-owner-fence',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===noOpStart);cleanup();restore();
+ cleanup=bridge('light');listener(settings('dark'));
+ const newerStart=themeEvents().length;
+ await setTheme('system');releaseRead(settings('light'));await settle();
+ check('THEME6-newer-preference',readCalls===1&&saveCalls===1&&themeEvents().length===newerStart+1&&themeEvents().at(-1).properties.value==='system'&&currentTheme()==='dark'&&window.localStorage.getItem('nod.theme')==='system');cleanup();
+ cleanup=bridge('light');
+ const unknownStart=themeEvents().length;
+ const unknown=setTheme('dark');rejectRead(new Error('Synthetic preference read failure'));await unknown;
+ check('THEME7-unknown-baseline',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===unknownStart);cleanup();
+ configureAnalytics(undefined);dom.window.close();
+ console.log(JSON.stringify({checks,events:themeEvents()},null,2));
+ assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 8);
 });
 
 test('route analytics stay in the consent period that accepted the request', async () => {

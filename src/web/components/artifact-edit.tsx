@@ -5,6 +5,7 @@ import type { Artifact } from '../../shared/contracts';
 import type { ImagePreview } from './attachment-images';
 import { Button, Notice } from './ui';
 import { reuseFile } from './file-actions';
+import { analyticsForCurrentSession } from '../lib/analytics';
 
 export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose(): void }) {
   const [text, setText] = useState<string | null>(null);
@@ -34,6 +35,7 @@ export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose():
   }
   async function save() {
     if (text === null || busy) return;
+    const capture = analyticsForCurrentSession();
     setBusy(true);
     setError('');
     try {
@@ -41,7 +43,7 @@ export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose():
       const body = new FormData();
       body.append('file', new File([text], name, { type: item.mimeType ?? 'text/plain' }));
       const artifact = await api<Artifact>('/api/uploads', { method: 'POST', body });
-      reuseFile(artifact);
+      reuseFile(artifact, 'drawer', capture);
       onClose();
     } catch (cause) {
       setError(errorMessage(cause));

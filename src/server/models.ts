@@ -262,9 +262,10 @@ export function createModelService(options: {
     provider: ModelProvider,
     method: ModelMethod,
     status: 'connected' | 'disconnected' | 'failed',
+    capture = analytics,
   ) {
     if (provider === 'elevenlabs') return;
-    analytics?.({
+    capture?.({
       event: 'nod_model_connection_changed',
       properties: { provider, method, status },
     });
@@ -909,17 +910,26 @@ export function createModelService(options: {
       await reload();
     },
     async remove(id: string) {
+      const capture = snapshotAnalytics(analytics);
       for (const [state, attempt] of attempts) if (attempt.connectionId === id) await cancel(state);
       const removed = await store.change((state) => {
         const row = state.connections.find((item) => item.id === id);
         if (row?.managed)
           throw new ConnectionError('This connection is managed in server settings.');
         state.connections = state.connections.filter((item) => item.id !== id);
-        if (state.selection?.connectionId === id) state.selection = null;
-        return row;
+        const selectionCleared = state.selection?.connectionId === id;
+        if (selectionCleared) state.selection = null;
+        return { row, selectionCleared };
       });
+      if (removed.selectionCleared)
+        for (const setting of ['model_selection', 'model_effort'] as const)
+          capture?.({
+            event: 'nod_setting_changed',
+            properties: { setting, actor: 'owner', state: 'cleared' },
+          });
       await reload();
-      if (removed) connectionChanged(removed.provider, removed.method, 'disconnected');
+      if (removed.row && capture)
+        connectionChanged(removed.row.provider, removed.row.method, 'disconnected', capture);
     },
     analyticsConnections() {
       return rows.flatMap((row) => {

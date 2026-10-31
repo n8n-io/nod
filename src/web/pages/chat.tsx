@@ -56,6 +56,8 @@ import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
 import { recordingSource } from '../lib/recording';
 import type { ImagePreview } from '../components/attachment-images';
+import { reuseFile } from '../components/file-actions';
+import { ownedArtifactUrl } from '../lib/attachment-url';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -1133,9 +1135,8 @@ export function Chat({
             if (artifact) {
               event.preventDefault();
               try {
-                window.dispatchEvent(
-                  new CustomEvent('nod:attach-artifact', { detail: JSON.parse(artifact) }),
-                );
+                const item = JSON.parse(artifact);
+                if (item && ownedArtifactUrl(item.url)) reuseFile(item, 'composer');
               } catch {}
             } else if (event.dataTransfer.files.length) {
               event.preventDefault();

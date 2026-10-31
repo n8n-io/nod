@@ -11,10 +11,19 @@ import { Button } from './ui';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { attachmentKind } from '../lib/attachment-kind';
 
-export function reuseFile(item: ImagePreview) {
+export function reuseFile(
+  item: ImagePreview,
+  location: 'message' | 'drawer' | 'commands' | 'composer',
+  capture = analyticsForCurrentSession(),
+) {
   const artifact = artifactFromPreview(item);
   if (!ownedArtifactUrl(artifact.url)) return false;
   window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact }));
+  capture('nod_artifact_action', {
+    kind: attachmentKind(artifact.mimeType, artifact.name) ?? 'file',
+    location,
+    action: 'reuse_requested',
+  });
   return true;
 }
 
@@ -122,13 +131,9 @@ export function FileActions({
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  function reuse(capture = analyticsForCurrentSession()) {
-    if (reuseFile(item))
-      capture('nod_artifact_action', { kind, location, action: 'reuse_requested' });
-  }
   async function run(action: string, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
-      reuse(capture);
+      reuseFile(item, location, capture);
       return;
     }
     const id = item.id;
@@ -185,7 +190,7 @@ export function FileActions({
         size="icon"
         aria-label={`Use ${item.name} in message`}
         data-tooltip="Add to message"
-        onClick={() => reuse()}
+        onClick={() => reuseFile(item, location)}
       >
         <Plus size={15} />
       </Button>

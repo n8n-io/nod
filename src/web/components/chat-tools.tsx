@@ -118,7 +118,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           {
             id: 'reuse',
             label: 'Use selected file in message',
-            action: () => reuseFile(selectedFile),
+            action: () => reuseFile(selectedFile, 'commands'),
           },
         ]
       : []),

@@ -13,7 +13,7 @@ import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
 import { attachmentKind, fileSize, localPreviewable } from '../lib/attachment-kind';
 import { readChatDraft, writeChatDraft } from '../lib/chat-draft';
-import { artifactFromPreview } from './file-actions';
+import { artifactFromPreview, reuseFile } from './file-actions';
 import { ownedArtifactUrl as validArtifact } from '../lib/attachment-url';
 import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
@@ -670,9 +670,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             event.preventDefault();
             event.stopPropagation();
             try {
-              window.dispatchEvent(
-                new CustomEvent('nod:attach-artifact', { detail: JSON.parse(internal) }),
-              );
+              const item = JSON.parse(internal);
+              if (item && validArtifact(item.url)) reuseFile(item, 'composer');
             } catch {}
             return;
           }

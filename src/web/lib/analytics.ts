@@ -26,7 +26,7 @@ type AnalyticsEvents = {
   nod_artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
   nod_artifact_action: {
     kind: AttachmentKind | 'file';
-    location: 'message' | 'drawer';
+    location: 'message' | 'drawer' | 'commands' | 'composer';
     action: 'copy' | 'download' | 'download_requested' | 'open' | 'reveal' | 'reuse_requested';
   };
   nod_settings_viewed: {
@@ -123,7 +123,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   nod_artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
   nod_artifact_action: {
     kind: artifactKinds,
-    location: ['message', 'drawer'],
+    location: ['message', 'drawer', 'commands', 'composer'],
     action: ['copy', 'download', 'download_requested', 'open', 'reveal', 'reuse_requested'],
   },
   nod_settings_viewed: {

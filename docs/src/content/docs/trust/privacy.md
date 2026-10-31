@@ -97,7 +97,7 @@ The recipient is the Nod team at n8n, through its EU PostHog project. This also 
 
 Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Recordings block private content and entry forms.
 
-Settings events identify the control changed and a fixed state such as on, off, or configured. They exclude rule text, voice names, exact quiet hours, location and regional settings, and spending-limit amounts. Navigation uses fixed page names without query strings or private IDs.
+Setting-change events identify a fixed control and bounded state, such as on, off, or configured. They exclude rule text, voice names, exact quiet-hour times, location and timezone or locale values, and spending-limit amounts. Navigation uses fixed page names without query strings or private IDs.
 
 Events include tool use, approvals, model tokens and cost, run timing and failures, connection outcomes, and the kinds of replies and files shown or opened. Run-scoped events record whether work was owner-requested and whether it ran as immediate, scheduled, or background work. Model usage without a known work context is unclassified; UI output events have no work classification. They exclude website domains, purchase amounts and currencies, Vault inventory, file names, task answer-choice labels, and generated reply content. Nod does not make model calls to read conversations or infer task categories, frustration, or success for analytics.
 

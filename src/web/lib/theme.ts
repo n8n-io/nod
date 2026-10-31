@@ -16,6 +16,7 @@ let chosenTheme: Theme | undefined;
 let accountTheme: ThemePreference | undefined;
 let desktopTheme: Theme | undefined;
 let desktopPreference: ThemePreference | undefined;
+let desktopPreferencesReady: Promise<DesktopPreferences | undefined> | undefined;
 
 function resolvedTheme(): Theme {
   const preference = desktopSettingsAvailable()
@@ -63,7 +64,12 @@ function applyDesktopPreferences(preferences: DesktopPreferences) {
 export async function setTheme(theme: ThemePreference) {
   const capture = analyticsForCurrentSession();
   if (desktopSettingsAvailable()) {
-    const previous = desktopPreference;
+    let previous = desktopPreference;
+    if (previous === undefined) {
+      const initial = await (desktopPreferencesReady ??
+        desktopPreferences()?.catch(() => undefined));
+      previous = desktopPreference ?? initial?.theme;
+    }
     const preferences = await setDesktopTheme(theme);
     if (preferences) {
       applyDesktopPreferences(preferences);
@@ -107,9 +113,10 @@ export function initializeTheme() {
     revision++;
     if (active) applyDesktopPreferences(preferences);
   });
-  void desktopPreferences()
+  desktopPreferencesReady = desktopPreferences()?.catch(() => undefined);
+  void desktopPreferencesReady
     ?.then((preferences) => {
-      if (active && revision === 0) applyDesktopPreferences(preferences);
+      if (preferences && active && revision === 0) applyDesktopPreferences(preferences);
     })
     .catch(() => {});
   const storage = (event: StorageEvent) => {
