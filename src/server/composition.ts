@@ -397,7 +397,9 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
-  const integrationBrowser = createIntegrationBrowser();
+  const integrationBrowser = createIntegrationBrowser(
+    desktopMode ? undefined : { origin: publicOrigin },
+  );
   const integrationProxy = createComposioProxy({
     dataRoot,
     ownerId,
@@ -1992,6 +1994,7 @@ async function initializeApplication(
   payments.registerRoutes(app);
   vaultAccess.registerRoutes(app);
   browserConnections.registerRoutes(app);
+  adapters.integrationBrowser?.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);

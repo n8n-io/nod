@@ -62,7 +62,8 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
     value !== '/vault?add=login' &&
     value !== '/vault?add=card' &&
     !connectionPath.test(value) &&
-    !e2eConsentPath.test(value)
+    !e2eConsentPath.test(value) &&
+    !/^\/api\/apps\/connect\/[A-Za-z0-9_-]{43}$/.test(value)
   )
     return null;
   try {
@@ -79,6 +80,7 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
       !url.hash
     )
       return { href: url.pathname, kind: 'navigation' };
+    if (isConnectionBridge(url)) return { href: url.href, kind: 'setup', setup: 'app' };
     if (!absolute || url.origin === base.origin) {
       if (url.pathname === '/vault' && (url.search || url.hash))
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash

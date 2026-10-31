@@ -323,8 +323,20 @@ export function createComposioProxy(options: {
                 transactionId,
                 challenge,
                 browserKey: browserKeySchema.parse(browserKey),
-                uiOrigin: { type: 'loopback', host: 'ipv4', port: Number(browser.port) },
-                native,
+                uiOrigin:
+                  browser.protocol === 'https:'
+                    ? { type: 'https', url: browser.origin }
+                    : {
+                        type: 'loopback',
+                        host:
+                          browser.hostname === 'localhost'
+                            ? 'localhost'
+                            : browser.hostname === '[::1]'
+                              ? 'ipv6'
+                              : 'ipv4',
+                        port: Number(browser.port || 80),
+                      },
+                ...(native ? { native } : {}),
                 ...(reconnectAccountId ? { reconnectAccountId } : {}),
               }),
             );

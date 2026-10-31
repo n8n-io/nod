@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { z } from 'zod';
+import type { FastifyInstance } from 'fastify';
+import { createHostedIntegrationBrowser } from './integration-browser-hosted.ts';
 import type { IntegrationConnectionBrowser } from '../ports/integrations.ts';
 import { logFailure } from './failure-log.ts';
 
@@ -70,7 +72,10 @@ content.hidden=false;document.body.classList.add('failed');document.title='Sign-
 </script></body></html>`;
 }
 
-export function createIntegrationBrowser(): IntegrationConnectionBrowser {
+export function createIntegrationBrowser(options?: {
+  origin: string;
+}): IntegrationConnectionBrowser & { registerRoutes(app: FastifyInstance): void } {
+  if (options) return createHostedIntegrationBrowser(options.origin);
   const attempts = new Map<
     string,
     {
@@ -106,6 +111,7 @@ export function createIntegrationBrowser(): IntegrationConnectionBrowser {
     attempt.server.closeAllConnections();
   }
   return {
+    registerRoutes() {},
     async open(id, brokerOrigin, start) {
       token.parse(id);
       if (closed || attempts.has(id) || opening.has(id) || attempts.size + opening.size >= 20)
