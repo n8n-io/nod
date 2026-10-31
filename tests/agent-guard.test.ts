@@ -34,7 +34,7 @@ import { BrowserActionError } from '../src/ports/computer.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { MemoryBrief } from '../src/ports/memory-recall.ts';
-import type { Presentation } from '../src/shared/presentation.ts';
+import { presentationText, type Presentation } from '../src/shared/presentation.ts';
 
 async function fixture(
   run: (
@@ -248,6 +248,191 @@ test('native visual replies need no filler and deduplicate only identical conten
       ...(!background ? [{ text: 'An additional verified result.' }] : []),
     ]);
   }
+});
+
+test('successful delivery context records reviewed output and invalidates review without recording duplicates', async () => {
+  const requested: Presentation = {
+    version: 1,
+    type: 'diagram',
+    title: 'Synthetic result',
+    sources: [],
+    nodes: [{ id: 'result', label: 'Requested value' }],
+    edges: [],
+  };
+  const corrected = { ...requested, nodes: [{ id: 'result', label: 'Corrected value' }] };
+  for (const outcome of ['original', 'corrected', 'omitted']) {
+    const brief: MemoryBrief = { mode: 'recall', facts: [], messages: [], searches: [] };
+    const snapshots: Array<MemoryBrief['lastDelivery']> = [];
+    const delivered: Array<{ text: string; presentation?: Presentation }> = [];
+    const actual: { text: string; presentation?: Presentation } = {
+      text: outcome === 'original' ? 'Requested introduction.' : 'Checked result.',
+      ...(outcome !== 'omitted'
+        ? { presentation: outcome === 'corrected' ? corrected : requested }
+        : {}),
+    };
+    await fixture(
+      async (tools, emit) => {
+        const send = () =>
+          call(tools, 'send_message', {
+            text: 'Requested introduction.',
+            presentation: requested,
+          });
+        await send();
+        assert.deepEqual(brief.lastDelivery, {
+          text: actual.text,
+          ...(actual.presentation
+            ? {
+                presentation: {
+                  type: actual.presentation.type,
+                  text: presentationText(actual.presentation),
+                },
+              }
+            : {}),
+        });
+        const recorded = brief.lastDelivery;
+        const repeated = await send();
+        assert.equal(
+          JSON.parse(repeated.content.find((part) => part.type === 'text')!.text).delivered,
+          false,
+        );
+        assert.equal(brief.lastDelivery, recorded);
+        assert.equal(snapshots.length, 1);
+        assert.equal(snapshots[0], undefined);
+        await call(tools, 'send_message', { text: 'A new fact is available.' });
+        assert.deepEqual(snapshots[1], recorded);
+        await send();
+        assert.deepEqual(snapshots[2], { text: 'A new fact is available.' });
+        emit({ type: 'final', text: 'A new caveat still applies.' });
+      },
+      {
+        reply: async (text, _id, _replyTo, presentation) => {
+          delivered.push({ text, ...(presentation ? { presentation } : {}) });
+        },
+      },
+      {
+        prepareMemory: async () => brief,
+        reviewMemoryReply: async (context, draft, _execution, visual) => {
+          snapshots.push(structuredClone(context.memoryBrief?.lastDelivery));
+          if (!visual || outcome === 'original') return draft;
+          return {
+            text: actual.text,
+            presentationSupported: false,
+            ...(outcome === 'corrected'
+              ? { correctedVisual: { text: actual.text, presentation: corrected } }
+              : {}),
+          };
+        },
+      },
+    );
+    assert.deepEqual(delivered, [
+      actual,
+      { text: 'A new fact is available.' },
+      actual,
+      { text: 'A new caveat still applies.' },
+    ]);
+    assert.deepEqual(brief.lastDelivery, { text: 'A new caveat still applies.' });
+  }
+});
+
+test('delivery context excludes failed, cancelled and in-flight replies', async () => {
+  for (const outcome of ['success', 'failure', 'cancelled']) {
+    const brief: MemoryBrief = { mode: 'recall', facts: [], messages: [], searches: [] };
+    const stop = new AbortController();
+    let started!: () => void;
+    let release!: () => void;
+    const persisting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = fixture(
+      async (tools) => {
+        const sending = call(tools, 'send_message', { text: 'A synthetic result.' });
+        await persisting;
+        assert.equal(brief.lastDelivery, undefined);
+        if (outcome === 'cancelled') stop.abort();
+        release();
+        if (outcome === 'success') await sending;
+        else await assert.rejects(sending, /persistence failed|abort/i);
+      },
+      {
+        signal: stop.signal,
+        reply: async () => {
+          started();
+          await held;
+          if (outcome === 'failure') throw new Error('Synthetic persistence failed.');
+        },
+      },
+      {
+        prepareMemory: async () => brief,
+        reviewMemoryReply: async (_context, draft) => draft,
+      },
+    );
+    if (outcome === 'cancelled') await assert.rejects(pending, /abort/i);
+    else await pending;
+    assert.deepEqual(
+      brief.lastDelivery,
+      outcome === 'success' ? { text: 'A synthetic result.' } : undefined,
+    );
+  }
+});
+
+test('delivery context bounds and redacts content without changing the delivered reply', async () => {
+  for (const text of [
+    'Synthetic result: fixture-private-marker.',
+    `fixture-private-marker ${'Synthetic public context. '.repeat(2_000)}`,
+  ]) {
+    const brief: MemoryBrief = { mode: 'recall', facts: [], messages: [], searches: [] };
+    const result = await fixture(
+      async (tools) => {
+        await call(tools, 'send_message', { text });
+      },
+      {},
+      {
+        prepareMemory: async () => brief,
+        reviewMemoryReply: async (_context, draft) => draft,
+        redactError: (value) => value.replaceAll('fixture-private-marker', '[redacted]'),
+      },
+    );
+    assert.deepEqual(result.replies, [text.trim()]);
+    assert.ok(brief.lastDelivery);
+    assert.equal(brief.lastDelivery.truncated, true);
+    assert.equal(
+      brief.lastDelivery.text,
+      text.length > 20_000 ? '' : text.replaceAll('fixture-private-marker', '[redacted]'),
+    );
+    assert.doesNotMatch(JSON.stringify(brief.lastDelivery), /fixture-private-marker/);
+  }
+});
+
+test('a reviewed redundant recap does not publish another reply or replace successful delivery context', async () => {
+  const brief: MemoryBrief = { mode: 'recall', facts: [], messages: [], searches: [] };
+  let delivered: MemoryBrief['lastDelivery'];
+  let checks = 0;
+  const result = await fixture(
+    async (tools, emit) => {
+      await call(tools, 'send_message', { text: 'The checked result is amber.' });
+      delivered = brief.lastDelivery;
+      emit({ type: 'final', text: 'A synthetic delivery acknowledgement.' });
+    },
+    {},
+    {
+      prepareMemory: async () => brief,
+      reviewMemoryReply: async (context, draft) => {
+        checks++;
+        if (!context.memoryBrief?.lastDelivery) return draft;
+        assert.deepEqual(context.memoryBrief.lastDelivery, {
+          text: 'The checked result is amber.',
+        });
+        return '';
+      },
+    },
+  );
+  assert.equal(checks, 2);
+  assert.deepEqual(result.replies, ['The checked result is amber.']);
+  assert.equal(result.result.spokenReply, 'The checked result is amber.');
+  assert.equal(brief.lastDelivery, delivered);
 });
 
 test('a chosen audio reply reaches the speech tool without repeating an internal progress note', async () => {

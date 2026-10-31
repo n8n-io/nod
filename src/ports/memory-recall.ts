@@ -32,5 +32,10 @@ export interface MemoryBrief {
   }>;
   reads?: Array<{ action: string; args: Record<string, unknown>; result: unknown }>;
   readsTruncated?: boolean;
+  lastDelivery?: {
+    text: string;
+    presentation?: { type: Presentation['type']; text: string };
+    truncated?: boolean;
+  };
   truncated?: boolean;
 }

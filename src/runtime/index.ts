@@ -304,10 +304,9 @@ export function createAgentRuntime(dependencies: {
       const draft = presentation
         ? `${text.trim()}\n\n${presentationText(presentation)}`.trim()
         : text.trim();
-      const checked = await reviewReply(
-        draft,
-        presentation ? { text: text.trim(), presentation } : undefined,
-      );
+      const reviewVisual = presentation ? { text: text.trim(), presentation } : undefined;
+      const reviewRevision = evidenceRevision;
+      const checked = await reviewReply(draft, reviewVisual);
       const correctedVisual =
         typeof checked !== 'string' && checked.presentationSupported !== true
           ? checked.correctedVisual
@@ -338,6 +337,24 @@ export function createAgentRuntime(dependencies: {
       )
         return { delivered: false, presentation: outcome };
       await context.reply(trimmed, id, replyToMessageId, presentation);
+      if (!stopped && !signal.aborted && context.memoryBrief) {
+        const unchanged = evidenceRevision === reviewRevision;
+        const visible = presentation ? presentationText(presentation) : '';
+        const redact = dependencies.redactError ?? String;
+        const redactedText = redact(trimmed);
+        const redactedVisual = redact(visible);
+        const text = redactedText.length <= 20_000 ? redactedText : '';
+        const shown = redactedVisual.length <= 20_000 - text.length ? redactedVisual : '';
+        context.memoryBrief.lastDelivery = {
+          text,
+          ...(presentation ? { presentation: { type: presentation.type, text: shown } } : {}),
+          ...(text !== trimmed || shown !== visible ? { truncated: true } : {}),
+        };
+        evidenceRevision++;
+        reviewedReplies.clear();
+        if (unchanged)
+          reviewedReplies.set(JSON.stringify([draft, reviewVisual, evidenceRevision]), checked);
+      }
       lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;

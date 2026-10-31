@@ -1277,6 +1277,115 @@ test('memory review excludes unsafe current-read text while retaining safe evide
   assert.equal(packets.length, 5);
 });
 
+test('memory review permits silence only for a redundant recap of complete successful delivery', async () => {
+  const pool = {} as pg.Pool;
+  const memory = createMemoryService({
+    pool,
+    ownerId: 'delivery-owner',
+    store: memoryObjectStore(),
+  });
+  let verdict: unknown = { supported: false, usedPaths: [], answer: '', redundant: true };
+  const packets: Array<{ evidence: MemoryBrief; lastDelivery?: MemoryBrief['lastDelivery'] }> = [];
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'delivery-owner',
+    memory,
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        packets.push(structuredClone(input) as (typeof packets)[number]);
+        return verdict;
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Show the synthetic result.',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: { mode: 'recall', facts: [], messages: [], searches: [] },
+  };
+  const draft = 'The synthetic result is already visible.';
+  assert.equal(await recall.review(context, draft), draft);
+  const delivered: NonNullable<MemoryBrief['lastDelivery']> = {
+    text: 'The source confirms amber.',
+    presentation: { type: 'diagram', text: 'Synthetic result\nAmber' },
+  };
+  context.memoryBrief!.lastDelivery = delivered;
+  for (const supported of [false, true]) {
+    verdict = { supported, usedPaths: [], answer: '', redundant: true };
+    assert.equal(await recall.review(context, draft), '');
+    assert.deepEqual(packets.at(-1)!.lastDelivery, delivered);
+    assert.equal(packets.at(-1)!.evidence.lastDelivery, undefined);
+  }
+  for (const redundant of [false, undefined]) {
+    verdict = { supported: false, usedPaths: [], answer: '', redundant };
+    assert.equal(await recall.review(context, draft), draft);
+  }
+  for (const followup of [
+    'The source was updated today.',
+    'The value is an estimate, not a measurement.',
+    'Which result would you like to use?',
+    'The subsequent download failed.',
+  ]) {
+    verdict = { supported: true, usedPaths: [], answer: followup, redundant: false };
+    assert.equal(await recall.review(context, followup), followup);
+  }
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: 'The saved result needs a factual correction.',
+    redundant: false,
+  };
+  assert.equal(await recall.review(context, draft), 'The saved result needs a factual correction.');
+  verdict = { supported: false, usedPaths: ['about/foreign'], answer: '', redundant: true };
+  assert.equal(await recall.review(context, draft), draft);
+  verdict = { supported: false, usedPaths: [], answer: '', redundant: true };
+  context.memoryBrief!.lastDelivery = { ...delivered, truncated: true };
+  assert.equal(await recall.review(context, draft), draft);
+  context.memoryBrief!.lastDelivery = { text: '' };
+  assert.equal(await recall.review(context, draft), draft);
+  context.memoryBrief!.lastDelivery = { ...delivered, text: '4111 1111 1111 1111' };
+  assert.equal(await recall.review(context, draft), draft);
+  assert.equal(packets.at(-1)!.lastDelivery?.truncated, true);
+  assert.equal(packets.at(-1)!.lastDelivery?.presentation?.type, 'diagram');
+  assert.doesNotMatch(JSON.stringify(packets.at(-1)), /4111/);
+  context.memoryBrief!.lastDelivery = delivered;
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: '',
+    redundant: true,
+    presentationSupported: false,
+  };
+  const visual: MemoryReplyVisual = {
+    text: '',
+    presentation: {
+      version: 1,
+      type: 'diagram',
+      title: 'A new result',
+      sources: [],
+      nodes: [{ id: 'new', label: 'New value' }],
+      edges: [],
+    },
+  };
+  assert.equal(await recall.review(context, draft, visual), draft);
+});
+
 test('memory review separates supported visuals from revised prose without weakening rejected claims', async () => {
   const pool = {} as pg.Pool;
   const store = memoryObjectStore();
