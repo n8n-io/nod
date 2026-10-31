@@ -215,6 +215,14 @@ export function createMemoryRecall(options: {
     visual?: MemoryReplyVisual,
   ): Promise<MemoryReplyReview> {
     if (!options.curator.configured || !context.memoryBrief || !draft.trim()) return draft;
+    const saved = (await options.memory.load()).entries.map((entry) => ({
+      path: pathOf(entry),
+      text: entry.text,
+      status: statusOf(entry),
+      fact: entry.fact,
+      expires: entry.expires,
+    }));
+    if (!context.memoryBrief) return draft;
     const reads = context.memoryBrief.reads?.filter(
       (read) => typeof read.result !== 'string' || !unsafeCurrentRead(read.result),
     );
@@ -223,13 +231,6 @@ export function createMemoryRecall(options: {
       reads,
       ...(reads?.length !== context.memoryBrief.reads?.length ? { readsTruncated: true } : {}),
     };
-    const saved = (await options.memory.load()).entries.map((entry) => ({
-      path: pathOf(entry),
-      text: entry.text,
-      status: statusOf(entry),
-      fact: entry.fact,
-      expires: entry.expires,
-    }));
     const parsed = (visual ? visualReviewSchema : reviewSchema).safeParse(
       await ask(
         'memory_check',

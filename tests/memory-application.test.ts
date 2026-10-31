@@ -1146,6 +1146,7 @@ test('memory review excludes unsafe current-read text while retaining safe evide
   ];
   const packets: MemoryBrief[] = [];
   let beforeLoad = async () => {};
+  let beforeCurate = async () => {};
   const recall = createMemoryRecall({
     pool,
     ownerId: 'review-owner',
@@ -1160,6 +1161,7 @@ test('memory review excludes unsafe current-read text while retaining safe evide
       id: 'fixture',
       configured: true,
       async curate({ input }) {
+        await beforeCurate();
         packets.push(structuredClone((input as { evidence: MemoryBrief }).evidence));
         return { supported: false, usedPaths: [path], answer: 'You prefer amber light.' };
       },
@@ -1205,35 +1207,74 @@ test('memory review excludes unsafe current-read text while retaining safe evide
   assert.deepEqual(evidence.reads, retained);
   for (const value of unsafeValues) assert.ok(!JSON.stringify(evidence).includes(value));
 
+  const safeRead = {
+    action: 'usage_get',
+    args: {},
+    result: untrustedBlock('usage_get', JSON.stringify({ requests: 32, costUsd: 0.25 })),
+  };
+  const unsafeRead = {
+    action: 'apps',
+    args: {},
+    result: untrustedBlock('apps', unsafeValues[0]),
+  };
+  for (const lateRead of [safeRead, unsafeRead]) {
+    let started!: () => void;
+    let release!: () => void;
+    const loading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    beforeLoad = async () => {
+      started();
+      await held;
+    };
+    context.memoryBrief!.reads = [...retained];
+    const pending = recall.review(context, 'You prefer blue light.');
+    await loading;
+    context.memoryBrief!.reads.push(lateRead);
+    release();
+    await pending;
+    assert.deepEqual(
+      packets.at(-1)!.reads,
+      lateRead === safeRead ? [...retained, safeRead] : retained,
+    );
+    assert.equal(packets.at(-1)!.readsTruncated, lateRead === unsafeRead ? true : undefined);
+  }
+  beforeLoad = async () => {};
   let started!: () => void;
   let release!: () => void;
-  const loading = new Promise<void>((resolve) => {
+  const curating = new Promise<void>((resolve) => {
     started = resolve;
   });
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  beforeLoad = async () => {
+  beforeCurate = async () => {
     started();
     await held;
   };
   context.memoryBrief!.reads = [...retained];
   const pending = recall.review(context, 'You prefer blue light.');
-  await loading;
-  context.memoryBrief!.reads.push({
-    action: 'apps',
-    args: {},
-    result: untrustedBlock('apps', unsafeValues[0]),
-  });
+  await curating;
+  context.memoryBrief!.reads.push(unsafeRead);
+  context.memoryBrief!.readsTruncated = true;
   release();
   await pending;
-  assert.equal(packets.length, 2);
-  assert.deepEqual(packets[1].reads, retained);
-  beforeLoad = async () => {};
+  assert.equal(packets.length, 4);
+  assert.deepEqual(packets[3].reads, retained);
+  assert.equal(packets[3].readsTruncated, undefined);
+  beforeCurate = async () => {};
   await recall.review(context, 'You prefer blue light.');
-  assert.equal(packets.length, 3);
-  assert.deepEqual(packets[2].reads, retained);
-  assert.equal(packets[2].readsTruncated, true);
+  assert.equal(packets.length, 5);
+  assert.deepEqual(packets[4].reads, retained);
+  assert.equal(packets[4].readsTruncated, true);
+  beforeLoad = async () => {
+    context.memoryBrief = undefined;
+  };
+  assert.equal(await recall.review(context, 'You prefer blue light.'), 'You prefer blue light.');
+  assert.equal(packets.length, 5);
 });
 
 test('memory review separates supported visuals from revised prose without weakening rejected claims', async () => {
