@@ -1599,6 +1599,14 @@ async function initializeApplication(
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
+        if (
+          !target &&
+          request.action === 'use' &&
+          (await vault.list(ownerId)).some((entry) => entry.id === request.connectionId)
+        )
+          throw new Error(
+            'This ID is a saved Vault login, not a browser profile. Open the sign-in page with browser, then use sign_in with savedLoginId set to this ID.',
+          );
         if (!target) return browserConnections.request(request, turn, signal, launch);
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
