@@ -1601,7 +1601,7 @@ async function initializeApplication(
         const target = await browserConnections.target(request);
         if (
           !target &&
-          request.action === 'use' &&
+          request.connectionId &&
           (await vault.list(ownerId)).some((entry) => entry.id === request.connectionId)
         )
           throw new Error(
