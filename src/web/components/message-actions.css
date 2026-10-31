@@ -128,6 +128,11 @@
   animation: reaction-pin-out 180ms ease-in forwards;
 }
 
+.chat-page .message:focus-visible {
+  outline: none;
+}
+
+.chat-page .message:focus-visible .message-body,
 .chat-page .message-body:focus-visible,
 .chat-page .message-trigger:focus-visible,
 .chat-page .reaction-pin:focus-visible {
