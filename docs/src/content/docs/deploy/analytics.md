@@ -69,6 +69,10 @@ Events use `analytics_schema=nod_v4`, `environment`, and `app_version` when avai
 
 UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`.
 
+Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
+
+Replay metadata includes masked snapshot data, source and byte size; fixed recording status, trigger status, start/flush reason, and script/configuration/error booleans; and nonnegative integer buffer-length, buffer-size, and flushed-size counters. These diagnostics contain no error messages, console output, or network payloads.
+
 Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. Web turns can also carry the sending tab's PostHog `$session_id`. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
 Owner-authored messages in Tasks are owner-requested background work. Work category and owner request are separate dimensions; automatic task activity isn't owner-requested.
