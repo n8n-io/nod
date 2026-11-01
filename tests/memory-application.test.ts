@@ -1597,6 +1597,7 @@ test('memory review separates supported visuals from revised prose without weake
               {
                 airline: 'Synthetic Air',
                 aircraft: 'An unsupported aircraft claim',
+                operatedBy: 'An unestablished operating carrier',
                 departure: { airport: 'AAA', time: '10:00' },
                 arrival: { airport: 'BBB', time: '12:00' },
               },
@@ -1608,6 +1609,7 @@ test('memory review separates supported visuals from revised prose without weake
   };
   const corrected = structuredClone(flight);
   delete corrected.options[0].journeys[0].segments[0].aircraft;
+  delete corrected.options[0].journeys[0].segments[0].operatedBy;
   expectedVisual = { text: '', presentation: flight };
   draft = presentationText(flight);
   const flightFallback = 'Booked Synthetic Air flight from AAA at 10:00 to BBB at 12:00.';

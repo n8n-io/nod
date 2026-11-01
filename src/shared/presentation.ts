@@ -90,7 +90,11 @@ const flightsPresentation = z.strictObject({
                   z.strictObject({
                     airline: text(80),
                     flightNumber: text(40).optional(),
-                    operatedBy: text(80).optional(),
+                    operatedBy: text(80)
+                      .describe(
+                        'Operating carrier explicitly established by the source. Do not infer it from an unlabeled carrier name or the marketing airline; omit when unknown.',
+                      )
+                      .optional(),
                     aircraft: text(120).optional(),
                     cabin: text(80).optional(),
                     duration: text(80).optional(),
