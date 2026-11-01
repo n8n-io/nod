@@ -2587,11 +2587,18 @@ test('each model call yields one chat-format trace without image data', async ()
                 name: 'skills',
                 arguments: { action: 'read', name: 'synthetic-guide' },
               },
+              {
+                type: 'toolCall',
+                id: 'code',
+                name: 'codemode',
+                arguments: { code: 'Synthetic codemode script' },
+              },
             ],
           },
           result('memory', 'manage_personal_context', 'Synthetic saved note'),
           result('learned', 'skills', untrustedBlock('learned skill', 'Synthetic learned flow')),
           result('guide', 'skills', 'Synthetic built-in guide'),
+          result('code', 'codemode', 'Synthetic codemode note'),
         ],
       },
     },
@@ -2603,6 +2610,8 @@ test('each model call yields one chat-format trace without image data', async ()
     'Synthetic learned flow',
     'about/sizes',
     'synthetic-flow',
+    'Synthetic codemode script',
+    'Synthetic codemode note',
   ])
     assert.ok(!sent.includes(value), value);
   assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
@@ -4885,6 +4894,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     traces: { active: () => true, record: (trace) => traces.push(trace) },
   });
   jsonReply = true;
+  const traced = traces.length;
   assert.deepEqual(
     await curator.curate(
       { task: 'review', instructions: 'Return JSON.', input: { synthetic: true } },
@@ -4895,8 +4905,13 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   );
   assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
   assert.equal(curatorUsage.at(-1)!.model, 'fixture-text-model');
-  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
-  const traced = traces.length;
+  assert.equal(traces.length, traced);
+  await curator.curate({
+    task: 'attention',
+    instructions: 'Return JSON.',
+    input: { record: 'Synthetic changed record.' },
+  });
+  assert.equal(traces.length, traced);
   await curator.curate({
     task: 'reflect',
     instructions: 'Return JSON.',

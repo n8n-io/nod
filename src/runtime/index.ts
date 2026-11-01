@@ -75,7 +75,8 @@ const admissions = new AsyncLocalStorage<{
 }>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
-const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
+const reportingTools = new Set(['ask_user', 'send_message', 'share_file']);
+const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
 const factlessTools = new Set([
   'set_status',
   'send_message',
@@ -422,10 +423,11 @@ export function createAgentRuntime(dependencies: {
         }
         if (
           overBudget() &&
-          (!reportingTools.has(name) ||
-            (context.proactivity &&
-              name === 'task' &&
-              (params as { action?: string }).action === 'start'))
+          !reportingTools.has(name) &&
+          !(
+            name === 'task' &&
+            reportingTaskActions.has(String((params as { action?: unknown }).action))
+          )
         ) {
           if (source === execution) checkInBlocked = true;
           throw new Error(

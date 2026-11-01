@@ -93,7 +93,7 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       ]);
       return result.rows[0] ?? { ...defaultPreferences };
     },
-    async update(raw: unknown): Promise<Preferences> {
+    async update(raw: unknown, expectedRules?: string): Promise<Preferences> {
       const patch = validate(raw);
       const result = await pool.query(
         `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
@@ -104,6 +104,7 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
         hour_cycle=COALESCE($12,preferences.hour_cycle),speech_reply=COALESCE($18,preferences.speech_reply),
         speech_voice=CASE WHEN $19 THEN $17 ELSE preferences.speech_voice END,
         proactive_paused=COALESCE($20,preferences.proactive_paused)
+        WHERE $22::text IS NULL OR preferences.rules=$22
         RETURNING ${columns}`,
         [
           ownerId,
@@ -127,8 +128,13 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           patch.speechVoice !== undefined,
           patch.proactivePaused ?? null,
           defaultPreferences.proactivePaused,
+          expectedRules ?? null,
         ],
       );
+      if (!result.rows[0])
+        throw Object.assign(new Error('Your rules changed. Review them before asking again.'), {
+          statusCode: 409,
+        });
       return result.rows[0];
     },
   };

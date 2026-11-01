@@ -21,6 +21,8 @@ export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
+  signal?: AbortSignal;
+  details?: Record<string, unknown>;
   expectedRevision?: number;
 }
 
@@ -402,6 +404,7 @@ export async function createApprovals(
       threadId: turn.threadId,
       turnId: turn.turnId,
       sourceMessageId: proposal.authorMessageId,
+      ...(options.details ? { details: options.details } : {}),
       ...(expectedRevision === undefined ? {} : { expectedRevision }),
     });
   }
@@ -559,6 +562,8 @@ export async function createApprovals(
           threadId: approval.thread_id,
           turnId,
           sourceMessageId: approval.source_message_id,
+          signal,
+          ...(approval.details ? { details: approval.details } : {}),
           ...(approval.expected_revision === null
             ? {}
             : { expectedRevision: approval.expected_revision }),
