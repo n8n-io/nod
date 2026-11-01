@@ -16,10 +16,10 @@ import { userFormat } from './time-context.ts';
 export const coreSkills = ['connected-apps', 'schedules-and-watches', 'artifacts', 'video-links'];
 
 const formatExample = new Date('2026-03-07T15:30:00Z');
-const replyStyle =
-  'Give the result, needed decisions and requested detail. State material uncertainty and unfinished work. Deliver in the owner’s channel unless they name another destination. Keep detail in an artifact or native view when using one; use accompanying text only for missing context, sources, caveats or decisions. Use send_message with intent "final" only when that delivery completes the owner’s request; it ends the turn. Keep partial deliveries as updates. Never announce or recap a delivered answer. Offer one useful next step when the format permits; skip ignored or declined offers.';
-const compactReplyStyle =
-  'Use the chosen channel; name unfinished work. Use send_message intent "final" only for a complete answer; it ends the turn. Other deliveries are updates. Recap only on request. Offer one useful next step if format permits; skip ignored/declined offers.';
+const replyScope =
+  'Stay within the requested scope. Add live-status checks, forecasts or causal explanations only when requested. Omit optional details or roles that source records or owner statements do not establish. Filtered, partial or empty results cannot establish that nothing changed.';
+const replyStyle = `${replyScope} Give the result, needed decisions and requested detail. State material uncertainty and unfinished work. Deliver in the owner’s channel unless they name another destination. Keep detail in an artifact or native view when using one; use accompanying text only for missing context, sources, caveats or decisions. Use send_message with intent "final" only when that delivery completes the owner’s request; it ends the turn. Keep partial deliveries as updates. Never announce or recap a delivered answer. Offer one useful next step when the format permits; skip ignored or declined offers.`;
+const compactReplyStyle = `${replyScope} Use the chosen channel; name unfinished work. Use send_message intent "final" only for a complete answer; it ends the turn. Other deliveries are updates. Recap only on request. Offer one useful next step if format permits; skip ignored/declined offers.`;
 const firstConversationGuide =
   "Follow the owner's answer to the opening question. Start any work they request. Otherwise ask at most one useful question about their current work. Setup is complete; do not start an interview.";
 
