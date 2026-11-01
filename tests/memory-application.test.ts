@@ -1343,6 +1343,7 @@ test('memory review permits silence only for a redundant recap of complete succe
     assert.equal(await recall.review(context, draft), draft);
   }
   for (const followup of [
+    'The synthetic result is above. The subsequent download failed.',
     'The source was updated today.',
     'The value is an estimate, not a measurement.',
     'Which result would you like to use?',
