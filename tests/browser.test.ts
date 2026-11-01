@@ -3325,6 +3325,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const cancelled = microphone();
         await act(async () => microphoneRequests[0].resolve(cancelled));
         assert.equal(cancelled.track.stopped, true);
+        await settle(() => document.activeElement === document.querySelector('[contenteditable]'));
         assert.equal(recorders.length, 0);
         assert.equal(currentText, 'Keep this synthetic draft');
         await click('Record an audio message');
@@ -3336,7 +3337,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests[2].resolve(recorded));
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
-        assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
+        assert.ok(document.activeElement === document.querySelector('[aria-label="Send audio message"]'), 'Recording must focus Send audio message');
         await click('Stop all work');
         assert.equal(workStops, 1);
         assert.equal(recorded.track.stopped, false);
