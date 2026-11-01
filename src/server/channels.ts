@@ -1310,7 +1310,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const item = targets.get(row.message_id);
       if (item && item.channel !== conversationChannel(row)) continue;
       const original = channelText(row.text);
-      const current = channelText([item?.title, item?.step].filter(Boolean).join(': '));
+      const current = channelText(
+        [item?.title, item?.step ?? item?.site].filter(Boolean).join(': '),
+      );
       const status =
         item &&
         !original.secureAction &&
@@ -1401,7 +1403,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const live = new Map<string, string>();
     for (const item of work)
       if (item.channel !== 'web')
-        live.set(item.channel, [item.title, item.step].filter(Boolean).join(': '));
+        live.set(item.channel, [item.title, item.step ?? item.site].filter(Boolean).join(': '));
     for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
     for (const [channel, text] of live) {
       const safe = channelText(text);

@@ -32,7 +32,7 @@ import {
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
-import { connectedTools, nodTools } from './tools.ts';
+import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { MemoryBrief } from '../ports/memory-recall.ts';
@@ -373,6 +373,26 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
     };
+    const servers = new Map(
+      mcpNamespaces(context.mcpServers ?? []).map(({ server, namespace }) => [
+        namespace,
+        server.name,
+      ]),
+    );
+    const appName = (name: string, params: unknown) => {
+      if (name.startsWith('mcp__')) return servers.get(name.split('__')[1]);
+      if (name !== 'apps') return undefined;
+      const { action, args } = (params ?? {}) as {
+        action?: unknown;
+        args?: { connectionId?: unknown };
+      };
+      if (typeof action !== 'string' || action === 'SEARCH_TOOLS') return undefined;
+      const apps = context.connectedApps ?? [];
+      return (
+        apps.find((app) => app.connectionId && app.connectionId === args?.connectionId) ??
+        apps.find((app) => action.startsWith(`${app.slug.toUpperCase()}_`))
+      )?.name;
+    };
     const guard = (
       name: string,
       params: unknown,
@@ -414,12 +434,15 @@ export function createAgentRuntime(dependencies: {
         }
         const id = randomUUID();
         const started = performance.now();
+        const app = appName(name, params);
         const event = () => ({
           execution: source,
           callId: id,
           ...(browserTools.has(name) && sites.has(source.browserId)
             ? { site: sites.get(source.browserId) }
-            : {}),
+            : app
+              ? { site: app }
+              : {}),
         });
         const end = (fields: {
           status: 'succeeded' | 'failed' | 'cancelled';

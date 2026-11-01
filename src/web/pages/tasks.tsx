@@ -182,7 +182,7 @@ export function TaskCard({
           <span className="task-preview-line">
             {live?.site && (
               <>
-                <Globe2 size={14} aria-hidden="true" />
+                {live.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}
                 {live.site} ·{' '}
               </>
             )}

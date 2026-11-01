@@ -105,7 +105,8 @@ function Working({ items = [], label = 'Nod is working' }: { items?: Activity[];
                 ) : (
                   item.site && (
                     <span key={item.site}>
-                      <Globe2 size={14} aria-hidden="true" /> {item.site}
+                      {item.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}{' '}
+                      {item.site}
                     </span>
                   )
                 )}
