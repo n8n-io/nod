@@ -183,7 +183,7 @@ import { createActivity } from './activity.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
-import { createBrowserConnections } from './browser-connections.ts';
+import { BrowserConnectionError, createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, registerLinkOpened } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
@@ -1599,7 +1599,18 @@ async function initializeApplication(
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
-        if (!target) return browserConnections.request(request, turn, signal, launch);
+        if (!target)
+          return browserConnections.request(request, turn, signal, launch).catch(async (error) => {
+            if (
+              error instanceof BrowserConnectionError &&
+              error.statusCode === 404 &&
+              (await vault.list(ownerId)).some((entry) => entry.id === request.connectionId)
+            )
+              throw new Error(
+                'This ID is a saved Vault login, not a browser profile. Open the sign-in page with browser, then use sign_in with savedLoginId set to this ID.',
+              );
+            throw error;
+          });
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
         const result = await browserConnections.request(request, turn, signal, launch);

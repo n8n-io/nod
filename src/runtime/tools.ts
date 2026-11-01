@@ -120,8 +120,16 @@ function defineTool<const N extends string, P extends TSchema>(
   description: string,
   parameters: P,
   eager = false,
+  companions: readonly string[] = [],
 ) {
-  return { name, description, parameters: rootObject(parameters), strict: parameters, eager };
+  return {
+    name,
+    description,
+    parameters: rootObject(parameters),
+    strict: parameters,
+    eager,
+    companions,
+  };
 }
 
 const scheduleObservation = Type.Union([
@@ -387,10 +395,11 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1 })),
     }),
     true,
+    ['sign_in', 'browser_session', 'pay'],
   ),
   sign_in: defineTool(
     'sign_in',
-    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects the manage_apps saved login; one matching login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry; action is its short button label; label names the login. The server checks consent, fills and submits once. Inspect the result without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
+    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects the manage_apps saved login; one matching login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry; action is its short button label; label names the login. The server checks consent, fills and submits once; the result includes the page when available. Inspect it without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
     Type.Union([
       Type.Object(
         {
@@ -548,10 +557,11 @@ export const toolDefinitions = {
         }),
       ),
     }),
+    true,
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it quietly for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list/create/update/cancel manage schedules; read schedules-and-watches for the schema. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check.\nusage_get {} reads spend and activity. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
+    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it quietly for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list {} reads schedules. schedule_create {title,prompt,timeZone,kind:once|recurring,cron?,runAt?,baselineObservation?}: recurring needs a five-field cron, once a future runAt with offset; baselineObservation is {status:verified,sourceUrl,value,summary}. schedule_update {id,...changed fields,enabled?}. schedule_cancel {id}. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check; value is null when unavailable.\nusage_get {} reads spend and activity. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -630,6 +640,7 @@ interface NodTool<P extends TSchema = TSchema> {
   description: string;
   parameters: P;
   eager?: boolean;
+  companions?: readonly string[];
   execute(params: Static<P>): Promise<unknown>;
 }
 
@@ -640,6 +651,7 @@ function bind<P extends TSchema>(
     parameters: P;
     strict: TSchema;
     eager?: boolean;
+    companions?: readonly string[];
   },
   execute: (params: Static<P>) => Promise<unknown>,
 ): NodTool {
@@ -988,10 +1000,21 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
       if (appConfirmation in result) return confirm(result);
-      if ('filled' in result)
-        return request.kind === 'otp'
-          ? 'Verification code entered privately.'
-          : 'Saved login entered.';
+      if ('filled' in result) {
+        signal.throwIfAborted();
+        try {
+          return {
+            filled: true,
+            observation: observed(
+              { action: 'snapshot' },
+              await computer.act(browserId, { action: 'snapshot' }, signal),
+            ),
+          };
+        } catch {
+          signal.throwIfAborted();
+          return { filled: true };
+        }
+      }
       await pause('credentials', vaultInvitation(request.origin, result.url, message, action));
       return 'Waiting for secure input.';
     }),

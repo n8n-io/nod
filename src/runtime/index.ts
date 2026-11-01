@@ -32,7 +32,7 @@ import {
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
-import { connectedTools, nodTools } from './tools.ts';
+import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { MemoryBrief } from '../ports/memory-recall.ts';
@@ -76,6 +76,17 @@ const admissions = new AsyncLocalStorage<{
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
+const factlessTools = new Set([
+  'set_status',
+  'send_message',
+  'ask_user',
+  'react_to_message',
+  'skills',
+  'codemode',
+  'tool_search',
+  'nod_tool_search',
+]);
+const memoryReads = ['memory_read', 'memory_find', 'history_search'];
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'read_source',
@@ -84,6 +95,7 @@ const delimitedTools = new Set([
   'delegate',
   'browser',
   'browser_session',
+  'sign_in',
   'web_search',
   'fetch_content',
   'get_search_content',
@@ -246,11 +258,13 @@ export function createAgentRuntime(dependencies: {
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const reviewedReplies = new Map<string, string>();
+    let outsideEvidence = false;
     const reviewReply = async (text: string) => {
       const draft = text.trim();
       if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
       if (
         !draft ||
+        outsideEvidence ||
         !context.memoryBrief ||
         !dependencies.reviewMemoryReply ||
         stopped ||
@@ -359,6 +373,26 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
     };
+    const servers = new Map(
+      mcpNamespaces(context.mcpServers ?? []).map(({ server, namespace }) => [
+        namespace,
+        server.name,
+      ]),
+    );
+    const appName = (name: string, params: unknown) => {
+      if (name.startsWith('mcp__')) return servers.get(name.split('__')[1]);
+      if (name !== 'apps') return undefined;
+      const { action, args } = (params ?? {}) as {
+        action?: unknown;
+        args?: { connectionId?: unknown };
+      };
+      if (typeof action !== 'string' || action === 'SEARCH_TOOLS') return undefined;
+      const apps = context.connectedApps ?? [];
+      return (
+        apps.find((app) => app.connectionId && app.connectionId === args?.connectionId) ??
+        apps.find((app) => action.startsWith(`${app.slug.toUpperCase()}_`))
+      )?.name;
+    };
     const guard = (
       name: string,
       params: unknown,
@@ -400,12 +434,15 @@ export function createAgentRuntime(dependencies: {
         }
         const id = randomUUID();
         const started = performance.now();
+        const app = appName(name, params);
         const event = () => ({
           execution: source,
           callId: id,
           ...(browserTools.has(name) && sites.has(source.browserId)
             ? { site: sites.get(source.browserId) }
-            : {}),
+            : app
+              ? { site: app }
+              : {}),
         });
         const end = (fields: {
           status: 'succeeded' | 'failed' | 'cancelled';
@@ -440,6 +477,14 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
+          if (
+            !factlessTools.has(name) &&
+            !(
+              name === 'manage_personal_context' &&
+              memoryReads.includes(String((params as { action?: unknown } | null)?.action))
+            )
+          )
+            outsideEvidence = true;
           if (
             name === 'send_message' ||
             name === 'create_audio' ||
@@ -618,6 +663,7 @@ export function createAgentRuntime(dependencies: {
               description,
               parameters,
               ...(tool.eager ? { eager: true } : {}),
+              ...(tool.companions?.length ? { companions: tool.companions } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),
               execute: async (params, options) => {

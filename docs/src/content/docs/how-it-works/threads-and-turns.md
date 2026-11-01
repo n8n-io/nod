@@ -27,7 +27,7 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `event`    | A source batch, observer task, or reaction to a Nod message                                | The observer, the task, or a new reaction session |
 | `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                            |
 
-Creating a turn also queues a `thread-drain` job in the same transaction.
+Creating a turn also queues a `thread-drain` job in the same transaction. Unless the turn waits for a start time, such as a task held until quiet hours end, the worker is woken as soon as that transaction commits instead of waiting for its next poll.
 
 ## How the worker starts turns
 

@@ -410,6 +410,7 @@ export function createPiAgent(options: {
         };
       };
       let idle = false;
+      let activation: ExtensionAPI | undefined;
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
       const prior = manager.buildSessionContext().messages;
@@ -501,6 +502,11 @@ export function createPiAgent(options: {
             : { exposure: 'direct' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args, signal) => {
+            const active = activation?.getActiveTools() ?? [];
+            const missing = (budget.compact ? [] : (tool.companions ?? [])).filter(
+              (name) => !active.includes(name) && input.tools.some((item) => item.name === name),
+            );
+            if (missing.length) activation?.setActiveTools([...active, ...missing]);
             return {
               ...(await boundedOutput(
                 tool.name,
@@ -524,6 +530,9 @@ export function createPiAgent(options: {
         settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
         additionalExtensionPaths: input.restricted ? [] : [webExtension],
         extensionFactories: [
+          (pi: ExtensionAPI) => {
+            activation = pi;
+          },
           ...(input.restricted
             ? []
             : [createCodemodeExtension({ inlineBudget: 0, models: false })]),
