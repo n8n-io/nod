@@ -350,9 +350,9 @@ export function createLedger({
     };
   }
 
-  async function limits() {
+  async function limits(database: Pick<PoolClient, 'query'> = pool) {
     const row = (
-      await pool.query(
+      await database.query(
         `SELECT monthly_usd,task_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
         [ownerId],
       )
@@ -569,8 +569,11 @@ export function createLedger({
         [ownerId],
       );
     };
-    if (shared) await write(shared);
-    else await transaction(write, pool);
+    if (shared) {
+      await write(shared);
+      return limits(shared);
+    }
+    await transaction(write, pool);
     return limits();
   }
 
