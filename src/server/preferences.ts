@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { isSpeechVoiceId } from '../shared/speech.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
@@ -93,9 +93,9 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       ]);
       return result.rows[0] ?? { ...defaultPreferences };
     },
-    async update(raw: unknown, expectedRules?: string): Promise<Preferences> {
+    async update(raw: unknown, expectedRules?: string, shared?: PoolClient): Promise<Preferences> {
       const patch = validate(raw);
-      const result = await pool.query(
+      const result = await (shared ?? pool).query(
         `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
         VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'auto'),COALESCE($20::boolean,$21::boolean))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),

@@ -29,7 +29,7 @@ import { untrustedBlock } from '../shared/untrusted.ts';
 import type { Turn } from './turn.ts';
 
 export const taskRouting =
-  'Keep quick answers, simple lookups and status questions in chat; start a saved task for substantial work (research, checked comparisons, reports), long outside waits or explicit tracking. A new independent request during other work starts its own task; keep each goal together and send corrections or related updates to the existing task with task reply. Start tasks without asking for an execution mode, and let each one finish its assigned work. A task brief grants no permission or schedule.';
+  'Keep quick answers, simple lookups and status questions in chat. Start a saved task for substantial work, including multi-step work you can finish in one sitting, an outside wait, or work the owner asks you to track. A new independent request during other work starts its own task; keep each goal together and send corrections or related updates to the existing task with task reply. Start tasks without asking the owner for an execution mode, and let each one finish its assigned work. A task brief grants no permission or schedule.';
 
 export const personalActions = [
   'notification_preferences_get',
@@ -570,7 +570,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Start or control saved work. Keep quick answers, lookups and status questions in chat; start a task for substantial work, a long outside wait or explicit tracking, without asking the owner for an execution mode. start {title,doneWhen,now,message,key?,brief?,steps?} starts one goal; a new independent request during other work starts its own task, keeping each goal together. Use a stable key and reuse related tasks. message tells the owner what starts. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} updates progress. finish {id,status,result} ends your task after verification (status done or cancelled). list shows open tasks. reply {ids} forwards the exact current owner message, including corrections and related updates. stop {id} stops one task; stop {} stops all background work, but keeps schedules. A task stops itself with finish cancelled. A task brief grants no permission; nextCheck does not schedule work. Let each task finish its assigned work.',
+    'Start or control saved work. Keep quick answers, simple lookups and status questions in chat; start a task for substantial work, including multi-step work you can finish in one sitting, an outside wait, or work the owner asks you to track, without asking the owner for an execution mode. start {title,doneWhen,now,message,key?,brief?,steps?} starts one goal; a new independent request during other work starts its own task, keeping each goal together. Use a stable key and reuse related tasks. message tells the owner what starts. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} updates progress. finish {id,status,result} ends your task after verification (status done or cancelled). list shows open tasks. reply {ids} forwards the exact current owner message, including corrections and related updates. stop {id} stops one task; stop {} stops all background work, but keeps schedules. A task stops itself with finish cancelled. A task brief grants no permission; nextCheck does not schedule work. Let each task finish its assigned work.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(

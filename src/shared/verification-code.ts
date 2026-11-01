@@ -7,7 +7,7 @@ export function classifyVerificationReply(text: string): VerificationReply {
     (match) =>
       (match[0].startsWith('+') || match[0].replace(/\D/g, '').length >= 3) &&
       (match.index + match[0].length === value.length ||
-        !/[\p{L}\p{N}]/u.test(value[match.index - 1] ?? '')),
+        !/[\p{L}\p{N}]/u.test(Array.from(value.slice(0, match.index)).at(-1) ?? '')),
   );
   if (!numbers.length) return { kind: 'ordinary' };
   const [only] = numbers;

@@ -1,4 +1,4 @@
-import { transaction as inTransaction } from './transaction.ts';
+import { afterCommit, transaction as inTransaction } from './transaction.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -705,14 +705,16 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       ).rows[0]!;
       return enqueue(client, saved, nextOccurrence(saved));
     }, shared);
-    refresh();
-    dependencies.analytics?.({
-      event: 'nod_schedule_changed',
-      properties: {
-        operation: 'create',
-        ...scheduleAnalytics(row),
-        actor: provenance ? 'agent' : 'user',
-      },
+    afterCommit(shared ?? pool, () => {
+      refresh();
+      dependencies.analytics?.({
+        event: 'nod_schedule_changed',
+        properties: {
+          operation: 'create',
+          ...scheduleAnalytics(row),
+          actor: provenance ? 'agent' : 'user',
+        },
+      });
     });
     return value(row);
   }
@@ -779,14 +781,16 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           : nextOccurrence(saved),
       );
     }, shared);
-    refresh();
-    dependencies.analytics?.({
-      event: 'nod_schedule_changed',
-      properties: {
-        operation: 'update',
-        ...scheduleAnalytics(row),
-        actor: provenance ? 'agent' : 'user',
-      },
+    afterCommit(shared ?? pool, () => {
+      refresh();
+      dependencies.analytics?.({
+        event: 'nod_schedule_changed',
+        properties: {
+          operation: 'update',
+          ...scheduleAnalytics(row),
+          actor: provenance ? 'agent' : 'user',
+        },
+      });
     });
     return value(row);
   }

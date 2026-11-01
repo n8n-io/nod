@@ -1346,6 +1346,7 @@ test(
           });
           await finish(parent.turnId, 'succeeded');
           const owner = await begin('Send the fixture relay details to Ana.');
+          t.after(() => finish(owner.turnId, 'cancelled'));
           const ownerMessageId = (await row(owner.turnId)).message_id;
           await tasks.execute(owner, { action: 'reply', ids: [task.id] }, ownerMessageId);
           await tasks.execute(owner, { action: 'reply', ids: [task.id] }, ownerMessageId);

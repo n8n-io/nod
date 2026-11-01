@@ -147,7 +147,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return { selection: dependencies.models!.view().selection };
     }
     if (action === 'notification_preferences_update') {
-      const result = await preferences.update(args, options?.expectedRules);
+      const result = await preferences.update(args, options?.expectedRules, options?.client);
       refresh();
       return result;
     }

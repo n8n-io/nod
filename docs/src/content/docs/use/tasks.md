@@ -11,7 +11,7 @@ Until there's something to show, the page helps you start instead. Select **some
 
 When writing a task or schedule request, press Enter to send or Shift+Enter for a new line.
 
-Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, such as research across sources, checked comparisons or report creation, and for a long outside wait or work you ask it to track. You never pick an execution mode: Nod starts the task itself and lets it finish the assigned work.
+Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, including multi-step work it can finish in one sitting, such as research across sources, checked comparisons or report creation, and for an outside wait, such as a person, a reply or an action elsewhere, or work you ask it to track. You never pick an execution mode: Nod starts the task itself and lets it finish the assigned work.
 
 | You write                              | What Nod does                    |
 | -------------------------------------- | -------------------------------- |

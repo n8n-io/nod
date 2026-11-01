@@ -4406,6 +4406,35 @@ test('restricted Pi sessions load no sandbox, web, or code tools', async () => {
   }
 });
 
+test('the chat prompt leaves room for an image in a small context window', async () => {
+  const { modelContextBudget, estimateModelTokens } = await import('../src/providers/pi/models.ts');
+  const { systemPrompt, coreSkills } = await import('../src/runtime/prompt.ts');
+  const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const skills = createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills);
+  const budget = modelContextBudget({
+    provider: 'compatible',
+    id: 'fixture-small',
+    contextWindow: 8192,
+    maxTokens: 4096,
+  });
+  const prompt = systemPrompt({ ...sandbox.workspace, path: '/workspace/fixture' }, skills);
+  const room = (content: unknown) =>
+    budget.window -
+    estimateModelTokens({
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content },
+      ],
+      tools: [],
+    }) -
+    budget.margin;
+  assert.ok(room('Synthetic request.') >= 128, 'the prompt must fit a small text-only window');
+  assert.ok(
+    room([{ type: 'image', data: 'fixture', mimeType: 'image/png' }]) >= 128,
+    'the prompt must leave room for an image in a small window',
+  );
+});
+
 test('native audio reaches the selected Pi model with tools and survives a reopened session', async (t) => {
   const { createServer } = await import('node:http');
   const bodies: Array<{

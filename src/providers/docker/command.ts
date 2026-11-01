@@ -224,7 +224,14 @@ for index,(args,child_env,seconds) in enumerate(steps):
     while os.waitpid(-1,os.WNOHANG)[0]: pass
    except (ChildProcessError,OSError): pass
   streams=any(key.data in ['stdout','stderr'] for key in sel.get_map().values())
-  if code is not None and not streams and not group_running(): break
+  if code is not None and not streams:
+   if reason:
+    if not members() and not descendants(): break
+   elif not group_running():
+    for pid in descendants():
+     try: os.kill(pid,signal.SIGKILL)
+     except OSError: pass
+    break
  p.wait()
  if reason or code: break
 if code and not last and not reason: output('stderr',log[-limit:])

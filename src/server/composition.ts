@@ -1134,14 +1134,15 @@ async function initializeApplication(
         : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
-            ? withTurnLock(turnLock, () => ledger.setLimits(args))
+            ? withTurnLock(turnLock, (client) => ledger.setLimits(args, client))
             : scheduleWrite
               ? withTurnLock(turnLock, (client) =>
                   personal.manage(action.slice('NOD_'.length), args, provenance, { client }),
                 )
               : lockedWrite
-                ? withTurnLock(turnLock, () =>
+                ? withTurnLock(turnLock, (client) =>
                     personal.manage(action.slice('NOD_'.length), args, provenance, {
+                      client,
                       ...(provenance.details?.currentRules === undefined
                         ? {}
                         : { expectedRules: String(provenance.details.currentRules) }),
