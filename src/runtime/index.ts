@@ -76,6 +76,17 @@ const admissions = new AsyncLocalStorage<{
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
+const factlessTools = new Set([
+  'set_status',
+  'send_message',
+  'ask_user',
+  'react_to_message',
+  'skills',
+  'codemode',
+  'tool_search',
+  'nod_tool_search',
+]);
+const memoryReads = ['memory_read', 'memory_find', 'history_search'];
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'read_source',
@@ -247,11 +258,13 @@ export function createAgentRuntime(dependencies: {
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
     const reviewedReplies = new Map<string, string>();
+    let outsideEvidence = false;
     const reviewReply = async (text: string) => {
       const draft = text.trim();
       if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
       if (
         !draft ||
+        outsideEvidence ||
         !context.memoryBrief ||
         !dependencies.reviewMemoryReply ||
         stopped ||
@@ -441,6 +454,14 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
+          if (
+            !factlessTools.has(name) &&
+            !(
+              name === 'manage_personal_context' &&
+              memoryReads.includes(String((params as { action?: unknown } | null)?.action))
+            )
+          )
+            outsideEvidence = true;
           if (
             name === 'send_message' ||
             name === 'create_audio' ||

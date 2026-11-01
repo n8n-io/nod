@@ -1960,6 +1960,38 @@ test('memory checks cover visual claims and keep the draft when a check fails', 
   }
 });
 
+test('memory checks keep answers that rest on work the check cannot see', async () => {
+  for (const action of ['history_search', 'schedule_list']) {
+    const replies: string[] = [];
+    let checks = 0;
+    await fixture(
+      async (tools, emit) => {
+        await call(tools, 'manage_personal_context', { action, args: {} });
+        emit({ type: 'final', text: 'I sent Tom the reminder.' });
+      },
+      {
+        reply: async (text) => {
+          replies.push(text);
+        },
+        manage: async () => ({ messages: [] }),
+      },
+      {
+        prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
+        reviewMemoryReply: async () => {
+          checks++;
+          return 'I cannot confirm that the reminder was sent.';
+        },
+      },
+    );
+    assert.equal(checks, action === 'history_search' ? 1 : 0);
+    assert.deepEqual(replies, [
+      action === 'history_search'
+        ? 'I cannot confirm that the reminder was sent.'
+        : 'I sent Tom the reminder.',
+    ]);
+  }
+});
+
 test('Stop ends a memory check that ignores cancellation without delivering its draft', async () => {
   const stop = new AbortController();
   const replies: string[] = [];
