@@ -43,6 +43,22 @@ Before signing or making an installer, both platform builds disable Node option 
 
 The runtime dependency overrides use patched Sharp and Undici versions. A single Sharp version avoids duplicate native image libraries.
 
+Overrides also select patched versions of Glob, Minimatch, Hono's Node server, qs, and RE2JS. Keep the root and desktop locks in sync when their shared build dependencies change.
+
+## Verify release provenance
+
+Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the release or recovery workflow on `main`, and that workflow's exact commit. A failed or missing check prevents public release.
+
+Download an asset and its bundle from the same release, then verify them:
+
+```sh
+gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigstore.json
+```
+
+The normal release workflow records its build commit. The recovery workflow records the recovery commit and verifies the original source and test results before signing the existing files. Platform signing and notarization checks still run.
+
+Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. Existing releases do not gain provenance from this change.
+
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.

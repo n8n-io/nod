@@ -9,8 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: desktop-build-release
@@ -18,6 +17,11 @@ concurrency:
 
 jobs:
   publish:
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
     if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 30
@@ -107,6 +111,17 @@ jobs:
           date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
           appendFileSync(process.env.GITHUB_ENV, `NOD_RELEASE_SOURCE=${plan.source}\nNOD_RELEASE_PLAN_SHA256=${createHash('sha256').update(bytes).digest('hex')}\nNOD_RUNTIME_REFRESH=${date.toISOString().slice(0, 10)}\n`);
           JS
+      - name: Verify release files and prepare provenance subjects
+        working-directory: release
+        run: node ../publisher/.github/scripts/desktop-release.mjs stage-all
+      - name: Sign recovered release provenance
+        id: provenance
+        if: ${{ !github.event.repository.private || vars.NOD_PRIVATE_ATTESTATIONS == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-checksums: release/.local/release-SHA256SUMS
       - name: Verify and publish the existing signed files
         working-directory: release
+        env:
+          NOD_RELEASE_ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
         run: node ../publisher/.github/scripts/desktop-release.mjs draft-all
