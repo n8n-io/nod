@@ -21,7 +21,7 @@ import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
-import { afterRollback, transaction } from './transaction.ts';
+import { afterCommit, afterRollback, transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
@@ -258,6 +258,8 @@ export async function withTurnLock<T>(
   return database ? execute(database) : transaction(execute, pool, signal);
 }
 
+let drainWorker: string | undefined;
+
 async function sendDrain(client: PoolClient | undefined, threadId: string, startAfter?: Date) {
   await boss.send(
     queue,
@@ -270,6 +272,7 @@ async function sendDrain(client: PoolClient | undefined, threadId: string, start
       retryLimit: 2,
     },
   );
+  if (!startAfter) afterCommit(client ?? {}, () => drainWorker && boss.notifyWorker(drainWorker));
 }
 
 async function insertEvent(
@@ -1021,15 +1024,15 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
   ]);
   for (const turn of stranded.rows) await failTurn(turn.id, dependencies.present);
   await sendDrain(undefined, (await activeThread()).id);
-  const start = () =>
-    boss.work<{ threadId: string }>(
+  const start = async () =>
+    (drainWorker = await boss.work<{ threadId: string }>(
       queue,
       { localConcurrency: 1, pollingIntervalSeconds: 0.5, batchSize: 20, burstWhenBatchFull: true },
       async (jobs) => {
         for (const threadId of new Set(jobs.map((job) => job.data.threadId)))
           await drainThread(threadId, dependencies);
       },
-    );
+    ));
   if (dependencies.consumers)
     await dependencies.consumers.register({
       start,

@@ -63,6 +63,7 @@ The self-hosted server reaches Docker through a restricted proxy for its workspa
 Every command goes through a small supervisor inside the container, in [`src/providers/docker/command.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/docker/command.ts).
 
 - It owns the command's session and signals every process in it, even ones that left the process group.
+- A command also ends the processes it detached, when the command itself ends, so work it left behind never outlives it. Stop ends the whole tree the same way, and escalates to `SIGKILL` for a process that ignores the first signal.
 - It enforces the timeout: 59 minutes for `bash` by default. The model can ask for longer.
 - It acknowledges when the command ends. If that acknowledgement is lost, the server fences the workspace: no more commands run until Nod restarts.
 

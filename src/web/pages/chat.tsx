@@ -2,7 +2,7 @@ import { Tooltip } from '../components/tooltip';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, CornerUpLeft, LoaderCircle, Repeat } from '../components/icons';
+import { ArrowDown, Check, CornerUpLeft, Globe2, LoaderCircle, Repeat } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -110,7 +110,7 @@ function Welcome() {
   );
 }
 function Working({ items = [], label = 'Nod is working' }: { items?: Activity[]; label?: string }) {
-  const details = items.filter((item) => item.title || item.step);
+  const details = items.filter((item) => item.title || item.step || item.site);
   return (
     <div className="thinking" role="status">
       <NodGlyph size={28} mode="thinking" />
@@ -119,12 +119,19 @@ function Working({ items = [], label = 'Nod is working' }: { items?: Activity[];
           details.map((item) => (
             <span className="working-text" key={item.turnId}>
               {item.title && <strong>{item.title}</strong>}
-              {item.step && (
+              {item.step ? (
                 <span key={item.step}>
                   <Markdown allowedElements={[]} unwrapDisallowed>
                     {item.step}
                   </Markdown>
                 </span>
+              ) : (
+                item.site && (
+                  <span key={item.site}>
+                    {item.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}
+                    {item.site}
+                  </span>
+                )
               )}
             </span>
           ))

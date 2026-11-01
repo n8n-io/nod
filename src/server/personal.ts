@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
+import { afterCommit } from './transaction.ts';
 import { createPreferencesStore } from './preferences.ts';
 import { controlInput, forgetInput, forgetReview, type MemoryService } from './memory.ts';
 import type { LearnedSkills } from './learned-skills.ts';
@@ -115,6 +116,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       turnId?: string;
       expectedRevision?: number;
     },
+    options?: { expectedRules?: string; client?: PoolClient },
   ) {
     if (action === 'notification_preferences_get') return preferences.get();
     if (action === 'models_get') {
@@ -142,24 +144,30 @@ export function createPersonalService(dependencies: PersonalDependencies) {
         event: 'nod_settings_updated',
         properties: { section: 'models', operation: 'update' },
       });
-      refresh();
+      afterCommit(options?.client ?? pool, refresh);
       return { selection: dependencies.models!.view().selection };
     }
     if (action === 'notification_preferences_update') {
-      const result = await preferences.update(args);
-      refresh();
+      const result = await preferences.update(args, options?.expectedRules, options?.client);
+      afterCommit(options?.client ?? pool, refresh);
       return result;
     }
     if (action === 'schedule_list') return schedules.list();
     if (action === 'schedule_record_observation')
       return schedules.recordObservation(provenance?.turnId ?? '', args);
-    if (action === 'schedule_create') return schedules.create(args, provenance);
+    if (action === 'schedule_create') return schedules.create(args, provenance, options?.client);
     if (action === 'schedule_update') {
       const { id, ...input } = args;
-      return schedules.update(String(id || ''), input, provenance);
+      return schedules.update(String(id || ''), input, provenance, undefined, options?.client);
     }
     if (action === 'schedule_cancel')
-      return schedules.update(String(args.id || ''), { enabled: false }, provenance);
+      return schedules.update(
+        String(args.id || ''),
+        { enabled: false },
+        provenance,
+        undefined,
+        options?.client,
+      );
     if (action === 'memory_find') {
       if (!memory) throw new Error('Memory is unavailable.');
       return memory.find(args);
@@ -172,7 +180,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       if (!memory) throw new Error('Memory is unavailable.');
       const result = await memory.control(args);
       if (result.cleared) remembered('clear', 'agent');
-      refresh();
+      afterCommit(options?.client ?? pool, refresh);
       return result;
     }
     if (action === 'memory_forget') {

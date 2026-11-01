@@ -634,6 +634,9 @@ async function releaseFixture(
   const f = await releaseRepository(t);
   const root = f.root;
   const scripts = join(root, '.github/scripts');
+  const provenance = join(root, '.local/fixture.sigstore.json');
+  await mkdir(dirname(provenance), { recursive: true });
+  await writeFile(provenance, 'Synthetic signature bundle');
   await mkdir(scripts, { recursive: true });
   await copyFile(
     fileURLToPath(new URL('../../.github/scripts/prepare-desktop-release.mjs', import.meta.url)),
@@ -832,6 +835,10 @@ if (args[0] === 'api') {
   if (release) output(release);
   missing();
 }
+if (args[0] === 'attestation') {
+  if (state.rejectAttestation) process.exit(1);
+  output([]);
+}
 if (args[0] !== 'release') throw new Error('Unexpected command');
 const tag = args[2];
 if (args[1] === 'create') {
@@ -935,6 +942,8 @@ globalThis.fetch = async (url, options = {}) => {
         GITHUB_SHA: source,
         GITHUB_REF: 'refs/heads/main',
         GITHUB_ACTIONS: 'true',
+        GITHUB_WORKFLOW_REF: 'synthetic/nod/.github/workflows/desktop-release.yml@refs/heads/main',
+        ...(isPublic ? { NOD_RELEASE_ATTESTATION: provenance } : {}),
         APPLE_CONFIGURED: 'true',
         ...signingEnv,
         NOD_RUNTIME_FINGERPRINT: fingerprint,
@@ -963,6 +972,62 @@ globalThis.fetch = async (url, options = {}) => {
     feed,
   };
 }
+
+test('public releases refuse missing or rejected provenance before uploading assets', async (t) => {
+  const f = await releaseFixture(t, { isPublic: true });
+  await assert.rejects(
+    f.invoke('draft', false, { NOD_RELEASE_ATTESTATION: '' }),
+    /require build provenance/,
+  );
+  await assert.rejects(
+    f.invoke('draft', false, {
+      GITHUB_WORKFLOW_REF: 'synthetic/fork/.github/workflows/desktop-release.yml@refs/heads/main',
+    }),
+    /trusted main workflow/,
+  );
+  await f.writeState({ ...(await f.readState()), rejectAttestation: true });
+  await assert.rejects(f.invoke('draft'), /GitHub release access failed/);
+  assert.equal((await f.readState()).created, 0);
+  await f.writeState({ ...(await f.readState()), rejectAttestation: false });
+  await f.invoke('draft', false, {
+    NOD_RELEASE_SOURCE: f.source,
+    GITHUB_SHA: 'b'.repeat(40),
+    GITHUB_WORKFLOW_REF:
+      'synthetic/nod/.github/workflows/recover-desktop-release.yml@refs/heads/main',
+  });
+  const state = await f.readState();
+  assert(
+    state.releases[f.appTag].assets.some((asset) => asset.name === 'nod-release.sigstore.json'),
+  );
+  const checks = state.calls.filter((call) => call[0] === 'attestation');
+  assert(checks.length > 1);
+  for (const call of checks) {
+    assert.equal(call[call.indexOf('--source-digest') + 1], f.source);
+    assert.equal(
+      call[call.indexOf('--signer-workflow') + 1],
+      'synthetic/nod/.github/workflows/desktop-release.yml',
+    );
+  }
+});
+
+test('private releases require provenance when attestations are enabled', async (t) => {
+  const f = await releaseFixture(t);
+  for (const workflow of ['desktop-release', 'recover-desktop-release']) {
+    await assert.rejects(
+      f.invoke('draft', false, {
+        NOD_PRIVATE_ATTESTATIONS: 'true',
+        NOD_RELEASE_ATTESTATION: '',
+        NOD_RELEASE_SOURCE: f.source,
+        GITHUB_SHA: 'b'.repeat(40),
+        GITHUB_WORKFLOW_REF: `synthetic/nod/.github/workflows/${workflow}.yml@refs/heads/main`,
+      }),
+      /require build provenance/,
+    );
+    assert.equal((await f.readState()).created, 0);
+  }
+  await f.invoke('draft', false, { NOD_PRIVATE_ATTESTATIONS: 'false' });
+  assert.equal((await f.readState()).created, 1);
+});
 
 test('automatic delivery requires current exact-main CI and publishes only its checked metadata', async (t) => {
   const f = await releaseFixture(t, { automatic: true, plan: true, publish: true });
@@ -1350,6 +1415,11 @@ test('all three checked bundles publish together as one regular Nod release', as
     assert.equal((await f.readState()).created, 0);
   }
   await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
+  await f.invoke('stage-all');
+  assert.equal((await f.readState()).created, 0);
+  const subjects = await readFile(join(f.root, '.local/release-SHA256SUMS'), 'utf8');
+  assert(subjects.includes(`${win.installer.sha256}  ${win.installer.file}\n`));
+  assert(subjects.includes(`${win.runtime.sha256}  ${win.runtime.file}\n`));
   await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
   await assert.rejects(f.invoke('draft-all'));
   assert.equal((await f.readState()).created, 0);

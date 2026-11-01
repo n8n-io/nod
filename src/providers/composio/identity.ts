@@ -147,7 +147,9 @@ export async function loadIntegrationIdentity(options: {
     let key;
     try {
       if (!encrypted || encrypted.length < 28) throw new Error();
-      const decipher = createDecipheriv('aes-256-gcm', encryptionKey, encrypted.subarray(0, 12));
+      const decipher = createDecipheriv('aes-256-gcm', encryptionKey, encrypted.subarray(0, 12), {
+        authTagLength: 16,
+      });
       decipher.setAAD(binding);
       decipher.setAuthTag(encrypted.subarray(12, 28));
       const plaintext = Buffer.concat([decipher.update(encrypted.subarray(28)), decipher.final()]);

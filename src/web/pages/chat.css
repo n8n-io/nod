@@ -474,6 +474,11 @@
 .chat-page .working-text strong {
   font-weight: 400;
 }
+.chat-page .working-text svg {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
 @keyframes working-shine {
   from {
     background-position: 120% 0;

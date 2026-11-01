@@ -7,6 +7,19 @@ import test from 'node:test';
 import pg from 'pg';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
+test('a verification code attached to any wording is intercepted in any language', async () => {
+  const { classifyVerificationReply, securityCodeIn } =
+    await import('../src/shared/verification-code.ts');
+  for (const text of ['1234', 'Your code is 1234', '验证码1234', 'رمز1234', 'otp1234', 'code:1234'])
+    assert.deepEqual(classifyVerificationReply(text), { kind: 'code', code: '1234' });
+  for (const text of ['1234 is the code', 'Send 12 34 as the code', 'otp 1234 now'])
+    assert.deepEqual(classifyVerificationReply(text), { kind: 'invalid' });
+  for (const text of ['MP3', 'meeting at 10:30', 'abc123def', 'no numbers here'])
+    assert.deepEqual(classifyVerificationReply(text), { kind: 'ordinary' });
+  assert.equal(securityCodeIn('1234'), '1234');
+  assert.equal(securityCodeIn('CVV: 123'), '123');
+});
+
 test(
   'chat verification intercepts owned codes before message routing and plaintext persistence',
   {

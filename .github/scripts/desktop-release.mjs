@@ -496,6 +496,46 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
   return release;
 }
 
+async function withProvenance(files) {
+  const bundle = process.env.NOD_RELEASE_ATTESTATION;
+  if (!bundle) {
+    if (
+      process.env.NOD_PRIVATE_ATTESTATIONS === 'true' ||
+      api(`repos/${releaseRepository}`)?.private !== true
+    )
+      throw new Error('Release uploads require build provenance.');
+    return files;
+  }
+  const workflow = process.env.GITHUB_WORKFLOW_REF;
+  if (
+    !['desktop-release', 'recover-desktop-release'].some(
+      (name) => workflow === `${sourceRepository}/.github/workflows/${name}.yml@refs/heads/main`,
+    ) ||
+    !shaPattern.test(process.env.GITHUB_SHA ?? '')
+  )
+    throw new Error('Build provenance requires a trusted main workflow.');
+  for (const file of files)
+    gh([
+      'attestation',
+      'verify',
+      file,
+      '--repo',
+      sourceRepository,
+      '--bundle',
+      bundle,
+      '--signer-workflow',
+      `${sourceRepository}/.github/workflows/desktop-release.yml`,
+      '--source-ref',
+      'refs/heads/main',
+      '--source-digest',
+      sourceRevision,
+    ]);
+  const destination = join(root, '.local/nod-release.sigstore.json');
+  await mkdir(join(root, '.local'), { recursive: true });
+  await copyFile(bundle, destination);
+  return [...files, destination];
+}
+
 function publishRelease(repository, tag) {
   const release = releaseByTag(repository, tag);
   if (!release?.draft || release.tag_name !== tag)
@@ -744,13 +784,14 @@ async function draftApp({ stageOnly = false } = {}) {
     } else files.push(join(output, name));
   }
   if (stageOnly) return files;
+  const verifiedFiles = await withProvenance(files);
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
     title: `Nod v${version}`,
     marker,
     notes: releaseNotes(),
-    files,
+    files: verifiedFiles,
   });
   await verifyDownloads(tag, [metadata.disk, metadata.update]);
   if (publish) {
@@ -830,7 +871,7 @@ async function reuseWindowsRuntime() {
   await writeFile(join(assets, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 }
 
-async function draftAll() {
+async function draftAll({ stageOnly = false } = {}) {
   const prepared = await configuredRelease(root);
   const version = prepared.version;
   const source = sourceRevision;
@@ -920,6 +961,24 @@ async function draftAll() {
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const sum = join(windows, 'SHA256SUMS-win32-x64');
   await copyFile(join(windows, 'SHA256SUMS'), sum);
+  const files = [
+    ...appFiles.values(),
+    ...['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json'].map((name) =>
+      join(windows, name),
+    ),
+    sum,
+    windowsManifest,
+  ];
+  if (stageOnly) {
+    await writeFile(
+      join(root, '.local/release-SHA256SUMS'),
+      (await Promise.all(files.map(async (file) => `${await hash(file)}  ${basename(file)}`))).join(
+        '\n',
+      ) + '\n',
+    );
+    return;
+  }
+  const verifiedFiles = await withProvenance(files);
   const download = (file) =>
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
   const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://nod-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
@@ -929,14 +988,7 @@ async function draftAll() {
     title: `Nod v${version}`,
     notes,
     marker,
-    files: [
-      ...appFiles.values(),
-      ...['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json'].map(
-        (name) => join(windows, name),
-      ),
-      sum,
-      windowsManifest,
-    ],
+    files: verifiedFiles,
   });
   const expected = [
     'nod-arm64.dmg',
@@ -975,5 +1027,6 @@ if (command === 'plan') await plan();
 else if (command === 'draft') await draftApp();
 else if (command === 'stage') console.log(JSON.stringify(await draftApp({ stageOnly: true })));
 else if (command === 'draft-all') await draftAll();
+else if (command === 'stage-all') await draftAll({ stageOnly: true });
 else if (command === 'reuse-windows-runtime') await reuseWindowsRuntime();
-else throw new Error('Expected plan, draft, stage, draft-all or reuse-windows-runtime.');
+else throw new Error('Expected plan, draft, stage, stage-all, draft-all or reuse-windows-runtime.');

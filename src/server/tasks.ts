@@ -278,8 +278,17 @@ export function createTasks(options: {
       )
     ).rows[0];
     if (!message) throw failure('A task update needs an owner message.');
+    const sourceId = `task-delivery:${task.session_id}:${sourceMessageId}`;
+    const prior = (
+      await client.query('SELECT id FROM turns WHERE owner_id=$1 AND source_id=$2', [
+        ownerId,
+        sourceId,
+      ])
+    ).rows[0];
+    if (prior) return;
     const turnId = await enqueueTurn(message.text, {
       source: 'task',
+      sourceId,
       sessionId: task.session_id,
       parentTurnId,
       background: true,
@@ -287,7 +296,11 @@ export function createTasks(options: {
       channelSourceId: task.channel_source_id,
       client,
     });
-    await client.query('UPDATE turns SET message_id=$1 WHERE id=$2', [sourceMessageId, turnId]);
+    const claimed = await client.query(
+      'UPDATE turns SET message_id=$1 WHERE id=$2 AND owner_id=$3 AND message_id IS NULL RETURNING id',
+      [sourceMessageId, turnId, ownerId],
+    );
+    if (!claimed.rowCount) return;
     await recordInput(client, taskId, turnId);
   }
 

@@ -1323,6 +1323,49 @@ test(
       );
 
       await t.test(
+        'a repeated relay of one owner message delivers once and does not reset the spending boundary',
+        async (t) => {
+          const parent = await begin('Draft the fixture relay plan.');
+          const task = (await tasks.execute(
+            parent,
+            {
+              action: 'start',
+              title: 'Fixture relay',
+              message: 'Working on the fixture relay.',
+              doneWhen: 'Done',
+              now: 'Working',
+            },
+            (await row(parent.turnId)).message_id,
+          )) as { id: string };
+          t.after(async () => {
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          await finish(parent.turnId, 'succeeded');
+          const owner = await begin('Send the fixture relay details to Ana.');
+          t.after(() => finish(owner.turnId, 'cancelled'));
+          const ownerMessageId = (await row(owner.turnId)).message_id;
+          await tasks.execute(owner, { action: 'reply', ids: [task.id] }, ownerMessageId);
+          await tasks.execute(owner, { action: 'reply', ids: [task.id] }, ownerMessageId);
+          const delivered = (
+            await db.pool.query(
+              "SELECT id FROM turns WHERE task_id=$1 AND source='task' AND message_id=$2",
+              [task.id, ownerMessageId],
+            )
+          ).rows;
+          assert.equal(delivered.length, 1);
+          const revision = (
+            await db.pool.query('SELECT revision FROM tasks WHERE id=$1', [task.id])
+          ).rows[0].revision;
+          assert.equal(revision, 2);
+          await finish(owner.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
         'a relayed owner message shows a task only its own question, and only the main chat steers or stops tasks',
         async (t) => {
           const start = async (request: string, title: string) => {

@@ -43,7 +43,7 @@ jobs:
   notes:
     name: Delete Git notes
     needs: scope
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -326,6 +326,6 @@ jobs:
       - name: Verify scanning exceptions still detect secrets
         run: python3 .github/scripts/check-secret-config.py "$RUNNER_TEMP/gitleaks/gitleaks"
       - name: Scan Git history
-        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --verbose --log-opts=HEAD .'
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose --log-opts=--all .'
       - name: Scan the checked-out files
-        run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir --redact --no-banner --verbose .'
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir --config .gitleaks.toml --redact --no-banner --verbose .'

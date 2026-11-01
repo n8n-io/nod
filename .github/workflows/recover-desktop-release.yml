@@ -9,8 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: desktop-build-release
@@ -18,6 +17,9 @@ concurrency:
 
 jobs:
   publish:
+    permissions:
+      contents: write
+      actions: read
     if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 30
@@ -78,7 +80,7 @@ jobs:
         with:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
-          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|release-plan)
+          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|release-plan|release-provenance)
           path: release/.local/desktop-release-artifacts
       - name: Place and bind the release files
         working-directory: release
@@ -107,6 +109,16 @@ jobs:
           date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
           appendFileSync(process.env.GITHUB_ENV, `NOD_RELEASE_SOURCE=${plan.source}\nNOD_RELEASE_PLAN_SHA256=${createHash('sha256').update(bytes).digest('hex')}\nNOD_RUNTIME_REFRESH=${date.toISOString().slice(0, 10)}\n`);
           JS
+      - name: Select the original build provenance
+        id: provenance
+        run: |
+          bundle="$GITHUB_WORKSPACE/release/.local/desktop-release-artifacts/desktop-release-provenance/nod-release-provenance.sigstore.json"
+          if [ -f "$bundle" ]; then
+            echo "bundle-path=$bundle" >> "$GITHUB_OUTPUT"
+          fi
       - name: Verify and publish the existing signed files
         working-directory: release
+        env:
+          NOD_PRIVATE_ATTESTATIONS: ${{ vars.NOD_PRIVATE_ATTESTATIONS }}
+          NOD_RELEASE_ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
         run: node ../publisher/.github/scripts/desktop-release.mjs draft-all

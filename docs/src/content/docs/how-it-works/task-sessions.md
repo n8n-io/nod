@@ -7,7 +7,7 @@ sidebar:
 
 Nod has one conversation per owner. The main chat session coordinates work. Each independent task gets a saved session that reports to the same conversation.
 
-A coherent request stays in chat even when it needs several app or browser steps. Independent work, a long outside wait, or your explicit request to track work starts a saved task.
+Quick answers, simple lookups and status questions stay in chat. Substantial work, including multi-step work that can finish in one sitting, an outside wait, or your explicit request to track work starts a saved task, and Nod chooses that itself without asking you for an execution mode. A new independent request while other work runs starts its own task; corrections and related updates go to the existing task.
 
 ## The architecture
 

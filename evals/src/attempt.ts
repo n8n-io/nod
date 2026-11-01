@@ -218,6 +218,18 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         browserHandoffs: trace.tools.filter(
           (call) => call.name === 'browser' && call.input?.action === 'handoff',
         ).length,
+        calls: trace.tools.map((call) => ({
+          name: call.name,
+          ...(typeof call.input?.action === 'string' ? { action: call.input.action } : {}),
+          ...(call.name === 'tool_search' && typeof call.input?.query === 'string'
+            ? { query: call.input.query.slice(0, 120) }
+            : {}),
+          ...(call.turnId ? { turnId: call.turnId } : {}),
+          ...(call.id?.includes('/') ? { nested: true } : {}),
+          error: call.isError,
+          at: call.at,
+          ...(call.finishedAt === undefined ? {} : { finishedAt: call.finishedAt }),
+        })),
         turns: trace.turns.map(({ source, background, status, error, startedAt, finishedAt }) => ({
           source,
           background,

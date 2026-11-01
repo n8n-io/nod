@@ -15,6 +15,8 @@ const omitted = '[owner context omitted]';
 const learnedSkill = untrustedParts('learned skill').open;
 const memory = (name: string, args: Record<string, unknown> | undefined) =>
   name === 'manage_personal_context' && String(args?.action).startsWith('memory_');
+const privateCall = (name: string, args?: Record<string, unknown>) =>
+  name === 'codemode' || memory(name, args);
 
 export interface PiModelCall {
   model: Model<Api>;
@@ -68,7 +70,7 @@ function chat(message: Message, hidden = new Set<string>()) {
             function: {
               name: call.name,
               arguments: JSON.stringify(
-                hidden.has(call.id) || memory(call.name, call.arguments)
+                hidden.has(call.id) || privateCall(call.name, call.arguments)
                   ? { action: call.arguments.action }
                   : call.arguments,
               ),
@@ -101,7 +103,7 @@ export function piModelTrace(
     ),
   );
   const owned = (message: ToolResultMessage) =>
-    memory(message.toolName, calls.get(message.toolCallId)) ||
+    privateCall(message.toolName, calls.get(message.toolCallId)) ||
     (message.toolName === 'skills' && text(message.content).startsWith(learnedSkill));
   const hidden = new Set(
     call.context.messages.flatMap((message) =>
