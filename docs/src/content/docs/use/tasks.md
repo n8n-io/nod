@@ -11,9 +11,17 @@ Until there's something to show, the page helps you start instead. Select **some
 
 When writing a task or schedule request, press Enter to send or Shift+Enter for a new line.
 
-Nod completes a coherent request in chat, including work with several app or browser steps. It starts a saved task for independent work, a long outside wait, or work you ask it to track.
+Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, including multi-step work it can finish in one sitting, such as research across sources, checked comparisons or report creation, and for an outside wait, such as a person, a reply or an action elsewhere, or work you ask it to track. You never pick an execution mode: Nod starts the task itself and lets it finish the assigned work.
 
-For example, "Compare these options and make a report" can stay in chat. "Ask three venues for quotes and tell me when they've all replied" starts a saved task. "What time is this meeting?" stays in chat. The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement.
+| You write                              | What Nod does                    |
+| -------------------------------------- | -------------------------------- |
+| "What time is my next meeting?"        | Answers in chat.                 |
+| "Compare flights to Copenhagen."       | Starts task A.                   |
+| "Also prepare my meeting notes."       | Starts task B while A continues. |
+| "For the flights, only direct routes." | Updates task A.                  |
+| "How are the flights going?"           | Reports task A's status in chat. |
+
+The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement. Reply to a task's message to correct it or add a related update; a question about its progress is answered in chat.
 
 Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and owner memory. Each task has its own working folder and saved session. See [Task sessions](/how-it-works/task-sessions/) for the architecture.
 

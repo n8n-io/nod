@@ -350,9 +350,9 @@ export function createLedger({
     };
   }
 
-  async function limits() {
+  async function limits(database: Pick<PoolClient, 'query'> = pool) {
     const row = (
-      await pool.query(
+      await database.query(
         `SELECT monthly_usd,task_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
         [ownerId],
       )
@@ -548,9 +548,9 @@ export function createLedger({
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
-  async function setLimits(input: unknown) {
+  async function setLimits(input: unknown, shared?: PoolClient) {
     const body = limitsInput.parse(input);
-    await transaction(async (client) => {
+    const write = async (client: PoolClient) => {
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],
@@ -568,7 +568,12 @@ export function createLedger({
         `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
         [ownerId],
       );
-    }, pool);
+    };
+    if (shared) {
+      await write(shared);
+      return limits(shared);
+    }
+    await transaction(write, pool);
     return limits();
   }
 

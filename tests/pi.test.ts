@@ -96,8 +96,8 @@ test('models and routers complete tool discovery inside the endpoint context', a
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
     { provider: 'compatible', id: 'fixture-large', window: 131_072, limit: 131_072 },
     { provider: 'compatible', id: 'fixture-resumed', window: 8192, limit: 8192 },
-    { provider: 'compatible', id: 'fixture-vision', window: 8192, limit: 8192 },
-    { provider: 'compatible', id: 'fixture-vision-resumed', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-vision', window: 10_240, limit: 10_240 },
+    { provider: 'compatible', id: 'fixture-vision-resumed', window: 10_240, limit: 10_240 },
     { provider: 'compatible', id: 'fixture-mcp', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-mcp-large', window: 131_072, limit: 131_072 },
     { provider: 'compatible', id: 'fixture-followup', window: 8192, limit: 8192 },
@@ -2587,11 +2587,18 @@ test('each model call yields one chat-format trace without image data', async ()
                 name: 'skills',
                 arguments: { action: 'read', name: 'synthetic-guide' },
               },
+              {
+                type: 'toolCall',
+                id: 'code',
+                name: 'codemode',
+                arguments: { code: 'Synthetic codemode script' },
+              },
             ],
           },
           result('memory', 'manage_personal_context', 'Synthetic saved note'),
           result('learned', 'skills', untrustedBlock('learned skill', 'Synthetic learned flow')),
           result('guide', 'skills', 'Synthetic built-in guide'),
+          result('code', 'codemode', 'Synthetic codemode note'),
         ],
       },
     },
@@ -2603,6 +2610,8 @@ test('each model call yields one chat-format trace without image data', async ()
     'Synthetic learned flow',
     'about/sizes',
     'synthetic-flow',
+    'Synthetic codemode script',
+    'Synthetic codemode note',
   ])
     assert.ok(!sent.includes(value), value);
   assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
@@ -4397,6 +4406,35 @@ test('restricted Pi sessions load no sandbox, web, or code tools', async () => {
   }
 });
 
+test('the chat prompt leaves room for an image in a small context window', async () => {
+  const { modelContextBudget, estimateModelTokens } = await import('../src/providers/pi/models.ts');
+  const { systemPrompt, coreSkills } = await import('../src/runtime/prompt.ts');
+  const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const skills = createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills);
+  const budget = modelContextBudget({
+    provider: 'compatible',
+    id: 'fixture-small',
+    contextWindow: 8192,
+    maxTokens: 4096,
+  });
+  const prompt = systemPrompt({ ...sandbox.workspace, path: '/workspace/fixture' }, skills);
+  const room = (content: unknown) =>
+    budget.window -
+    estimateModelTokens({
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content },
+      ],
+      tools: [],
+    }) -
+    budget.margin;
+  assert.ok(room('Synthetic request.') >= 128, 'the prompt must fit a small text-only window');
+  assert.ok(
+    room([{ type: 'image', data: 'fixture', mimeType: 'image/png' }]) >= 128,
+    'the prompt must leave room for an image in a small window',
+  );
+});
+
 test('native audio reaches the selected Pi model with tools and survives a reopened session', async (t) => {
   const { createServer } = await import('node:http');
   const bodies: Array<{
@@ -4885,6 +4923,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     traces: { active: () => true, record: (trace) => traces.push(trace) },
   });
   jsonReply = true;
+  const traced = traces.length;
   assert.deepEqual(
     await curator.curate(
       { task: 'review', instructions: 'Return JSON.', input: { synthetic: true } },
@@ -4895,8 +4934,13 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   );
   assert.equal(bodies.at(-1)!.model, 'fixture-text-model');
   assert.equal(curatorUsage.at(-1)!.model, 'fixture-text-model');
-  assert.equal(traces.at(-1)!.name, 'fixture-text-model');
-  const traced = traces.length;
+  assert.equal(traces.length, traced);
+  await curator.curate({
+    task: 'attention',
+    instructions: 'Return JSON.',
+    input: { record: 'Synthetic changed record.' },
+  });
+  assert.equal(traces.length, traced);
   await curator.curate({
     task: 'reflect',
     instructions: 'Return JSON.',

@@ -70,6 +70,9 @@ export const connectedUser = (cli: ConnectedCli) =>
   20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
 
 const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
+import ctypes
+try: ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0)
+except Exception: pass
 line=sys.stdin.buffer.raw.readline()
 home=None
 def sealed(path):
@@ -137,11 +140,28 @@ def members():
    if p.pid in [int(values[2]),int(values[3])] and values[0] not in ['Z','X']: found.append(int(name))
   except (OSError,ValueError,IndexError): pass
  return found
+def descendants():
+ table={}
+ for name in os.listdir('/proc'):
+  if not name.isdigit(): continue
+  try:
+   with open('/proc/'+name+'/stat') as f: values=f.read().rsplit(')',1)[1].split()
+  except (OSError,ValueError,IndexError): continue
+  if values[0] in ['Z','X']: continue
+  table[int(name)]=int(values[1])
+ tree={os.getpid(),p.pid}
+ grow=True
+ while grow:
+  grow=False
+  for pid,ppid in table.items():
+   if pid in tree: continue
+   if ppid in tree: tree.add(pid); grow=True
+ return sorted(tree-{os.getpid(),p.pid})
 def kill(value):
  try: os.killpg(p.pid,value)
  except ProcessLookupError: pass
  if os.path.isdir('/proc'):
-  for pid in members():
+  for pid in set(members())|set(descendants()):
    try: os.kill(pid,value)
    except OSError: pass
 def cancel(value):
@@ -199,8 +219,19 @@ for index,(args,child_env,seconds) in enumerate(steps):
     if sent>limit: cancel('limit')
     else: output(key.data,chunk)
   code=p.poll()
+  if code is not None:
+   try:
+    while os.waitpid(-1,os.WNOHANG)[0]: pass
+   except (ChildProcessError,OSError): pass
   streams=any(key.data in ['stdout','stderr'] for key in sel.get_map().values())
-  if code is not None and not streams and not group_running(): break
+  if code is not None and not streams:
+   if reason:
+    if not members() and not descendants(): break
+   elif not group_running():
+    for pid in descendants():
+     try: os.kill(pid,signal.SIGKILL)
+     except OSError: pass
+    break
  p.wait()
  if reason or code: break
 if code and not last and not reason: output('stderr',log[-limit:])

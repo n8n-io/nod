@@ -100,7 +100,7 @@ Telegram shows **typing…** and a quoted progress section in your language when
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 
-Nod completes bounded work in chat, including requests with several app or browser steps. It starts a saved task for independent work, a long outside wait, or work you ask it to track. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
+Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, including multi-step work it can finish in one sitting, such as research across sources, checked comparisons or report creation, and for an outside wait, such as a person, a reply or an action elsewhere, or work you ask it to track. You don't choose an execution mode: Nod starts the task itself. A new independent request while other work runs starts its own task, and each task keeps its goal; send a correction or a related update to the existing task by replying to its message. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
 ## Notifications
 

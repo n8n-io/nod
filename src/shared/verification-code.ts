@@ -3,9 +3,12 @@ type VerificationReply =
 
 export function classifyVerificationReply(text: string): VerificationReply {
   const value = text.trim().replace(/[.!]$/, '').trimEnd();
-  const numbers = [
-    ...value.matchAll(/(?<![\p{L}\p{N}])\+?\d+(?:[\p{Zs}\t]+\d+)*(?![\p{L}\p{N}])/gu),
-  ].filter((match) => match[0].startsWith('+') || match[0].replace(/\D/g, '').length >= 3);
+  const numbers = [...value.matchAll(/\+?\d+(?:[\p{Zs}\t]+\d+)*/gu)].filter(
+    (match) =>
+      (match[0].startsWith('+') || match[0].replace(/\D/g, '').length >= 3) &&
+      (match.index + match[0].length === value.length ||
+        !/[\p{L}\p{N}]/u.test(Array.from(value.slice(0, match.index)).at(-1) ?? '')),
+  );
   if (!numbers.length) return { kind: 'ordinary' };
   const [only] = numbers;
   const code = only[0].replace(/[\p{Zs}\t]/gu, '');

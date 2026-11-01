@@ -1116,43 +1116,71 @@ async function initializeApplication(
           ),
           { notRun: true },
         );
+      const turnLock = provenance.signal
+        ? { turnId: provenance.turnId, signal: provenance.signal }
+        : provenance.turnId;
+      const scheduleWrite = [
+        'NOD_schedule_cancel',
+        'NOD_schedule_create',
+        'NOD_schedule_update',
+      ].includes(action);
+      const lockedWrite =
+        action === 'NOD_limits_update' ||
+        action === 'NOD_model_select' ||
+        action.startsWith('NOD_memory_') ||
+        action === 'NOD_notification_preferences_update';
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
-            ? ledger.setLimits(args)
-            : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
-              ? withTurnLock(provenance.turnId, () =>
-                  personal.manage(action.slice('NOD_'.length), args, provenance),
+            ? withTurnLock(turnLock, (client) => ledger.setLimits(args, client))
+            : scheduleWrite
+              ? withTurnLock(turnLock, (client) =>
+                  personal.manage(action.slice('NOD_'.length), args, provenance, { client }),
                 )
-              : action.startsWith('NOD_')
-                ? personal.manage(action.slice('NOD_'.length), args, provenance)
-                : (async () => {
-                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                    const ready = hasWorkspaceFiles(args)
-                      ? await integrations
-                          .prepare(ownerId, action, args, turn)
-                          .catch((error: unknown) => {
-                            throw Object.assign(
-                              error instanceof Error ? error : new Error(String(error)),
-                              { notRun: true },
-                            );
+              : lockedWrite
+                ? withTurnLock(turnLock, (client) =>
+                    personal.manage(action.slice('NOD_'.length), args, provenance, {
+                      client,
+                      ...(provenance.details?.currentRules === undefined
+                        ? {}
+                        : { expectedRules: String(provenance.details.currentRules) }),
+                    }),
+                  )
+                : action.startsWith('NOD_')
+                  ? personal.manage(action.slice('NOD_'.length), args, provenance)
+                  : (async () => {
+                      const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                      const ready = hasWorkspaceFiles(args)
+                        ? await integrations
+                            .prepare(ownerId, action, args, turn, provenance.signal)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                error instanceof Error ? error : new Error(String(error)),
+                                { notRun: true },
+                              );
+                            })
+                        : args;
+                      const result = await integrations.executeApproved(
+                        ownerId,
+                        action,
+                        ready,
+                        turn,
+                        provenance.signal,
+                      );
+                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                      return privateEmailResult(
+                        (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
                           })
-                      : args;
-                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
-                    await ledger.action(provenance.turnId, action, { kind: 'approved' });
-                    return privateEmailResult(
-                      (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value,
-                      mailCheck,
-                    );
-                  })());
+                        ).value,
+                        mailCheck,
+                      );
+                    })());
       analytics.actionExecuted(ownerId, action);
       return result;
     },

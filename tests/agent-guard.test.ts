@@ -1028,6 +1028,44 @@ test('past the spending check-in a turn stops working but can ask, and one that 
   assert.equal(reads.length, 3);
 });
 
+test('past the spending check-in chat task start and reply are refused while reporting stays open', async () => {
+  const accepted: string[] = [];
+  const id = '22222222-2222-4222-8222-222222222222';
+  const result = await fixture(
+    async (tools) => {
+      await assert.rejects(
+        call(tools, 'task', {
+          action: 'start',
+          title: 'Synthetic task',
+          doneWhen: 'The synthetic result exists.',
+          now: 'Read the synthetic record.',
+          message: 'Synthetic task started.',
+        }),
+        /check-in/,
+      );
+      await assert.rejects(call(tools, 'task', { action: 'reply', ids: [id] }), /check-in/);
+      await call(tools, 'task', { action: 'list' });
+      await call(tools, 'task', { action: 'update', id, now: 'Still working' });
+      await call(tools, 'task', {
+        action: 'finish',
+        id,
+        status: 'done',
+        result: 'Synthetic done.',
+      });
+      await call(tools, 'ask_user', { question: 'Keep going?' });
+    },
+    {
+      checkIn: { budgetUsd: 5, spentUsd: 6 },
+      task: async (input) => {
+        accepted.push(String((input as { action?: unknown }).action));
+        return {};
+      },
+    },
+  );
+  assert.deepEqual(accepted, ['list', 'update', 'finish']);
+  assert.equal(result.result.status, 'waiting_user');
+});
+
 test('app time annotations reach Pi inside the data boundary while scripts and browser observations stay unchanged', async () => {
   const data = { items: [{ start: { dateTime: '2026-10-30T10:00:00Z' } }] };
   const raw = JSON.stringify(data);

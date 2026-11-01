@@ -21,6 +21,8 @@ export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
+  signal?: AbortSignal;
+  details?: Record<string, unknown>;
   expectedRevision?: number;
 }
 
@@ -201,7 +203,8 @@ export async function createApprovals(
     result jsonb
   );
     ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
-      ADD COLUMN IF NOT EXISTS expected_revision integer;
+      ADD COLUMN IF NOT EXISTS expected_revision integer,
+      ADD COLUMN IF NOT EXISTS details jsonb;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
@@ -374,7 +377,7 @@ export async function createApprovals(
       );
       const approval = (
         await client.query(
-          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9) RETURNING *",
+          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision,details) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10::jsonb) RETURNING *",
           [
             randomUUID(),
             ownerId,
@@ -385,6 +388,7 @@ export async function createApprovals(
             inspected.authorMessageId,
             messageId,
             expectedRevision ?? null,
+            details ?? null,
           ],
         )
       ).rows[0];
@@ -402,6 +406,8 @@ export async function createApprovals(
       threadId: turn.threadId,
       turnId: turn.turnId,
       sourceMessageId: proposal.authorMessageId,
+      signal: options.signal,
+      ...(options.details ? { details: options.details } : {}),
       ...(expectedRevision === undefined ? {} : { expectedRevision }),
     });
   }
@@ -559,6 +565,8 @@ export async function createApprovals(
           threadId: approval.thread_id,
           turnId,
           sourceMessageId: approval.source_message_id,
+          signal,
+          ...(approval.details ? { details: approval.details } : {}),
           ...(approval.expected_revision === null
             ? {}
             : { expectedRevision: approval.expected_revision }),

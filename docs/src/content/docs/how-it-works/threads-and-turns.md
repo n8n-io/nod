@@ -137,7 +137,7 @@ A session opens its browser on its first browser call, so a session that never b
 
 ## Stop and failures
 
-The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A task's **Stop** control affects only that session and its helpers. When the owner asks in chat, `task stop` without an ID does what the main control does for every session except the main chat, so the chat turn can report what it stopped. Stop ends a turn at once, even when a tool call is stuck: Nod stops waiting for it, and nothing it returns later reaches the turn. Stop can't undo an external action that already started. Ordinary turns have no time limit, but every browser command does (see [Sandbox and browser](/how-it-works/sandbox-and-browser/)).
+The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A workspace command also ends the processes it detached, when the command itself ends, so work it left behind never outlives it. Stop ends that tree the same way, and escalates to `SIGKILL` for a process that ignores the first signal. A task's **Stop** control affects only that session and its helpers. When the owner asks in chat, `task stop` without an ID does what the main control does for every session except the main chat, so the chat turn can report what it stopped. Stop ends a turn at once, even when a tool call is stuck: Nod stops waiting for it, and nothing it returns later reaches the turn. Stop can't undo an external action that already started. Ordinary turns have no time limit, but every browser command does (see [Sandbox and browser](/how-it-works/sandbox-and-browser/)).
 
 An aborted database transaction stops waiting for a free connection at once. If the pool supplies a connection later, Nod closes it without running the transaction.
 
@@ -145,7 +145,7 @@ Turns and tool calls are never retried. Pi retries a model request that fails wi
 
 When the monthly spending limit is reached, new turns end `failed` before they call the model, and work you started posts one limit notice.
 
-Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Usage**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. An observer turn that ends past the check-in without asking waits on that notice as its question instead, so no new batch starts until you reply. Your next message to that session starts a new count.
+Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Usage**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and so do the task actions that report, update, finish, list or stop saved work; `task start` and `task reply` do not, in any session. Helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. An observer turn that ends past the check-in without asking waits on that notice as its question instead, so no new batch starts until you reply. Your next message to that session starts a new count.
 
 ## Reset
 
