@@ -344,7 +344,7 @@ test(
       planningTasks: onboarding.planning,
     });
     onboarding.registerRoutes(app);
-    const tasks = createTasks({ pool: db.pool, ownerId });
+    const tasks = createTasks({ pool: db.pool, ownerId, analytics: captureAnalytics });
     await tasks.initialize();
     personal.registerRoutes(app);
     tasks.registerRoutes(app);
@@ -717,6 +717,167 @@ test(
       let firstThreadId = '';
       let firstUserTurnId = '';
       const firstClientMessageId = randomUUID();
+
+      await t.test(
+        'declared task outcomes follow committed transitions and caller consent',
+        async (t) => {
+          const ids: string[] = [];
+          const turns: string[] = [];
+          const fixture = async (owner = ownerId) => {
+            const id = randomUUID();
+            const turnId = randomUUID();
+            ids.push(id);
+            turns.push(turnId);
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'task','Synthetic task outcome','running',true)",
+              [turnId, owner, threadId, id],
+            );
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision) VALUES($1,$2,$3,$1,'Synthetic private task','Synthetic result','Working',1)",
+              [id, owner, turnId],
+            );
+            await db.pool.query('UPDATE turns SET task_id=$2 WHERE id=$1', [turnId, id]);
+            return { id, ref: { turnId, threadId } };
+          };
+          t.after(async () => {
+            analytics.setUsageData(ownerId, true);
+            await db.pool.query('UPDATE turns SET task_id=NULL WHERE id=ANY($1::uuid[])', [turns]);
+            await db.pool.query('DELETE FROM tasks WHERE id=ANY($1::uuid[])', [ids]);
+            await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [turns]);
+          });
+          const before = analyticsEvents.length;
+          const outcomes = () =>
+            analyticsEvents
+              .slice(before)
+              .filter(({ event }) => event === 'nod_task_finished')
+              .map(({ properties }) => ({ status: properties.status, actor: properties.actor }));
+          for (const status of ['done', 'cancelled'] as const) {
+            const task = await fixture();
+            await tasks.execute(
+              task.ref,
+              {
+                action: 'finish',
+                id: task.id,
+                status,
+                result: 'Synthetic private declared result',
+              },
+              null,
+            );
+            await assert.rejects(
+              tasks.execute(
+                task.ref,
+                { action: 'finish', id: task.id, status, result: 'Repeated result' },
+                null,
+              ),
+              /closed/,
+            );
+          }
+          assert.deepEqual(outcomes(), [
+            { status: 'done', actor: 'agent' },
+            { status: 'cancelled', actor: 'agent' },
+          ]);
+          const single = await fixture();
+          assert.equal((await request('POST', `/api/tasks/${single.id}/stop`)).statusCode, 200);
+          assert.equal((await request('POST', `/api/tasks/${single.id}/stop`)).statusCode, 200);
+          assert.equal(outcomes().length, 3);
+          assert.deepEqual(outcomes().at(-1), { status: 'cancelled', actor: 'owner' });
+          const foreign = await fixture('synthetic-other-task-owner');
+          assert.equal((await request('POST', `/api/tasks/${foreign.id}/stop`)).statusCode, 404);
+          const first = await fixture();
+          const second = await fixture();
+          await assert.rejects(
+            transaction(async (client) => {
+              await tasks.chatCommand(client, 'stop');
+              assert.equal(outcomes().length, 3);
+              throw new Error('Synthetic outer rollback');
+            }, db.pool),
+            /Synthetic outer rollback/,
+          );
+          assert.equal(outcomes().length, 3);
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT count(*)::int AS count FROM tasks WHERE id=ANY($1::uuid[]) AND state='open'",
+                [[first.id, second.id]],
+              )
+            ).rows[0].count,
+            2,
+          );
+          await transaction(async (client) => {
+            await tasks.chatCommand(client, 'stop');
+            assert.equal(outcomes().length, 3);
+          }, db.pool);
+          assert.equal(outcomes().length, 5);
+          await transaction((client) => tasks.chatCommand(client, 'stop'), db.pool);
+          assert.equal(outcomes().length, 5);
+          assert.equal(
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [foreign.id])).rows[0]
+              .state,
+            'open',
+          );
+          const deferred = await fixture();
+          await db.pool
+            .query(`CREATE FUNCTION reject_task_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic deferred task rollback'; END $$;
+          CREATE CONSTRAINT TRIGGER reject_task_change AFTER UPDATE ON tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_task_change()`);
+          try {
+            await assert.rejects(
+              tasks.execute(
+                deferred.ref,
+                { action: 'finish', id: deferred.id, status: 'done', result: 'Must roll back' },
+                null,
+              ),
+              /Synthetic deferred task rollback/,
+            );
+          } finally {
+            await db.pool.query(
+              'DROP TRIGGER reject_task_change ON tasks; DROP FUNCTION reject_task_change()',
+            );
+          }
+          assert.equal(outcomes().length, 5);
+          assert.equal(
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [deferred.id])).rows[0]
+              .state,
+            'open',
+          );
+          const held = await db.pool.connect();
+          await held.query('BEGIN');
+          await thread.lockThread(held);
+          const pid = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+          const pending = request('POST', '/api/thread/stop');
+          try {
+            await waitFor(
+              async () =>
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                    [pid],
+                  )
+                ).rowCount! > 0,
+            );
+            analytics.setUsageData(ownerId, false);
+            analytics.setUsageData(ownerId, true);
+          } finally {
+            await held.query('COMMIT');
+            held.release();
+          }
+          assert.equal((await pending).statusCode, 200);
+          assert.equal(outcomes().length, 5);
+          assert.equal(
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [deferred.id])).rows[0]
+              .state,
+            'cancelled',
+          );
+          await fixture();
+          assert.equal((await request('POST', '/api/thread/stop')).statusCode, 200);
+          assert.deepEqual(outcomes().at(-1), { status: 'cancelled', actor: 'owner' });
+          assert.equal(outcomes().length, 6);
+          const emitted = JSON.stringify(
+            analyticsEvents.slice(before).filter(({ event }) => event === 'nod_task_finished'),
+          );
+          for (const privateValue of [...ids, ...turns, 'Synthetic private'])
+            assert.ok(!emitted.includes(privateValue));
+        },
+      );
 
       await t.test('first-card tasks stay in the ledger after 100 newer tasks', async (t) => {
         const owner = `first-card-ledger-${randomUUID()}`;
@@ -4547,6 +4708,7 @@ test(
           const options = {
             pool: db.pool,
             ownerId,
+            analytics: captureAnalytics,
             sources: async () =>
               connected
                 ? [
@@ -4649,6 +4811,140 @@ test(
             });
           }
           try {
+            await t.test(
+              'prepared outcomes and owner controls emit only committed bounded changes',
+              async () => {
+                await reset();
+                const before = analyticsEvents.length;
+                const saved = () =>
+                  analyticsEvents
+                    .slice(before)
+                    .filter(({ event }) => event === 'nod_prepared_work_saved');
+                await save({ delivery: 'private' });
+                assert.deepEqual(
+                  saved().map(({ properties }) => properties.outcome),
+                  ['prepared'],
+                );
+                await save({ delivery: 'private' });
+                assert.equal(saved().length, 1);
+                await save({ delivery: 'private', draft: 'A different synthetic private result.' });
+                await save();
+                await save();
+                assert.deepEqual(
+                  saved().map(({ properties }) => properties.outcome),
+                  ['prepared', 'prepared', 'notified'],
+                );
+                assert.equal(await delivered(), 1);
+                const issue = (await engine.view()).issues[0];
+                for (const action of ['useful', 'not_useful', 'handled', 'dismiss'] as const) {
+                  await engine.control({ id: issue.id, action });
+                  await engine.control({ id: issue.id, action });
+                }
+                await engine.control({ id: issue.id, action: 'snooze', minutes: 15 });
+                const controls = analyticsEvents
+                  .slice(before)
+                  .filter(({ event }) => event === 'nod_prepared_work_updated');
+                assert.deepEqual(
+                  controls.map(({ properties }) => properties.action),
+                  ['useful', 'not_useful', 'handled', 'dismiss', 'snooze'],
+                );
+                const foreign = createProactivity({
+                  ...options,
+                  ownerId: 'synthetic-analytics-other',
+                });
+                await assert.rejects(
+                  foreign.control({ id: issue.id, action: 'useful' }),
+                  /unavailable/,
+                );
+                await assert.rejects(
+                  engine.control({ id: issue.id, action: 'useful' }, ref),
+                  /owner message/,
+                );
+                assert.equal(
+                  analyticsEvents
+                    .slice(before)
+                    .filter(({ event }) => event === 'nod_prepared_work_updated').length,
+                  5,
+                );
+                for (const privateValue of [
+                  issue.id,
+                  turnId,
+                  sourceId,
+                  'Contract reply',
+                  'synthetic private result',
+                ])
+                  assert.ok(!JSON.stringify([...saved(), ...controls]).includes(privateValue));
+              },
+            );
+            await t.test(
+              'deferred rollback and revoked consent suppress prepared-work analytics',
+              async () => {
+                await reset();
+                await save({ delivery: 'private' });
+                const issue = (await engine.view()).issues[0];
+                const before = analyticsEvents.length;
+                await db.pool
+                  .query(`CREATE FUNCTION reject_prepared_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic deferred rollback'; END $$;
+                CREATE CONSTRAINT TRIGGER reject_prepared_change AFTER INSERT OR UPDATE ON proactive_issues DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_prepared_change()`);
+                try {
+                  await assert.rejects(
+                    save({ draft: 'Uncommitted synthetic result' }),
+                    /Synthetic deferred rollback/,
+                  );
+                  await assert.rejects(
+                    engine.control({ id: issue.id, action: 'useful' }),
+                    /Synthetic deferred rollback/,
+                  );
+                } finally {
+                  await db.pool.query(
+                    'DROP TRIGGER reject_prepared_change ON proactive_issues; DROP FUNCTION reject_prepared_change()',
+                  );
+                }
+                assert.equal(analyticsEvents.length, before);
+                assert.equal(await delivered(), 0);
+                assert.equal((await engine.view()).issues[0].feedback, null);
+                afterRead = async () => {
+                  analytics.setUsageData(ownerId, false);
+                  analytics.setUsageData(ownerId, true);
+                };
+                await save({
+                  delivery: 'private',
+                  draft: 'Committed after the consent period ended.',
+                });
+                assert.equal(analyticsEvents.length, before);
+                assert.equal(
+                  (await engine.view()).issues[0].draft,
+                  'Committed after the consent period ended.',
+                );
+                afterRead = async () => {};
+                const { lockProactivity } = await import('../src/server/locks.ts');
+                const held = await db.pool.connect();
+                await held.query('BEGIN');
+                await lockProactivity(held, ownerId);
+                const pid = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+                const pending = engine.control({ id: issue.id, action: 'useful' });
+                try {
+                  await waitFor(
+                    async () =>
+                      (
+                        await db.pool.query(
+                          'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                          [pid],
+                        )
+                      ).rowCount! > 0,
+                  );
+                  analytics.setUsageData(ownerId, false);
+                  analytics.setUsageData(ownerId, true);
+                } finally {
+                  await held.query('COMMIT');
+                  held.release();
+                }
+                assert.equal((await pending).feedback, 'useful');
+                assert.equal(analyticsEvents.length, before);
+                await engine.control({ id: issue.id, action: 'not_useful' });
+                assert.equal(analyticsEvents.at(-1)?.event, 'nod_prepared_work_updated');
+              },
+            );
             await t.test(
               'every useful matter nudges once, with no daily count or gap',
               async () => {

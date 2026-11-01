@@ -38,7 +38,12 @@ import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
-import { analyticsModel, type AnalyticsEvent, type CaptureAnalytics } from './analytics.ts';
+import {
+  analyticsModel,
+  snapshotAnalytics,
+  type AnalyticsEvent,
+  type CaptureAnalytics,
+} from './analytics.ts';
 import { attachmentKind } from '../shared/attachment-kind.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
@@ -634,7 +639,10 @@ export async function cancelTurns(
   client: PoolClient,
   threadId: string,
   scope: { sessionId?: string; background?: boolean } = {},
+  analytics?: CaptureAnalytics,
+  actor: 'owner' | 'agent' = 'owner',
 ) {
+  const capture = snapshotAnalytics(analytics);
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const current = await client.query(
     "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
@@ -656,6 +664,11 @@ export async function cancelTurns(
         )
       ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
     : [];
+  if (tasks.length)
+    afterCommit(client, () => {
+      for (const _task of tasks)
+        capture?.({ event: 'nod_task_finished', properties: { status: 'cancelled', actor } });
+    });
   return {
     tasks,
     ids: current.rows.map((row) => row.id as string),
@@ -671,9 +684,10 @@ export function abortTurns(ids: string[]) {
   for (const id of ids) running.get(id)?.abort();
 }
 
-export async function stopThread() {
+export async function stopThread(analytics?: CaptureAnalytics) {
+  const capture = snapshotAnalytics(analytics);
   const cancelled = await transaction(
-    async (client) => cancelTurns(client, (await lockThread(client)).id),
+    async (client) => cancelTurns(client, (await lockThread(client)).id, {}, capture),
     pool,
   );
   abortTurns(cancelled.ids);
@@ -681,12 +695,13 @@ export async function stopThread() {
   return { browsers: cancelled.browsers };
 }
 
-export async function resetThread(expectedThreadId: string) {
+export async function resetThread(expectedThreadId: string, analytics?: CaptureAnalytics) {
+  const capture = snapshotAnalytics(analytics);
   const result = await transaction(async (client) => {
     const thread = await lockThread(client);
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
-    const cancelled = await cancelTurns(client, thread.id);
+    const cancelled = await cancelTurns(client, thread.id, {}, capture);
     await client.query('UPDATE threads SET archived_at=now(),updated_at=now() WHERE id=$1', [
       thread.id,
     ]);

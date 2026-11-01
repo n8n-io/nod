@@ -46,7 +46,7 @@ import type {
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
-import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
+import { registerAnalyticsRoutes, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { messagePreview } from './message-preview.ts';
 
 const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,
@@ -297,11 +297,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
   });
   app.post('/api/conversation/reset', async (request, reply) => {
+    const capture = snapshotAnalytics(dependencies.analytics);
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
     return audioMessages.pause(async () => {
-      const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+      const { previousThreadId, browsers, ...reset } = await resetThread(threadId, capture);
       for (const id of [previousThreadId, ...browsers])
         void dependencies.computer?.discard(id).catch(() => {});
       return reset;
@@ -351,13 +352,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
     return submitted;
   });
-  app.post('/api/thread/stop', () =>
-    audioMessages.pause(async () => {
-      const { browsers } = await stopThread();
+  app.post('/api/thread/stop', () => {
+    const capture = snapshotAnalytics(dependencies.analytics);
+    return audioMessages.pause(async () => {
+      const { browsers } = await stopThread(capture);
       await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
       return { ok: true };
-    }),
-  );
+    });
+  });
   app.get('/api/events', async (_request, reply) => {
     reply.hijack();
     streams.add(reply.raw);

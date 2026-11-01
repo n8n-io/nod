@@ -866,6 +866,7 @@ async function initializeApplication(
   const tasks = createTasks({
     pool,
     ownerId,
+    analytics: captureAnalytics,
     refresh,
     clearBrowser: (id) => adapters.computer.clear(id),
   });
@@ -1411,6 +1412,7 @@ async function initializeApplication(
   proactivity = createProactivity({
     pool,
     ownerId,
+    analytics: captureAnalytics,
     redact: createTextRedactor(secrets),
     sources: (client) => observations.sources(client),
     read: async (turn, input, signal) => {

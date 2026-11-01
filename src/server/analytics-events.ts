@@ -112,6 +112,28 @@ export const analyticsEvent = z.discriminatedUnion('event', [
   z.object({ event: z.literal('nod_task_stopped') }).strict(),
   z
     .object({
+      event: z.literal('nod_task_finished'),
+      properties: z
+        .object({ status: z.enum(['done', 'cancelled']), actor: z.enum(['owner', 'agent']) })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('nod_prepared_work_saved'),
+      properties: z.object({ outcome: z.enum(['prepared', 'notified']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('nod_prepared_work_updated'),
+      properties: z
+        .object({ action: z.enum(['useful', 'not_useful', 'handled', 'dismiss', 'snooze']) })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('nod_feedback_sent'),
       properties: z
         .object({

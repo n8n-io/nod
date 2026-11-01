@@ -79,10 +79,14 @@ The [Nod PostHog project](https://eu.posthog.com/project/231804) has five dashbo
 
 All insights filter `analytics_schema=nod_v4` and `environment=production`, enable internal/test exclusions, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 
+Check the project's actual exclusion rules before describing the sample as external users. Enabling the internal/test filter doesn't establish which installations it excludes. Person-property rules, such as staff email domains, can't classify new installations because Nod sends no person profiles or email addresses. Production builds used by staff can remain in the sample.
+
 ### Denominators and limits
 
 - **Active use:** An owner-authored message in chat or Tasks: `owner_requested=true` and `source` equal to `user` or `task`. These saved charts exclude all `resume` events, including genuine confirmation messages. Identity counts represent sharing installations, not all installations or individual humans.
 - **Execution:** Outcomes describe segments. Waiting isn't success or failure; a completed segment doesn't verify the whole task.
+- **First attempt after setup:** Cohorts start at each installation's first observed onboarding completion, calculated before date selection. Select its first owner-requested chat or Tasks execution start within seven elapsed days. Join only that installation and analytics run ID to the completion. Later retries and resumes don't replace the first result. Open start windows, elapsed windows without starts, missing run IDs, and starts without completions remain separate. All selected onboarding cohorts enter the denominator; incomplete observations aren't failures. The eventual-success funnel answers a different question.
+- **Declared tasks and prepared work:** Task finish events measure committed `done` or `cancelled` transitions. Prepared-work events measure changed preparation, saved offer messages, and changed owner-requested controls, including usefulness feedback. These aren't verified task outcomes or satisfaction scores. No-op and rolled-back writes are excluded.
 - **Return after first success:** The first observed `nod_v4` successful owner-requested execution segment starts the cohort, including a resumed segment. Returns require a later owner-authored chat or Tasks start; all resume starts are excluded. D1, W1, W2, and W4 use elapsed windows of 1–2, 7–14, 14–21, and 28–35 days. Only installations whose entire window has elapsed, as of the earlier of now and the selected end date, enter each denominator. Find the first success globally before applying the selected cohort range, which defaults to 90 days. The 30% W4 reference is a target for this observed sample, not proof of useful whole-job completion or a forecast. Execution starts can be later than message submission because of queueing; messages merged into a running turn create no separate start.
 - **Attempt retention:** The separate native retention charts start at the first observed owner-authored request, including existing installations and failed attempts. D0 is cohort size; D1 and W1/W2/W4 measure another request in elapsed, noncumulative windows. These diagnose return after trying Nod and use a different denominator from return after first success.
 - **Connection entry:** Connect clicks and confirmed completions retain their original `apps`, `chat`, `onboarding`, or `manage` entry. The counts don't join individual attempts and aren't a conversion rate.
@@ -94,6 +98,8 @@ All insights filter `analytics_schema=nod_v4` and `environment=production`, enab
 - **Interaction reach:** Distinct installations using reactions, copy/reply, task and browser controls, starter cards, feedback, browser notifications, or voice input. Rows overlap; reactions and feedback reports aren't satisfaction scores.
 
 These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. Audience characteristics such as role, company size, AI experience, and preferred tools are not collected. NPS and stopped-use surveys are outside this instrumentation. Use independent operational checks and separate user research for those questions.
+
+The pre-mortem's named-group retention, NPS, and departure-reason questions remain unanswered by this schema. A fresh cohort needs 35 days before its complete W4 window can be read. Model costs exclude independent browser and integration bills, and execution duration isn't time to the first useful answer.
 
 ### Maintain insights
 

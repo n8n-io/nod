@@ -112,6 +112,9 @@ Connecting email is optional. Model setup can be bypassed when already configure
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `nod_turn_started`                                               | Source, channel, background flag, work category, owner-requested flag, and selected public model when available.                                                                     |
 | `nod_turn_completed`                                             | The same context, outcome, execution/queue milliseconds, and bounded waiting or failure reason.                                                                                      |
+| `nod_task_finished`                                              | Committed task status (`done` or `cancelled`) and actor (`owner` or `agent`).                                                                                                        |
+| `nod_prepared_work_saved`                                        | A changed preparation or saved offer message, with `prepared` or `notified` outcome.                                                                                                 |
+| `nod_prepared_work_updated`                                      | Changed owner-requested control: `useful`, `not_useful`, `handled`, `dismiss`, or `snooze`.                                                                                          |
 | `nod_chat_stopped`, `nod_task_stopped`, `nod_conversation_reset` | Server-accepted stop or completed reset.                                                                                                                                             |
 | `nod_tool_used`                                                  | Fixed tool category, outcome, milliseconds, and subagent flag.                                                                                                                       |
 | `nod_model_used`                                                 | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.                                    |
@@ -128,6 +131,8 @@ Connecting email is optional. Model setup can be bypassed when already configure
 | `nod_vault_changed`, `nod_vault_imported`                        | Login/card kind and operation, or number imported. No domains or inventory.                                                                                                          |
 
 An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelled`, `interrupted`, or `skipped`. Success means execution finished; it doesn't verify the whole task. A crash can leave a start without a completion. One turn can handle several queued messages.
+
+Task completion records a declared status, not verified success. `notified` means an offer message was saved, not that an external notification arrived or was read. Prepared-work feedback records the requested action, which can be performed through Nod's tools. It isn't a survey or a rating for every task. Rejected, rolled-back, and unchanged writes don't count. These events exclude task identifiers, titles, prepared content, and feedback text.
 
 `duration_ms` measures execution time. `queue_duration_ms` measures waiting to start. They exclude time awaiting an owner response between segments. Join related measurements using the installation identity and analytics `run_id`.
 
@@ -159,6 +164,14 @@ Views require a visible app and content intersecting its viewport. Repeated moun
 `open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted or sent. Reuse locations also cover the command palette (`commands`) and internal file drops (`composer`); artifact views remain limited to message and drawer locations.
 
 Answer-choice collectors and dashboards are ready for the separate answer-choice feature integration. They exclude option labels, selected text, and response content.
+
+### Read first-attempt outcomes
+
+The first-attempt table starts with each installation's first observed `nod_v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
+
+No start is separated into an open seven-day window or an elapsed window. A start without a matching completion remains unknown, not failed. Missing analytics run IDs are reported separately. Results include observations up to the earlier of now and the selected end date. A matching completion can occur after the seven-day start window.
+
+The denominator includes all selected observed onboarding completions, including incomplete windows. This isn't a sample of verified new people or unassisted installations. The separate seven-day activation funnel measures eventual success and can include retries.
 
 ### Read return and cost measurements
 
