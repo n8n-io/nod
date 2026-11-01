@@ -659,6 +659,20 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-checksums: .local/release-SHA256SUMS
+      - name: Preserve the original build provenance
+        if: steps.provenance.outputs.bundle-path != ''
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$PROVENANCE_BUNDLE" .local/nod-release-provenance.sigstore.json
+      - name: Save provenance for release recovery
+        if: steps.provenance.outputs.bundle-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-release-provenance
+          path: .local/nod-release-provenance.sigstore.json
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: error
       - name: Verify GitHub asset digests and downloaded release files
         env:
           GH_TOKEN: ${{ github.token }}

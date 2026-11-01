@@ -114,27 +114,3 @@ condition = "AND"
 paths = ['^docs/testing/composio-proxy/cp04\.v1\.results\.json$']
 regexTarget = "match"
 regexes = ['^s3key: executedAttachment\.s3key $']
-
-[[allowlists]]
-description = "These exact values are file hashes checked against the recorded source commit."
-targetRules = ["generic-api-key"]
-condition = "AND"
-paths = ['^docs/vault/tested-source\.json$']
-regexTarget = "line"
-regexes = [
-    '''^\s*"src/ports/authentication\.ts":\s*"2f6feab7b0847067c3af41229a996ec242a93f0fe3bd87f812f2fe9882ee1175",?$''',
-    '''^\s*"src/ports/key\-store\.ts":\s*"e1b800eae51c32ffef383037b7fddc0bee3c97356a5f7be720aaba12be44e8ee",?$''',
-    '''^\s*"src/providers/agent\-browser/credentials\.ts":\s*"f7d89fb52556879b047d7555ac5c9945c1c7d0edde81033119a631af477d6831",?$''',
-    '''^\s*"src/providers/direct/oauth\.ts":\s*"84970091831a4b19fa588f566665f8f1f8a2c14dc668a561dc0b8a35767b473b",?$''',
-    '''^\s*"src/providers/discovered/oauth\.ts":\s*"887bfc4822489b739be1445d52f7daffdf807e3d0e123d068a99d8acf1dfb38d",?$''',
-    '''^\s*"src/providers/environment/key\-store\.ts":\s*"f24292271eeb16e17fa57da9d16990ad318eee5ed4a6b4c29b8077df819ba951",?$''',
-    '''^\s*"src/providers/keychain/key\-store\.ts":\s*"0319776ea27ed39c42b0140f107ffe814cc20fe327ba6310093d693eebadbc45",?$''',
-    '''^\s*"src/server/access\.ts":\s*"f390b888f8509b9593b6c18a8b36db4cc047d7220a34b1ef61bd53d16ccf17a4",?$''',
-    '''^\s*"src/server/deployment\-auth\.ts":\s*"47ac9efbcc61e8d161c6eab59494713c8316594ae966ae6da29e9074afa6f910",?$''',
-    '''^\s*"src/server/integration\-key\.ts":\s*"17028add09b8ed154854c2d23c308b2e5b717efefe49c15d13b9e7b5ba4c01c7",?$''',
-    '''^\s*"src/server/runtime\-auth\.ts":\s*"dfdf604d006b0c5e4772a01a8105292ef0f9cdb1bc5b1bc4912f5336fb6a7e0b",?$''',
-    '''^\s*"src/server/vault\-access\.ts":\s*"6d2f6bad1a113b0b42d264346d69079b2a9b361acbcd7e8f685a261201f0de22",?$''',
-    '''^\s*"src/shared/password\-import\.ts":\s*"b18f1c81d0315f9e7191040d765a82a1f57c57ecb97d5ebccb80f1af74ce6893",?$''',
-    '''^\s*"src/web/lib/api\.ts":\s*"9e0300aaf3ba676535b80e411bada4b68cb8c08fee7aca63c5f0691e0004ce76",?$''',
-    '''^\s*"src/web/pages/credentials\.tsx":\s*"bf853104c3acb03658181479599cbb53b589bc0b01d7b68e9a76bab9cd9861b9",?$''',
-]

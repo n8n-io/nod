@@ -989,7 +989,12 @@ test('public releases refuse missing or rejected provenance before uploading ass
   await assert.rejects(f.invoke('draft'), /GitHub release access failed/);
   assert.equal((await f.readState()).created, 0);
   await f.writeState({ ...(await f.readState()), rejectAttestation: false });
-  await f.invoke('draft');
+  await f.invoke('draft', false, {
+    NOD_RELEASE_SOURCE: f.source,
+    GITHUB_SHA: 'b'.repeat(40),
+    GITHUB_WORKFLOW_REF:
+      'synthetic/nod/.github/workflows/recover-desktop-release.yml@refs/heads/main',
+  });
   const state = await f.readState();
   assert(
     state.releases[f.appTag].assets.some((asset) => asset.name === 'nod-release.sigstore.json'),

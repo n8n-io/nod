@@ -47,15 +47,18 @@ Overrides also select patched versions of Glob, Minimatch, Hono's Node server, q
 
 ## Verify release provenance
 
-Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the release or recovery workflow on `main`, and that workflow's exact commit. A failed or missing check prevents public release.
+Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents public release.
 
-Download an asset and its bundle from the same release, then verify them:
+Download an asset and its bundle from the same release. Get the full build commit from the release notes and check it against the approved release. Replace the placeholder, then verify:
 
 ```sh
-gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigstore.json
+BUILD_COMMIT='<full-build-commit>'
+gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigstore.json \
+  --signer-workflow n8n-io/nod/.github/workflows/desktop-release.yml \
+  --source-ref refs/heads/main --source-digest "$BUILD_COMMIT"
 ```
 
-The normal release workflow records its build commit. The recovery workflow records the recovery commit and verifies the original source and test results before signing the existing files. Platform signing and notarization checks still run.
+The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit. It cannot create replacement provenance. A public release without the original bundle requires a new build. Platform signing and notarization checks still run.
 
 Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. Existing releases do not gain provenance from this change.
 

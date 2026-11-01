@@ -521,11 +521,11 @@ async function withProvenance(files) {
       '--bundle',
       bundle,
       '--signer-workflow',
-      workflow.split('@')[0],
+      `${sourceRepository}/.github/workflows/desktop-release.yml`,
       '--source-ref',
       'refs/heads/main',
       '--source-digest',
-      process.env.GITHUB_SHA,
+      sourceRevision,
     ]);
   const destination = join(root, '.local/nod-release.sigstore.json');
   await mkdir(join(root, '.local'), { recursive: true });
