@@ -1343,7 +1343,6 @@ test('memory review permits silence only for a redundant recap of complete succe
     assert.equal(await recall.review(context, draft), draft);
   }
   for (const followup of [
-    'The synthetic result is above. The subsequent download failed.',
     'The source was updated today.',
     'The value is an estimate, not a measurement.',
     'Which result would you like to use?',
@@ -1351,6 +1350,20 @@ test('memory review permits silence only for a redundant recap of complete succe
   ]) {
     verdict = { supported: true, usedPaths: [], answer: followup, redundant: false };
     assert.equal(await recall.review(context, followup), followup);
+  }
+  for (const [followup, answer] of [
+    [`${draft} The subsequent download failed.`, 'The subsequent download failed.'],
+    [
+      `${draft} The value is a verified measurement. The subsequent download failed.`,
+      'Correction: amber is a recorded preference, not a verified measurement. The subsequent download failed.',
+    ],
+  ] as const) {
+    for (const supported of [true, false]) {
+      verdict = { supported, usedPaths: [], answer, redundant: false };
+      assert.equal(await recall.review(context, followup), supported ? followup : answer);
+      assert.deepEqual(packets.at(-1)!.lastDelivery, delivered);
+      assert.deepEqual(context.memoryBrief!.lastDelivery, delivered);
+    }
   }
   verdict = {
     supported: false,
