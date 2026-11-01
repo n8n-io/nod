@@ -239,6 +239,8 @@ export function createAgentRuntime(dependencies: {
     let answered = false;
     let lastNote = '';
     let reported = false;
+    let finalDelivered = false;
+    let requestRevision = 0;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -440,6 +442,7 @@ export function createAgentRuntime(dependencies: {
     const assertActive = () => {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
+      if (finalDelivered) throw new Error('The final answer is already delivered.');
     };
     const servers = new Map(
       mcpNamespaces(context.mcpServers ?? []).map(({ server, namespace }) => [
@@ -470,6 +473,7 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
         assertActive();
+        const revision = requestRevision;
         if (context.proactivity) {
           const safe =
             name === 'read_source' ||
@@ -546,6 +550,18 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
+          if (
+            name === 'send_message' &&
+            (params as { intent?: unknown } | null)?.intent === 'final'
+          ) {
+            const delivery = output as ReplyDelivery;
+            if (
+              delivery.delivered &&
+              delivery.presentation !== 'omitted' &&
+              revision === requestRevision
+            )
+              finalDelivered = true;
+          }
           if (
             !factlessTools.has(name) &&
             !(
@@ -1051,7 +1067,7 @@ export function createAgentRuntime(dependencies: {
         timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => {
-          if (stopped) return true;
+          if (stopped || finalDelivered) return true;
           if (checkInBlocked) checkInStrikes++;
           checkInBlocked = false;
           return (checkInStopped = checkInStrikes >= 2);
@@ -1063,6 +1079,8 @@ export function createAgentRuntime(dependencies: {
             const messages = [];
             const incoming = await takeMessages();
             if (incoming.length) {
+              requestRevision++;
+              finalDelivered = false;
               context.memoryBrief = undefined;
               evidenceRevision++;
               reviewedReplies.clear();
@@ -1101,6 +1119,11 @@ export function createAgentRuntime(dependencies: {
           }),
         onEvent: (event) => {
           countUsage(event);
+          if (
+            finalDelivered &&
+            ['message_start', 'text_delta', 'message_end', 'final'].includes(event.type)
+          )
+            return;
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();

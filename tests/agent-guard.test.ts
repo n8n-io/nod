@@ -227,7 +227,10 @@ test('native visual replies need no filler and deduplicate only identical conten
           assert.equal(receipt.presentation, 'original');
         }
         await call(tools, 'send_message', { text: '', presentation: updated });
-        const caveat = await call(tools, 'send_message', { text: 'A separate useful caveat.' });
+        const caveat = await call(tools, 'send_message', {
+          text: 'A separate useful caveat.',
+          intent: 'update',
+        });
         const receipt = JSON.parse(caveat.content.find((part) => part.type === 'text')!.text);
         assert.equal(receipt.delivered, true);
         assert.equal(receipt.presentation, 'none');
@@ -248,6 +251,215 @@ test('native visual replies need no filler and deduplicate only identical conten
       ...(!background ? [{ text: 'An additional verified result.' }] : []),
     ]);
   }
+});
+
+test('final replies finish after persistence, retain staged files and speech, and leave later messages queued', async () => {
+  for (const task of [false, true]) {
+    const file = {
+      id: randomUUID(),
+      name: 'synthetic.pdf',
+      mimeType: 'application/pdf',
+      size: 12,
+      url: '/api/artifacts/synthetic',
+    };
+    const pending: (typeof file)[] = [];
+    const delivered: Array<{ text: string; files: (typeof file)[] }> = [];
+    const queued = [{ id: randomUUID(), text: 'A new request.', attachments: [] }];
+    let taking = 0;
+    let reviews = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const persisting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { result, aborted } = await fixture(
+      async (tools, emit, options) => {
+        await options.runTool('read', {}, async () => ({
+          content: [{ type: 'text', text: 'Synthetic checked record.' }],
+        }));
+        await call(tools, 'share_file', { path: 'synthetic.pdf' });
+        await assert.rejects(call(tools, 'send_message', { text: '', intent: 'final' }));
+        assert.equal(options.shouldStop(), false);
+        const sending = call(tools, 'send_message', {
+          text: 'The checked result is amber.',
+          intent: 'final',
+        });
+        await Promise.race([persisting, sending]);
+        try {
+          assert.equal(options.shouldStop(), false);
+          assert.deepEqual(delivered, []);
+        } finally {
+          release();
+        }
+        const response = await sending;
+        const receipt = JSON.parse(response.content.find((part) => part.type === 'text')!.text);
+        assert.equal(receipt.delivered, true);
+        assert.equal(receipt.presentation, 'none');
+        assert.equal(options.shouldStop(), true);
+        assert.deepEqual(pending, []);
+        await assert.rejects(
+          call(tools, 'send_message', { text: 'Another result after completion.' }),
+        );
+        if (!options.shouldStop()) await options.nextMessages!();
+        emit({ type: 'message_start' });
+        emit({ type: 'text_delta', text: 'A stray completion summary.' });
+        emit({ type: 'final', text: 'A stray completion summary.' });
+        emit({ type: 'message_end', status: 'succeeded' });
+      },
+      {
+        ...(task
+          ? {
+              background: true,
+              taskContext: {
+                id: randomUUID(),
+                title: 'Synthetic task',
+                brief: 'Find the synthetic result.',
+                doneWhen: 'The result is delivered.',
+                revision: 1,
+              },
+            }
+          : {}),
+        publish: async () => {
+          pending.push(file);
+          return file;
+        },
+        reply: async (text) => {
+          started();
+          await gate;
+          delivered.push({ text, files: pending.splice(0) });
+        },
+        takeMessages: async () => {
+          taking++;
+          return queued.splice(0);
+        },
+      },
+      {
+        prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
+        reviewMemoryReply: async (_context, draft) => {
+          reviews++;
+          return draft;
+        },
+      },
+    );
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.result, undefined);
+    assert.equal(result.spokenReply, 'The checked result is amber.');
+    assert.equal(aborted, false);
+    assert.equal(reviews, 0);
+    assert.equal(taking, 0);
+    assert.equal(queued.length, 1);
+    assert.deepEqual(delivered, [{ text: 'The checked result is amber.', files: [file] }]);
+  }
+});
+
+test('final visual delivery finishes only for a new original or corrected result', async () => {
+  const visual: Presentation = {
+    version: 1,
+    type: 'diagram',
+    title: 'Synthetic result',
+    sources: [],
+    nodes: [{ id: 'one', label: 'Original result' }],
+    edges: [],
+  };
+  const corrected: Presentation = {
+    ...visual,
+    nodes: [{ id: 'one', label: 'Corrected result' }],
+  };
+  for (const outcome of ['original', 'corrected', 'omitted', 'failed', 'duplicate'] as const) {
+    const delivered: Array<{ text: string; presentation?: Presentation }> = [];
+    let attempts = 0;
+    const { result } = await fixture(
+      async (tools, emit, options) => {
+        if (outcome === 'duplicate')
+          await call(tools, 'send_message', { text: '', presentation: visual });
+        const sending = call(tools, 'send_message', {
+          text: '',
+          presentation: visual,
+          intent: 'final',
+        });
+        if (outcome === 'failed') await assert.rejects(sending, /Synthetic persistence failure/);
+        else {
+          const response = await sending;
+          const receipt = JSON.parse(response.content.find((part) => part.type === 'text')!.text);
+          assert.equal(receipt.delivered, outcome !== 'duplicate');
+          assert.equal(receipt.presentation, outcome === 'duplicate' ? 'original' : outcome);
+        }
+        assert.equal(options.shouldStop(), outcome === 'original' || outcome === 'corrected');
+        emit({ type: 'final', text: 'A necessary unfinished-work explanation.' });
+      },
+      {
+        reply: async (text, _id, _replyTo, presentation) => {
+          if (outcome === 'failed' && attempts++ === 0)
+            throw new Error('Synthetic persistence failure.');
+          delivered.push({ text, presentation });
+        },
+      },
+      {
+        prepareMemory: async () => ({ mode: 'recall', facts: [], messages: [], searches: [] }),
+        reviewMemoryReply: async (_context, draft, _execution, requested) => {
+          if (!requested || (outcome !== 'corrected' && outcome !== 'omitted')) return draft;
+          return {
+            text: 'A corrected fallback.',
+            presentationSupported: false,
+            ...(outcome === 'corrected'
+              ? { correctedVisual: { text: '', presentation: corrected } }
+              : {}),
+          };
+        },
+      },
+    );
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(
+      delivered.at(-1),
+      outcome === 'original' || outcome === 'corrected'
+        ? { text: '', presentation: outcome === 'corrected' ? corrected : visual }
+        : { text: 'A necessary unfinished-work explanation.', presentation: undefined },
+    );
+  }
+});
+
+test('an owner message steered during final delivery keeps the newer request active', async () => {
+  const queued = [{ id: randomUUID(), text: 'Include the second fact.', attachments: [] }];
+  const delivered: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const persisting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const { result } = await fixture(
+    async (tools, _emit, options) => {
+      const sending = call(tools, 'send_message', { text: 'The first fact.', intent: 'final' });
+      await Promise.race([persisting, sending]);
+      try {
+        const incoming = await options.nextMessages!();
+        assert.equal(incoming.length, 1);
+      } finally {
+        release();
+      }
+      await sending;
+      assert.equal(options.shouldStop(), false);
+      await call(tools, 'send_message', { text: 'The second fact.', intent: 'final' });
+      assert.equal(options.shouldStop(), true);
+    },
+    {
+      takeMessages: async () => queued.splice(0),
+      reply: async (text) => {
+        if (!delivered.length) {
+          started();
+          await gate;
+        }
+        delivered.push(text);
+      },
+    },
+  );
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(delivered, ['The first fact.', 'The second fact.']);
 });
 
 test('successful delivery context records reviewed output and invalidates review without recording duplicates', async () => {
