@@ -43,6 +43,25 @@ Before signing or making an installer, both platform builds disable Node option 
 
 The runtime dependency overrides use patched Sharp and Undici versions. A single Sharp version avoids duplicate native image libraries.
 
+Overrides also select patched versions of Glob, Minimatch, Hono's Node server, qs, and RE2JS. Keep the root and desktop locks in sync when their shared build dependencies change.
+
+## Verify release provenance
+
+Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents public release.
+
+Download an asset and its bundle from the same release. Get the full build commit from the release notes and check it against the approved release. Replace the placeholder, then verify:
+
+```sh
+BUILD_COMMIT='<full-build-commit>'
+gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigstore.json \
+  --signer-workflow n8n-io/nod/.github/workflows/desktop-release.yml \
+  --source-ref refs/heads/main --source-digest "$BUILD_COMMIT"
+```
+
+The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit. It cannot create replacement provenance. A public release without the original bundle requires a new build. Platform signing and notarization checks still run.
+
+Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. With this setting, both release and recovery uploads require the original bundle. A missing bundle requires a new build. Existing releases do not gain provenance from this change.
+
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.

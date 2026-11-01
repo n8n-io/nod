@@ -32,6 +32,7 @@ While the switch is on, each request Nod makes to your model becomes one trace, 
 | The model's reply                                                         | Checks of emails that may give access to an account                                     |
 | The model name, token counts and cost                                     | Requests to decision services                                                           |
 |                                                                           | Separate requests to the models that write your memory, writing style or learned skills |
+|                                                                           | Its attention and review tasks, and any codemode step                                   |
 | Whether it came from chat, a task, a helper or a background check         | Your usage analytics, which have their own switch                                       |
 
 n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
@@ -78,7 +79,7 @@ Nod removes what it can recognize. A trace can still contain personal details wr
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
 - **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other Nod data such as feedback reports. Nod's own IDs inside messages and tool results get the same keyed hash. Other content can still connect traces, such as a website address, a document link or an account handle.
-- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool. Those reads keep only their action, such as `memory_read`, not the note path, search words or skill name.
+- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool. Those reads keep only their action, such as `memory_read`, not the note path, search words or skill name. The attention and review tasks that read your saved memory are not traced at all, and a codemode step keeps neither its script nor its result, because a script can read memory or a connected account.
 - **No images.** Images are replaced with `[image]`.
 
 These steps remove the direct links to you. Traces are still pseudonymised, not anonymous: what a conversation says can identify you, for example a detail the scrubber doesn't recognize.

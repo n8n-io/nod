@@ -3966,6 +3966,139 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     });
   });
 
+  test('shared transactions preserve preference authority, rollback and analytics consent', async (t) => {
+    const { createPreferencesStore } = await import('../src/server/preferences.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
+    const f = await fixture(t);
+    const preferences = createPreferencesStore(f.database, f.owner, f.analytics.forOwner(f.owner));
+    const rules = 'Synthetic reviewed standing rules';
+    await preferences.update({ rules, notificationRule: 'Synthetic original notification' });
+    f.captured.length = 0;
+    await transaction(async (client) => {
+      const saved = await preferences.update(
+        { notificationRule: 'Synthetic accepted notification' },
+        'agent',
+        rules,
+        client,
+      );
+      assert.equal(saved.notificationRule, 'Synthetic accepted notification');
+      assert.equal((await preferences.get()).notificationRule, 'Synthetic original notification');
+      assert.deepEqual(f.changes(), []);
+    }, f.database);
+    assert.equal((await preferences.get()).notificationRule, 'Synthetic accepted notification');
+    assert.deepEqual(f.changes(), [
+      { setting: 'notification_rule', actor: 'agent', state: 'configured' },
+    ]);
+    await assert.rejects(
+      transaction(async (client) => {
+        await preferences.update({ rules: 'Synthetic rolled-back rules' }, 'agent', rules, client);
+        assert.equal(f.changes().length, 1);
+        throw new Error('Synthetic outer preference rollback');
+      }, f.database),
+      /Synthetic outer preference rollback/,
+    );
+    assert.equal((await preferences.get()).rules, rules);
+    assert.equal(f.changes().length, 1);
+    await assert.rejects(
+      transaction(
+        (client) =>
+          preferences.update(
+            { notificationRule: 'Synthetic unauthorized notification' },
+            'agent',
+            'Synthetic stale reviewed rules',
+            client,
+          ),
+        f.database,
+      ),
+      { statusCode: 409, message: 'Your rules changed. Review them before asking again.' },
+    );
+    assert.equal((await preferences.get()).notificationRule, 'Synthetic accepted notification');
+    assert.equal(f.changes().length, 1);
+    for (const enabled of [true, false]) {
+      f.analytics.setUsageData(f.owner, enabled);
+      await transaction(async (client) => {
+        await preferences.update({ proactivePaused: enabled }, 'agent', rules, client);
+        f.analytics.setUsageData(f.owner, false);
+        f.analytics.setUsageData(f.owner, true);
+        assert.equal(f.changes().length, 1);
+      }, f.database);
+      assert.equal((await preferences.get()).proactivePaused, enabled);
+      assert.equal(f.changes().length, 1);
+    }
+    await transaction(
+      (client) => preferences.update({ proactivePaused: true }, 'agent', rules, client),
+      f.database,
+    );
+    assert.deepEqual(f.changes().slice(1), [
+      { setting: 'proactivity_paused', actor: 'agent', state: 'on' },
+    ]);
+    assert.ok(!JSON.stringify(f.captured).includes('Synthetic'));
+  });
+
+  test('shared transactions defer spending analytics until commit and fence consent changes', async (t) => {
+    const { transaction } = await import('../src/server/transaction.ts');
+    const f = await fixture(t);
+    const ledger = createLedger({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+    });
+    await ledger.initialize();
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 });
+    f.captured.length = 0;
+    await transaction(async (client) => {
+      const saved = await ledger.setLimits({ monthlyUsd: 50.26, taskUsd: null }, 'agent', client);
+      assert.deepEqual(saved, { limit: { monthlyUsd: 50.26, reached: false }, taskUsd: null });
+      assert.deepEqual(await ledger.limits(), {
+        limit: { monthlyUsd: 37.42, reached: false },
+        taskUsd: 8.53,
+      });
+      assert.deepEqual(f.changes(), []);
+    }, f.database);
+    assert.deepEqual(await ledger.limits(), {
+      limit: { monthlyUsd: 50.26, reached: false },
+      taskUsd: null,
+    });
+    assert.deepEqual(f.changes(), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'configured' },
+      { setting: 'task_spending_limit', actor: 'agent', state: 'off' },
+    ]);
+    await assert.rejects(
+      transaction(async (client) => {
+        await ledger.setLimits({ monthlyUsd: null, taskUsd: 5 }, 'agent', client);
+        assert.equal(f.changes().length, 2);
+        throw new Error('Synthetic outer spending rollback');
+      }, f.database),
+      /Synthetic outer spending rollback/,
+    );
+    assert.deepEqual(await ledger.limits(), {
+      limit: { monthlyUsd: 50.26, reached: false },
+      taskUsd: null,
+    });
+    assert.equal(f.changes().length, 2);
+    for (const enabled of [true, false]) {
+      const monthlyUsd = enabled ? 60.19 : 70.31;
+      f.analytics.setUsageData(f.owner, enabled);
+      await transaction(async (client) => {
+        await ledger.setLimits({ monthlyUsd }, 'agent', client);
+        f.analytics.setUsageData(f.owner, false);
+        f.analytics.setUsageData(f.owner, true);
+        assert.equal(f.changes().length, 2);
+      }, f.database);
+      assert.equal((await ledger.limits()).limit?.monthlyUsd, monthlyUsd);
+      assert.equal(f.changes().length, 2);
+    }
+    await transaction(
+      (client) => ledger.setLimits({ monthlyUsd: null }, 'agent', client),
+      f.database,
+    );
+    assert.deepEqual(f.changes().slice(2), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'off' },
+    ]);
+    for (const amount of ['37.42', '8.53', '50.26', '60.19', '70.31'])
+      assert.ok(!JSON.stringify(f.captured).includes(amount));
+  });
+
   test('memory settings emit successful CAS transitions and retain the starting consent period', async (t) => {
     const { createMemoryService } = await import('../src/server/memory.ts');
     const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');

@@ -183,7 +183,7 @@ import { createActivity } from './activity.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
-import { createBrowserConnections } from './browser-connections.ts';
+import { BrowserConnectionError, createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, registerLinkOpened } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
@@ -1114,43 +1114,71 @@ async function initializeApplication(
           ),
           { notRun: true },
         );
+      const turnLock = provenance.signal
+        ? { turnId: provenance.turnId, signal: provenance.signal }
+        : provenance.turnId;
+      const scheduleWrite = [
+        'NOD_schedule_cancel',
+        'NOD_schedule_create',
+        'NOD_schedule_update',
+      ].includes(action);
+      const lockedWrite =
+        action === 'NOD_limits_update' ||
+        action === 'NOD_model_select' ||
+        action.startsWith('NOD_memory_') ||
+        action === 'NOD_notification_preferences_update';
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
-            ? ledger.setLimits(args, 'agent')
-            : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
-              ? withTurnLock(provenance.turnId, () =>
-                  personal.manage(action.slice('NOD_'.length), args, provenance),
+            ? withTurnLock(turnLock, (client) => ledger.setLimits(args, 'agent', client))
+            : scheduleWrite
+              ? withTurnLock(turnLock, (client) =>
+                  personal.manage(action.slice('NOD_'.length), args, provenance, { client }),
                 )
-              : action.startsWith('NOD_')
-                ? personal.manage(action.slice('NOD_'.length), args, provenance)
-                : (async () => {
-                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                    const ready = hasWorkspaceFiles(args)
-                      ? await integrations
-                          .prepare(ownerId, action, args, turn)
-                          .catch((error: unknown) => {
-                            throw Object.assign(
-                              error instanceof Error ? error : new Error(String(error)),
-                              { notRun: true },
-                            );
+              : lockedWrite
+                ? withTurnLock(turnLock, (client) =>
+                    personal.manage(action.slice('NOD_'.length), args, provenance, {
+                      client,
+                      ...(provenance.details?.currentRules === undefined
+                        ? {}
+                        : { expectedRules: String(provenance.details.currentRules) }),
+                    }),
+                  )
+                : action.startsWith('NOD_')
+                  ? personal.manage(action.slice('NOD_'.length), args, provenance)
+                  : (async () => {
+                      const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                      const ready = hasWorkspaceFiles(args)
+                        ? await integrations
+                            .prepare(ownerId, action, args, turn, provenance.signal)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                error instanceof Error ? error : new Error(String(error)),
+                                { notRun: true },
+                              );
+                            })
+                        : args;
+                      const result = await integrations.executeApproved(
+                        ownerId,
+                        action,
+                        ready,
+                        turn,
+                        provenance.signal,
+                      );
+                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                      return privateEmailResult(
+                        (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
                           })
-                      : args;
-                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
-                    await ledger.action(provenance.turnId, action, { kind: 'approved' });
-                    return privateEmailResult(
-                      (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value,
-                      mailCheck,
-                    );
-                  })());
+                        ).value,
+                        mailCheck,
+                      );
+                    })());
       return result;
     },
     async (action, args, expectedRevision, client) => {
@@ -1602,7 +1630,18 @@ async function initializeApplication(
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
-        if (!target) return browserConnections.request(request, turn, signal, launch);
+        if (!target)
+          return browserConnections.request(request, turn, signal, launch).catch(async (error) => {
+            if (
+              error instanceof BrowserConnectionError &&
+              error.statusCode === 404 &&
+              (await vault.list(ownerId)).some((entry) => entry.id === request.connectionId)
+            )
+              throw new Error(
+                'This ID is a saved Vault login, not a browser profile. Open the sign-in page with browser, then use sign_in with savedLoginId set to this ID.',
+              );
+            throw error;
+          });
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
         const result = await browserConnections.request(request, turn, signal, launch);

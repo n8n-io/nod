@@ -614,6 +614,8 @@ jobs:
       NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -647,8 +649,34 @@ jobs:
         with:
           name: desktop-release-plan
           path: .local
+      - name: Verify release files and prepare provenance subjects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/desktop-release.mjs stage-all
+      - name: Sign release provenance
+        id: provenance
+        if: ${{ !github.event.repository.private || vars.NOD_PRIVATE_ATTESTATIONS == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-checksums: .local/release-SHA256SUMS
+      - name: Preserve the original build provenance
+        if: steps.provenance.outputs.bundle-path != ''
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$PROVENANCE_BUNDLE" .local/nod-release-provenance.sigstore.json
+      - name: Save provenance for release recovery
+        if: steps.provenance.outputs.bundle-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-release-provenance
+          path: .local/nod-release-provenance.sigstore.json
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: error
       - name: Verify GitHub asset digests and downloaded release files
         env:
           GH_TOKEN: ${{ github.token }}
+          NOD_PRIVATE_ATTESTATIONS: ${{ vars.NOD_PRIVATE_ATTESTATIONS }}
+          NOD_RELEASE_ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
           NOD_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-all

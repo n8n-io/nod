@@ -1,4 +1,4 @@
-import { transaction as inTransaction } from './transaction.ts';
+import { afterCommit, transaction as inTransaction } from './transaction.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -173,8 +173,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   const now = dependencies.now ?? (() => new Date());
   let workerStarted = false;
 
-  const transaction = <T>(operation: (client: PoolClient) => Promise<T>) =>
-    inTransaction(operation, pool);
+  const transaction = <T>(operation: (client: PoolClient) => Promise<T>, shared?: PoolClient) =>
+    shared ? operation(shared) : inTransaction(operation, pool);
 
   function validateTiming(input: z.infer<typeof timingSchema>, enabled: boolean) {
     try {
@@ -674,7 +674,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     };
   }
 
-  async function create(raw: unknown, provenance?: ScheduleProvenance) {
+  async function create(raw: unknown, provenance?: ScheduleProvenance, shared?: PoolClient) {
     const input = validateCreate(raw);
     const row = await transaction(async (client) => {
       const source = await sourceProvenance(client, provenance);
@@ -704,15 +704,17 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         )
       ).rows[0]!;
       return enqueue(client, saved, nextOccurrence(saved));
-    });
-    refresh();
-    dependencies.analytics?.({
-      event: 'nod_schedule_changed',
-      properties: {
-        operation: 'create',
-        ...scheduleAnalytics(row),
-        actor: provenance ? 'agent' : 'user',
-      },
+    }, shared);
+    afterCommit(shared ?? pool, () => {
+      refresh();
+      dependencies.analytics?.({
+        event: 'nod_schedule_changed',
+        properties: {
+          operation: 'create',
+          ...scheduleAnalytics(row),
+          actor: provenance ? 'agent' : 'user',
+        },
+      });
     });
     return value(row);
   }
@@ -722,6 +724,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     raw: unknown,
     provenance?: ScheduleProvenance,
     expectedRevision?: number,
+    shared?: PoolClient,
   ) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
@@ -777,15 +780,17 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           ? previous.nextRun
           : nextOccurrence(saved),
       );
-    });
-    refresh();
-    dependencies.analytics?.({
-      event: 'nod_schedule_changed',
-      properties: {
-        operation: 'update',
-        ...scheduleAnalytics(row),
-        actor: provenance ? 'agent' : 'user',
-      },
+    }, shared);
+    afterCommit(shared ?? pool, () => {
+      refresh();
+      dependencies.analytics?.({
+        event: 'nod_schedule_changed',
+        properties: {
+          operation: 'update',
+          ...scheduleAnalytics(row),
+          actor: provenance ? 'agent' : 'user',
+        },
+      });
     });
     return value(row);
   }

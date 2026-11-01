@@ -77,9 +77,9 @@ The [Nod PostHog project](https://eu.posthog.com/project/231804) has five dashbo
 | [Nod · Outputs and interaction](https://eu.posthog.com/project/231804/dashboard/1036782)    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
 | [Nod · Navigation and controls](https://eu.posthog.com/project/231804/dashboard/1072707)    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
-All insights filter `analytics_schema=nod_v4` and `environment=production`, enable internal/test exclusions, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
+All insights filter `analytics_schema=nod_v4` and `environment=production`, include internal and external installations, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 
-Check the project's actual exclusion rules before describing the sample as external users. Enabling the internal/test filter doesn't establish which installations it excludes. Person-property rules, such as staff email domains, can't classify new installations because Nod sends no person profiles or email addresses. Production builds used by staff can remain in the sample.
+Internal/test exclusions are off for these dashboards. The production sample intentionally includes staff using release builds. A separate project for internal use is deferred; don't describe this mixed sample as external users.
 
 ### Denominators and limits
 

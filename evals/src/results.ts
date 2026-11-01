@@ -51,6 +51,16 @@ export interface AttemptResult {
     modelUsage: UsageDetails[];
     interactions: Record<string, number>;
     browserHandoffs: number;
+    calls?: Array<{
+      name: string;
+      action?: string;
+      query?: string;
+      turnId?: string;
+      nested?: boolean;
+      error: boolean;
+      at: number;
+      finishedAt?: number;
+    }>;
     compactions?: number;
     turns: Array<{
       source: string;

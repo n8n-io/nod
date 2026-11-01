@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { isSpeechVoiceId } from '../shared/speech.ts';
 import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
-import { transaction } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 const preferencesSchema = z
@@ -96,7 +96,12 @@ export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: 
       ]);
       return result.rows[0] ?? { ...defaultPreferences };
     },
-    async update(raw: unknown, actor: SettingActor = 'owner'): Promise<Preferences> {
+    async update(
+      raw: unknown,
+      actor: SettingActor = 'owner',
+      expectedRules?: string,
+      shared?: PoolClient,
+    ): Promise<Preferences> {
       const patch = validate(raw);
       const capture = snapshotAnalytics(analytics);
       const save = async (connection: Pick<Pool, 'query'>) => {
@@ -109,6 +114,7 @@ export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: 
         hour_cycle=COALESCE($12,preferences.hour_cycle),speech_reply=COALESCE($18,preferences.speech_reply),
         speech_voice=CASE WHEN $19 THEN $17 ELSE preferences.speech_voice END,
         proactive_paused=COALESCE($20,preferences.proactive_paused)
+        WHERE $22::text IS NULL OR preferences.rules=$22
         RETURNING ${columns}`,
           [
             ownerId,
@@ -132,12 +138,17 @@ export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: 
             patch.speechVoice !== undefined,
             patch.proactivePaused ?? null,
             defaultPreferences.proactivePaused,
+            expectedRules ?? null,
           ],
         );
+        if (!result.rows[0])
+          throw Object.assign(new Error('Your rules changed. Review them before asking again.'), {
+            statusCode: 409,
+          });
         return result.rows[0] as Preferences;
       };
-      if (!analytics) return save(pool);
-      const change = await transaction(async (client) => {
+      if (!analytics) return save(shared ?? pool);
+      const run = async (client: PoolClient) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `preferences:${ownerId}`,
         ]);
@@ -146,22 +157,25 @@ export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: 
           [ownerId],
         );
         const before: Preferences = previous.rows[0] ?? { ...defaultPreferences };
-        return { before, after: await save(client) };
-      }, pool);
-      captureSettingChanges(capture, actor, change.before, change.after, {
-        speechVoice: 'speech_voice',
-        speechReply: 'speech_reply',
-        notificationRule: 'notification_rule',
-        rules: 'rules',
-        timeZone: 'time_zone',
-        locale: 'locale',
-        hourCycle: 'hour_cycle',
-        quietHoursEnabled: 'quiet_hours',
-        quietStart: 'quiet_start',
-        quietEnd: 'quiet_end',
-        proactivePaused: 'proactivity_paused',
-      });
-      return change.after;
+        const after = await save(client);
+        afterCommit(client, () =>
+          captureSettingChanges(capture, actor, before, after, {
+            speechVoice: 'speech_voice',
+            speechReply: 'speech_reply',
+            notificationRule: 'notification_rule',
+            rules: 'rules',
+            timeZone: 'time_zone',
+            locale: 'locale',
+            hourCycle: 'hour_cycle',
+            quietHoursEnabled: 'quiet_hours',
+            quietStart: 'quiet_start',
+            quietEnd: 'quiet_end',
+            proactivePaused: 'proactivity_paused',
+          }),
+        );
+        return after;
+      };
+      return shared ? run(shared) : transaction(run, pool);
     },
   };
 }

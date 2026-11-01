@@ -26,6 +26,8 @@ const inputs = [
   'src/providers/container-browser/xvfb.sh',
   'src/providers/docker/install-rtk.sh',
   'src/providers/docker/save-video.py',
+  'src/providers/docker/workspace-artifacts.txt',
+  'src/providers/docker/workspace-video.txt',
 ];
 const windowsInputs = [
   'desktop/licenses/speech.md',

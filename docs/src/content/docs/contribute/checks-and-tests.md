@@ -48,6 +48,36 @@ The [capability evals](/contribute/evals/) call live models, so they aren't part
 
 When the evaluation harness changes, CI starts PostgreSQL for its database checks. These checks use synthetic data and disposable schemas.
 
+## Security checks
+
+The **Security analysis** workflow runs on pull requests, on `main`, and each week. Semgrep runs its `p/ci` rules on the repository. Error-level findings fail the job. Metrics and version checks are off. Review parser warnings because a partial parse can leave code unchecked. Run the same check locally:
+
+```sh
+semgrep scan --config p/ci --severity ERROR --metrics off --disable-version-check --error .
+```
+
+CodeQL checks JavaScript, TypeScript, and Python when the repository is public. To use it while the repository is private, enable GitHub Code Security and set `NOD_PRIVATE_CODEQL` to `true`. The workflow does not change repository access or branch protection.
+
+CI also runs Gitleaks on all fetched Git refs and the checkout. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
+
+Check dependency advisories in each package:
+
+```sh
+pnpm audit
+pnpm --dir desktop audit
+pnpm --dir docs audit
+```
+
+The workspace image installs Python packages from `src/providers/docker/workspace-artifacts.txt` and `workspace-video.txt` with `--require-hashes`. Their `.in` files hold the direct requirements. To update a file, change its `.in` file and compile it with `uv`:
+
+```sh
+uv pip compile src/providers/docker/workspace-artifacts.in --python-version 3.11 --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate --output-file src/providers/docker/workspace-artifacts.txt
+```
+
+Use the same command for `workspace-video.in`. Check both Linux AMD64 and ARM64 installs. The desktop runtime fingerprint includes both lockfiles, so a change requires a new runtime pack.
+
+Before changing repository visibility, scan all branches and tags. Review existing releases, Actions logs, and downloadable artifacts for private content. GitHub makes the existing Actions history and logs public with the repository. Rotate any exposed credential before publication; deleting its current file does not remove Git history.
+
 ## Integration tests
 
 `pnpm run test:integration` runs every test file in Linux, with Chromium and a throwaway PostgreSQL database. It never uses your local database or credentials.

@@ -49,7 +49,7 @@ Nod counts installations, not people. Two installations count as two; a shared i
 
 The owner's sharing choice still applies. Nod disables IP geolocation. Events don't create PostHog person profiles or add names and contact details.
 
-Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and apply the project's internal/test exclusions.
+Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 
 ## What is excluded
 

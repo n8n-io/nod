@@ -14,7 +14,7 @@ import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
-import { transaction } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
 import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
 
@@ -351,9 +351,9 @@ export function createLedger({
     };
   }
 
-  async function limits() {
+  async function limits(database: Pick<PoolClient, 'query'> = pool) {
     const row = (
-      await pool.query(
+      await database.query(
         `SELECT monthly_usd,task_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
         [ownerId],
       )
@@ -549,10 +549,10 @@ export function createLedger({
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
-  async function setLimits(input: unknown, actor: SettingActor = 'owner') {
+  async function setLimits(input: unknown, actor: SettingActor = 'owner', shared?: PoolClient) {
     const body = limitsInput.parse(input);
     const capture = snapshotAnalytics(analytics);
-    const change = await transaction(async (client) => {
+    const write = async (client: PoolClient) => {
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],
@@ -581,12 +581,18 @@ export function createLedger({
         `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
         [ownerId],
       );
-      return { before, after };
-    }, pool);
-    captureSettingChanges(capture, actor, change.before, change.after, {
-      monthly_usd: 'monthly_spending_limit',
-      task_usd: 'task_spending_limit',
-    });
+      afterCommit(client, () =>
+        captureSettingChanges(capture, actor, before, after, {
+          monthly_usd: 'monthly_spending_limit',
+          task_usd: 'task_spending_limit',
+        }),
+      );
+    };
+    if (shared) {
+      await write(shared);
+      return limits(shared);
+    }
+    await transaction(write, pool);
     return limits();
   }
 

@@ -535,6 +535,11 @@
   color: var(--text-secondary);
   animation: working-step 240ms var(--ease-enter);
 }
+.chat-page .working-text svg {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
 @keyframes working-step {
   from {
     opacity: 0;

@@ -28,7 +28,7 @@ We ask you to keep the details private until a fix is released, or for 90 days a
 
 ## Supported versions
 
-Nod is an early preview. Fixes go into `main` and the next desktop release. Maintainers cut desktop releases from `main` by hand, and the app on Apple silicon Macs updates automatically.
+Nod is an early preview. Fixes go into `main` and the next desktop release. Use the latest release for your platform.
 
 | Version                            | Supported |
 | ---------------------------------- | --------- |
@@ -52,7 +52,7 @@ These are out of scope:
 
 - vulnerabilities in model providers, Composio, Telegram, WhatsApp or the websites Nod visits; report those to their owners;
 - attacks that need an already compromised computer, or administrator access to it;
-- a local server that its owner exposed to a network, contrary to the [setup guide](README.md#install-from-source);
+- a local server that its owner exposed to a network, contrary to the [setup guide](docs/src/content/docs/get-started/install-from-source.mdx);
 - denial of service against your own installation through resource exhaustion;
 - social engineering, phishing and physical attacks;
 - missing hardening, such as a header or a version string, without a demonstrated impact;
@@ -66,15 +66,8 @@ Test only installations and accounts you own. Use synthetic data. Do not access 
 
 ## How Nod protects your data
 
-Nod is driven by a language model. Content it reads, such as web pages, emails and documents, can try to steer it. The server checks below limit what that can lead to; they do not make the model's judgment reliable. If you can make Nod do something the server should have stopped, that is a vulnerability. If Nod makes an unwise choice that the server allows, it is a bug or a design issue. Report it privately if it could put users at risk.
+Nod uses a language model. External content can affect its decisions. The server limits what the model can do. These limits do not guarantee that each decision is correct. Report a problem privately if it could put users at risk.
 
-- **Where Nod runs.** In the desktop app and a source install, the server, database, workspace and browser run on your computer. The desktop app runs the server on your Mac and the database, workspace and browser in a private virtual machine. Model requests go to the provider you choose. Apps you connect through Composio, MCP or OAuth go to those services. Telegram and WhatsApp messages go through those services.
-- **Local access.** A source install listens on `127.0.0.1` and asks for an access key once. The desktop app gives each launch its own token, and only its own windows receive it.
-- **Keys.** Model keys, the Composio key and saved logins are encrypted with a key kept in the macOS Keychain, protected desktop storage or `NOD_VAULT_KEY`. Provider keys never enter the workspace or the browser.
-- **Vault and sign-in.** Pi selects the account, fields and submit control. The server checks permission for the current task, selected item and exact origins. Event, read-only and onboarding turns cannot sign in. Scheduled work is checked against the instruction that created its schedule. The provider enters and submits privately, keeps observations paused during entry and submission, then, after successful submission, lets Pi inspect the live page with known values removed from text and masked in screenshots. A failed private entry keeps observation and control locked until that document changes. Vault tools return no saved password or code. The server, browser provider and destination website receive the value; a website can disclose it in a later response. A new task must pass the permission checks to keep a signed-in browser. Uses appear in Usage. See the [security model](docs/src/content/docs/trust/security-model.md) for the boundaries and limits.
-- **Payments.** You approve one card, shop, checkout document, field origins, submit control, amount and currency in Nod web or desktop. Approval needs the card's security code, which Nod never stores. Telegram and WhatsApp cannot approve. Entry and submission use the same private document boundary. A claimed operation cannot run twice; an interrupted or failed operation is uncertain. Usage reports card submitted, and Pi checks the shop's result. Stored-card use does not enforce settlement at the issuer or establish PCI compliance. See [payments](docs/src/content/docs/trust/payments.mdx).
-- **Workspace.** Nod's commands and file tools run in a container with no access to your home directory, no Docker socket and no provider keys.
-- **Untrusted content.** Results from apps, the browser and the web reach the model marked as data, not instructions. If such content looks like an attempt to steer Nod, the server holds sends and deletions for your confirmation until your next message.
-- **Approvals.** Nod's server checks connected-app actions before they run. Reads and changes to your own data run directly. Actions that reach other people, delete data or can't be classified need your confirmation, unless every recipient is someone you named or confirmed before, or a review model that sees only your recent messages matches the action to your request. Confirmed actions run once and are never retried. Actions in websites through Nod's browser depend on the model's instructions, not this check.
+The [security model](docs/src/content/docs/trust/security-model.md) defines the current boundaries and limits. [Trust and Vault](docs/src/content/docs/trust/index.mdx) explains permissions and saved data. [Payments](docs/src/content/docs/trust/payments.mdx) explains card use and its limits. [Architecture](docs/src/content/docs/how-it-works/architecture.mdx) describes the system.
 
-[AGENTS.md](AGENTS.md#safety-invariants) lists the exact rules, [Trust and Vault](docs/src/content/docs/trust/index.mdx) explains them for users and security teams, and [architecture](docs/src/content/docs/how-it-works/architecture.mdx) explains how they are built.
+[AGENTS.md](AGENTS.md#safety-invariants) lists the rules for implementation changes.

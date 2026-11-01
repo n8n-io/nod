@@ -16,10 +16,12 @@ import type { ModelTraces } from '../../ports/traces.ts';
 
 const untraced = new Set([
   'access',
+  'attention',
   'reflect',
   'remember',
   'recall',
   'memory_check',
+  'review',
   'style',
   'skill',
 ]);
