@@ -60,7 +60,7 @@ gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigst
 
 The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit. It cannot create replacement provenance. A public release without the original bundle requires a new build. Platform signing and notarization checks still run.
 
-Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. Existing releases do not gain provenance from this change.
+Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. With this setting, both release and recovery uploads require the original bundle. A missing bundle requires a new build. Existing releases do not gain provenance from this change.
 
 ## Configure the repository once
 

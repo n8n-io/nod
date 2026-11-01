@@ -499,8 +499,11 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
 async function withProvenance(files) {
   const bundle = process.env.NOD_RELEASE_ATTESTATION;
   if (!bundle) {
-    if (api(`repos/${releaseRepository}`)?.private !== true)
-      throw new Error('Public releases require build provenance.');
+    if (
+      process.env.NOD_PRIVATE_ATTESTATIONS === 'true' ||
+      api(`repos/${releaseRepository}`)?.private !== true
+    )
+      throw new Error('Release uploads require build provenance.');
     return files;
   }
   const workflow = process.env.GITHUB_WORKFLOW_REF;

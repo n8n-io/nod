@@ -676,6 +676,7 @@ jobs:
       - name: Verify GitHub asset digests and downloaded release files
         env:
           GH_TOKEN: ${{ github.token }}
+          NOD_PRIVATE_ATTESTATIONS: ${{ vars.NOD_PRIVATE_ATTESTATIONS }}
           NOD_RELEASE_ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
           NOD_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-all

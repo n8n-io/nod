@@ -1010,6 +1010,25 @@ test('public releases refuse missing or rejected provenance before uploading ass
   }
 });
 
+test('private releases require provenance when attestations are enabled', async (t) => {
+  const f = await releaseFixture(t);
+  for (const workflow of ['desktop-release', 'recover-desktop-release']) {
+    await assert.rejects(
+      f.invoke('draft', false, {
+        NOD_PRIVATE_ATTESTATIONS: 'true',
+        NOD_RELEASE_ATTESTATION: '',
+        NOD_RELEASE_SOURCE: f.source,
+        GITHUB_SHA: 'b'.repeat(40),
+        GITHUB_WORKFLOW_REF: `synthetic/nod/.github/workflows/${workflow}.yml@refs/heads/main`,
+      }),
+      /require build provenance/,
+    );
+    assert.equal((await f.readState()).created, 0);
+  }
+  await f.invoke('draft', false, { NOD_PRIVATE_ATTESTATIONS: 'false' });
+  assert.equal((await f.readState()).created, 1);
+});
+
 test('automatic delivery requires current exact-main CI and publishes only its checked metadata', async (t) => {
   const f = await releaseFixture(t, { automatic: true, plan: true, publish: true });
   const initial = await f.readState();

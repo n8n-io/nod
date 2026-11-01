@@ -119,5 +119,6 @@ jobs:
       - name: Verify and publish the existing signed files
         working-directory: release
         env:
+          NOD_PRIVATE_ATTESTATIONS: ${{ vars.NOD_PRIVATE_ATTESTATIONS }}
           NOD_RELEASE_ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
         run: node ../publisher/.github/scripts/desktop-release.mjs draft-all
