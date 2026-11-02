@@ -187,7 +187,7 @@ function SetupAction({
           disabled={app?.available === false}
           aria-label={`${app?.available === false ? 'Expired' : 'Connect'} ${app?.name ?? label.replace(/^Connect\s+/i, '')}`}
           onClick={(event) => {
-            captureAnalytics('nod_setup_link_clicked', { setup });
+            captureAnalytics('setup_link_clicked', { setup });
             onConnect(href, event.currentTarget);
           }}
         >
@@ -207,7 +207,7 @@ function SetupAction({
       }
       referrerPolicy="no-referrer"
       onClick={(event) => {
-        captureAnalytics('nod_setup_link_clicked', { setup });
+        captureAnalytics('setup_link_clicked', { setup });
         if (
           setup === 'vault' &&
           !event.button &&
@@ -288,7 +288,7 @@ export function SetupActions({
     const navigate = appLink.test(href);
     if (!navigate && request.current) return;
     setAnnouncement('');
-    captureAnalytics('nod_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    captureAnalytics('app_connect_clicked', { entry: 'chat', result: 'opened' });
     const analytics = appConnectionAnalytics('chat');
     completion.current = { href, complete: analytics.complete };
     if (navigate) {

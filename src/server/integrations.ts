@@ -283,10 +283,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
   function track(
     app: string,
-    status: Extract<AnalyticsEvent, { event: 'nod_connection_changed' }>['properties']['status'],
+    status: Extract<AnalyticsEvent, { event: 'connection_changed' }>['properties']['status'],
     failureReason?: Extract<
       AnalyticsEvent,
-      { event: 'nod_connection_changed' }
+      { event: 'connection_changed' }
     >['properties']['failure_reason'],
   ) {
     captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);

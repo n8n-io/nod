@@ -920,13 +920,13 @@ export function ModelPicker({
     if (models.busy) return;
     const capture = analyticsForCurrentSession();
     if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id))) {
-      capture('nod_model_selected', {
+      capture('model_selected', {
         provider: source.provider in modelProviderNames ? source.provider : 'other',
         entry: surface,
         recommended,
       });
       setOpen(false);
-    } else capture('nod_ui_error', { area: 'models', action: 'save' });
+    } else capture('ui_error', { area: 'models', action: 'save' });
   }
   return (
     <div className="model-picker">

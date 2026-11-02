@@ -19,7 +19,7 @@ export function reuseFile(
   const artifact = artifactFromPreview(item);
   if (!ownedArtifactUrl(artifact.url)) return false;
   window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact }));
-  capture('nod_artifact_action', {
+  capture('artifact_action', {
     kind: attachmentKind(artifact.mimeType, artifact.name) ?? 'file',
     location,
     action: 'reuse_requested',
@@ -141,14 +141,13 @@ export function FileActions({
     try {
       if (action === 'copy') {
         await copyImage(artifact.url);
-        capture('nod_artifact_action', { kind, location, action: 'copy' });
+        capture('artifact_action', { kind, location, action: 'copy' });
         if (activeId.current === id) setNotice('Image copied');
       } else {
         await desktopFileAction(artifact.id, action as 'save' | 'open' | 'show' | 'prepare');
-        if (action === 'save')
-          capture('nod_artifact_action', { kind, location, action: 'download' });
+        if (action === 'save') capture('artifact_action', { kind, location, action: 'download' });
         else if (action === 'open' || action === 'show')
-          capture('nod_artifact_action', {
+          capture('artifact_action', {
             kind,
             location,
             action: action === 'open' ? 'open' : 'reveal',

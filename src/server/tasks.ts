@@ -334,7 +334,7 @@ export function createTasks(options: {
     );
     if (updated.rowCount)
       afterCommit(client, () =>
-        capture?.({ event: 'nod_task_finished', properties: { status: 'cancelled', actor } }),
+        capture?.({ event: 'task_finished', properties: { status: 'cancelled', actor } }),
       );
     return cancelled;
   }
@@ -494,7 +494,7 @@ export function createTasks(options: {
       if (request.action === 'finish')
         afterCommit(client, () =>
           capture?.({
-            event: 'nod_task_finished',
+            event: 'task_finished',
             properties: { status: request.status, actor: 'agent' },
           }),
         );

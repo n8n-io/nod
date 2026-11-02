@@ -803,7 +803,7 @@ export function Chat({
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
       if (!privateVerification)
-        captureAnalytics('nod_chat_message_sent', {
+        captureAnalytics('chat_message_sent', {
           has_attachments: attachments.length > 0 || Boolean(recording),
           input: recording ? 'voice' : 'text',
           is_reply: Boolean(replyId),
@@ -869,7 +869,7 @@ export function Chat({
             : verificationFailure(verificationStatus, verificationRequests.length > 1)
           : errorMessage(cause),
       );
-      captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+      captureAnalytics('ui_error', { area: 'chat', action: 'send' });
       return {
         sent: false,
         restoreText: !privateVerification || !explicitVerification,
@@ -1050,11 +1050,11 @@ export function Chat({
     setError('');
     try {
       await post('/api/thread/stop');
-      captureAnalytics('nod_chat_stop_requested');
+      captureAnalytics('chat_stop_requested');
       await refresh();
     } catch (cause) {
       if (threadRef.current === stoppedThread) setError(errorMessage(cause));
-      captureAnalytics('nod_ui_error', { area: 'chat', action: 'stop' });
+      captureAnalytics('ui_error', { area: 'chat', action: 'stop' });
     } finally {
       if (threadRef.current === stoppedThread) setStopping(false);
     }
@@ -1220,7 +1220,7 @@ export function Chat({
                         !state.configuration.llmReady || resetting || welcoming || spendingPaused
                       }
                       onStart={(task, position) => {
-                        captureAnalytics('nod_task_card_started', {
+                        captureAnalytics('task_card_started', {
                           ...(task.kind
                             ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
                             : {}),

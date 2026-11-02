@@ -47,7 +47,7 @@ export function createAccountSession(options: {
       publication.usageVersion === usageVersion
     )
       options.analytics?.capture(owner, {
-        event: 'nod_setting_changed',
+        event: 'setting_changed',
         properties: { setting: 'usage_data', actor: 'owner', state: 'on' },
       });
   }
@@ -208,7 +208,7 @@ export function createAccountSession(options: {
       if (onboardingCompletedNow) {
         const model = options.model?.();
         options.analytics?.capture(owner, {
-          event: 'nod_onboarding_completed',
+          event: 'onboarding_completed',
           ...(model?.configured
             ? { properties: { model_provider: analyticsModel(model.provider).provider } }
             : {}),
@@ -216,7 +216,7 @@ export function createAccountSession(options: {
       }
       if (input.theme !== undefined)
         capture?.({
-          event: 'nod_settings_updated',
+          event: 'settings_updated',
           properties: { section: 'account', operation: 'update' },
         });
       reply.header('cache-control', 'no-store');

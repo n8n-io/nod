@@ -161,7 +161,7 @@ export function TaskCard({
           aria-expanded={expanded}
           aria-controls={`${headingId}-body`}
           onClick={() => {
-            if (!expanded) captureAnalytics('nod_task_action', { action: 'expand' });
+            if (!expanded) captureAnalytics('task_action', { action: 'expand' });
             setExpanded(!expanded);
           }}
         >
@@ -292,7 +292,7 @@ export function TaskCard({
               variant="ghost"
               size="sm"
               onClick={() => {
-                captureAnalytics('nod_task_action', { action: 'reply' });
+                captureAnalytics('task_action', { action: 'reply' });
                 onReply();
               }}
             >
@@ -304,7 +304,7 @@ export function TaskCard({
               variant="ghost"
               size="sm"
               onClick={() => {
-                captureAnalytics('nod_task_action', { action: 'show_in_chat' });
+                captureAnalytics('task_action', { action: 'show_in_chat' });
                 window.dispatchEvent(
                   new window.CustomEvent('nod:focus-message', {
                     detail: { messageId: task.messageId },
@@ -321,7 +321,7 @@ export function TaskCard({
             size="sm"
             aria-expanded={showActivity}
             onClick={() => {
-              if (!showActivity) captureAnalytics('nod_task_action', { action: 'show_activity' });
+              if (!showActivity) captureAnalytics('task_action', { action: 'show_activity' });
               setShowActivity(!showActivity);
             }}
           >
@@ -333,7 +333,7 @@ export function TaskCard({
               size="sm"
               disabled={stopping}
               onClick={async () => {
-                captureAnalytics('nod_task_action', { action: 'stop' });
+                captureAnalytics('task_action', { action: 'stop' });
                 setStopping(true);
                 setError('');
                 try {
@@ -422,7 +422,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
   const history = useScheduleHistory();
   const [view, setView] = useState<(typeof views)[number]>('current');
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: next });
+    if (next !== view) captureAnalytics('tab_viewed', { page: 'tasks', tab: next });
     setView(next);
   };
   const tabsId = useId();
@@ -472,7 +472,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
   useEffect(() => {
     if (!tabbed || seen.current) return;
     seen.current = true;
-    captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view });
+    captureAnalytics('tab_viewed', { page: 'tasks', tab: view });
   }, [tabbed]);
   const counts = {
     current: tasks.data ? open.length : null,

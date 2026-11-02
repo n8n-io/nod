@@ -330,7 +330,7 @@ describe('account routes', () => {
       );
       await request({ onboardingCompleted: true });
       assert.equal(f.calls.started, 1);
-      analytics.capture('local-owner', { event: 'nod_conversation_reset' });
+      analytics.capture('local-owner', { event: 'conversation_reset' });
       assert.equal(captured.length, 0);
       const opted = await request({ usageData: true });
       assert.equal(opted.statusCode, 200);
@@ -339,10 +339,10 @@ describe('account routes', () => {
       assert.equal(opted.json().analytics.enabled, available);
       assert.equal(f.record().usageData, true);
       await request({ theme: 'dark' });
-      analytics.forOwner('local-owner')({ event: 'nod_chat_stopped' });
+      analytics.forOwner('local-owner')({ event: 'chat_stopped' });
       assert.deepEqual(
         captured
-          .filter(({ event }) => event === 'nod_setting_changed')
+          .filter(({ event }) => event === 'setting_changed')
           .map(({ properties }) => ({
             setting: properties.setting,
             actor: properties.actor,
@@ -359,16 +359,16 @@ describe('account routes', () => {
         captured.map((event) => [event.distinctId, event.event]),
         available
           ? [
-              [`local:${installationId}`, 'nod_setting_changed'],
-              [`local:${installationId}`, 'nod_setting_changed'],
-              [`local:${installationId}`, 'nod_settings_updated'],
-              [`local:${installationId}`, 'nod_chat_stopped'],
+              [`local:${installationId}`, 'setting_changed'],
+              [`local:${installationId}`, 'setting_changed'],
+              [`local:${installationId}`, 'settings_updated'],
+              [`local:${installationId}`, 'chat_stopped'],
             ]
           : [],
       );
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
-      analytics.capture('local-owner', { event: 'nod_chat_stopped' });
+      analytics.capture('local-owner', { event: 'chat_stopped' });
       assert.equal(captured.length, available ? 4 : 0);
     }
   });
@@ -583,7 +583,7 @@ describe('analytics privacy', () => {
       captureConnection(capture, connection, 'connected');
       await withServiceAnalytics(capture, connection, async () => ({ private: origin }));
     }
-    const entries = captured.filter(({ event }) => event === 'nod_secure_entry_changed');
+    const entries = captured.filter(({ event }) => event === 'secure_entry_changed');
     assert.equal(entries.length, 15);
     assert.deepEqual(
       new Set(entries.map(({ properties: { kind, status } }) => JSON.stringify({ kind, status }))),
@@ -595,10 +595,10 @@ describe('analytics privacy', () => {
         ].map((entry) => JSON.stringify(entry)),
       ),
     );
-    const connections = captured.filter(({ event }) => event === 'nod_connection_changed');
+    const connections = captured.filter(({ event }) => event === 'connection_changed');
     assert.equal(connections.length, addresses.length);
     assert.ok(connections.every(({ properties }) => properties.app === 'custom'));
-    const services = captured.filter(({ event }) => event === 'nod_service_used');
+    const services = captured.filter(({ event }) => event === 'service_used');
     assert.equal(services.length, addresses.length);
     assert.ok(
       services.every(
@@ -623,11 +623,11 @@ describe('analytics privacy', () => {
         properties: { domain: 'example.com', via: 'browser', subagent: false },
       },
       {
-        event: 'nod_secure_entry_changed',
+        event: 'secure_entry_changed',
         properties: { kind: 'payment', status: 'submitted', amount: 42 },
       },
       {
-        event: 'nod_connection_changed',
+        event: 'connection_changed',
         properties: {
           app: 'custom',
           connection_method: 'mcp',
@@ -635,7 +635,7 @@ describe('analytics privacy', () => {
           domain: 'example.com',
         },
       },
-      { event: 'nod_vault_imported', properties: { count: 1, domains: ['example.com'] } },
+      { event: 'vault_imported', properties: { count: 1, domains: ['example.com'] } },
     ])
       capture(event as never);
     assert.equal(captured.length, count);
@@ -689,7 +689,7 @@ describe('analytics privacy', () => {
         analytics.withSystemWork(owner, activity, async () => {
           await model();
           analytics.capture(owner, {
-            event: 'nod_service_used',
+            event: 'service_used',
             properties: {
               app: 'gmail',
               connection_method: 'managed_app',
@@ -702,10 +702,7 @@ describe('analytics privacy', () => {
     );
     for (const activity of ['memory_learning', 'onboarding', 'writing_style']) {
       const events = captured.filter((event) => event.properties.system_activity === activity);
-      assert.deepEqual(events.map((event) => event.event).sort(), [
-        'nod_model_used',
-        'nod_service_used',
-      ]);
+      assert.deepEqual(events.map((event) => event.event).sort(), ['model_used', 'service_used']);
       assert.ok(
         events.every(
           (event) =>
@@ -719,7 +716,7 @@ describe('analytics privacy', () => {
     assert.equal(captured.at(-1)!.properties.work_type, 'unclassified');
     await analytics.withRun(owner, async () => {
       analytics.capture(owner, {
-        event: 'nod_turn_started',
+        event: 'turn_started',
         properties: {
           source: 'user',
           channel: 'web',
@@ -736,14 +733,14 @@ describe('analytics privacy', () => {
     assert.ok(captured.at(-1)!.properties.run_id);
     const before = captured.length;
     await analytics.withSystemWork(owner, 'onboarding', async () => {
-      analytics.capture('foreign-system-owner', { event: 'nod_chat_stopped' });
+      analytics.capture('foreign-system-owner', { event: 'chat_stopped' });
       analytics.setUsageData(owner, false);
       analytics.setUsageData(owner, true);
       await model();
     });
     assert.equal(captured.length, before);
-    assert.equal(captured.filter((event) => event.event === 'nod_turn_started').length, 1);
-    assert.equal(captured.filter((event) => event.event === 'nod_turn_completed').length, 0);
+    assert.equal(captured.filter((event) => event.event === 'turn_started').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'turn_completed').length, 0);
   });
 
   test('agent model usage analytics carry the request duration and cached input', async (t) => {
@@ -796,7 +793,7 @@ describe('analytics privacy', () => {
     const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
     await analytics.withRun('owner-fixture', async () => {
       analytics.capture('owner-fixture', {
-        event: 'nod_turn_started',
+        event: 'turn_started',
         properties: {
           source: 'event',
           channel: 'web',
@@ -807,8 +804,8 @@ describe('analytics privacy', () => {
       });
       await opened.prompt('Synthetic', []);
     });
-    const used = captured.find((event) => event.event === 'nod_model_used')!;
-    const started = captured.find((event) => event.event === 'nod_turn_started')!;
+    const used = captured.find((event) => event.event === 'model_used')!;
+    const started = captured.find((event) => event.event === 'turn_started')!;
     assert.equal(used.properties.run_id, started.properties.run_id);
     assert.equal(used.properties.work_type, 'background');
     assert.equal(used.properties.owner_requested, false);
@@ -820,7 +817,7 @@ describe('analytics privacy', () => {
     await telemetry.shutdown();
     assert.equal(spans.length, 2);
     assert.equal(spans[0].traceId, spans[1].traceId);
-    assert.equal(captured.filter((event) => event.event === 'nod_model_used').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'model_used').length, 1);
   });
 });
 
@@ -1842,7 +1839,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       { provider: 'openai', method: 'api_key' },
       { provider: 'compatible', method: 'api_key' },
     ].map((properties) => ({
-      event: 'nod_model_connection_changed',
+      event: 'model_connection_changed',
       properties: { ...properties, status: 'failed' },
     }));
     assert.deepEqual(captured, failures);
@@ -1873,7 +1870,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(captured, [
       ...failures,
       {
-        event: 'nod_model_connection_changed',
+        event: 'model_connection_changed',
         properties: { provider: 'openai', method: 'subscription', status: 'connected' },
       },
     ]);
@@ -1929,7 +1926,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       state.connections.push({ ...structuredClone(state.connections[0]), id: unselected });
     });
     const calls = catalogs;
-    const settings = () => captured.filter(({ event }) => event === 'nod_setting_changed');
+    const settings = () => captured.filter(({ event }) => event === 'setting_changed');
     await owner.remove(unselected);
     assert.equal(settings().length, 0);
     assert.equal(owner.view().selection?.connectionId, selected);
@@ -2021,13 +2018,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       }),
       [
         {
-          event: 'nod_model_connection_changed',
+          event: 'model_connection_changed',
           provider: 'compatible',
           method: 'api_key',
           status: 'connected',
         },
         {
-          event: 'nod_model_connection_observed',
+          event: 'model_connection_observed',
           provider: 'compatible',
           method: 'api_key',
           selected: true,
@@ -2052,7 +2049,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       url: address,
       key: 'fixture-rotated-key',
     });
-    const settingEvents = () => captured.filter(({ event }) => event === 'nod_setting_changed');
+    const settingEvents = () => captured.filter(({ event }) => event === 'setting_changed');
     await owner.select({ connectionId: id, modelId: 'fixture-alternate', effort: 'off' });
     assert.equal(settingEvents().length, 1);
     assert.deepEqual(
@@ -2649,7 +2646,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const history = createFeedbackActivity('runtime');
   const privateValue = 'A private person and their confidential project';
-  history.record('nod_connection_changed', {
+  history.record('connection_changed', {
     app: 'gmail',
     connection_method: 'managed_app',
     status: 'failed',
@@ -2657,7 +2654,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     domain: privateValue,
     account: privateValue,
   });
-  history.record('nod_service_used', {
+  history.record('service_used', {
     app: privateValue,
     connection_method: 'mcp',
     outcome: 'failed',
@@ -2703,7 +2700,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   setRequestAccount('diagnostic-owner-one');
   t.after(() => setRequestAccount(null));
   capturePageview('/vault/private-person?secret=private');
-  captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+  captureAnalytics('ui_error', { area: 'chat', action: 'send' });
   assert.equal(requests, 0);
   await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
   for (let index = 0; index < 110; index++)
@@ -2774,7 +2771,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     await assert.rejects(cancelledRequest, { name: 'AbortError' });
     assert.equal(feedbackActivitySnapshot().length, changedOwner ? 0 : 1);
   }
-  feedbackActivity.record('nod_ui_error', { area: 'settings', action: 'load' });
+  feedbackActivity.record('ui_error', { area: 'settings', action: 'load' });
   setRequestAccount(null);
   assert.deepEqual(feedbackActivitySnapshot(), []);
   for (const path of ['/api/session', '/api/access']) {
@@ -3854,7 +3851,7 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     analytics.setUsageData(owner, true);
     const changes = () =>
       captured
-        .filter(({ event }) => event === 'nod_setting_changed')
+        .filter(({ event }) => event === 'setting_changed')
         .map(({ properties }) => ({
           setting: properties.setting,
           actor: properties.actor,

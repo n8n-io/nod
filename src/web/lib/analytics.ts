@@ -9,69 +9,69 @@ import type { AttachmentKind } from '../../shared/attachment-kind';
 import type { Presentation } from '../../shared/presentation';
 
 type AnalyticsEvents = {
-  nod_onboarding_step_viewed: {
+  onboarding_step_viewed: {
     step: 'welcome' | 'email' | 'brain' | 'privacy';
     direction: 'forward' | 'back';
   };
-  nod_onboarding_step_skipped: { step: 'email' };
-  nod_local_setting_changed:
+  onboarding_step_skipped: { step: 'email' };
+  local_setting_changed:
     | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
     | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
     | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
-  nod_notification_opened: { kind: 'reply' };
-  nod_app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
-  nod_presentation_viewed: { kind: Presentation['type'] };
-  nod_answer_choices_viewed: { multiple: boolean; option_count: number };
-  nod_answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
-  nod_artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
-  nod_artifact_action: {
+  notification_opened: { kind: 'reply' };
+  app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
+  presentation_viewed: { kind: Presentation['type'] };
+  answer_choices_viewed: { multiple: boolean; option_count: number };
+  answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
+  artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
+  artifact_action: {
     kind: AttachmentKind | 'file';
     location: 'message' | 'drawer' | 'commands' | 'composer';
     action: 'copy' | 'download' | 'download_requested' | 'open' | 'reveal' | 'reuse_requested';
   };
-  nod_settings_viewed: {
+  settings_viewed: {
     tab: 'general' | 'models' | 'memory';
   };
-  nod_chat_message_sent: {
+  chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
     source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
     input: 'text' | 'voice';
   };
-  nod_chat_stop_requested: undefined;
-  nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
-  nod_setup_link_clicked: { setup: 'app' | 'vault' | 'browser' };
-  nod_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
-  nod_message_reaction_changed: {
+  chat_stop_requested: undefined;
+  task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
+  setup_link_clicked: { setup: 'app' | 'vault' | 'browser' };
+  browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
+  message_reaction_changed: {
     operation: 'add' | 'remove' | 'change';
     reaction: 'thumbs_up' | 'heart' | 'joy' | 'party' | 'wow' | 'pray' | 'thumbs_down' | 'other';
     method: 'quick' | 'picker' | 'double_click' | 'menu' | 'pin';
     role: 'assistant' | 'user';
   };
-  nod_message_action: {
+  message_action: {
     action: 'copy' | 'reply';
     role: 'assistant' | 'user';
     method: 'button' | 'context_menu';
   };
-  nod_app_connect_clicked: {
+  app_connect_clicked: {
     entry: 'apps' | 'chat' | 'onboarding' | 'manage';
     result: 'opened' | 'needs_access_setup';
   };
-  nod_model_selected: {
+  model_selected: {
     provider: ModelProvider | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
-  nod_attachment_added: {
+  attachment_added: {
     method: 'picker' | 'drop' | 'paste';
     kind: 'image' | 'pdf' | 'other';
     count: '1' | '2-5' | '6+';
   };
-  nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  nod_tab_viewed:
+  task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
+  tab_viewed:
     | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
     | { page: 'apps'; tab: 'all' | 'connected' };
-  nod_ui_error: {
+  ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
   };
@@ -100,76 +100,76 @@ const artifactKinds = [
   'file',
 ];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  nod_onboarding_step_viewed: {
+  onboarding_step_viewed: {
     step: ['welcome', 'email', 'brain', 'privacy'],
     direction: ['forward', 'back'],
   },
-  nod_onboarding_step_skipped: { step: ['email'] },
-  nod_local_setting_changed: {
+  onboarding_step_skipped: { step: ['email'] },
+  local_setting_changed: {
     setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
     value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
   },
-  nod_notification_opened: { kind: ['reply'] },
-  nod_app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
-  nod_presentation_viewed: {
+  notification_opened: { kind: ['reply'] },
+  app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
+  presentation_viewed: {
     kind: ['image', 'map', 'flights', 'seats', 'booking', 'chart', 'apps', 'diagram'],
   },
-  nod_answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
-  nod_answer_choices_selected: {
+  answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
+  answer_choices_selected: {
     multiple: [true, false],
     option_count: [1, 2, 3, 4, 5, 6],
     selected_count: [1, 2, 3, 4, 5, 6],
   },
-  nod_artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
-  nod_artifact_action: {
+  artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
+  artifact_action: {
     kind: artifactKinds,
     location: ['message', 'drawer', 'commands', 'composer'],
     action: ['copy', 'download', 'download_requested', 'open', 'reveal', 'reuse_requested'],
   },
-  nod_settings_viewed: {
+  settings_viewed: {
     tab: ['general', 'models', 'memory'],
   },
-  nod_chat_message_sent: {
+  chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
     source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
     input: ['text', 'voice'],
   },
-  nod_chat_stop_requested: {},
-  nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
-  nod_setup_link_clicked: { setup: ['app', 'vault', 'browser'] },
-  nod_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
-  nod_message_reaction_changed: {
+  chat_stop_requested: {},
+  task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
+  setup_link_clicked: { setup: ['app', 'vault', 'browser'] },
+  browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
+  message_reaction_changed: {
     operation: ['add', 'remove', 'change'],
     reaction: ['thumbs_up', 'heart', 'joy', 'party', 'wow', 'pray', 'thumbs_down', 'other'],
     method: ['quick', 'picker', 'double_click', 'menu', 'pin'],
     role: roles,
   },
-  nod_message_action: {
+  message_action: {
     action: ['copy', 'reply'],
     role: roles,
     method: ['button', 'context_menu'],
   },
-  nod_app_connect_clicked: {
+  app_connect_clicked: {
     entry: ['apps', 'chat', 'onboarding', 'manage'],
     result: ['opened', 'needs_access_setup'],
   },
-  nod_model_selected: {
+  model_selected: {
     provider: [...modelProviders, 'other'],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },
-  nod_attachment_added: {
+  attachment_added: {
     method: ['picker', 'drop', 'paste'],
     kind: ['image', 'pdf', 'other'],
     count: ['1', '2-5', '6+'],
   },
-  nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
-  nod_tab_viewed: {
+  task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
+  tab_viewed: {
     page: ['tasks', 'apps'],
     tab: ['current', 'scheduled', 'previous', 'all', 'connected'],
   },
-  nod_ui_error: {
+  ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
     action: ['load', 'save', 'send', 'connect', 'disconnect', 'prepare', 'stop', 'render'],
   },
@@ -392,14 +392,14 @@ export function analyticsForCurrentSession(): typeof captureAnalytics {
 }
 
 export function appConnectionAnalytics(
-  entry: AnalyticsEvents['nod_app_connection_completed']['entry'],
+  entry: AnalyticsEvents['app_connection_completed']['entry'],
 ) {
   const capture = analyticsForCurrentSession();
   let reported = false;
   const complete = () => {
     if (reported) return;
     reported = true;
-    capture('nod_app_connection_completed', { entry });
+    capture('app_connection_completed', { entry });
   };
   return { complete, transfer: (id: string) => discoveryConnections.set(id, complete) };
 }
@@ -411,7 +411,7 @@ export function takeAppConnectionAnalytics(id: string) {
 }
 
 export function observeAnalyticsView<
-  Event extends 'nod_presentation_viewed' | 'nod_artifact_viewed' | 'nod_answer_choices_viewed',
+  Event extends 'presentation_viewed' | 'artifact_viewed' | 'answer_choices_viewed',
 >(element: HTMLElement, key: string, event: Event, properties: AnalyticsEvents[Event]) {
   const account = requestAccountVersion();
   let intersecting = false;

@@ -65,7 +65,7 @@ The schema doesn't infer task categories, completed goals, or frustration from c
 
 ## Event properties
 
-Events use `analytics_schema=nod_v4`, `environment`, and `app_version` when available. This schema starts fresh; earlier analytics aren't migrated into its dashboards.
+Events use `analytics_schema=v4`, `environment`, and `app_version` when available. This schema starts fresh; earlier analytics aren't migrated into its dashboards.
 
 UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`.
 
@@ -81,52 +81,52 @@ Server events must pass a strict schema. UI events keep only allowed properties 
 
 ### Setup and app interaction
 
-| Event                                                     | What it records                                                                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `$pageview`                                               | Normalized app route. URLs use the placeholder `https://app.nod.example` host.                               |
-| `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
-| `nod_onboarding_step_skipped`                             | Skipped `email` step.                                                                                        |
-| `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                                          |
-| `nod_settings_viewed`, `nod_tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                                   |
-| `nod_local_setting_changed`                               | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                  |
-| `nod_notification_opened`                                 | Clicked browser reply notification, without its content. Native notification clicks aren't observed.         |
-| `nod_chat_message_sent`                                   | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source. |
-| `nod_chat_stop_requested`                                 | Stop requested in the app.                                                                                   |
-| `nod_task_card_started`, `nod_task_action`                | Card kind and bounded position, or fixed task control.                                                       |
-| `nod_setup_link_clicked`, `nod_link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                        |
-| `nod_browser_handoff_action`                              | Successful done, back, reload, expand, or collapse operation.                                                |
-| `nod_message_reaction_changed`, `nod_message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                |
-| `nod_attachment_added`                                    | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                 |
-| `nod_app_connect_clicked`, `nod_app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                               |
-| `nod_model_selected`                                      | Provider, settings/onboarding entry, and whether the recommendation was chosen.                              |
-| `nod_ui_error`                                            | Fixed area and action, without error text.                                                                   |
-| `nod_feedback_sent`                                       | Bug/feature/other category and attachment/report booleans, without feedback content.                         |
+| Event                                             | What it records                                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `$pageview`                                       | Normalized app route. URLs use the placeholder `https://app.example` host.                                   |
+| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
+| `onboarding_step_skipped`                         | Skipped `email` step.                                                                                        |
+| `onboarding_completed`                            | First saved completion and selected model provider, when available.                                          |
+| `settings_viewed`, `tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                                   |
+| `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                  |
+| `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.         |
+| `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source. |
+| `chat_stop_requested`                             | Stop requested in the app.                                                                                   |
+| `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                       |
+| `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                        |
+| `browser_handoff_action`                          | Successful done, back, reload, expand, or collapse operation.                                                |
+| `message_reaction_changed`, `message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                |
+| `attachment_added`                                | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                 |
+| `app_connect_clicked`, `app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                               |
+| `model_selected`                                  | Provider, settings/onboarding entry, and whether the recommendation was chosen.                              |
+| `ui_error`                                        | Fixed area and action, without error text.                                                                   |
+| `feedback_sent`                                   | Bug/feature/other category and attachment/report booleans, without feedback content.                         |
 
 Connecting email is optional. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
 ### Runs, models, and connected services
 
-| Event                                                            | What it records                                                                                                                                                                      |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `nod_turn_started`                                               | Source, channel, background flag, work category, owner-requested flag, and selected public model when available.                                                                     |
-| `nod_turn_completed`                                             | The same context, outcome, execution/queue milliseconds, and bounded waiting or failure reason.                                                                                      |
-| `nod_task_finished`                                              | Committed task status (`done` or `cancelled`) and actor (`owner` or `agent`).                                                                                                        |
-| `nod_prepared_work_saved`                                        | A changed preparation or saved offer message, with `prepared` or `notified` outcome.                                                                                                 |
-| `nod_prepared_work_updated`                                      | Changed owner-requested control: `useful`, `not_useful`, `handled`, `dismiss`, or `snooze`.                                                                                          |
-| `nod_chat_stopped`, `nod_task_stopped`, `nod_conversation_reset` | Server-accepted stop or completed reset.                                                                                                                                             |
-| `nod_tool_used`                                                  | Fixed tool category, outcome, milliseconds, and subagent flag.                                                                                                                       |
-| `nod_model_used`                                                 | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.                                    |
-| `nod_model_connection_changed`, `nod_model_connection_observed`  | Provider, API-key/subscription/OAuth method, status or selected-model state, and bounded effort.                                                                                     |
-| `nod_connection_changed`, `nod_connection_observed`              | Public app or `custom`, connection method, and status/bounded failure reason where applicable.                                                                                       |
-| `nod_service_used`                                               | App, method, outcome, milliseconds, bounded failure reason, and optional preparation phase.                                                                                          |
-| `nod_source_read`                                                | Source category (`connected_app`, `tasks`, `other`), discovery/record-read operation, outcome, milliseconds, and bounded record/unavailable counts.                                  |
-| `nod_confirmation_changed`                                       | Asked/approved/declined/executed/expired/uncertain, fixed action kind, and turn source.                                                                                              |
-| `nod_secure_entry_changed`                                       | Sign-in/payment/code kind and requested/superseded/approved/submitted/failed/uncertain state.                                                                                        |
-| `nod_settings_updated`                                           | Accepted settings request by section, operation, and optional channel; can include unchanged writes. Channel operations name the request, not confirmed connection or disconnection. |
-| `nod_setting_changed`                                            | Committed setting change by fixed setting, owner/agent/system actor, and bounded state when available. No free-form values.                                                          |
-| `nod_schedule_changed`                                           | Create/update/delete, once/recurring kind, bounded cadence, and user/agent actor.                                                                                                    |
-| `nod_memory_changed`                                             | Note/skill, save/forget/archive/clear, and owner/agent/background actor.                                                                                                             |
-| `nod_vault_changed`, `nod_vault_imported`                        | Login/card kind and operation, or number imported. No domains or inventory.                                                                                                          |
+| Event                                                   | What it records                                                                                                                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `turn_started`                                          | Source, channel, background flag, work category, owner-requested flag, and selected public model when available.                                                                     |
+| `turn_completed`                                        | The same context, outcome, execution/queue milliseconds, and bounded waiting or failure reason.                                                                                      |
+| `task_finished`                                         | Committed task status (`done` or `cancelled`) and actor (`owner` or `agent`).                                                                                                        |
+| `prepared_work_saved`                                   | A changed preparation or saved offer message, with `prepared` or `notified` outcome.                                                                                                 |
+| `prepared_work_updated`                                 | Changed owner-requested control: `useful`, `not_useful`, `handled`, `dismiss`, or `snooze`.                                                                                          |
+| `chat_stopped`, `task_stopped`, `conversation_reset`    | Server-accepted stop or completed reset.                                                                                                                                             |
+| `tool_used`                                             | Fixed tool category, outcome, milliseconds, and subagent flag.                                                                                                                       |
+| `model_used`                                            | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.                                    |
+| `model_connection_changed`, `model_connection_observed` | Provider, API-key/subscription/OAuth method, status or selected-model state, and bounded effort.                                                                                     |
+| `connection_changed`, `connection_observed`             | Public app or `custom`, connection method, and status/bounded failure reason where applicable.                                                                                       |
+| `service_used`                                          | App, method, outcome, milliseconds, bounded failure reason, and optional preparation phase.                                                                                          |
+| `source_read`                                           | Source category (`connected_app`, `tasks`, `other`), discovery/record-read operation, outcome, milliseconds, and bounded record/unavailable counts.                                  |
+| `confirmation_changed`                                  | Asked/approved/declined/executed/expired/uncertain, fixed action kind, and turn source.                                                                                              |
+| `secure_entry_changed`                                  | Sign-in/payment/code kind and requested/superseded/approved/submitted/failed/uncertain state.                                                                                        |
+| `settings_updated`                                      | Accepted settings request by section, operation, and optional channel; can include unchanged writes. Channel operations name the request, not confirmed connection or disconnection. |
+| `setting_changed`                                       | Committed setting change by fixed setting, owner/agent/system actor, and bounded state when available. No free-form values.                                                          |
+| `schedule_changed`                                      | Create/update/delete, once/recurring kind, bounded cadence, and user/agent actor.                                                                                                    |
+| `memory_changed`                                        | Note/skill, save/forget/archive/clear, and owner/agent/background actor.                                                                                                             |
+| `vault_changed`, `vault_imported`                       | Login/card kind and operation, or number imported. No domains or inventory.                                                                                                          |
 
 An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelled`, `interrupted`, or `skipped`. Success means execution finished; it doesn't verify the whole task. A crash can leave a start without a completion. One turn can handle several queued messages.
 
@@ -146,14 +146,14 @@ The `system` setting actor identifies app-reported automatic browser-timezone in
 
 ### Outputs and answer choices
 
-| Event                         | What it records                                                                                                       |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `nod_output_created`          | Committed assistant presentation or file delivery, by kind and count.                                                 |
-| `nod_presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation.                                              |
-| `nod_artifact_viewed`         | Artifact kind and message/drawer location.                                                                            |
-| `nod_artifact_action`         | Kind, message/drawer/commands/composer location, and copy/download/download-request/open/reveal/reuse-request action. |
-| `nod_answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                                                                 |
-| `nod_answer_choices_selected` | The same context and number successfully selected (one to six).                                                       |
+| Event                     | What it records                                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `output_created`          | Committed assistant presentation or file delivery, by kind and count.                                                 |
+| `presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation.                                              |
+| `artifact_viewed`         | Artifact kind and message/drawer location.                                                                            |
+| `artifact_action`         | Kind, message/drawer/commands/composer location, and copy/download/download-request/open/reveal/reuse-request action. |
+| `answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                                                                 |
+| `answer_choices_selected` | The same context and number successfully selected (one to six).                                                       |
 
 Views require a visible app and content intersecting its viewport. Repeated mounting doesn't count again within the current capture period. These observations aren't unique files or a linked conversion funnel.
 
@@ -165,7 +165,7 @@ Answer-choice collectors and dashboards are ready for the separate answer-choice
 
 ### Read first-attempt outcomes
 
-The first-attempt table starts with each installation's first observed `nod_v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
+The first-attempt table starts with each installation's first observed `v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
 
 No start is separated into an open seven-day window or an elapsed window. A start without a matching completion remains unknown, not failed. Missing analytics run IDs are reported separately. Results include observations up to the earlier of now and the selected end date. A matching completion can occur after the seven-day start window.
 
@@ -173,7 +173,7 @@ The denominator includes all selected observed onboarding completions, including
 
 ### Read return and cost measurements
 
-The primary return table starts at an installation's first observed successful owner-requested execution segment in `nod_v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
+The primary return table starts at an installation's first observed successful owner-requested execution segment in `v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
 
 A return is a later owner-requested execution start from chat or Tasks (`source=user` or `task`). All resume starts are excluded. Queue delays can move starts across window boundaries, and messages merged into a running turn don't create separate starts.
 
@@ -186,7 +186,7 @@ A return is a later owner-requested execution start from chat or Tasks (`source=
 
 Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish whole-task retention. The separate first-attempt return charts are diagnostic and aren't compared with that reference.
 
-The segment-cost table groups `nod_model_used` records by installation and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
+The segment-cost table groups `model_used` records by installation and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
 
 Mean, median, and p90 use samples with at least one priced request and can represent partial costs. Coverage columns identify fully priced samples, unpriced requests, and samples with no prices; an entirely unpriced group has no cost value. Date ranges can truncate segments. Segments without model records and maintenance or unclassified work without a run ID are absent from this table, not free; total model-spend and pricing-coverage charts retain unscoped usage. Neither table exposes private task or turn IDs.
 
@@ -198,7 +198,7 @@ NPS, reasons for leaving, role, company size, AI experience, and preferred AI to
 
 Nod does not collect session recordings, screen captures, DOM snapshots, or replay metadata for analytics. The recorder is disabled and snapshot events are rejected.
 
-Page URLs use `https://app.nod.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
+Page URLs use `https://app.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
 
 Autocapture, console and network capture, automatic exceptions, feature-flag events, and remote survey popups are disabled.
 

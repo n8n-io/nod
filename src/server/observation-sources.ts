@@ -148,7 +148,7 @@ export function createObservationSources(
           : 'other';
     const capture = (outcome: 'succeeded' | 'failed' | 'cancelled', result?: ObservationBatch) =>
       options.analytics?.({
-        event: 'nod_source_read',
+        event: 'source_read',
         properties: {
           source_type,
           operation: input.query ? 'discovery' : 'records',

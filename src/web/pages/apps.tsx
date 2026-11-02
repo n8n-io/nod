@@ -200,15 +200,15 @@ export function Apps({
   useEffect(() => {
     if (seen.current) return;
     seen.current = true;
-    captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view });
+    captureAnalytics('tab_viewed', { page: 'apps', tab: view });
   }, []);
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'apps', tab: next });
+    if (next !== view) captureAnalytics('tab_viewed', { page: 'apps', tab: next });
     setView(next);
   };
   useEffect(() => {
     if (loadError || (catalogError && catalogStatus !== 403))
-      captureAnalytics('nod_ui_error', { area: 'apps', action: 'load' });
+      captureAnalytics('ui_error', { area: 'apps', action: 'load' });
   }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -449,7 +449,7 @@ export function Apps({
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
     const completion = appConnectionAnalytics(entry);
-    capture('nod_app_connect_clicked', { entry, result: 'opened' });
+    capture('app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
@@ -553,7 +553,7 @@ export function Apps({
           ? restarting
           : { ...context, outcome: 'failed', error: errorMessage(cause) },
       );
-      capture('nod_ui_error', { area: 'apps', action: 'connect' });
+      capture('ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -582,7 +582,7 @@ export function Apps({
       void refresh();
     } catch (cause) {
       if (request.signal.aborted) return;
-      capture('nod_ui_error', { area: 'apps', action: 'disconnect' });
+      capture('ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
       throw cause;
     } finally {

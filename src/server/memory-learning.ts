@@ -65,7 +65,7 @@ export function createMemoryLearning(options: {
   const report = (changes: ReturnType<typeof applyOps>, actor: 'agent' | 'background') => {
     for (const { operation } of changes)
       options.analytics?.({
-        event: 'nod_memory_changed',
+        event: 'memory_changed',
         properties: { kind: 'note', operation, actor },
       });
   };

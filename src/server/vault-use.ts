@@ -4,7 +4,7 @@ import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 
-type SecureEntry = Extract<AnalyticsEvent, { event: 'nod_secure_entry_changed' }>['properties'];
+type SecureEntry = Extract<AnalyticsEvent, { event: 'secure_entry_changed' }>['properties'];
 
 interface SecureEntryUse {
   kind: string;
@@ -23,7 +23,7 @@ export function captureSecureEntry(
       : use.kind === 'otp'
         ? 'code'
         : 'sign_in';
-  analytics?.({ event: 'nod_secure_entry_changed', properties: { kind, status } });
+  analytics?.({ event: 'secure_entry_changed', properties: { kind, status } });
 }
 
 export class VaultUseError extends Error {

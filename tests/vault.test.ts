@@ -1692,8 +1692,7 @@ test(
         createPayments(pool, {
           ownerId: 'local-development',
           analytics: (event) => {
-            if (event.event === 'nod_secure_entry_changed')
-              secureEntries.push(event.properties.status);
+            if (event.event === 'secure_entry_changed') secureEntries.push(event.properties.status);
           },
           uses: vault.uses,
           present: async (turn, input) => {
@@ -3452,7 +3451,7 @@ test('analytics routes collapse private paths to known pages', async () => {
     assert.equal(analyticsRoute(path), route, path);
   assert.equal(
     sanitizedAnalyticsUrl('/payments/synthetic-private-id?code=1'),
-    'https://app.nod.example/payments',
+    'https://app.example/payments',
   );
 });
 
@@ -4061,66 +4060,66 @@ let root=createRoot(document.getElementById('root'));
 const render=element=>act(async()=>root.render(element));
 const count=name=>events.filter(event=>event.event===name).length;
 await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
-check('UI2-not-mounted',count('nod_presentation_viewed')===0);
+check('UI2-not-mounted',count('presentation_viewed')===0);
 await act(async()=>visible('.message-presentation'));
 await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
 await act(async()=>visible('.message-presentation'));
-check('UI2-once',count('nod_presentation_viewed')===1);
+check('UI2-once',count('presentation_viewed')===1);
 Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
 await render(createElement(MessagePresentation,{value:diagram,messageId:'private-other-message'}));
 await act(async()=>visible('.message-presentation'));
-check('UI2-hidden-tab',count('nod_presentation_viewed')===1);
+check('UI2-hidden-tab',count('presentation_viewed')===1);
 Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
 await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
-check('UI2-holdout',events.filter(event=>event.event==='nod_presentation_viewed').map(event=>event.properties.kind).join(',')==='chart,diagram');
+check('UI2-holdout',events.filter(event=>event.event==='presentation_viewed').map(event=>event.properties.kind).join(',')==='chart,diagram');
 const file={id:'00000000-0000-4000-8000-000000000001',url:'/api/artifacts/00000000-0000-4000-8000-000000000001',name:privateValue+'.txt',size:12,mimeType:'text/plain'};
 window.fetch=globalThis.fetch=async()=>new Response('Private file', {headers:{'content-type':'text/plain'}});
 Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}});
 const files=()=>createElement(ArtifactWorkspace,{files:[file],className:'test-workspace'},createElement(MessageAttachments,{attachments:[file]}));
 await render(files());
 await act(async()=>visible('.attachment-card'));
-check('UI3-message-exposure',events.filter(event=>event.event==='nod_artifact_viewed'&&event.properties.location==='message').length===1);
+check('UI3-message-exposure',events.filter(event=>event.event==='artifact_viewed'&&event.properties.location==='message').length===1);
 await act(async()=>document.querySelector('.attachment-card-open').click());
 await act(async()=>visible('.artifact-drawer'));
-check('UI3-drawer-open',events.filter(event=>event.event==='nod_artifact_viewed'&&event.properties.location==='drawer').length===1);
+check('UI3-drawer-open',events.filter(event=>event.event==='artifact_viewed'&&event.properties.location==='drawer').length===1);
 await act(async()=>document.querySelector('button[aria-label="Copy contents"]').click());
-check('UI4-copy',events.some(event=>event.event==='nod_artifact_action'&&event.properties.action==='copy'&&event.properties.kind==='text'));
+check('UI4-copy',events.some(event=>event.event==='artifact_action'&&event.properties.action==='copy'&&event.properties.kind==='text'));
 await act(async()=>document.querySelector('.artifact-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
 const drawer=document.querySelector('.artifact-drawer');
 check('UI3-retained-hidden',drawer?.hidden===true);
-const beforeHidden=count('nod_artifact_viewed');
+const beforeHidden=count('artifact_viewed');
 await act(async()=>visible('.artifact-drawer'));
-check('UI3-hidden-no-exposure',count('nod_artifact_viewed')===beforeHidden);
+check('UI3-hidden-no-exposure',count('artifact_viewed')===beforeHidden);
 let rejectSave=false;
 let release;
 window.nodDesktop={fileAction:async()=>{if(rejectSave)throw new Error('Synthetic save failed');if(release===null)await new Promise(resolve=>{release=resolve})}};
 await render(createElement(FileActions,{item:file}));
 const save=()=>document.querySelector('button[aria-label^="Save "]');
 await act(async()=>save().click());
-check('UI4-native-save',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+check('UI4-native-save',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
 rejectSave=true;
 await act(async()=>save().click());
-check('UI4-rejected-save',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+check('UI4-rejected-save',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
 rejectSave=false;release=null;
 await act(async()=>save().click());
 configureAnalytics(undefined);
 configureAnalytics(configuration,'web');
 await act(async()=>release());
-check('UI5-consent-fence',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+check('UI5-consent-fence',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
 release=null;
 await act(async()=>save().click());
 setRequestAccount('synthetic-owner-two');
 await act(async()=>release());
-check('UI5-owner-fence',events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='download').length===1);
+check('UI5-owner-fence',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
 check('UI2-content-free',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(file.id)&&!JSON.stringify(events).includes('private-message'));
 setRequestAccount('synthetic-owner-one');
 configureAnalytics(configuration,'web');
-client.capture('nod_answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
+client.capture('answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
 check('UI7-choices-bounded',events.at(-1).properties.option_count===3&&events.at(-1).properties.selected_count===2&&!JSON.stringify(events.at(-1)).includes(privateValue)&&!JSON.stringify(events.at(-1)).includes(file.id));
 await act(async()=>root.unmount());
 configureAnalytics(undefined);
 dom.window.close();
-console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$'))},null,2));
 assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
 process.exit(0);
 `,
@@ -4167,7 +4166,7 @@ const root=createRoot(document.getElementById('root'));
 await act(async()=>root.render(createElement(Test)));
 const settle=async condition=>{for(let i=0;i<60&&!condition();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
 const start=()=>act(async()=>document.querySelector('button').click());
-const completions=()=>captured.filter(event=>event.event==='nod_app_connection_completed');
+const completions=()=>captured.filter(event=>event.event==='app_connection_completed');
 await start();await settle(()=>checks===1);assert.equal(completions().length,0);
 await act(async()=>channels[0].onmessage({data:{connection:'connected',service:'gmail',attempt}}));
 await settle(()=>checks===2);assert.equal(completions().length,0,'an unverified broadcast must not become a successful conversion');
@@ -4232,7 +4231,7 @@ const root = createRoot(document.getElementById('root'));
 const render = (value) => act(async () => root.render(createElement(StrictMode, null, value)));
 const settle = async (condition) => { for (let i = 0; i < 80 && !condition(); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); assert.ok(Boolean(condition()), 'observable condition did not occur'); };
 const button = (text) => [...document.querySelectorAll('button')].find((value) => value.textContent.trim() === text);
-const completions = () => captured.filter((event) => event.event === 'nod_app_connection_completed');
+const completions = () => captured.filter((event) => event.event === 'app_connection_completed');
 const submit = () => act(async () => {
   document.querySelector('[name="accountName"]').value = 'Synthetic account';
   document.querySelector('[name="token"]').value = 'synthetic-token';
@@ -4342,20 +4341,20 @@ let native;
 function Native(){native=useDesktopSettings();return null}
 await render(createElement(Native));await waitFor(()=>native.settings);
 for(const change of [{theme:'dark'},{launchAtLogin:true},{notifications:true}])await act(async()=>native.save(change));
-check('LS1-saved',count('nod_local_setting_changed')===3);
-const nativeCount=count('nod_local_setting_changed');
+check('LS1-saved',count('local_setting_changed')===3);
+const nativeCount=count('local_setting_changed');
 await act(async()=>native.save({theme:'dark'}));
 nativeMode='fail';await act(async()=>native.save({theme:'light'}).catch(()=>{}));
 nativeMode='ignore';await act(async()=>native.save({theme:'light'}));
-check('LS2-no-op-failure-ignored',count('nod_local_setting_changed')===nativeCount);
+check('LS2-no-op-failure-ignored',count('local_setting_changed')===nativeCount);
 nativeMode='hold';let saved;
 await act(async()=>{saved=native.save({theme:'light'})});
 setRequestAccount('synthetic-another-owner');await act(async()=>{releaseNative();await saved});
-check('LS3-owner-fence',count('nod_local_setting_changed')===nativeCount);
+check('LS3-owner-fence',count('local_setting_changed')===nativeCount);
 restore();await act(async()=>{saved=native.save({theme:'system'})});
 configureAnalytics(undefined);configureAnalytics(config,'web');
 await act(async()=>{releaseNative();await saved});
-check('LS3-consent-fence',count('nod_local_setting_changed')===nativeCount);
+check('LS3-consent-fence',count('local_setting_changed')===nativeCount);
 nativeMode='ok';delete window.nodDesktop;
 let permission='granted',releasePermission,permissionRequests=0;
 class SyntheticNotification{static get permission(){return permission}static requestPermission(){permissionRequests++;return new Promise(resolve=>releasePermission=value=>{permission=value;resolve(value)})}close(){this.onclose?.()}}
@@ -4376,31 +4375,31 @@ await sessionStore.refresh();restore();
 const {BrowserNotificationSettings,BrowserNotificationPrompt}=await import('./src/web/components/browser-notifications.tsx');
 const notice=()=>document.querySelector('[role="switch"][aria-label="Browser notifications"]');
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
-const startNotifications=count('nod_local_setting_changed');
-await click(notice());check('BN1-enabled',count('nod_local_setting_changed')===startNotifications+1);
-await click(button('Send test notification'));check('BN1-test-not-change',count('nod_local_setting_changed')===startNotifications+1);
-await click(notice());check('BN1-disabled',count('nod_local_setting_changed')===startNotifications+2);
+const startNotifications=count('local_setting_changed');
+await click(notice());check('BN1-enabled',count('local_setting_changed')===startNotifications+1);
+await click(button('Send test notification'));check('BN1-test-not-change',count('local_setting_changed')===startNotifications+1);
+await click(notice());check('BN1-disabled',count('local_setting_changed')===startNotifications+2);
 window.localStorage.removeItem('nod.browser-notifications.'+owner);
 await remount(createElement(BrowserNotificationPrompt,{ownerId:owner}));
-await click(button('Not now'));check('BN1-dismissed',count('nod_local_setting_changed')===startNotifications+3);
+await click(button('Not now'));check('BN1-dismissed',count('local_setting_changed')===startNotifications+3);
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 permission='default';await click(notice());await waitFor(()=>releasePermission);
 check('BN2-denied-trigger',permissionRequests===1&&notice().disabled);
 await act(async()=>releasePermission('denied'));
-check('BN2-denied',permission==='denied'&&notice().disabled&&count('nod_local_setting_changed')===startNotifications+3);
+check('BN2-denied',permission==='denied'&&notice().disabled&&count('local_setting_changed')===startNotifications+3);
 permission='default';await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 assert.equal(notice().disabled,false);
 releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
 check('BN2-consent-trigger',permissionRequests===2&&permission==='default'&&notice().disabled);
 configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releasePermission('granted'));
-check('BN2-consent-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.'+owner)==='enabled'&&count('nod_local_setting_changed')===startNotifications+3);
+check('BN2-consent-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.'+owner)==='enabled'&&count('local_setting_changed')===startNotifications+3);
 permission='default';window.localStorage.removeItem('nod.browser-notifications.'+owner);
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 assert.equal(notice().disabled,false);
 releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
 check('BN2-owner-trigger',permissionRequests===3&&permission==='default'&&notice().disabled);
 owner='synthetic-another-owner';await act(async()=>sessionStore.refresh());await act(async()=>releasePermission('granted'));
-check('BN2-owner-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.synthetic-settings-owner')===null&&count('nod_local_setting_changed')===startNotifications+3);
+check('BN2-owner-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.synthetic-settings-owner')===null&&count('local_setting_changed')===startNotifications+3);
 owner='synthetic-settings-owner';await act(async()=>sessionStore.refresh());restore();
 const {MessageBubble}=await import('./src/web/components/message.tsx');
 const message={id:'00000000-0000-4000-8000-000000000711',role:'assistant',text:'SYNTHETIC_PRIVATE_COPY_89271',createdAt:new Date().toISOString(),attachments:[],reactions:[]};
@@ -4409,53 +4408,53 @@ Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:
 await remount(createElement(MessageBubble,{message}));
 const copy=()=>document.querySelector('button[aria-label="Copy message"],button[aria-label="Message copied"]')??document.querySelector('button[aria-label="Copy"]');
 assert.ok(copy(),'copy control exists');
-const copyStart=count('nod_message_action');
-await click(copy());check('CP1-rejected',count('nod_message_action')===copyStart);
+const copyStart=count('message_action');
+await click(copy());check('CP1-rejected',count('message_action')===copyStart);
 copyMode='hold';await click(copy());await waitFor(()=>releaseCopy);
-check('CP1-pending',count('nod_message_action')===copyStart);
-await act(async()=>releaseCopy());check('CP1-success',count('nod_message_action')===copyStart+1);
+check('CP1-pending',count('message_action')===copyStart);
+await act(async()=>releaseCopy());check('CP1-success',count('message_action')===copyStart+1);
 await click(copy());configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseCopy());
-check('CP2-consent-fence',count('nod_message_action')===copyStart+1);
+check('CP2-consent-fence',count('message_action')===copyStart+1);
 await click(copy());setRequestAccount('synthetic-another-owner');await act(async()=>releaseCopy());
-check('CP2-owner-fence',count('nod_message_action')===copyStart+1);restore();
+check('CP2-owner-fence',count('message_action')===copyStart+1);restore();
 const {BrowserHandoff}=await import('./src/web/components/browser-handoff.tsx');
 const handoff=()=>createElement(BrowserHandoff,{turnId:'00000000-0000-4000-8000-000000000712'});
 await remount(handoff());
-const startHandoff=count('nod_browser_handoff_action');
-await click(button('Return to Nod'));check('BH1-rejected',count('nod_browser_handoff_action')===startHandoff);
+const startHandoff=count('browser_handoff_action');
+await click(button('Return to Nod'));check('BH1-rejected',count('browser_handoff_action')===startHandoff);
 handoffMode='hold';await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
-check('BH1-pending',count('nod_browser_handoff_action')===startHandoff);
-await act(async()=>releaseHandoff());check('BH1-success',count('nod_browser_handoff_action')===startHandoff+1);
+check('BH1-pending',count('browser_handoff_action')===startHandoff);
+await act(async()=>releaseHandoff());check('BH1-success',count('browser_handoff_action')===startHandoff+1);
 await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
 configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseHandoff());
-check('BH2-consent-fence',count('nod_browser_handoff_action')===startHandoff+1);
+check('BH2-consent-fence',count('browser_handoff_action')===startHandoff+1);
 await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
 setRequestAccount('synthetic-another-owner');await act(async()=>releaseHandoff());
-check('BH2-owner-fence',count('nod_browser_handoff_action')===startHandoff+1);restore();
+check('BH2-owner-fence',count('browser_handoff_action')===startHandoff+1);restore();
 await remount(handoff());await click(document.querySelector('button[aria-label="Enlarge browser"]'));
 await click(document.querySelector('button[aria-label="Shrink browser"]'));
-check('BH3-resize',count('nod_browser_handoff_action')===startHandoff+3);
+check('BH3-resize',count('browser_handoff_action')===startHandoff+3);
 const {deliverBrowserNotification}=await import('./src/web/lib/browser-notifications.ts');
 permission='granted';window.localStorage.setItem('nod.browser-notifications.'+owner,'enabled');window.focus=()=>{};
 Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
 let notificationCurrent=true;
 const notification=await deliverBrowserNotification(owner,'private-thread',{id:'private-message',createdAt:'2026-10-31T00:00:00Z'},()=>notificationCurrent);
 assert.ok(notification);
-notificationCurrent=false;notification.onclick();check('NO1-stale-owner',count('nod_notification_opened')===0);
-notificationCurrent=true;configureAnalytics(undefined);notification.onclick();check('NO1-consent-off',count('nod_notification_opened')===0);
-configureAnalytics(config,'web');notification.onclick();check('NO1-current-click',count('nod_notification_opened')===1);
+notificationCurrent=false;notification.onclick();check('NO1-stale-owner',count('notification_opened')===0);
+notificationCurrent=true;configureAnalytics(undefined);notification.onclick();check('NO1-consent-off',count('notification_opened')===0);
+configureAnalytics(config,'web');notification.onclick();check('NO1-current-click',count('notification_opened')===1);
 const {FileActions,reuseFile}=await import('./src/web/components/file-actions.tsx');
 const reused=[];window.addEventListener('nod:attach-artifact',event=>reused.push(event.detail));
-const reuseEvents=()=>events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='reuse_requested');
+const reuseEvents=()=>events.filter(event=>event.event==='artifact_action'&&event.properties.action==='reuse_requested');
 const artifact={id:'00000000-0000-4000-8000-000000000713',url:'/api/artifacts/00000000-0000-4000-8000-000000000713',name:'SYNTHETIC_PRIVATE_COPY_89271.txt',mimeType:'text/plain',size:12};
 let nativeAction='open',rejectFile=false;
 window.nodDesktop={fileMenu:async()=>nativeAction,fileAction:async()=>{if(rejectFile)throw new Error('Synthetic native action failure')}};
 await remount(createElement(FileActions,{item:artifact,location:'drawer'}));
 const fileMenu=()=>document.querySelector('button[aria-label^="File actions"]');
-const artifactStart=count('nod_artifact_action');
-rejectFile=true;await click(fileMenu());check('FA1-rejected',count('nod_artifact_action')===artifactStart);
+const artifactStart=count('artifact_action');
+rejectFile=true;await click(fileMenu());check('FA1-rejected',count('artifact_action')===artifactStart);
 rejectFile=false;await click(fileMenu());nativeAction='show';await click(fileMenu());
-check('FA1-accepted',events.filter(event=>event.event==='nod_artifact_action').slice(-2).map(event=>event.properties.action).join(',')==='open,reveal');
+check('FA1-accepted',events.filter(event=>event.event==='artifact_action').slice(-2).map(event=>event.properties.action).join(',')==='open,reveal');
 const buttonReuseStart=reuseEvents().length;
 await click(document.querySelector('button[aria-label^="Use "]'));
 check('FA1-reuse-request',reused.length===1&&reuseEvents().length===buttonReuseStart+1&&reuseEvents().at(-1).properties.location==='drawer');
@@ -4509,15 +4508,15 @@ let quickTheme={theme:'system',resolvedTheme:'light',notifications:false,launchA
 let rejectTheme=false,holdTheme=false,releaseTheme;
 window.nodDesktop={getSettings:async()=>quickTheme,getPreferences:async()=>quickTheme,onPreferences:()=>()=>{},setTheme:async theme=>{if(rejectTheme)throw new Error('Synthetic theme failure');if(holdTheme)await new Promise(resolve=>releaseTheme=resolve);quickTheme={...quickTheme,theme};return quickTheme}};
 const stopTheme=initializeTheme();await settle();
-const themeStart=count('nod_local_setting_changed');
-await setTheme('dark');await setTheme('dark');check('QT1-native-change-only',count('nod_local_setting_changed')===themeStart+1);
-rejectTheme=true;await setTheme('light').catch(()=>{});check('QT1-native-failure',count('nod_local_setting_changed')===themeStart+1);rejectTheme=false;
-holdTheme=true;const pendingTheme=setTheme('light');setRequestAccount('synthetic-another-owner');releaseTheme();await pendingTheme;check('QT1-owner-fence',count('nod_local_setting_changed')===themeStart+1);restore();
+const themeStart=count('local_setting_changed');
+await setTheme('dark');await setTheme('dark');check('QT1-native-change-only',count('local_setting_changed')===themeStart+1);
+rejectTheme=true;await setTheme('light').catch(()=>{});check('QT1-native-failure',count('local_setting_changed')===themeStart+1);rejectTheme=false;
+holdTheme=true;const pendingTheme=setTheme('light');setRequestAccount('synthetic-another-owner');releaseTheme();await pendingTheme;check('QT1-owner-fence',count('local_setting_changed')===themeStart+1);restore();
 stopTheme();delete window.nodDesktop;window.localStorage.setItem('nod.theme','light');
-await setTheme('dark');await setTheme('dark');check('QT1-browser-change-only',count('nod_local_setting_changed')===themeStart+2);
+await setTheme('dark');await setTheme('dark');check('QT1-browser-change-only',count('local_setting_changed')===themeStart+2);
 check('private-data-excluded',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE_COPY_89271')&&!JSON.stringify(events).includes(message.id)&&!JSON.stringify(events).includes('00000000-0000-4000-8000-000000000712'));
 await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
-console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_'))},null,2));
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$'))},null,2));
 assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
 } finally {clearInterval(keepAlive);}
 process.exit(0);
@@ -4590,8 +4589,8 @@ const settle=()=>act(async()=>new Promise(resolve=>setTimeout(resolve,5)));
 const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition(),'drop fixture settled')};
 const editor=()=>document.querySelector('.composer [contenteditable]');
 const conversation=()=>document.querySelector('.conversation-scroll');
-const reuseEvents=()=>events.filter(event=>event.event==='nod_artifact_action'&&event.properties.action==='reuse_requested');
-const attachmentEvents=()=>events.filter(event=>event.event==='nod_attachment_added');
+const reuseEvents=()=>events.filter(event=>event.event==='artifact_action'&&event.properties.action==='reuse_requested');
+const attachmentEvents=()=>events.filter(event=>event.event==='attachment_added');
 const drop=async(target,value,files=[])=>{
  const event=new Event('drop',{bubbles:true,cancelable:true});
  Object.defineProperty(event,'dataTransfer',{value:{types:value?['application/x-nod-artifact']:['Files'],files,getData:type=>type==='application/x-nod-artifact'?value:''}});
@@ -4634,7 +4633,7 @@ await waitFor(()=>uploads.length===2);
 check('DROP7-external-files',reuseEvents().length===externalReuse&&attachmentEvents().length===externalAttachments+2&&attachmentEvents().slice(-2).every(event=>event.properties.method==='drop'));
 check('DROP8-private-data',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE')&&!JSON.stringify(events).includes('private.example.test')&&!JSON.stringify(events).includes(artifact(721).id));
 await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
-console.log(JSON.stringify({checks,events:events.filter(event=>event.event.startsWith('nod_')),renewals:renewals.map(item=>({count:item.ids.length,owner:item.owner})),dispatchCount:dispatches.length,uploadCount:uploads.length},null,2));
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$')),renewals:renewals.map(item=>({count:item.ids.length,owner:item.owner})),dispatchCount:dispatches.length,uploadCount:uploads.length},null,2));
 assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
 } finally {clearInterval(keepAlive);}
 process.exit(0);
@@ -4662,7 +4661,7 @@ const client={init(_key,options){this.options=options;options.loaded?.()},captur
 setAnalyticsClient(client);
 const configuration={enabled:true,distinctId:'local:theme-owner',environment:'development'};
 const restore=()=>{setRequestAccount('theme-owner');configureAnalytics(configuration,'desktop')};
-restore();captureAnalytics('nod_settings_viewed',{tab:'general'});assert.equal(events.length,1,'analytics capture is enabled');
+restore();captureAnalytics('settings_viewed',{tab:'general'});assert.equal(events.length,1,'analytics capture is enabled');
 const settings=theme=>({theme,resolvedTheme:theme==='system'?'dark':theme,notifications:false,launchAtLogin:false});
 let releaseRead,rejectRead,listener,readCalls,saveCalls,persisted,rejectSave;
 function bridge(theme){
@@ -4671,7 +4670,7 @@ function bridge(theme){
  return initializeTheme();
 }
 const settle=async()=>{await Promise.resolve();await Promise.resolve()};
-const themeEvents=()=>events.filter(event=>event.event==='nod_local_setting_changed');
+const themeEvents=()=>events.filter(event=>event.event==='local_setting_changed');
 const keepAlive=setInterval(()=>{},1000);
 try {
  let cleanup=bridge('light');
@@ -4793,7 +4792,7 @@ test('route analytics stay in the consent period that accepted the request', asy
     assert.ok(
       captured.every(
         ({ event, properties }) =>
-          event === 'nod_settings_updated' &&
+          event === 'settings_updated' &&
           properties.section === 'preferences' &&
           properties.operation === 'update',
       ),

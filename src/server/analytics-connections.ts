@@ -1,11 +1,8 @@
 import type { Analytics, AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 
-type ConnectionProperties = Extract<
-  AnalyticsEvent,
-  { event: 'nod_connection_changed' }
->['properties'];
+type ConnectionProperties = Extract<AnalyticsEvent, { event: 'connection_changed' }>['properties'];
 type ServiceFailureReason = NonNullable<
-  Extract<AnalyticsEvent, { event: 'nod_service_used' }>['properties']['failure_reason']
+  Extract<AnalyticsEvent, { event: 'service_used' }>['properties']['failure_reason']
 >;
 export type AnalyticsConnection = {
   app?: string;
@@ -35,7 +32,7 @@ export function captureConnection(
 ) {
   analytics?.(
     {
-      event: 'nod_connection_changed',
+      event: 'connection_changed',
       properties: {
         ...properties(connection),
         status,
@@ -101,7 +98,7 @@ export function captureServiceFailure(
 ) {
   analytics?.(
     {
-      event: 'nod_service_used',
+      event: 'service_used',
       properties: {
         ...properties(connection),
         ...(connection.operation_phase ? { operation_phase: connection.operation_phase } : {}),
@@ -126,7 +123,7 @@ export async function withServiceAnalytics<T>(
   const capture = (outcome: 'succeeded' | 'failed' | 'cancelled', error?: unknown) =>
     analytics?.(
       {
-        event: 'nod_service_used',
+        event: 'service_used',
         properties: {
           ...properties(connection),
           outcome,
@@ -155,7 +152,7 @@ export async function captureConnectionInventory(
   read: () => Promise<AnalyticsConnection[]>,
   models: () => Extract<
     AnalyticsEvent,
-    { event: 'nod_model_connection_observed' }
+    { event: 'model_connection_observed' }
   >['properties'][] = () => [],
 ) {
   const consent = analytics.consent(ownerId);
@@ -171,7 +168,7 @@ export async function captureConnectionInventory(
     analytics.capture(
       ownerId,
       {
-        event: 'nod_connection_observed',
+        event: 'connection_observed',
         properties: value,
       },
       { consentRevision: consent.revision },
@@ -180,7 +177,7 @@ export async function captureConnectionInventory(
   for (const properties of models())
     analytics.capture(
       ownerId,
-      { event: 'nod_model_connection_observed', properties },
+      { event: 'model_connection_observed', properties },
       { consentRevision: consent.revision },
     );
 }

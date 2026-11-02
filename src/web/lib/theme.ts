@@ -74,7 +74,7 @@ export async function setTheme(theme: ThemePreference) {
     if (preferences) {
       applyDesktopPreferences(preferences);
       if (previous !== undefined && previous !== theme && preferences.theme === theme)
-        capture('nod_local_setting_changed', { setting: 'theme', value: theme });
+        capture('local_setting_changed', { setting: 'theme', value: theme });
     }
     return;
   }
@@ -83,7 +83,7 @@ export async function setTheme(theme: ThemePreference) {
     const previous = window.localStorage.getItem(storageKey);
     window.localStorage.setItem(storageKey, theme);
     if (previous !== theme && window.localStorage.getItem(storageKey) === theme)
-      capture('nod_local_setting_changed', { setting: 'theme', value: theme });
+      capture('local_setting_changed', { setting: 'theme', value: theme });
   } catch {}
   applyTheme(resolvedTheme());
 }

@@ -60,7 +60,7 @@ export function useDesktopSettings(enabled = true) {
           value.theme === change.theme &&
           previous.theme !== value.theme
         )
-          capture('nod_local_setting_changed', { setting: 'theme', value: value.theme });
+          capture('local_setting_changed', { setting: 'theme', value: value.theme });
         for (const [key, setting] of [
           ['launchAtLogin', 'launch_at_login'],
           ['notifications', 'desktop_notifications'],
@@ -70,7 +70,7 @@ export function useDesktopSettings(enabled = true) {
             value[key] === change[key] &&
             previous[key] !== value[key]
           )
-            capture('nod_local_setting_changed', {
+            capture('local_setting_changed', {
               setting,
               value: value[key] ? 'enabled' : 'disabled',
             });

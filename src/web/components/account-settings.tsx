@@ -369,10 +369,8 @@ export function AccountSettings({
     const key = `${openRequest}:${value}`;
     if (recordedTab.current === key) return;
     recordedTab.current = key;
-    captureAnalytics('nod_settings_viewed', {
-      tab: value
-        .toLowerCase()
-        .replace(' ', '_') as AnalyticsProperties<'nod_settings_viewed'>['tab'],
+    captureAnalytics('settings_viewed', {
+      tab: value.toLowerCase().replace(' ', '_') as AnalyticsProperties<'settings_viewed'>['tab'],
     });
   }
   const id = useId();

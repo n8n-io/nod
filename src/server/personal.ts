@@ -31,7 +31,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     kind: MemoryChange['kind'] = 'note',
   ) =>
     dependencies.analytics?.({
-      event: 'nod_memory_changed',
+      event: 'memory_changed',
       properties: { kind, operation, actor },
     });
 
@@ -141,7 +141,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       const input = modelSelectionInput.parse(await validateReview(action, args));
       await dependencies.models!.select(input, 'agent');
       dependencies.analytics?.({
-        event: 'nod_settings_updated',
+        event: 'settings_updated',
         properties: { section: 'models', operation: 'update' },
       });
       afterCommit(options?.client ?? pool, refresh);

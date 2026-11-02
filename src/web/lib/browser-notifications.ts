@@ -213,7 +213,7 @@ export async function deliverBrowserNotification(
       notification.close();
       if (!isCurrent()) return;
       window.focus();
-      captureAnalytics('nod_notification_opened', { kind: 'reply' });
+      captureAnalytics('notification_opened', { kind: 'reply' });
       window.dispatchEvent(
         new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
       );

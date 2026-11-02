@@ -999,7 +999,7 @@ export function createProactivity(options: {
       )
         afterCommit(client, () =>
           capture?.({
-            event: 'nod_prepared_work_saved',
+            event: 'prepared_work_saved',
             properties: { outcome: allowed ? 'notified' : 'prepared' },
           }),
         );
@@ -1523,7 +1523,7 @@ export function createProactivity(options: {
         previous.next_check?.getTime() !== row.next_check?.getTime()
       )
         afterCommit(client, () =>
-          capture?.({ event: 'nod_prepared_work_updated', properties: { action: input.action } }),
+          capture?.({ event: 'prepared_work_updated', properties: { action: input.action } }),
         );
       return publicIssue(row);
     };

@@ -16,7 +16,7 @@ Change the event schema, collectors, privacy checks, and dashboards together.
 - **Exclude private content.** No conversations, tool arguments/results, names, contact details, private IDs, URLs/domains, file names/paths, purchase amounts, or raw errors.
 - **Use bounded facts.** Prefer enums, booleans, counts, and milliseconds. Public model/app names require catalog validation; custom values become `custom`.
 - **Count the observed result.** Save/change events follow committed writes or successful responses. Record clicks and requests separately when those are the actual measurement.
-- **Use `nod_<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning.
+- **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning.
 
 Don't infer completed tasks or frustration from conversations. Execution success, useful output, and user satisfaction are separate questions.
 
@@ -51,7 +51,7 @@ Committed output delivery, visible presentation, artifact view, and artifact act
 
 Session recordings are disabled. Don't load a recorder, capture DOM snapshots, or forward replay identifiers. The UI capture boundary rejects snapshot events and replay properties.
 
-Use normalized app routes for navigation. Keep the `https://app.nod.example` placeholder host; real hosts, private IDs, query strings, and fragments must not enter analytics.
+Use normalized app routes for navigation. Keep the `https://app.example` placeholder host; real hosts, private IDs, query strings, and fragments must not enter analytics.
 
 `data-analytics-private` still prevents user-triggered feedback screenshots on sensitive screens. Keep those markers when changing a private surface.
 
@@ -65,21 +65,21 @@ Opt-out must discard queued and retry events. Asynchronous callbacks from an ear
 | Rename an event/property or change its meaning                     | Bump `schemaVersion` in `src/shared/analytics.ts` and replace affected insight queries. |
 | Remove collection                                                  | Delete the collector and schema entry, then remove or replace dependent insights.       |
 
-The current contract is `nod_v4`. It starts fresh. There is no historical migration or requirement to preserve a one-to-one event mapping. Earlier events can remain in PostHog storage but aren't used by current dashboards.
+The current contract is `v4`. It starts fresh. There is no historical migration or requirement to preserve a one-to-one event mapping. Earlier events can remain in PostHog storage but aren't used by current dashboards.
 
 ## Read the dashboards
 
 The team maintains five analytics dashboards:
 
-| Dashboard                        | Questions                                                                                                                       |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Nod · Product health             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                             |
-| Nod · Activation and connections | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
-| Nod · Reliability and cost       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
-| Nod · Outputs and interaction    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
-| Nod · Navigation and controls    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
+| Dashboard                  | Questions                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Product health             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                             |
+| Activation and connections | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
+| Reliability and cost       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
+| Outputs and interaction    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
+| Navigation and controls    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
-All insights filter `analytics_schema=nod_v4` and `environment=production`, include internal and external installations, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
+All insights filter `analytics_schema=v4` and `environment=production`, include internal and external installations, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 
 Internal/test exclusions are off for these dashboards. The production sample intentionally includes staff using release builds. A separate project for internal use is deferred; don't describe this mixed sample as external users.
 
@@ -89,13 +89,13 @@ Internal/test exclusions are off for these dashboards. The production sample int
 - **Execution:** Outcomes describe segments. Waiting isn't success or failure; a completed segment doesn't verify the whole task.
 - **First attempt after setup:** Cohorts start at each installation's first observed onboarding completion, calculated before date selection. Select its first owner-requested chat or Tasks execution start within seven elapsed days. Join only that installation and analytics run ID to the completion. Later retries and resumes don't replace the first result. Open start windows, elapsed windows without starts, missing run IDs, and starts without completions remain separate. All selected onboarding cohorts enter the denominator; incomplete observations aren't failures. The eventual-success funnel answers a different question.
 - **Declared tasks and prepared work:** Task finish events measure committed `done` or `cancelled` transitions. Prepared-work events measure changed preparation, saved offer messages, and changed owner-requested controls, including usefulness feedback. These aren't verified task outcomes or satisfaction scores. No-op and rolled-back writes are excluded.
-- **Return after first success:** The first observed `nod_v4` successful owner-requested execution segment starts the cohort, including a resumed segment. Returns require a later owner-authored chat or Tasks start; all resume starts are excluded. D1, W1, W2, and W4 use elapsed windows of 1–2, 7–14, 14–21, and 28–35 days. Only installations whose entire window has elapsed, as of the earlier of now and the selected end date, enter each denominator. Find the first success globally before applying the selected cohort range, which defaults to 90 days. The 30% W4 reference is a target for this observed sample, not proof of useful whole-job completion or a forecast. Execution starts can be later than message submission because of queueing; messages merged into a running turn create no separate start.
+- **Return after first success:** The first observed `v4` successful owner-requested execution segment starts the cohort, including a resumed segment. Returns require a later owner-authored chat or Tasks start; all resume starts are excluded. D1, W1, W2, and W4 use elapsed windows of 1–2, 7–14, 14–21, and 28–35 days. Only installations whose entire window has elapsed, as of the earlier of now and the selected end date, enter each denominator. Find the first success globally before applying the selected cohort range, which defaults to 90 days. The 30% W4 reference is a target for this observed sample, not proof of useful whole-job completion or a forecast. Execution starts can be later than message submission because of queueing; messages merged into a running turn create no separate start.
 - **Attempt retention:** The separate native retention charts start at the first observed owner-authored request, including existing installations and failed attempts. D0 is cohort size; D1 and W1/W2/W4 measure another request in elapsed, noncumulative windows. These diagnose return after trying Nod and use a different denominator from return after first success.
 - **Connection entry:** Connect clicks and confirmed completions retain their original `apps`, `chat`, `onboarding`, or `manage` entry. The counts don't join individual attempts and aren't a conversion rate.
 - **Costs:** Model estimates exclude unpriced usage, browser fees, and independent integration charges. Tool duration isn't billed browser runtime. Per-segment cost joins installation identity and analytics `run_id`, then groups actual usage by provider and model. Whole-segment estimates and each model's contribution are separate rows; multi-model segments overlap across model rows. Missing prices or missing usage records are not free usage. Standalone system and unclassified requests without a run stay outside per-segment estimates. Segments are not complete multi-turn jobs.
 - **Outputs:** Committed delivery, visibility, copying, and saving are separate observations. Their totals aren't a per-output conversion funnel.
 - **Navigation:** Page and tab views measure observed reach, not time spent or intent. An installation can appear in several rows.
-- **Settings:** `nod_setting_changed` follows a committed value change, attributed to owner, agent, or system. System identifies app-reported automatic browser-timezone initialization; this telemetry hint grants no authority. `nod_settings_updated` counts accepted requests and can include unchanged writes. Its operation names describe the request, not a confirmed connection or disconnection. Local browser notifications record `dismissed` when the owner saves **Not now**, not when a delivered notification closes.
+- **Settings:** `setting_changed` follows a committed value change, attributed to owner, agent, or system. System identifies app-reported automatic browser-timezone initialization; this telemetry hint grants no authority. `settings_updated` counts accepted requests and can include unchanged writes. Its operation names describe the request, not a confirmed connection or disconnection. Local browser notifications record `dismissed` when the owner saves **Not now**, not when a delivered notification closes.
 - **Memory and Vault:** Changes and import batches measure writes. They don't establish inventory, reading, successful sign-in, or usefulness.
 - **Interaction reach:** Distinct installations using reactions, copy/reply, task and browser controls, starter cards, feedback, browser notifications, or voice input. Rows overlap; reactions and feedback reports aren't satisfaction scores.
 

@@ -679,7 +679,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     source?: 'user' | 'agent',
   ) {
     options.analytics?.({
-      event: 'nod_vault_changed',
+      event: 'vault_changed',
       properties: {
         item_type,
         operation,
@@ -844,7 +844,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       }
     }, pool);
     if (result.imported)
-      options.analytics?.({ event: 'nod_vault_imported', properties: { count: result.imported } });
+      options.analytics?.({ event: 'vault_imported', properties: { count: result.imported } });
     return result;
   }
 

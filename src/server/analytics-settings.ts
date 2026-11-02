@@ -1,6 +1,6 @@
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 
-type SettingChange = Extract<AnalyticsEvent, { event: 'nod_setting_changed' }>['properties'];
+type SettingChange = Extract<AnalyticsEvent, { event: 'setting_changed' }>['properties'];
 export type SettingActor = SettingChange['actor'];
 
 function state(setting: SettingChange['setting'], value: unknown): SettingChange['state'] {
@@ -31,7 +31,7 @@ export function captureSettingChanges<T extends object>(
     const setting = keys[property];
     if (!setting || Object.is(before[property], after[property])) continue;
     capture?.({
-      event: 'nod_setting_changed',
+      event: 'setting_changed',
       properties: { setting, actor, state: state(setting, after[property]) },
     });
   }

@@ -30,7 +30,7 @@ export type CaptureAnalytics = {
   snapshot?: () => CaptureAnalytics;
 };
 export const snapshotAnalytics = (capture?: CaptureAnalytics) => capture?.snapshot?.() ?? capture;
-export type MemoryChange = Extract<AnalyticsEvent, { event: 'nod_memory_changed' }>['properties'];
+export type MemoryChange = Extract<AnalyticsEvent, { event: 'memory_changed' }>['properties'];
 
 export function analyticsEnabled(env: Record<string, string | undefined>) {
   const production = env.NODE_ENV === 'production';
@@ -106,7 +106,7 @@ const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', '
 
 export function toolUsed(event: Extract<RuntimeObservation, { type: 'tool_end' }>): AnalyticsEvent {
   return {
-    event: 'nod_tool_used',
+    event: 'tool_used',
     properties: {
       tool: workspaceTools.has(event.name)
         ? 'workspace'
@@ -204,7 +204,7 @@ export async function createAnalytics(options: {
     if (!parsed.success) return;
     if (run) {
       const { data } = parsed;
-      if (data.event === 'nod_turn_started') {
+      if (data.event === 'turn_started') {
         run.work = {
           work_type: data.properties.work_type,
           owner_requested: data.properties.owner_requested,
@@ -212,9 +212,9 @@ export async function createAnalytics(options: {
         if (data.properties.model_provider)
           run.model ??= turnModel(data.properties.model_provider, data.properties.model);
       }
-      if (data.event === 'nod_model_used' && data.properties.purpose === 'agent')
+      if (data.event === 'model_used' && data.properties.purpose === 'agent')
         run.model = turnModel(data.properties.provider, data.properties.model);
-      if (data.event === 'nod_turn_completed' && run.model) {
+      if (data.event === 'turn_completed' && run.model) {
         const { model_provider: _, model: __, ...properties } = data.properties;
         data.properties = { ...properties, ...run.model };
       }
@@ -241,7 +241,7 @@ export async function createAnalytics(options: {
                     owner_requested: false,
                     system_activity: system.activity,
                   }
-                : parsed.data.event === 'nod_model_used'
+                : parsed.data.event === 'model_used'
                   ? { work_type: 'unclassified', owner_requested: false }
                   : {})),
             ...('properties' in parsed.data ? parsed.data.properties : {}),
@@ -325,14 +325,14 @@ export type Analytics = Awaited<ReturnType<typeof createAnalytics>>;
 
 type SettingsSection = Extract<
   AnalyticsEvent,
-  { event: 'nod_settings_updated' }
+  { event: 'settings_updated' }
 >['properties']['section'];
 type SettingsOperation = Extract<
   AnalyticsEvent,
-  { event: 'nod_settings_updated' }
+  { event: 'settings_updated' }
 >['properties']['operation'];
 const settings = (section: SettingsSection, operation: SettingsOperation): AnalyticsEvent => ({
-  event: 'nod_settings_updated',
+  event: 'settings_updated',
   properties: { section, operation },
 });
 const channel =
@@ -350,7 +350,7 @@ const channel =
       ).data;
     if (!provider) return;
     return {
-      event: 'nod_settings_updated',
+      event: 'settings_updated',
       properties: {
         section: 'channels',
         operation: typeof operation === 'function' ? operation(provider) : operation,
@@ -363,9 +363,9 @@ export const analyticsRoutes = new Map<
   string,
   AnalyticsEvent | ((request: FastifyRequest) => AnalyticsEvent | undefined)
 >([
-  ['POST /api/conversation/reset', { event: 'nod_conversation_reset' }],
-  ['POST /api/thread/stop', { event: 'nod_chat_stopped' }],
-  ['POST /api/tasks/:id/stop', { event: 'nod_task_stopped' }],
+  ['POST /api/conversation/reset', { event: 'conversation_reset' }],
+  ['POST /api/thread/stop', { event: 'chat_stopped' }],
+  ['POST /api/tasks/:id/stop', { event: 'task_stopped' }],
   ['PATCH /api/preferences', settings('preferences', 'update')],
   [
     'PUT /api/channel-settings/:provider',
@@ -393,7 +393,7 @@ export const analyticsRoutes = new Map<
       const source = z.enum(['text', 'tooltip']).safeParse(body.source).data;
       return source
         ? {
-            event: 'nod_link_opened',
+            event: 'link_opened',
             properties: {
               source,
               ...(body.position && body.position <= 20 ? { position: body.position } : {}),

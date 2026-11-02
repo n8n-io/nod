@@ -68,7 +68,7 @@ function useNotificationChoice(ownerId: string) {
       const notification = await setBrowserNotifications(ownerId, enabled, isAllowed);
       const saved = browserNotificationStatus(ownerId).choice;
       if (isCurrent() && saved !== previous && saved === (enabled ? 'enabled' : 'disabled'))
-        capture('nod_local_setting_changed', { setting: 'browser_notifications', value: saved });
+        capture('local_setting_changed', { setting: 'browser_notifications', value: saved });
       if (notification) {
         if (!isAllowed()) notification.close();
         else {
@@ -94,7 +94,7 @@ function useNotificationChoice(ownerId: string) {
     try {
       dismissBrowserNotifications(ownerId);
       if (previous !== 'dismissed' && browserNotificationStatus(ownerId).choice === 'dismissed')
-        capture('nod_local_setting_changed', {
+        capture('local_setting_changed', {
           setting: 'browser_notifications',
           value: 'dismissed',
         });

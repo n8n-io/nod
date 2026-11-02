@@ -262,7 +262,7 @@ export async function registerFeedback(
       const delivered = await save(await options.delivery.submit(envelope));
       if (delivered.status === 'submitted' || delivered.status === 'partial')
         capture?.({
-          event: 'nod_feedback_sent',
+          event: 'feedback_sent',
           properties: {
             category: input.category,
             has_attachments: input.attachments.length > 0,

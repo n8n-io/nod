@@ -406,7 +406,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       }
     }
     const first = files[0];
-    captureAnalytics('nod_attachment_added', {
+    captureAnalytics('attachment_added', {
       method,
       kind: first.type.startsWith('image/')
         ? 'image'

@@ -264,7 +264,7 @@ function ArtifactDrawer({
   const kind = attachmentKind(current.mimeType ?? '', current.name);
   useEffect(() => {
     if (!visible || !root.current) return;
-    return observeAnalyticsView(root.current, `${current.id}:drawer`, 'nod_artifact_viewed', {
+    return observeAnalyticsView(root.current, `${current.id}:drawer`, 'artifact_viewed', {
       kind: kind ?? 'file',
       location: 'drawer',
     });
@@ -417,7 +417,7 @@ function ArtifactDrawer({
       const response = await apiResponse(current.url);
       if (!response.ok) throw new Error('The file could not be loaded.');
       await navigator.clipboard.writeText(await response.text());
-      capture('nod_artifact_action', { kind: kind ?? 'file', location: 'drawer', action: 'copy' });
+      capture('artifact_action', { kind: kind ?? 'file', location: 'drawer', action: 'copy' });
       setCopied(true);
     } catch {
       setCopyError('Could not copy. Select the text or download the file.');
@@ -653,7 +653,7 @@ export function ArtifactWorkspace({
             (item) => item.url === url || item.downloadUrl === url,
           );
           if (!file) return;
-          captureAnalytics('nod_artifact_action', {
+          captureAnalytics('artifact_action', {
             kind: attachmentKind(file.mimeType ?? '', file.name) ?? 'file',
             location: link?.closest('.artifact-drawer') ? 'drawer' : 'message',
             action: 'download_requested',

@@ -40,11 +40,12 @@ setRequestAccount('synthetic-owner-one');setAnalyticsClient(client);configureAna
 check('NR1-config',client.options.disable_session_recording===true&&client.options.disable_external_dependency_loading===true);
 check('NR1-flags',client.options.advanced_disable_flags===true);
 capturePageview(window.location.href);
-check('NR4-pageview',sent.length===1&&sent[0].data[0].event==='$pageview'&&sent[0].data[0].properties.$current_url==='https://app.nod.example/settings');
+check('NR4-pageview',sent.length===1&&sent[0].data[0].event==='$pageview'&&sent[0].data[0].properties.$current_url==='https://app.example/settings');
+check('NE1-schema',sent[0].data[0].properties.analytics_schema==='v4');
 const snapshot={event:'$snapshot',properties:{$snapshot_data:[{data:{textContent:'PRIVATE_SCREEN_CANARY'}}],$snapshot_bytes:20,$snapshot_source:'web'}};
 check('NR2-snapshot',client.options.before_send(snapshot)===null);
 check('NR2-unknown',client.options.before_send({event:'$autocapture',properties:{text:'PRIVATE_SCREEN_CANARY'}})===null);
-const event=client.capture('nod_settings_viewed',{
+const event=client.capture('settings_viewed',{
  tab:'general',
  $session_id:'synthetic-session',$window_id:'synthetic-window',
  $snapshot_data:[{data:{textContent:'PRIVATE_SCREEN_CANARY'}}],$snapshot_bytes:20,$snapshot_source:'web',
@@ -52,6 +53,7 @@ const event=client.capture('nod_settings_viewed',{
  $sdk_debug_replay_internal_buffer_length:1,$sdk_debug_replay_flushed_size:20,
  label:'PRIVATE_SCREEN_CANARY',url:window.location.href,
 });
+assert.ok(event,'The product-neutral settings_viewed event must be captured');
 check('NR3-bounded',event.properties.tab==='general'&&!Object.keys(event.properties).some(key=>/snapshot|recording|rrweb|sdk_debug_replay/.test(key)));
 check('NR3-session',event.properties.$session_id==='synthetic-session'&&event.properties.$window_id==='synthetic-window');
 for(const [path,route] of [
@@ -60,21 +62,21 @@ for(const [path,route] of [
  ['/prepared/00000000-0000-4000-8000-000000000705?token=PRIVATE_URL_CANARY','/prepared'],
 ]){
  capturePageview(path);
- check('NR4-'+route,sent.at(-1).data[0].properties.$current_url==='https://app.nod.example'+route);
+ check('NR4-'+route,sent.at(-1).data[0].properties.$current_url==='https://app.example'+route);
 }
 const staleCapture=analyticsForCurrentSession();
-const queued=client.options.before_send({event:'nod_settings_viewed',properties:{tab:'memory'}});
+const queued=client.options.before_send({event:'settings_viewed',properties:{tab:'memory'}});
 configureAnalytics(undefined);
 const before=sent.length;
-captureAnalytics('nod_settings_viewed',{tab:'general'});
+captureAnalytics('settings_viewed',{tab:'general'});
 client._send_request({data:[queued]});
 check('NR5-disabled',sent.length===before&&client.options.before_send(snapshot)===null);
 configureAnalytics(configuration,'web');flushFrames();
-staleCapture('nod_settings_viewed',{tab:'memory'});
+staleCapture('settings_viewed',{tab:'memory'});
 client._send_request({data:[queued]});
 client._retryQueue.retriableRequest({data:[queued]});
 check('NR5-stale',sent.length===before);
-captureAnalytics('nod_settings_viewed',{tab:'models'});
+captureAnalytics('settings_viewed',{tab:'models'});
 check('NR5-current',sent.length===before+1&&sent.at(-1).data[0].properties.tab==='models');
 setRequestAccount('synthetic-owner-two');configureAnalytics({...configuration,distinctId:'local:synthetic-owner-two'},'desktop');flushFrames();
 capturePageview('/apps');
@@ -116,11 +118,12 @@ test('server analytics ignore obsolete replay links while preserving permitted e
   });
   try {
     analytics.setUsageData('synthetic-owner', true);
-    analytics.capture('synthetic-owner', { event: 'nod_chat_stopped' }, {
+    analytics.capture('synthetic-owner', { event: 'chat_stopped' }, {
       replaySessionId: randomUUID(),
     } as AnalyticsDelivery);
     assert.equal(captured.length, 1);
-    assert.equal(captured[0].event, 'nod_chat_stopped');
+    assert.equal(captured[0].event, 'chat_stopped');
+    assert.equal(captured[0].properties.analytics_schema, 'v4');
     assert.equal(captured[0].properties.$session_id, undefined);
     assert.equal(Object.hasOwn(analytics, 'linkReplay'), false);
     assert.equal(Object.hasOwn(analytics, 'replaySession'), false);

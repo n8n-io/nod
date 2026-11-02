@@ -79,7 +79,7 @@ const analyticsReactions: Record<string, ReactionAnalytics['reaction']> = {
   '🙏': 'pray',
   '👎': 'thumbs_down',
 };
-type ReactionAnalytics = AnalyticsProperties<'nod_message_reaction_changed'>;
+type ReactionAnalytics = AnalyticsProperties<'message_reaction_changed'>;
 const messageSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
@@ -507,7 +507,7 @@ export function MessageBubble({
       await post(`/api/messages/${message.id}/reaction`, { reaction: next });
       setReaction(next);
       setSelectedName(next ? name : '');
-      capture('nod_message_reaction_changed', {
+      capture('message_reaction_changed', {
         operation: !next ? 'remove' : reaction ? 'change' : 'add',
         reaction: analyticsReactions[reactionEmoji(next ?? value)] ?? 'other',
         method,
@@ -535,7 +535,7 @@ export function MessageBubble({
             ? undefined
             : articleElement.current?.querySelector<HTMLElement>('.message-text'),
         );
-      capture('nod_message_action', { action: 'copy', role: message.role, method });
+      capture('message_action', { action: 'copy', role: message.role, method });
       setCopied(true);
       clearTimeout(copyTimeout.current);
       copyTimeout.current = setTimeout(() => setCopied(false), 2000);
@@ -544,7 +544,7 @@ export function MessageBubble({
     }
   }
   function reply(method: 'button' | 'context_menu') {
-    captureAnalytics('nod_message_action', { action: 'reply', role: message.role, method });
+    captureAnalytics('message_action', { action: 'reply', role: message.role, method });
     setPanel(null);
     onReply?.(quote || undefined);
     setQuote('');

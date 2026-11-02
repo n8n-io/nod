@@ -370,11 +370,11 @@ export async function insertAssistantMessage(
     afterCommit(client, () => {
       if (visual)
         analytics({
-          event: 'nod_output_created',
+          event: 'output_created',
           properties: { presentation_kind: visual.type, count: 1 },
         });
       for (const [artifact_kind, count] of kinds)
-        analytics({ event: 'nod_output_created', properties: { artifact_kind, count } });
+        analytics({ event: 'output_created', properties: { artifact_kind, count } });
     });
   }
   return id;
@@ -670,7 +670,7 @@ export async function cancelTurns(
   if (tasks.length)
     afterCommit(client, () => {
       for (const _task of tasks)
-        capture?.({ event: 'nod_task_finished', properties: { status: 'cancelled', actor } });
+        capture?.({ event: 'task_finished', properties: { status: 'cancelled', actor } });
     });
   return {
     tasks,
@@ -1290,14 +1290,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ? { model_provider: model.provider, ...(model.model ? { model: model.model } : {}) }
       : {}),
   };
-  let outcome: Extract<AnalyticsEvent, { event: 'nod_turn_completed' }>['properties']['outcome'] =
+  let outcome: Extract<AnalyticsEvent, { event: 'turn_completed' }>['properties']['outcome'] =
     'failed';
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   let limited = false;
   let failure: 'model' | 'unknown' = 'unknown';
   if (work)
     dependencies.analytics?.({
-      event: 'nod_turn_started',
+      event: 'turn_started',
       properties: { ...analyticsProperties, ...work },
     });
   const turnId = turn.id as string;
@@ -1891,7 +1891,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   } finally {
     if (work)
       dependencies.analytics?.({
-        event: 'nod_turn_completed',
+        event: 'turn_completed',
         properties: {
           ...analyticsProperties,
           ...work,

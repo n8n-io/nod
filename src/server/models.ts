@@ -266,7 +266,7 @@ export function createModelService(options: {
   ) {
     if (provider === 'elevenlabs') return;
     capture?.({
-      event: 'nod_model_connection_changed',
+      event: 'model_connection_changed',
       properties: { provider, method, status },
     });
   }
@@ -899,12 +899,12 @@ export function createModelService(options: {
       });
       if (changed.model)
         capture?.({
-          event: 'nod_setting_changed',
+          event: 'setting_changed',
           properties: { setting: 'model_selection', actor, state: 'configured' },
         });
       if (changed.effort)
         capture?.({
-          event: 'nod_setting_changed',
+          event: 'setting_changed',
           properties: { setting: 'model_effort', actor, state: value.effort },
         });
       await reload();
@@ -924,7 +924,7 @@ export function createModelService(options: {
       if (removed.selectionCleared)
         for (const setting of ['model_selection', 'model_effort'] as const)
           capture?.({
-            event: 'nod_setting_changed',
+            event: 'setting_changed',
             properties: { setting, actor: 'owner', state: 'cleared' },
           });
       await reload();

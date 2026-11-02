@@ -200,7 +200,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     try {
       await flush();
       await post('/api/browser-handoff/navigate', { turnId, action });
-      capture('nod_browser_handoff_action', { action });
+      capture('browser_handoff_action', { action });
       setError('');
     } catch (reason) {
       setError(errorMessage(reason));
@@ -216,7 +216,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     try {
       await flush();
       await post('/api/browser-handoff/done', { turnId });
-      capture('nod_browser_handoff_action', { action: 'done' });
+      capture('browser_handoff_action', { action: 'done' });
       setReturned(true);
       setClosed(true);
     } catch (reason) {
@@ -236,7 +236,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       setShown(false);
       setExpanded(value);
       if (value !== expanded)
-        capture('nod_browser_handoff_action', { action: value ? 'expand' : 'collapse' });
+        capture('browser_handoff_action', { action: value ? 'expand' : 'collapse' });
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {

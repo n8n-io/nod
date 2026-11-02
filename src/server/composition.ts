@@ -639,13 +639,13 @@ async function initializeApplication(
     if (activity) diagnostics.log?.record('activity', activity);
     analytics.capture(ownerId, event, delivery);
     if (
-      event.event === 'nod_connection_changed' &&
+      event.event === 'connection_changed' &&
       ['connected', 'disconnected'].includes(event.properties.status)
     )
       void observeConnections?.('apps');
     if (
-      (event.event === 'nod_model_connection_changed' && event.properties.status !== 'failed') ||
-      (event.event === 'nod_settings_updated' && event.properties.section === 'models')
+      (event.event === 'model_connection_changed' && event.properties.status !== 'failed') ||
+      (event.event === 'settings_updated' && event.properties.section === 'models')
     )
       void observeConnections?.('models');
   };

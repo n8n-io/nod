@@ -219,7 +219,7 @@ export function MessageAttachments({
     const stop = files.flatMap(([id, mimeType, name], index) =>
       elements[index]
         ? [
-            observeAnalyticsView(elements[index], `${id}:message`, 'nod_artifact_viewed', {
+            observeAnalyticsView(elements[index], `${id}:message`, 'artifact_viewed', {
               kind: attachmentKind(mimeType ?? '', name) ?? 'file',
               location: 'message',
             }),

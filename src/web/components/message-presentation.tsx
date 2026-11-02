@@ -22,8 +22,8 @@ function SourceLink({ href, children }: { href: string; children: React.ReactNod
 export function MessagePresentation({ value, messageId }: { value: unknown; messageId?: string }) {
   const parsed = presentationSchema.safeParse(value);
   const titleId = useId();
-  const root = useAnalyticsView<HTMLElement, 'nod_presentation_viewed'>(
-    'nod_presentation_viewed',
+  const root = useAnalyticsView<HTMLElement, 'presentation_viewed'>(
+    'presentation_viewed',
     { kind: parsed.success ? parsed.data.type : 'image' },
     messageId ?? titleId,
     parsed.success,

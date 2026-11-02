@@ -749,7 +749,7 @@ test(
           const outcomes = () =>
             analyticsEvents
               .slice(before)
-              .filter(({ event }) => event === 'nod_task_finished')
+              .filter(({ event }) => event === 'task_finished')
               .map(({ properties }) => ({ status: properties.status, actor: properties.actor }));
           for (const status of ['done', 'cancelled'] as const) {
             const task = await fixture();
@@ -872,7 +872,7 @@ test(
           assert.deepEqual(outcomes().at(-1), { status: 'cancelled', actor: 'owner' });
           assert.equal(outcomes().length, 6);
           const emitted = JSON.stringify(
-            analyticsEvents.slice(before).filter(({ event }) => event === 'nod_task_finished'),
+            analyticsEvents.slice(before).filter(({ event }) => event === 'task_finished'),
           );
           for (const privateValue of [...ids, ...turns, 'Synthetic private'])
             assert.ok(!emitted.includes(privateValue));
@@ -1043,13 +1043,13 @@ test(
             }));
             assert.deepEqual(outputs, [
               {
-                event: 'nod_output_created',
+                event: 'output_created',
                 presentation_kind: 'image',
                 artifact_kind: undefined,
                 count: 1,
               },
               {
-                event: 'nod_output_created',
+                event: 'output_created',
                 presentation_kind: undefined,
                 artifact_kind: 'image',
                 count: 1,
@@ -1758,15 +1758,15 @@ test(
             await waitFor(() =>
               analyticsEvents.some(
                 (event) =>
-                  event.event === 'nod_turn_completed' &&
+                  event.event === 'turn_completed' &&
                   event.properties.run_id === analyticsRuns.get(id),
               ),
             );
             const events = analyticsEvents.filter(
               (event) => event.properties.run_id === analyticsRuns.get(id),
             );
-            const starts = events.filter((event) => event.event === 'nod_turn_started');
-            const ends = events.filter((event) => event.event === 'nod_turn_completed');
+            const starts = events.filter((event) => event.event === 'turn_started');
+            const ends = events.filter((event) => event.event === 'turn_completed');
             assert.equal(starts.length, 1);
             assert.equal(ends.length, 1);
             for (const event of [...starts, ...ends]) {
@@ -1924,13 +1924,13 @@ test(
           await waitFor(() =>
             analyticsEvents.some(
               (event) =>
-                event.event === 'nod_output_created' &&
+                event.event === 'output_created' &&
                 event.properties.run_id === analyticsRuns.get(source.turnId),
             ),
           );
           const outputs = analyticsEvents.filter(
             (event) =>
-              event.event === 'nod_output_created' &&
+              event.event === 'output_created' &&
               event.properties.run_id === analyticsRuns.get(source.turnId),
           );
           assert.equal(outputs.length, 1);
@@ -4819,7 +4819,7 @@ test(
                 const saved = () =>
                   analyticsEvents
                     .slice(before)
-                    .filter(({ event }) => event === 'nod_prepared_work_saved');
+                    .filter(({ event }) => event === 'prepared_work_saved');
                 await save({ delivery: 'private' });
                 assert.deepEqual(
                   saved().map(({ properties }) => properties.outcome),
@@ -4843,7 +4843,7 @@ test(
                 await engine.control({ id: issue.id, action: 'snooze', minutes: 15 });
                 const controls = analyticsEvents
                   .slice(before)
-                  .filter(({ event }) => event === 'nod_prepared_work_updated');
+                  .filter(({ event }) => event === 'prepared_work_updated');
                 assert.deepEqual(
                   controls.map(({ properties }) => properties.action),
                   ['useful', 'not_useful', 'handled', 'dismiss', 'snooze'],
@@ -4863,7 +4863,7 @@ test(
                 assert.equal(
                   analyticsEvents
                     .slice(before)
-                    .filter(({ event }) => event === 'nod_prepared_work_updated').length,
+                    .filter(({ event }) => event === 'prepared_work_updated').length,
                   5,
                 );
                 for (const privateValue of [
@@ -4942,7 +4942,7 @@ test(
                 assert.equal((await pending).feedback, 'useful');
                 assert.equal(analyticsEvents.length, before);
                 await engine.control({ id: issue.id, action: 'not_useful' });
-                assert.equal(analyticsEvents.at(-1)?.event, 'nod_prepared_work_updated');
+                assert.equal(analyticsEvents.at(-1)?.event, 'prepared_work_updated');
               },
             );
             await t.test(
@@ -7014,7 +7014,7 @@ test(
         .status,
       'submitted',
     );
-    assert.deepEqual(captured, ['nod_feedback_sent']);
+    assert.deepEqual(captured, ['feedback_sent']);
   },
 );
 
@@ -7036,7 +7036,7 @@ test(
             {
               source: 'runtime',
               ageMs: 1245,
-              event: 'nod_ui_error',
+              event: 'ui_error',
               properties: {
                 area: 'chat',
                 action: 'send',
@@ -7054,7 +7054,7 @@ test(
         {
           source: 'app',
           ageMs: 1000,
-          event: 'nod_ui_error',
+          event: 'ui_error',
           properties: { area: 'chat', action: 'send' },
         },
       ],

@@ -204,7 +204,7 @@ export function useAppSignIn({
     const { service: slug, connectionId } = target;
     const capture = analyticsForCurrentSession();
     const completion = appConnectionAnalytics(entry);
-    capture('nod_app_connect_clicked', { entry, result: 'opened' });
+    capture('app_connect_clicked', { entry, result: 'opened' });
     clearAttempt();
     const external = desktopLinksAvailable();
     const popup = external
@@ -272,7 +272,7 @@ export function useAppSignIn({
       if (controller.signal.aborted || request.current !== controller) return;
       clearAttempt();
       setError(errorMessage(cause));
-      capture('nod_ui_error', { area: entry, action: 'connect' });
+      capture('ui_error', { area: entry, action: 'connect' });
     } finally {
       if (request.current === controller) {
         request.current = null;

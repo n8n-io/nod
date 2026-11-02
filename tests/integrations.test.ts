@@ -8402,7 +8402,7 @@ test(
       ),
       /changed before/,
     );
-    const reads = captured.filter((event) => event.event === 'nod_service_used');
+    const reads = captured.filter((event) => event.event === 'service_used');
     assert.equal(reads.length, 2);
     assert.equal(reads[0]!.properties.app, 'gmail');
     assert.equal(reads[0]!.properties.outcome, 'succeeded');
@@ -8688,7 +8688,7 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
   assert.match(JSON.stringify(result), /content is private/);
   assert.equal(analytics.length, 1);
   assert.deepEqual(analytics[0], {
-    event: 'nod_source_read',
+    event: 'source_read',
     properties: {
       source_type: 'other',
       operation: 'records',

@@ -1,6 +1,6 @@
 import { preparedWorkId } from '../../shared/app-links.ts';
 
-export const analyticsHost = 'app.nod.example';
+export const analyticsHost = 'app.example';
 
 const routes = new Set([
   '/',

@@ -244,10 +244,10 @@ export async function createDiscoveredConnections(
   }
   function track(
     row: Pick<ProposalRow, 'paths'>,
-    status: Extract<AnalyticsEvent, { event: 'nod_connection_changed' }>['properties']['status'],
+    status: Extract<AnalyticsEvent, { event: 'connection_changed' }>['properties']['status'],
     failureReason?: Extract<
       AnalyticsEvent,
-      { event: 'nod_connection_changed' }
+      { event: 'connection_changed' }
     >['properties']['failure_reason'],
   ) {
     for (const path of row.paths)
