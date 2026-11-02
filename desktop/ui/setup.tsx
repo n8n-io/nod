@@ -418,6 +418,12 @@ function Startup() {
           <div className="ob-screen">
             <EmailPreview
               logos={{ gmail: gmailLogo, outlook: outlookLogo, composio: composioLogo }}
+              status={[
+                active.message || startupMessage(active.stage),
+                progress === undefined ? '' : `${Math.round(progress * 100)}%`,
+              ]
+                .filter(Boolean)
+                .join(' ')}
             />
           </div>
         </OnboardingFrame>
