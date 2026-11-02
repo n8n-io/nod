@@ -17,6 +17,8 @@ import {
 } from './icons';
 import { formatSelectedText } from '../lib/editor-formatting';
 import { safeMessageLink } from '../lib/message-links';
+import { Tooltip } from './tooltip';
+import { isPrimaryModifier, shortcutLabel } from '../lib/navigation';
 
 const styles = [
   ['paragraph', 'Text', 'T'],
@@ -177,6 +179,7 @@ function FormattingMenu({
     if (
       !active ||
       !editor.isEditable ||
+      event.defaultPrevented ||
       event.isComposing ||
       editor.view.composing ||
       event.keyCode === 229
@@ -184,12 +187,24 @@ function FormattingMenu({
       return false;
     const { doc, selection } = editor.state;
     if (selection.empty || !doc.textBetween(selection.from, selection.to).trim()) return false;
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+    if (
+      isPrimaryModifier(event) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'k'
+    ) {
       event.preventDefault();
       openLink();
       return true;
     }
-    if (event.key === 'Tab' && !event.shiftKey && !dismissed.current) {
+    if (
+      event.key === 'Tab' &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !dismissed.current
+    ) {
       event.preventDefault();
       reveal();
       toolbar.current?.querySelector('button')?.focus();
@@ -278,11 +293,12 @@ function FormattingMenu({
   }, [panel, editor, pluginKey]);
 
   function menuKeyDown(event: KeyboardEvent) {
-    if (event.isComposing) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
     if (
       !(event.target instanceof HTMLInputElement) &&
-      (event.metaKey || event.ctrlKey) &&
-      !event.altKey
+      isPrimaryModifier(event) &&
+      !event.altKey &&
+      !event.shiftKey
     ) {
       const command = { b: 'toggleBold', i: 'toggleItalic', u: 'toggleUnderline' }[
         event.key.toLowerCase()
@@ -294,6 +310,7 @@ function FormattingMenu({
         return;
       }
     }
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -327,7 +344,7 @@ function FormattingMenu({
       items[next]?.focus();
     }
   }
-  const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   return (
     <BubbleMenu
       editor={editor}
@@ -420,17 +437,18 @@ function FormattingMenu({
         </div>
       ) : (
         <div className="editor-format-bar" role="toolbar" aria-label="Text formatting">
-          <button
-            type="button"
-            className="editor-format-tool"
-            aria-label="Link"
-            aria-pressed={state.link}
-            title={`Link (${modifier}K)`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={openLink}
-          >
-            <Link2 size={17} />
-          </button>
+          <Tooltip content="Link" shortcut={shortcutLabel('k', mac)}>
+            <button
+              type="button"
+              className="editor-format-tool"
+              aria-label="Link"
+              aria-pressed={state.link}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={openLink}
+            >
+              <Link2 size={17} />
+            </button>
+          </Tooltip>
           {(
             [
               ['bold', 'Bold', 'B', Bold, 'toggleBold'],
@@ -438,20 +456,24 @@ function FormattingMenu({
               ['underline', 'Underline', 'U', Underline, 'toggleUnderline'],
             ] as const
           ).map(([mark, label, key, Icon, command]) => (
-            <button
-              type="button"
+            <Tooltip
               key={mark}
-              className="editor-format-tool"
-              aria-label={label}
-              aria-pressed={state[mark]}
-              title={
-                mark === 'underline' && !underlineShortcut ? label : `${label} (${modifier}${key})`
+              content={label}
+              shortcut={
+                mark === 'underline' && !underlineShortcut ? undefined : shortcutLabel(key, mac)
               }
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => editor.chain().focus()[command]().run()}
             >
-              <Icon size={17} />
-            </button>
+              <button
+                type="button"
+                className="editor-format-tool"
+                aria-label={label}
+                aria-pressed={state[mark]}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => editor.chain().focus()[command]().run()}
+              >
+                <Icon size={17} />
+              </button>
+            </Tooltip>
           ))}
           <span className="editor-format-separator" />
           <button

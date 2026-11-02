@@ -52,6 +52,8 @@ Use black text on brand pink. Brand pink text doesn't have enough contrast on a 
 
 Success (`--success`), warning (`--warning`), error (`--error`) and information (`--info`) are product states, each with a `-soft` background. Always pair them with an icon or text.
 
+Native charts use the [brand's pink and neutral palette](https://guidelines.n8n.design/colors) through `--chart-1` to `--chart-12`. Use `--chart-line-1` to `--chart-line-3` for lines and bar outlines so marks stay readable on light and dark surfaces. Keep category names, values and line styles available; color alone must not identify a series. Maps, diagrams and other native visuals use the same pink selection and neutral surface tokens as the rest of the interface. Reserve success, warning, error and information colors for actual states, not chart categories.
+
 ## Type
 
 The interface uses Geist, and code uses Geist Mono, the same fonts as the n8n editor. Both use the SIL Open Font License and are served locally from `public/fonts`. Use regular weight for body text and medium for headings.
@@ -80,15 +82,35 @@ Page padding changes with the available width. Pages share one title size, and a
 
 ## Icons and brand details
 
-| Item               | Rule                                                                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Icon set           | [n8n icons](https://n8n-icons.vercel.app/) from `src/web/components/icons.tsx`; Lucide only where the set has no icon yet                                                  |
-| Icon sizes         | The 12 px drawing at 14 px and below, the 16 px drawing up to 18 px, scaled up for navigation (20 px, 24 px in the desktop app) and empty states; page titles have no icon |
-| Icon style         | Outline by default, Solid for the selected navigation item; neutral color, pink for selected navigation, state colors on status icons                                      |
-| Connected services | Logos keep their official colors                                                                                                                                           |
-| Dot grid           | 24 px, only on the sign-in story and the empty conversation. Never in messages, tables, forms, app lists or Settings.                                                      |
+| Item               | Rule                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Icon set           | [n8n icons](https://n8n-icons.vercel.app/) from `src/web/components/icons.tsx`; Lucide only where the set has no icon yet             |
+| Icon sizes         | The 12 px drawing at 14 px and below, the 16 px drawing up to 18 px, scaled to 28 px for sidebar navigation; page titles have no icon |
+| Icon style         | Outline by default, Solid for the selected navigation item; neutral color, pink for selected navigation, state colors on status icons |
+| Connected services | Logos keep their official colors                                                                                                      |
+| Dot grid           | 24 px, only on the sign-in story and the empty conversation. Never in messages, tables, forms, app lists or Settings.                 |
 
 Don't show a construction grid. Keep the existing reduced-motion behaviour. The brand guide doesn't define motion for product interfaces yet.
+
+The sidebar is 96 px wide when collapsed and 224 px when expanded. Keep its 44 px Nod mark and navigation icons the same size and position through the width transition. Chat message actions and composer controls share 32 px targets and 4 px gaps.
+
+The sidebar toggle sits at the middle of its divider. Its rounded panel outline has a wider sidebar pane when open and a narrow inset when closed. Keep a 44 × 44 px target around the 32 × 32 px circular face. Reveal it near the edge after 120 ms, wait 300 ms before hiding it, and keep it visible through the sidebar transition. Keyboard focus and touch keep it available; reduced motion removes the animation and delays.
+
+## Tooltips and shortcuts
+
+Use `Button`'s `title` and `shortcut` props for action hints. Wrap other controls in `Tooltip` to share the same surface, spacing, and keyboard hint style.
+
+Show hints after 100 ms of pointer hover or immediately on keyboard focus. Only show shortcuts that work on the current platform. Keep essential instructions visible without hovering.
+
+Use `isPrimaryModifier` for Command on macOS and Control on Windows and Linux. Generate hints with `shortcutLabel` and accept only the modifiers the action supports.
+
+## Shared tabs and action menus
+
+Use `Tabs` for switching between related panels. Apps and workbook sheets use pills; Settings and diagnostics use the underline variant. The component owns selection, focus and arrow-key navigation. Pages own the content and can refuse a tab change while an edit needs saving. Keep page-specific tab styles to layout and spacing.
+
+Use `ActionMenu` for a button that opens a list of actions or choices. It shares menu spacing, selection, disabled states, keyboard navigation, dismissal and focus return. Message and microphone menus reuse its surface, items and navigation while keeping their own context-click, recording and permission behavior.
+
+Keep searchable selection in `SearchPicker`. Form popovers, editor tools, emoji pickers and native system menus retain their own interaction rules.
 
 <details>
 <summary>Rules for each surface</summary>
@@ -98,7 +120,7 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 | Shell                     | Neutral sidebar, pink selection, quiet utility controls                                                            |
 | Chat                      | Neutral received bubbles, pink sent bubbles, readable tables and files                                             |
 | Composer                  | Clear boundary, visible focus, one primary send action                                                             |
-| Tasks and schedules       | Shared title, tabs, row spacing and action height; one summary line with ideas while empty                         |
+| Scheduled work            | Shared title, row spacing and action height; each schedule contains its details and run history                    |
 | Apps and channels         | Neutral cards, visible connection state, consistent controls                                                       |
 | Vault                     | Clear selection, fields and error states; secure forms preserved; one summary line and the ways to add while empty |
 | Usage                     | One summary line, one cost card, a quiet statement list                                                            |

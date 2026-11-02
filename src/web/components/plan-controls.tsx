@@ -1,11 +1,22 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ArrowUp, ChevronDown, LoaderCircle, Plus } from './icons';
+import { ChevronDown, LoaderCircle, Pencil, Plus } from './icons';
 import type { Schedule } from '../../shared/contracts';
-import { Button, Field, Input, Notice, Switch } from './ui';
-import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+  Field,
+  Input,
+  Notice,
+  Switch,
+} from './ui';
+import { SearchPicker, type PickerOption } from './search-picker';
+import { TimeZonePicker } from './time-zone-picker';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
-import { useDateFormat } from '../lib/date-format';
+import { formatDateTime, useDateFormat } from '../lib/date-format';
 import {
   readSchedule,
   scheduleExpression,
@@ -14,101 +25,6 @@ import {
   scheduleWeekDays,
   type ScheduleFrequency,
 } from '../lib/schedules';
-
-type Subject = { kind: 'task' } | { kind: 'schedule'; title?: string };
-
-const suggestions = {
-  task: ['Get three quotes for a boiler service', 'Follow up on emails nobody answered this week'],
-  schedule: ['Move it to 8:00 on weekdays', 'Run it every Monday', 'Add the weather'],
-  newSchedule: ['Remind me to stretch at 16:00', 'Summarize my inbox each Friday'],
-};
-
-function askFor(subject: Subject) {
-  if (subject.kind === 'task')
-    return {
-      prefix: '',
-      placeholder: 'What should Nod take care of?',
-      label: 'Ask Nod for a task',
-      chips: suggestions.task,
-    };
-  if (subject.title)
-    return {
-      prefix: `About the schedule ${JSON.stringify(subject.title)}: `,
-      placeholder: `What should change in ${subject.title}?`,
-      label: `Ask Nod about ${subject.title}`,
-      chips: suggestions.schedule,
-    };
-  return {
-    prefix: 'New schedule: ',
-    placeholder: 'What should Nod do, and when?',
-    label: 'Ask Nod for a new schedule',
-    chips: suggestions.newSchedule,
-  };
-}
-
-export function AskNod({
-  subject,
-  onAsk,
-  onClose,
-}: {
-  subject: Subject;
-  onAsk(text: string): void;
-  onClose(): void;
-}) {
-  const [text, setText] = useState('');
-  const input = useRef<HTMLTextAreaElement>(null);
-  const id = useId();
-  useEffect(() => input.current?.focus(), []);
-  const { prefix, placeholder, label, chips } = askFor(subject);
-  const submit = (value: string) => {
-    if (!value.trim()) return;
-    onAsk(`${prefix}${value.trim()}`);
-  };
-  return (
-    <div className="ask-nod" role="group" aria-labelledby={`${id}-label`}>
-      <span className="sr-only" id={`${id}-label`}>
-        {label}
-      </span>
-      <form
-        className="ask-nod-field"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit(text);
-        }}
-      >
-        <textarea
-          ref={input}
-          className="input"
-          rows={1}
-          value={text}
-          placeholder={placeholder}
-          aria-label={placeholder}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              onClose();
-            } else if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-        />
-        <Button type="submit" size="icon" aria-label="Send to Nod" disabled={!text.trim()}>
-          <ArrowUp size={16} />
-        </Button>
-      </form>
-      <div className="ask-nod-chips">
-        {chips.map((chip) => (
-          <Button key={chip} type="button" variant="outline" size="sm" onClick={() => submit(chip)}>
-            {chip}
-          </Button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 async function patchSchedule(id: string, body: Record<string, unknown>) {
   const path = '/api/schedules';
@@ -211,6 +127,8 @@ export function useDirectChange(id: string) {
           : {}),
       });
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409)
+        void pageDataCache.refresh('/api/schedules', true);
       const error = errorMessage(cause);
       showToast({ id: Date.now(), text: error, failed: true });
       return error;
@@ -289,73 +207,132 @@ export function PauseSwitch({ schedule, change }: { schedule: Schedule; change: 
   );
 }
 
-export function ScheduleTiming({
+export function ScheduleEditor({
   schedule,
   change,
 }: {
   schedule: Schedule;
   change: ScheduleChange;
 }) {
+  const [editing, setEditing] = useState<Schedule | null>(null);
+  return (
+    <Dialog
+      open={Boolean(editing)}
+      onOpenChange={(open) => {
+        if (!change.busy) setEditing(open ? { ...schedule } : null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={change.busy}
+          aria-label={`Edit schedule ${schedule.title}`}
+        >
+          <Pencil size={16} aria-hidden="true" />
+          Edit schedule
+        </Button>
+      </DialogTrigger>
+      {editing && (
+        <DialogContent
+          className="schedule-editor-dialog"
+          aria-describedby={undefined}
+          aria-busy={change.busy}
+        >
+          <DialogTitle>Edit schedule</DialogTitle>
+          <ScheduleEditorForm schedule={editing} change={change} onClose={() => setEditing(null)} />
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+}
+
+function ScheduleEditorForm({
+  schedule,
+  change,
+  onClose,
+}: {
+  schedule: Schedule;
+  change: ScheduleChange;
+  onClose(): void;
+}) {
   const initial = {
+    title: schedule.title,
+    prompt: schedule.prompt,
     ...readSchedule(schedule.cron ?? ''),
     ...(schedule.kind === 'once' && schedule.runAt
       ? scheduleLocalTime(schedule.runAt, schedule.timeZone)
       : { date: '' }),
     timeZone: schedule.timeZone,
   };
+  const dateFormat = useDateFormat();
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState('');
   const timeZoneLabel = useId();
   const [nextRun, setNextRun] = useState<string | null>(schedule.nextRun);
   const [previewError, setPreviewError] = useState('');
+  const [previewing, setPreviewing] = useState(false);
+  const timingDirty =
+    draft.frequency !== initial.frequency ||
+    draft.time !== initial.time ||
+    draft.day !== initial.day ||
+    draft.date !== initial.date ||
+    draft.timeZone !== initial.timeZone;
+  const dirty =
+    timingDirty || draft.title.trim() !== schedule.title || draft.prompt.trim() !== schedule.prompt;
+  const timing = () => ({
+    timeZone: draft.timeZone,
+    ...(schedule.kind === 'once'
+      ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
+      : {
+          cron: scheduleExpression(
+            draft.frequency,
+            draft.time,
+            draft.day,
+            schedule.cron ?? undefined,
+          ),
+        }),
+  });
   useEffect(() => {
+    setPreviewError('');
+    if (!timingDirty) {
+      setNextRun(schedule.nextRun);
+      setPreviewing(false);
+      return;
+    }
     const controller = new AbortController();
     setNextRun(null);
-    setPreviewError('');
+    setPreviewing(true);
     const timer = setTimeout(() => {
       try {
-        const body = {
-          timeZone: draft.timeZone,
-          ...(schedule.kind === 'once'
-            ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
-            : {
-                cron: scheduleExpression(
-                  draft.frequency,
-                  draft.time,
-                  draft.day,
-                  schedule.cron ?? undefined,
-                ),
-              }),
-        };
         void api<{ nextRun: string | null }>(`/api/schedules/${schedule.id}/preview`, {
           method: 'POST',
-          body: JSON.stringify(body),
+          body: JSON.stringify(timing()),
           signal: controller.signal,
         })
           .then((result) => {
-            if (controller.signal.aborted) return;
-            setNextRun(result.nextRun);
-            setPreviewError('');
+            if (!controller.signal.aborted) {
+              setNextRun(result.nextRun);
+              setPreviewing(false);
+            }
           })
           .catch((cause) => {
             if (!controller.signal.aborted) {
-              setNextRun(null);
               setPreviewError(errorMessage(cause));
+              setPreviewing(false);
             }
           });
-      } catch {
-        setNextRun(null);
-        setPreviewError('Choose a valid date and time.');
+      } catch (cause) {
+        setPreviewError(errorMessage(cause));
+        setPreviewing(false);
       }
     }, 250);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [draft, schedule.id, schedule.kind]);
-  const dirty = Object.keys(initial).some(
-    (key) => draft[key as keyof typeof draft] !== initial[key as keyof typeof initial],
-  );
+  }, [draft.frequency, draft.time, draft.day, draft.date, draft.timeZone, timingDirty, schedule]);
   const zones = [
     ...new Set([schedule.timeZone, 'UTC', ...(Intl.supportedValuesOf?.('timeZone') ?? [])]),
   ].sort();
@@ -365,177 +342,192 @@ export function ScheduleTiming({
   };
   return (
     <form
-      className="schedule-timing"
-      aria-label={`Timing for ${schedule.title}`}
-      onKeyDown={(event) => {
-        if (
-          event.key === 'Escape' &&
-          !event.defaultPrevented &&
-          !change.busy &&
-          !(
-            event.target instanceof Element &&
-            event.target.closest('[data-radix-popper-content-wrapper]')
-          )
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          setDraft(initial);
-          setError('');
-        }
-      }}
+      className="schedule-editor-form"
+      aria-label={`Edit ${schedule.title}`}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!dirty || change.busy) return;
+        if (!dirty || change.busy || !draft.title.trim() || !draft.prompt.trim()) return;
         try {
-          const body = {
-            timeZone: draft.timeZone,
-            ...(schedule.kind === 'once'
-              ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
-              : {
-                  cron: scheduleExpression(
-                    draft.frequency,
-                    draft.time,
-                    draft.day,
-                    schedule.cron ?? undefined,
-                  ),
-                }),
+          const values = {
+            title: draft.title.trim(),
+            prompt: draft.prompt.trim(),
+            ...(timingDirty ? timing() : {}),
           };
+          const body = Object.fromEntries(
+            Object.entries(values).filter(
+              ([key, value]) => value !== schedule[key as keyof Schedule],
+            ),
+          );
+          const undo = Object.fromEntries(
+            Object.keys(body).map((key) => [key, schedule[key as keyof Schedule]]),
+          );
           setError('');
           void change
-            .apply(body, `Updated ${schedule.title}.`, {
-              timeZone: schedule.timeZone,
-              ...(schedule.kind === 'once' ? { runAt: schedule.runAt } : { cron: schedule.cron }),
-            })
+            .apply(
+              { ...body, expectedRevision: schedule.revision },
+              `Updated ${draft.title.trim()}.`,
+              undo,
+            )
             .then((error) => {
               if (error) setError(error);
+              else onClose();
             });
         } catch (cause) {
           setError(errorMessage(cause));
         }
       }}
     >
-      <div className="schedule-timing-fields">
-        {schedule.kind === 'once' ? (
-          <Field label="Date">
-            <Input
-              type="date"
-              value={draft.date}
-              required
-              disabled={change.busy}
-              onChange={(event) => update({ date: event.target.value })}
-            />
-          </Field>
-        ) : (
-          <SchedulePicker
-            label="Repeat"
-            value={draft.frequency}
-            options={
-              initial.frequency === 'custom'
-                ? [...frequencies, { value: 'custom', label: 'Custom schedule' }]
-                : frequencies
+      <div className="schedule-editor-fields">
+        <Field label="Name">
+          <Input
+            value={draft.title}
+            maxLength={160}
+            required
+            disabled={change.busy}
+            onChange={(event) => update({ title: event.target.value })}
+          />
+        </Field>
+        <Field label="What Nod should do">
+          <textarea
+            className="input"
+            rows={4}
+            value={draft.prompt}
+            required
+            disabled={change.busy}
+            onChange={(event) => update({ prompt: event.target.value })}
+          />
+        </Field>
+        <div className="schedule-editor-timing" role="group" aria-label="Timing">
+          <div
+            className="schedule-timing-fields"
+            data-columns={
+              schedule.kind === 'recurring' && ['weekly', 'monthly'].includes(draft.frequency)
+                ? 3
+                : 2
             }
-            disabled={change.busy}
-            onChange={(frequency) =>
-              update({
-                frequency: frequency as ScheduleFrequency,
-                day: initial.frequency === frequency ? initial.day : '1',
-              })
+            data-custom={
+              (schedule.kind === 'recurring' && draft.frequency === 'custom') || undefined
             }
-          />
-        )}
-        {schedule.kind === 'recurring' && draft.frequency === 'weekly' && (
-          <SchedulePicker
-            label="Day"
-            value={draft.day}
-            options={[1, 2, 3, 4, 5, 6, 0].map((day) => ({
-              value: String(day),
-              label: scheduleWeekDays[day],
-            }))}
-            disabled={change.busy}
-            onChange={(day) => update({ day })}
-          />
-        )}
-        {schedule.kind === 'recurring' && draft.frequency === 'monthly' && (
-          <SchedulePicker
-            label="Day of month"
-            value={draft.day}
-            options={Array.from({ length: 31 }, (_, index) => ({
-              value: String(index + 1),
-              label: String(index + 1),
-            }))}
-            disabled={change.busy}
-            onChange={(day) => update({ day })}
-          />
-        )}
-        {(schedule.kind === 'once' || draft.frequency !== 'custom') && (
-          <Field label="Time">
-            <Input
-              type="time"
-              value={draft.time}
-              required
-              disabled={change.busy}
-              onChange={(event) => update({ time: event.target.value })}
-            />
-          </Field>
-        )}
-        <div className="schedule-timing-field schedule-time-zone">
-          <span className="field-label" id={timeZoneLabel}>
-            Time zone
-          </span>
-          <TimeZonePicker
-            value={draft.timeZone}
-            zones={zones}
-            disabled={change.busy}
-            labelledBy={timeZoneLabel}
-            onChange={(timeZone) => update({ timeZone })}
-          />
-        </div>
-      </div>
-      {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
-        <p className="field-hint">
-          Custom timing is kept as saved. Choose a repeat option to replace it, or ask Nod to adjust
-          it.
-        </p>
-      )}
-      {schedule.kind === 'recurring' && draft.frequency === 'monthly' && Number(draft.day) > 28 && (
-        <p className="field-hint">Months without this day are skipped.</p>
-      )}
-      {error && <Notice>{error}</Notice>}
-      {nextRun && (
-        <p className="field-hint" role="status">
-          {schedule.enabled ? 'Next run:' : 'Next run if enabled:'}{' '}
-          {new Intl.DateTimeFormat(undefined, {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-            timeZone: draft.timeZone,
-          }).format(new Date(nextRun))}{' '}
-          ({draft.timeZone})
-        </p>
-      )}
-      {previewError && (
-        <p role="status" className="field-hint">
-          {previewError}
-        </p>
-      )}
-      {dirty && (
-        <div className="schedule-timing-actions">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={change.busy}
-            onClick={() => {
-              setDraft(initial);
-              setError('');
-            }}
           >
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={change.busy}>
-            {change.busy ? 'Saving…' : 'Save changes'}
-          </Button>
+            {schedule.kind === 'once' ? (
+              <Field label="Date">
+                <Input
+                  type="date"
+                  value={draft.date}
+                  required
+                  disabled={change.busy}
+                  onChange={(event) => update({ date: event.target.value })}
+                />
+              </Field>
+            ) : (
+              <SchedulePicker
+                label="Repeat"
+                value={draft.frequency}
+                options={
+                  initial.frequency === 'custom'
+                    ? [...frequencies, { value: 'custom', label: 'Custom schedule' }]
+                    : frequencies
+                }
+                disabled={change.busy}
+                onChange={(frequency) =>
+                  update({
+                    frequency: frequency as ScheduleFrequency,
+                    day: initial.frequency === frequency ? initial.day : '1',
+                  })
+                }
+              />
+            )}
+            {schedule.kind === 'recurring' && draft.frequency === 'weekly' && (
+              <SchedulePicker
+                label="Day"
+                value={draft.day}
+                options={[1, 2, 3, 4, 5, 6, 0].map((day) => ({
+                  value: String(day),
+                  label: scheduleWeekDays[day],
+                }))}
+                disabled={change.busy}
+                onChange={(day) => update({ day })}
+              />
+            )}
+            {schedule.kind === 'recurring' && draft.frequency === 'monthly' && (
+              <SchedulePicker
+                label="Day of month"
+                value={draft.day}
+                options={Array.from({ length: 31 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: String(index + 1),
+                }))}
+                disabled={change.busy}
+                onChange={(day) => update({ day })}
+              />
+            )}
+            {(schedule.kind === 'once' || draft.frequency !== 'custom') && (
+              <Field label="Time">
+                <Input
+                  type="time"
+                  value={draft.time}
+                  required
+                  disabled={change.busy}
+                  onChange={(event) => update({ time: event.target.value })}
+                />
+              </Field>
+            )}
+            <div className="schedule-timing-field schedule-time-zone">
+              <span className="field-label" id={timeZoneLabel}>
+                Time zone
+              </span>
+              <TimeZonePicker
+                value={draft.timeZone}
+                zones={zones}
+                disabled={change.busy}
+                labelledBy={timeZoneLabel}
+                onChange={(timeZone) => update({ timeZone })}
+              />
+            </div>
+          </div>
+          {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
+            <p className="field-hint">
+              Custom timing is kept as saved. Choose a repeat option to replace it, or ask Nod to
+              adjust it.
+            </p>
+          )}
+          {schedule.kind === 'recurring' &&
+            draft.frequency === 'monthly' &&
+            Number(draft.day) > 28 && (
+              <p className="field-hint">Months without this day are skipped.</p>
+            )}
+          <div
+            className="schedule-editor-status"
+            role="status"
+            data-error={Boolean(previewError) || undefined}
+          >
+            {previewError ||
+              (nextRun ? (
+                <>
+                  {schedule.enabled ? 'Next run:' : 'Next run if enabled:'}{' '}
+                  {formatDateTime(nextRun, dateFormat, { timeZone: draft.timeZone })} (
+                  {draft.timeZone})
+                </>
+              ) : previewing ? (
+                'Checking next run…'
+              ) : timingDirty ? (
+                'No upcoming run for this timing.'
+              ) : null)}
+          </div>
         </div>
-      )}
+        {error && <Notice>{error}</Notice>}
+      </div>
+      <div className="schedule-timing-actions">
+        <Button type="button" variant="ghost" disabled={change.busy} onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          disabled={!dirty || change.busy || !draft.title.trim() || !draft.prompt.trim()}
+        >
+          {change.busy ? 'Saving…' : 'Save changes'}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -805,19 +797,27 @@ export function PlanDetails({
   summary,
   children,
   actions,
+  onOpenChange,
 }: {
   label: string;
   summary?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
+  onOpenChange?(open: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return (
     <>
       {!open && summary && <p className="saved-plan-summary">{summary}</p>}
-      <div className="saved-plan-details" id={id} hidden={!open}>
-        {children}
+      <div
+        className="saved-plan-details"
+        id={id}
+        data-open={open}
+        aria-hidden={!open}
+        inert={!open}
+      >
+        <div className="saved-plan-details-content">{children}</div>
       </div>
       <div className="saved-plan-footer">
         <Button
@@ -827,7 +827,10 @@ export function PlanDetails({
           aria-expanded={open}
           aria-controls={id}
           aria-label={`${open ? 'Hide' : 'See'} details for ${label}`}
-          onClick={() => setOpen(!open)}
+          onClick={() => {
+            setOpen(!open);
+            onOpenChange?.(!open);
+          }}
         >
           {open ? 'Hide details' : 'See details'}
           <ChevronDown size={16} aria-hidden="true" />
@@ -839,18 +842,17 @@ export function PlanDetails({
 }
 
 export function NewPlan({ onAsk }: { onAsk(text: string): void }) {
-  const [open, setOpen] = useState(false);
   return (
-    <>
-      <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Plus size={16} aria-hidden="true" />
-        New schedule
-      </Button>
-      {open && (
-        <div className="connection-menu-options menu new-plan-card">
-          <AskNod subject={{ kind: 'schedule' }} onAsk={onAsk} onClose={() => setOpen(false)} />
-        </div>
-      )}
-    </>
+    <Button
+      size="sm"
+      onClick={() =>
+        onAsk(
+          'Help me create a schedule. Ask me one question at a time to work out what to do and when.',
+        )
+      }
+    >
+      <Plus size={16} aria-hidden="true" />
+      New schedule
+    </Button>
   );
 }

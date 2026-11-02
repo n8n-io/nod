@@ -425,24 +425,33 @@ export function createLedger({
   async function entries(before?: { at: string; id: string }, session?: string) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
-         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.plan,c.unpriced,
+         (SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
+           WHERE m.owner_id=$1 AND th.owner_id=$1 AND th.archived_at IS NULL
+             AND m.thread_id=u.thread_id AND ((m.turn_id=u.id AND m.role='assistant') OR m.id=u.message_id)
+           ORDER BY (m.turn_id=u.id AND m.role='assistant') DESC NULLS LAST,m.created_at DESC,m.id DESC LIMIT 1) AS message_id,
+         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.models,c.plan,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
            FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
              AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
-           WHERE a.turn_id=u.id) AS actions
+           WHERE a.turn_id=u.id AND a.owner_id=$1) AS actions
        FROM turns u
        LEFT JOIN LATERAL (SELECT count(*) AS used,sum(cost_usd)::float8 AS cost,
-           bool_or(${planUsage}) AS plan,bool_or(${unpricedUsage}) AS unpriced
-         FROM model_usage WHERE turn_id=u.id) c ON true
+           bool_or(${planUsage}) AS plan,bool_or(${unpricedUsage}) AS unpriced,
+           jsonb_agg(DISTINCT jsonb_build_object(
+             'provider',NULLIF(details->>'provider',''),
+             'model',NULLIF(details->>'model',''),
+             'billing',CASE WHEN cost_usd IS NULL AND details ? 'estimateUsd' THEN 'plan' ELSE 'api' END)) AS models
+         FROM model_usage WHERE turn_id=u.id AND owner_id=$1) c ON true
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
          AND ($4::uuid IS NULL OR u.session_id=$4)
-         AND (c.used>0 OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id))
+         AND (c.used>0 OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id AND a.owner_id=$1))
        ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
       [ownerId, before?.at ?? null, before?.id ?? null, session ?? null],
     );
     const page = rows.slice(0, pageSize).map((row): TrustEntry => ({
       id: row.id,
+      messageId: row.message_id ?? null,
       at: row.created_at.toISOString(),
       ...describe(row),
       channel: String(row.channel).split(':')[0]!,
@@ -455,6 +464,12 @@ export function createLedger({
           : row.unpriced
             ? { pricing: 'unpriced' }
             : {}),
+      models: (row.models ?? []).sort(
+        (a: TrustEntry['models'][number], b: TrustEntry['models'][number]) =>
+          `${a.provider ?? ''}:${a.model ?? ''}:${a.billing}`.localeCompare(
+            `${b.provider ?? ''}:${b.model ?? ''}:${b.billing}`,
+          ),
+      ),
       actions: (row.actions ?? []).map(
         (item: { action: string; basis: TrustBasis | null; said: boolean }): TrustAction => {
           const { app, label } = actionTitle(item.action);
@@ -486,6 +501,8 @@ export function createLedger({
              AND ${planUsage} AND created_at>=${monthStart})::float8 AS month_plan,
            EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND ${unpricedUsage}
              AND created_at>=${monthStart}) AS unpriced,
+           EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND cost_usd IS NULL AND details ? 'estimateUsd'
+             AND created_at>=${monthStart}) AS plan_usage,
            ${monthStart} AS start,
            extract(day FROM date_trunc('month', now() AT TIME ZONE ${zone}) + interval '1 month - 1 day')::int AS days,
            extract(epoch FROM now()-${monthStart})::float8/86400 AS elapsed`,
@@ -520,6 +537,7 @@ export function createLedger({
         planUsd: row.month_plan,
         daily: days,
         unpriced: row.unpriced,
+        planUsage: row.plan_usage,
       },
       ...current,
       ...page,

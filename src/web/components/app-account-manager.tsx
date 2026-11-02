@@ -2,7 +2,15 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { Connection } from '../../shared/contracts';
 import { errorMessage } from '../lib/api';
 import { connectionIdentity, connectionIssue } from '../lib/secondary-pages';
-import { LoaderCircle, Plus } from './icons';
+import {
+  CircleAlert,
+  CircleCheck,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  Unlink,
+  UserRound,
+} from './icons';
 import { ServiceLogo } from './service-logo';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Notice } from './ui';
 
@@ -111,50 +119,65 @@ export function AppAccountManager({
           }}
         >
           <div className="dialog-heading app-manage-heading">
-            {group && <ServiceLogo {...group.service} />}
-            <div>
-              <DialogTitle ref={title} tabIndex={-1}>
-                {group?.service.name} accounts
-              </DialogTitle>
-            </div>
+            {group && <ServiceLogo {...group.service} size={28} />}
+            <DialogTitle ref={title} tabIndex={-1}>
+              {group?.service.name} accounts
+            </DialogTitle>
           </div>
           {error && (
             <div data-analytics-private>
               <Notice onDismiss={onDismissError}>{error}</Notice>
             </div>
           )}
-          <div className="app-manage-accounts">
+          <div className="app-manage-accounts" role="list">
             {group?.accounts.map((account) => {
               const identity = connectionIdentity(account);
               const issue = connectionIssue(account);
               const label = accountLabel(account);
               return (
-                <div className="compact-account" key={account.connectionId}>
+                <div className="compact-account" key={account.connectionId} role="listitem">
+                  <span className="app-account-avatar" aria-hidden="true">
+                    <UserRound size={18} />
+                  </span>
                   <div className="compact-account-details" data-analytics-private>
                     <span className="compact-account-name">{identity.primary}</span>
                     {identity.secondary && (
                       <span className="compact-account-email">{identity.secondary}</span>
                     )}
-                    {issue && <p className="app-account-issue">{issue}</p>}
+                    <span
+                      className="app-account-status"
+                      data-attention={Boolean(issue) || undefined}
+                    >
+                      {issue ? (
+                        <CircleAlert size={12} aria-hidden="true" />
+                      ) : (
+                        <CircleCheck size={12} aria-hidden="true" />
+                      )}
+                      {issue ?? 'Connected'}
+                    </span>
                   </div>
                   <div className="app-account-actions">
                     {account.canReconnect &&
                       (account.status === 'disconnected' || account.reconnectRequired) && (
                         <Button
-                          size="sm"
+                          variant="ghost"
+                          size="icon"
+                          className="account-reconnect"
                           aria-label={`Reconnect ${label} to ${account.name}`}
+                          title={`Reconnect ${label}`}
                           disabled={busy}
                           onClick={() => onConnect(account, false)}
                         >
-                          Reconnect
+                          <RefreshCw size={16} aria-hidden="true" />
                         </Button>
                       )}
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="icon"
                       className="account-disconnect"
                       data-disconnect-account={account.connectionId}
                       aria-label={`Disconnect ${label} from ${account.name}`}
+                      title={`Disconnect ${label}`}
                       disabled={busy}
                       onClick={(event) => {
                         accountTrigger.current = event.currentTarget;
@@ -162,17 +185,16 @@ export function AppAccountManager({
                         setSelected(account);
                       }}
                     >
-                      Disconnect
+                      <Unlink size={16} aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
               );
             })}
           </div>
-          <div className="dialog-actions app-manage-actions">
-            {!addAccount?.browserUrl && (
+          {!addAccount?.browserUrl && !addAccount?.savedLogin && (
+            <div className="dialog-actions app-manage-actions">
               <Button
-                size="sm"
                 data-add-account
                 disabled={busy || addAccount?.status === 'not_configured'}
                 onClick={() => addAccount && onConnect(addAccount, true)}
@@ -184,11 +206,8 @@ export function AppAccountManager({
                 )}
                 Add account
               </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={onClose}>
-              Done
-            </Button>
-          </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
       <Dialog

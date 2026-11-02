@@ -20,7 +20,7 @@ You can paste Markdown or formatted text. Chat, feedback and message display use
 Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline.
 
 - **Attach files.** Select **Attach files**, press Command+U on Mac or Ctrl+U on Windows and Linux while writing a message, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. Nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Hover over a message and select **Reply**, or right-click inside the bubble and select **Reply**. On touch screens, the reply button stays visible. Replies to a whole message show a formatted excerpt in the composer and sent reply. Select it to jump to the original message, then select **Return to where you were** to go back. Use **Message actions** to copy text. To see the time below a bubble, hover over the message, focus one of its controls, or tap its text.
+- **Reply to a message.** Hover over a message and select **Reply**. On touch screens or in a narrow chat, hold or right-click the bubble to open **Reply**, **React** and **Copy**. You can also focus a message and press Shift+F10. Replies show a formatted excerpt in the composer and sent reply. Select it to jump to the original message, then select **Return to where you were** to go back. To see the time inside the bottom-right corner of a bubble, hover over the message, focus one of its controls, or tap its text.
 
 Your unfinished draft stays on this device for your account and conversation. After a reload, Nod restores its text, reply target, and available uploaded files. It checks saved files before you can send them. If a check fails, select **Retry** or remove the file. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.
 
@@ -28,15 +28,19 @@ Unsent files become eligible for cleanup 24 hours after upload or their last suc
 
 Select a passage in a message, then **Reply to selection** to quote it. Selected passages keep their exact text, including literal symbols, and stay separate from your own message. Select a reply quote to visit its source. **Return to where you were** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
 
-Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches, with highlighted text and each message’s date. Use the arrow keys to move between results and Enter to open a message. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+Select **Search chat** to search stored messages in the current conversation. Search shows up to 50 recent matches, with the sender, date and highlighted text. Use the arrow keys to move between results and Enter to open a message. Escape closes search and returns focus to the control you used before opening it. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+
+Nod loads earlier messages automatically as you scroll toward the top and keeps your reading position. Select **Back to latest** above the message box to return to the newest message.
 
 Action confirmations show the question without extra status labels. [Usage](/use/spending/) shows the recorded action results.
 
 ## Send an audio message
 
-Select **Record an audio message** beside the send button and allow microphone access. Select **Send** when you finish. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
+Press and hold the microphone beside the send button and allow microphone access. Release to finish recording, then select **Send**. You can also press Command+D on macOS or Ctrl+D elsewhere to start recording, then press it again to stop into preview. The shortcut does not send the message or replace an existing preview. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
 
-Use the arrow beside the microphone to choose an input. Nod remembers your choice in this browser. If that microphone is disconnected, Nod uses your system default.
+Recording works without setting up a voice provider. Nod reuses a connected transcription service when available. Otherwise, the first recording starts an automatic download of the local transcription model, about 80 MB, on the computer hosting Nod. You can record and preview while it prepares. Send waits until preparation finishes; **Cancel sending** keeps your recording and caption. If preparation fails, send again to retry. Discarding the recording or leaving chat cancels its preparation request. This does not download reply voices or change your chosen voice.
+
+Right-click the microphone to choose an input. Before you grant browser access, the menu only offers **Allow microphone access**. Device choices appear after access is granted. With the microphone focused, press Shift+F10 or Alt+Down to open the same settings. Nod remembers your choice in this browser. If that microphone is disconnected, Nod uses your system default.
 
 Your message shows the recording and any caption you typed. Nod keeps an internal transcript for private verification and action authorization; the generated transcript is not shown in the message. Models marked **Audio input**, currently **GPT Audio 1.5** through an OpenAI API connection, also receive the actual recording. Text-only models use the transcript. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
 
@@ -44,39 +48,41 @@ An audio model's **Text support** label shows its companion from the same connec
 
 With **Auto**, Nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.
 
-In **Settings → General → Voice**, choose a **Voice provider**, then open **Assistant voice** to compare samples and choose a voice. Set **Spoken replies** to **Auto**, **When I send audio**, **Always**, or **Off**. Auto is the default for new settings; existing choices stay unchanged. Off stops automatic spoken replies, but you can still explicitly request an audio file.
+In **Settings → Voice & audio**, open **Voice** to search available voices and compare samples. Set **Spoken replies** to **Auto**, **After audio**, **Always**, or **Off**. Changes apply immediately; a failed save restores the previous choice. Off stops automatic spoken replies, but you can still explicitly request an audio file.
 
-**Automatic** uses the first connected speech service in this order: OpenRouter, OpenAI, ElevenLabs, then downloaded free voices. Multilingual voices follow the reply's language. For voices with a specific language, **Automatic** chooses a matching voice from that service. If the language is unclear or unsupported, it keeps the service's default. Select **Automatic** in the voice picker to restore this behavior. This default can change when your connections or provider's voice list change. To keep a particular voice, choose its provider, then select the voice. Your chat model stays unchanged. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
+The **Microphone** control uses the same device preference as the chat composer. Select **Allow access** before choosing a device. Nod only requests permission when you select that action. Recording audio messages doesn't require setting up a spoken-reply voice.
+
+**Automatic** uses the first connected speech service in this order: OpenRouter, OpenAI, ElevenLabs, then downloaded free voices. Multilingual voices follow the reply's language. For voices with a specific language, **Automatic** chooses a matching voice from that service. If the language is unclear or unsupported, it keeps the service's default. Select **Automatic** in the voice picker to restore this behavior. This default can change when your connections or provider's voice list change. To keep a particular voice, select it in the picker. Your chat model stays unchanged. Cloud speech uses the provider's credits; a chat subscription alone does not include it.
 
 Native audio keeps the two most recent recording messages available across follow-ups and session compaction. Older recordings remain saved and their transcripts provide conversation context. Each recording is limited to five minutes and 25 MB. Browser recordings are converted to WAV for compatible models; externally uploaded native audio supports WAV, WebM, Ogg and MP3. Audio input uses the selected model's API credits, separately from your chosen spoken-reply voice.
 
-Existing API connections make their voices available automatically. Select a provider to see its connection status. If it isn't connected, sign in to OpenRouter for ElevenLabs and Kokoro voices, or connect ElevenLabs or OpenAI with an API key. OpenRouter doesn't need a separate ElevenLabs key. For local speech, select **Free voices → Download voices**. Setup stays on this page, and your connected chat model stays selected.
+Existing speech connections make their voices available in the picker. Open a provider under **Connections** or **More voices** to manage access. Sign in to OpenRouter for ElevenLabs and Kokoro voices, or connect ElevenLabs or OpenAI with an API key. OpenRouter doesn't need a separate ElevenLabs key. OpenAI speech requires API access, separate from a ChatGPT plan. Connecting a provider returns you to the chooser without selecting a voice for you.
 
 A direct ElevenLabs connection brings in voices saved in your account. Give the key Text to Speech, Speech to Text, and Voices read access. Select **Browse voices** to add or create voices on ElevenLabs, then **Refresh voices** to see them in Nod. Saved keys have a **Disconnect** action. Samples and replies use the selected provider’s credits.
 
 ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Choose a specific voice to keep it across replies, or **Automatic** to follow the conversation language. Changing a voice doesn't change the language Nod writes in.
 
-Under **Free voices**, select **Download voices** for a one-time download of about 180 MB, with no account needed. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices. Downloads need an internet connection; downloaded voices run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
+Under **Free voices**, select **Download** for a one-time download of about 180 MB, with no account needed. The chooser shows download progress, then preparation. Voices become selectable only when preparation completes. You can cancel your download or retry a failed attempt; your current voice stays selected. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices. Downloads need an internet connection; downloaded voices run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
 
 ## See visual answers
 
-When a visual makes an answer easier to understand, nod can include images, maps, flight comparisons, seat plans, booking summaries, diagrams, or charts.
+When a visual makes an answer easier to understand, nod can include images, maps, flight itineraries and comparisons, seat plans, booking summaries, diagrams, or charts.
 
-Each visual stays beside its explanation. References stay in the reply as links. Nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it in the file panel.
+Each visual appears as a single preview. Hover over it or focus it with the keyboard to reveal its expand control, which stays visible on touch screens. Select that control to inspect it in the file panel. A self-contained card can be the whole answer. Nod adds text for useful context or caveats instead of announcing the card or repeating its contents. Supplied sources and freshness details remain available inside the card. Nod can capture a page it visits and include the screenshot with its answer; select the image to inspect it in the file panel.
 
 When nod suggests apps to connect, it lists up to three below its message, each with a **Connect** button. Connect starts sign-in right there in the chat, the same as the email step in onboarding. If the app list fails to load, select **Try again** below the message. If catalog access is unavailable, select **Open Apps** to see the available connections. In Telegram and WhatsApp, nod names the apps to connect in [Apps](/connect/apps/) instead.
 
-Location cards show numbered markers and a **View map** link for every place. Each link opens OpenStreetMap with that location marked. Select a marker or place to inspect it, then **Load map** to see its street map in chat. Maps load only when you choose. A place's **Source** link opens its supplied reference separately.
+Location cards pair a numbered overview with a list of places. Select a marker or place, then **Open in Maps** to open its marked location in OpenStreetMap. Select **Map** to load the selected place's street map in chat, or **Overview** to return to relative positions. Maps load only when you choose. With a marker or place focused, use the arrow keys to change selection. A place's **Source** link opens its supplied reference separately.
 
-Flight comparisons give each option its own numbered card, price and expandable journey. Connection airports, technical stops and supplied stop durations stay visible before you expand it. The details keep each leg of an outbound, return or multi-city journey, with supplied local dates and time zones. Airport changes and self-transfers stay visible. Missing transfer information remains unknown.
+Flight cards group each journey's date, flight number, route, and times. A different arrival date stays beside the destination. Booked trips keep price and booking reference under **Details**; comparisons can show a price beside the carrier. Details also contain terminals, baggage and source links when available. Connection airports, technical stops, airport changes and self-transfers stay visible. Missing information is never treated as proof of a nonstop flight or a protected connection. An itinerary overview shows the reservation as recorded. Ask for a status or check-in update when you need current information.
 
 Seat plans group the supplied rows by cabin and deck, preserving different layouts, aisles and empty positions. The coverage states whether the source shows the whole aircraft, a cabin or selected rows. Each plan refers to one flight or aircraft configuration. The view is schematic; nod can show the original image when exact geometry matters. Inspecting a seat doesn't reserve it or confirm its availability.
 
 Venue cards can include photos, review summaries with their source rating and review count, and notes such as access or cancellation conditions. Comparisons keep each venue's details together. A proposed booking stays an option until nod has evidence of confirmation.
 
-Charts use bars for comparisons, lines for trends, and pie or donut charts for parts of a whole. Select a category or point to inspect its values.
+Charts use bars for comparisons, lines for trends, and pie or donut charts for parts of a whole. Hover, select, or focus a category or point to inspect its values. With a point focused, use the arrow keys to move through the data. A chart request stays focused on its data and any gaps. Ask for a forecast or an explanation of the numbers when you need further analysis.
 
-Telegram and WhatsApp receive the answer and visual details as text, with source links. Locations keep their marked map links. Flight options keep their numbers and separate journey details. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. The WhatsApp Cloud API receives PNG and JPEG images up to 5 MB each. If a file cannot be delivered in the channel, the answer points you back to nod to open it. Interactive visuals stay in nod's chat.
+Telegram and WhatsApp receive the answer and visual details as text, with source links, even when the card has no accompanying message. Locations keep their marked map links. Flights keep their separate journey details and booking references. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. The WhatsApp Cloud API receives PNG and JPEG images up to 5 MB each. If a file cannot be delivered in the channel, the answer points you back to nod to open it. Interactive visuals stay in nod's chat.
 
 ## Listen to audio
 
@@ -92,7 +98,7 @@ For large files or formats whose waveform your browser can't read, the player sh
 
 The message box stays open while Nod works. You can send another message at any time. Your sent messages have no receipt or queue labels.
 
-One short status line beside the typing dots shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer.
+One short status line beside the animated Nod mark shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer.
 
 Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
 
@@ -112,6 +118,8 @@ On desktop, enabling notifications sends a confirmation. If it does not appear, 
 
 Notifications use Nod's name and icon. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
 
+When you return to Chat with unread replies, a **New messages** divider marks where they begin and Chat opens there. It stays for that visit, even after you reach the latest reply and clear the unread badge. Selecting a notification still opens that specific message. Replies arriving while you are already at the bottom do not add a divider or move you away.
+
 The web choice applies to this account in this browser. Turning it off does not revoke the browser’s site permission. Quiet hours apply to web and desktop notifications.
 
 ### Notice new messages on macOS
@@ -126,13 +134,17 @@ macOS controls whether badges appear. In **System Settings > Notifications > Nod
 
 When a task needs a decision, an approval or your help in its browser, it asks and waits. Reply to its question to continue the session that asked. Other tasks can keep working. For actions that need a yes or no, see [Approvals](/trust/approvals/).
 
+For a question with a few useful answers, Nod can show compact choices below its message. Descriptions help distinguish accounts or other similar answers. Select a choice to send it as a reply to that question, even when a newer question appears below it. If you can choose several, select them and then **Send**.
+
+Select **Write an answer** to open a reply to that question in the message box. For multiple choices, **Add your own** brings your selected answers into the message box so you can add other options or explain a preference. If you already have an unrelated draft, finish or clear it first; Nod keeps its text and files intact. After your answer is sent, the choices disappear. The question and your reply stay in the conversation. Stopped or replaced questions no longer offer choices. Telegram and WhatsApp show the choices as text, which you can reply to normally.
+
 Nod doesn't ask for passwords or card numbers in chat. It uses a saved login or a private form instead. See [Vault](/trust/vault/).
 
 ## Stop Nod
 
 While Nod works, one progress indicator shows the chat's activity and any background tasks.
 
-To stop Nod, select **Stop** next to the send button.
+While the message box is empty, the send button becomes **Stop**. Select it to stop Nod. Typing a message restores **Send**.
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
@@ -146,13 +158,17 @@ If Nod may have sent or changed something, verify the result yourself or ask Nod
 
 Open the **Settings** page, then **Models** to choose the model Nod uses from your connected providers. See [Models](/connect/models/).
 
+## Adjust the sidebar
+
+On a wide screen, move your pointer near the sidebar's right edge to reveal its middle button. Select it to expand or collapse the sidebar. You can also Tab to the button; on touch screens, it stays visible. Narrow screens use the navigation menu at the top.
+
 ## Desktop shortcuts
 
-In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to show shortcut hints. Use that key with 1–6 for Chat, Tasks, Apps, Channels, Usage and Vault; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
+In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to reveal the navigation tooltips. These are the same tooltips shown on hover. Use that key with 1–6 for Chat, Scheduled, Apps, Channels, Usage and Vault; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
 
 ## React to messages
 
-To react to one of Nod's replies, hover over the bubble and select its reaction icon. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. On touch screens, the reaction icon is always visible. Your reaction appears at the bottom of the bubble. Select it to remove it. Nod takes a reaction as feedback on that reply, never as an answer to a question or an approval.
+To react to one of Nod's replies, hover over the bubble and select its reaction icon, or hold or right-click the bubble and choose **React**. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. Your reaction appears at the bottom of the bubble. Select it to remove it. Nod takes a reaction as feedback on that reply, never as an answer to a question or an approval.
 
 Nod sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 
@@ -163,7 +179,7 @@ Links to Nod screens open in the current window. A link to **Settings > Models**
 | To see or change                          | Open                                      |
 | ----------------------------------------- | ----------------------------------------- |
 | Your conversation                         | **Chat** in the sidebar                   |
-| Saved tasks                               | **Tasks** in the sidebar                  |
+| Scheduled work                            | **Scheduled** in the sidebar              |
 | App connections                           | **Apps** in the sidebar                   |
 | Telegram and WhatsApp                     | **Channels** in the sidebar               |
 | Spending and activity                     | **Usage** in the sidebar                  |
@@ -195,17 +211,6 @@ Select **Review** to inspect the **Chat**, **Activity** and **Connections** tabs
 Preparing a report sends recent app activity and errors to your Nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
 
 In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Reopening a draft keeps its original screenshot. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. You can annotate or remove the screenshot. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided.
-
-## Start with an empty chat
-
-Nod has no button for a new conversation in normal use. When you run Nod from source in development mode (`pnpm dev`), **Clear messages** at the top of the chat starts an empty chat and stops its running tasks.
-
-| Starts fresh                                | Stays                                             |
-| ------------------------------------------- | ------------------------------------------------- |
-| The chat you see and Nod's working context  | Your earlier messages, stored but no longer shown |
-| The workspace folder                        | Memory, connected apps and Vault                  |
-| The browser, with its temporary downloads   | Saved browser sessions                            |
-| Running and queued work, which is cancelled | Task history and schedules                        |
 
 ## Related resources
 

@@ -31,6 +31,8 @@ Nod loads n8n's tools only when a task needs them and follows n8n's own guide fo
 
 ## Connect another service
 
+To connect an MCP server yourself, open **Apps** and select **Connect MCP**. Enter a name and the public HTTPS server URL, then choose browser sign-in, an access token or an API key. Select **Continue** to finish authentication in the private setup dialog. **Connection details** shows any extra setup instructions. Tokens stay outside the chat.
+
 Ask Nod to connect a service it can't find in the app catalog. Nod proposes a way in, called an access path, and sends you a link to a private setup page. There, you paste a token or sign in. The model never sees the token.
 
 | Access path | What Nod calls                     | How it signs in                       |

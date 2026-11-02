@@ -1,8 +1,10 @@
 import {
   flightJourneySummary,
   presentationImages,
+  presentationInputSchema,
   presentationSchema,
   presentationText,
+  type Presentation,
 } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
@@ -890,6 +892,34 @@ test('flight journeys preserve every leg and distinguish connections from techni
   ])
     assert.ok(summary.includes(detail), detail);
   const option = parsed.options[0];
+  assert.equal(option.status, undefined);
+  assert.equal(presentationInputSchema.safeParse(parsed).success, false);
+  for (const status of ['booked', 'option', 'unknown'] as const) {
+    const classified: Presentation = { ...parsed, options: [{ ...option, status }] };
+    assert.deepEqual(presentationInputSchema.parse(classified), classified);
+  }
+  const booked = presentationSchema.parse({
+    ...parsed,
+    options: [{ ...option, status: 'booked', bookingReference: 'SYNTH42', price: undefined }],
+  });
+  const bookedText = presentationText(booked);
+  assert.match(bookedText, /Booked/);
+  assert.match(bookedText, /Booking reference: SYNTH42/);
+  assert.doesNotMatch(bookedText, /Option \d|undefined|EUR 740|Recommended/);
+  const unconfirmed = presentationSchema.parse({
+    ...parsed,
+    options: [{ ...option, status: 'unknown' }],
+  });
+  assert.match(presentationText(unconfirmed), /Booking status unknown/);
+  assert.doesNotMatch(presentationText(unconfirmed), /Recommended/);
+  assert.match(summary, /Recommended/);
+  assert.doesNotMatch(summary, /Booking status unknown/);
+  assert.doesNotMatch(bookedText, /Booking status unknown/);
+  assert.equal(
+    presentationSchema.safeParse({ ...parsed, options: [{ ...option, status: 'unverified' }] })
+      .success,
+    false,
+  );
   const outbound = option.journeys[0];
   const invalidJourneys = [
     [],
@@ -957,11 +987,11 @@ test('flight journeys preserve every leg and distinguish connections from techni
     ],
     Array.from({ length: 7 }, (_, index) => ({ ...outbound, id: String(index) })),
   ];
-  for (const journeys of invalidJourneys)
-    assert.equal(
-      presentationSchema.safeParse({ ...flight, options: [{ ...option, journeys }] }).success,
-      false,
-    );
+  for (const journeys of invalidJourneys) {
+    const invalid = { ...flight, options: [{ ...option, status: 'unknown', journeys }] };
+    assert.equal(presentationSchema.safeParse(invalid).success, false);
+    assert.equal(presentationInputSchema.safeParse(invalid).success, false);
+  }
   assert.equal(
     presentationSchema.safeParse({
       ...flight,

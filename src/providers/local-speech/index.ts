@@ -2,7 +2,11 @@ import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { SpeechProviderError, type SpeechProvider } from '../../ports/speech.ts';
+import {
+  SpeechProviderError,
+  type SpeechProvider,
+  type LocalSpeechControls,
+} from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { speechVoices } from '../../shared/speech.ts';
 import { verifySpeechCache } from './cache.ts';
@@ -13,7 +17,7 @@ interface LocalSpeechStatus {
 }
 
 type Request =
-  | { method: 'prepare' }
+  | { method: 'prepare'; transcription: boolean }
   | { method: 'synthesize'; text: string; voice: string }
   | { method: 'transcribe'; bytes: Uint8Array; mimeType: string };
 
@@ -27,6 +31,7 @@ type Job = {
   cleanup(): void;
 };
 type Preparation = {
+  transcription: boolean;
   promise: Promise<void>;
   controller: AbortController;
   callers: number;
@@ -37,12 +42,9 @@ export function createLocalSpeechProvider(options: {
   fork?: (path: string, args: string[], options: ForkOptions) => ChildProcess;
   idleMs?: number;
   requestMs?: number;
-}): SpeechProvider & {
-  prepare(signal?: AbortSignal): Promise<void>;
-  status(): LocalSpeechStatus;
-  close(): Promise<void>;
-} {
+}): SpeechProvider & LocalSpeechControls {
   let status: LocalSpeechStatus = { state: 'not_downloaded' };
+  let inputStatus: LocalSpeechStatus = { state: 'not_downloaded' };
   let child: ChildProcess | undefined;
   let active: Job | undefined;
   const queue: Job[] = [];
@@ -50,9 +52,21 @@ export function createLocalSpeechProvider(options: {
   let idle: ReturnType<typeof setTimeout> | undefined;
   let preparing: Preparation | undefined;
   let closed = false;
-  const cached = verifySpeechCache(options.cacheDir).then((ready) => {
-    if (ready && !closed && status.state === 'not_downloaded') status = { state: 'ready' };
-  });
+  const cached = (async () => {
+    const ready = await verifySpeechCache(options.cacheDir);
+    const inputReady = ready || (await verifySpeechCache(options.cacheDir, true, true));
+    if (closed) return;
+    if (ready && status.state === 'not_downloaded') status = { state: 'ready' };
+    if (inputReady && inputStatus.state === 'not_downloaded') inputStatus = { state: 'ready' };
+  })();
+
+  function preparationStatus(transcription: boolean, value: LocalSpeechStatus) {
+    if (transcription) inputStatus = value;
+    else {
+      status = value;
+      if (inputStatus.state !== 'ready') inputStatus = value;
+    }
+  }
   const voices = speechVoices.filter((voice) => voice.engine === 'Local');
 
   function stop(error: Error) {
@@ -103,7 +117,12 @@ export function createLocalSpeechProvider(options: {
       child = worker;
       const died = () => {
         if (child !== worker) return;
-        status = { state: 'failed' };
+        const request = active?.request;
+        preparationStatus(
+          request?.method === 'transcribe' ||
+            (request?.method === 'prepare' && request.transcription),
+          { state: 'failed' },
+        );
         stop(new SpeechProviderError('Local speech stopped. Try again.'));
       };
       worker.on('error', died);
@@ -121,7 +140,10 @@ export function createLocalSpeechProvider(options: {
         if (reply.id !== active.id) return;
         if (reply.type === 'progress' && active.request.method === 'prepare') {
           if (typeof reply.progress === 'number' && reply.progress >= 0 && reply.progress <= 100)
-            status = { state: 'downloading', progress: reply.progress };
+            preparationStatus(active.request.transcription, {
+              state: 'downloading',
+              progress: reply.progress,
+            });
           return;
         }
         const finished = active;
@@ -261,7 +283,7 @@ export function createLocalSpeechProvider(options: {
         finish(new DOMException('The speech request was cancelled.', 'AbortError'));
         if (!preparation.callers && preparing === preparation) {
           preparing = undefined;
-          status = { state: 'not_downloaded' };
+          preparationStatus(preparation.transcription, { state: 'not_downloaded' });
           preparation.controller.abort();
         }
       };
@@ -269,6 +291,48 @@ export function createLocalSpeechProvider(options: {
       preparation.promise.then(() => finish(), finish);
       if (signal?.aborted) abort();
     });
+  }
+
+  async function prepare(transcription: boolean, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    await cached;
+    signal?.throwIfAborted();
+    if (closed) throw new SpeechProviderError('Local speech is closed.');
+    if ((transcription ? inputStatus : status).state === 'ready') return;
+    if (preparing) {
+      const running = preparing;
+      try {
+        await waitForPreparation(running, signal);
+      } catch (error) {
+        if (running.transcription === transcription) throw error;
+        signal?.throwIfAborted();
+      }
+      return prepare(transcription, signal);
+    }
+    preparationStatus(transcription, { state: 'downloading', progress: 0 });
+    const preparation: Preparation = {
+      transcription,
+      controller: new AbortController(),
+      callers: 0,
+      promise: Promise.resolve(),
+    };
+    preparing = preparation;
+    preparation.promise = (async () => {
+      try {
+        await mkdir(options.cacheDir, { recursive: true });
+        await call({ method: 'prepare', transcription }, preparation.controller.signal);
+        if (preparing === preparation) preparationStatus(transcription, { state: 'ready' });
+      } catch (error) {
+        if (preparing === preparation)
+          preparationStatus(transcription, {
+            state: preparation.controller.signal.aborted ? 'not_downloaded' : 'failed',
+          });
+        throw error;
+      } finally {
+        if (preparing === preparation) preparing = undefined;
+      }
+    })();
+    return waitForPreparation(preparation, signal);
   }
 
   return {
@@ -279,38 +343,12 @@ export function createLocalSpeechProvider(options: {
       return !closed && status.state === 'ready';
     },
     get transcriptionConfigured() {
-      return !closed && status.state === 'ready';
+      return !closed && inputStatus.state === 'ready';
     },
     status: () => ({ ...status }),
-    async prepare(signal) {
-      signal?.throwIfAborted();
-      await cached;
-      signal?.throwIfAborted();
-      if (closed) throw new SpeechProviderError('Local speech is closed.');
-      if (status.state === 'ready') return;
-      if (preparing) return waitForPreparation(preparing, signal);
-      status = { state: 'downloading', progress: 0 };
-      const preparation: Preparation = {
-        controller: new AbortController(),
-        callers: 0,
-        promise: Promise.resolve(),
-      };
-      preparing = preparation;
-      preparation.promise = (async () => {
-        try {
-          await mkdir(options.cacheDir, { recursive: true });
-          await call({ method: 'prepare' }, preparation.controller.signal);
-          if (preparing === preparation) status = { state: 'ready' };
-        } catch (error) {
-          if (preparing === preparation)
-            status = { state: preparation.controller.signal.aborted ? 'not_downloaded' : 'failed' };
-          throw error;
-        } finally {
-          if (preparing === preparation) preparing = undefined;
-        }
-      })();
-      return waitForPreparation(preparation, signal);
-    },
+    prepare: (signal) => prepare(false, signal),
+    prepareTranscription: (signal) => prepare(true, signal),
+    transcriptionStatus: () => ({ ...inputStatus }),
     async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
       if (status.state !== 'ready') throw new SpeechProviderError('Enable local speech first.');
@@ -330,7 +368,8 @@ export function createLocalSpeechProvider(options: {
     },
     async transcribe(audio, signal, report) {
       signal?.throwIfAborted();
-      if (status.state !== 'ready') throw new SpeechProviderError('Enable local speech first.');
+      if (inputStatus.state !== 'ready')
+        throw new SpeechProviderError('Enable local speech first.');
       if (!audio.bytes.length || audio.bytes.length > 25 * 1024 * 1024)
         throw new SpeechProviderError('The recording is too large.');
       return measured('transcribe', report, signal, async () => {

@@ -41,6 +41,7 @@ export function collapseScreenshotMessages(messages: Message[]) {
     const artifact = message.attachments[0];
     const isScreenshot =
       message.role === 'assistant' &&
+      !message.presentation &&
       Boolean(message.turnId) &&
       message.attachments.length === 1 &&
       artifact.mimeType === 'image/png' &&

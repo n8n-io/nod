@@ -1,15 +1,11 @@
 ---
 title: Track tasks
-description: See task status in web chat, on the Tasks page and in Telegram.
+description: Track work in chat and manage recurring work on the Scheduled page.
 sidebar:
   order: 2
 ---
 
-The **Tasks** page shows what Nod is working on, what's scheduled and what's done.
-
-Until there's something to show, the page helps you start instead. Select **something that takes a while** or **something that repeats** to ask Nod in your own words or pick an idea. The views appear once Nod has a task, a schedule or a past run.
-
-When writing a task or schedule request, press Enter to send or Shift+Enter for a new line.
+Task previews in chat show what Nod is working on and what needs your attention. The **Scheduled** page holds schedules and their recent runs. Select **New schedule** to open chat, where Nod helps you decide what to do and when.
 
 Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, including multi-step work it can finish in one sitting, such as research across sources, checked comparisons or report creation, and for an outside wait, such as a person, a reply or an action elsewhere, or work you ask it to track. You never pick an execution mode: Nod starts the task itself and lets it finish the assigned work.
 
@@ -25,15 +21,9 @@ The main chat stays available while tasks work. Each task keeps its goal and his
 
 Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and owner memory. Each task has its own working folder and saved session. See [Task sessions](/how-it-works/task-sessions/) for the architecture.
 
-## Three views
+## Scheduled work
 
-| View          | Shows                                                                         |
-| ------------- | ----------------------------------------------------------------------------- |
-| **Current**   | Open task cards, with the ones that need you first                            |
-| **Scheduled** | Your schedules and Nod's planned check-ins. See [Schedules](/use/schedules/). |
-| **Previous**  | Finished cards and past schedule runs, newest first                           |
-
-![The Scheduled view with a weekday calendar check and a Friday weekly recap, each with its next run and a switch to pause it.](../../../assets/screens/tasks-light.png)
+Open **Scheduled** to review upcoming schedules. Expand **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
 
 ## What a card shows
 
@@ -46,9 +36,9 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 | **Next check** | When Nod will look again                                                                   |
 | **Done when**  | What finished looks like                                                                   |
 
-The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and a bubble at the bottom of the chat show its current activity and, while it browses, the website it is on. Useful, verified milestones also arrive as chat messages, with what is complete and what remains. Inside the details, select **Show activity** to read Nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
+A compact task preview appears in chat. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and the progress indicator at the bottom of the chat show its current activity and, while it browses, the website it is on. Useful, verified milestones also arrive as chat messages, with what is complete and what remains. Inside the details, select **Show activity** to read Nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
 
-The activity bubble shows the task title above its current step. Both wrap so you can read the full text.
+The progress indicator shows the task title above its current step. Both wrap so you can read the full text.
 
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 
@@ -60,7 +50,7 @@ An owner update has a revision. **Owner update queued** means the task has not r
 
 Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. You can also ask Nod in the main chat to stop one task, or all background work, including scheduled runs and app checks. Reset also closes the old thread's open tasks.
 
-A task checks in when its spending since your last message to it passes the amount you set in **Usage**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
+A task checks in when its spending since your last message to it passes the check-in amount, $5 by default, and asks whether to keep going. Tell Nod in chat to change the amount. See [Task check-ins](/use/spending/#task-check-ins).
 
 ## Rename a task
 
@@ -68,7 +58,7 @@ Open its preview and select its title in the details. Change the display name, t
 
 ## Inspect task activity
 
-On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, Nod's steps and messages, and the tool and helper steps between them, such as _Searched the web_ or _Gmail: send email_. Select **Show in chat** to return to the task's message.
+In chat, open a task preview and select **Show activity**. The details show planned steps, Nod's steps and messages, and the tool and helper steps between them, such as _Searched the web_ or _Gmail: send email_. Select **Show in chat** to return to the task's message.
 
 ![An expanded task with steps, activity from tools and helpers, and task controls.](../../../assets/screens/task-sessions-activity.png)
 

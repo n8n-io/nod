@@ -1,7 +1,8 @@
+import { Tooltip } from '../components/tooltip';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, Globe2, LoaderCircle, Repeat, Trash2 } from '../components/icons';
+import { ArrowDown, Check, CornerUpLeft, LoaderCircle, Repeat } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -13,8 +14,10 @@ import type {
 } from '../../shared/contracts';
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
+import type { QuestionAnswer } from '../../shared/answer-choices';
 import { integrationMetadata, integrationServices } from '../../shared/integrations';
 import { moreIdeasLine } from '../../shared/sender-apps';
+import { presentationText } from '../../shared/presentation';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
@@ -24,19 +27,10 @@ import { MessageBubble } from '../components/message';
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
-import { ChatTurnRail } from '../components/chat-turn-rail';
 import { ChatNotifications } from '../components/chat-notifications';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-discovery';
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  Notice,
-  Skeleton,
-} from '../components/ui';
+import { Button, Notice } from '../components/ui';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
@@ -50,12 +44,27 @@ import {
   mergeMessages,
   messagesAreGrouped,
   suggestedTaskStatus,
-  visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
 import { recordingSource } from '../lib/recording';
 import type { ImagePreview } from '../components/attachment-images';
+import {
+  hasUnreadHistory,
+  loadUnreadChatBoundary,
+  unreadChatMessageIds,
+  type ChatReadCursor,
+} from '../lib/chat-unread';
+
+type ComposerReply = NonNullable<Message['replyTo']> & { answerQuestion?: true };
+type UnreadVisit = {
+  ownerId: string;
+  threadId: string;
+  cursor: ChatReadCursor | null;
+  messages: Message[];
+  hasEarlier: boolean;
+  messageId?: string | null;
+};
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -70,6 +79,28 @@ function verificationFailure(
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
 }
+function scrollPosition(element: HTMLElement | null) {
+  const viewport = element?.getBoundingClientRect();
+  const anchor =
+    element &&
+    Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+      (message) => message.getBoundingClientRect().bottom > viewport!.top,
+    );
+  return {
+    top: element?.scrollTop ?? 0,
+    id: anchor?.dataset.messageId,
+    offset: anchor && viewport ? anchor.getBoundingClientRect().top - viewport.top : 0,
+  };
+}
+function restoreScrollPosition(element: HTMLElement, position: ReturnType<typeof scrollPosition>) {
+  const anchor = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+    (message) => message.dataset.messageId === position.id,
+  );
+  if (anchor)
+    element.scrollTop +=
+      anchor.getBoundingClientRect().top - element.getBoundingClientRect().top - position.offset;
+  else element.scrollTop = position.top;
+}
 function Welcome() {
   return (
     <div className="welcome" data-analytics-public>
@@ -78,41 +109,26 @@ function Welcome() {
     </div>
   );
 }
-function Working({ items = [], label = 'Nod is working' }: { items?: Activity[]; label?: string }) {
-  const details = items.filter((item) => item.title || item.step || item.site);
+function Working({ items = [], label }: { items?: Activity[]; label?: string }) {
+  const details = items.filter((item) => item.step?.trim());
+  if (!details.length && !label) return null;
   return (
-    <div className="thinking" role="status" aria-label={details.length ? undefined : label}>
-      <div className="assistant-mark" aria-hidden="true">
-        <BrandMark small />
-      </div>
-      <div className="working-bubble">
-        <span className="thinking-dots" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-        {details.length > 0 && (
-          <div className="working-details">
-            {details.map((item) => (
-              <span className="working-text" key={item.turnId}>
-                {item.title && <strong>{item.title}</strong>}
-                {item.step ? (
-                  <span key={item.step}>
-                    <Markdown allowedElements={[]} unwrapDisallowed>
-                      {item.step}
-                    </Markdown>
-                  </span>
-                ) : (
-                  item.site && (
-                    <span key={item.site}>
-                      {item.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}
-                      {item.site}
-                    </span>
-                  )
-                )}
+    <div className="thinking" role="status">
+      <NodGlyph size={28} mode="thinking" />
+      <div className="working-details">
+        {details.length ? (
+          details.map((item) => (
+            <span className="working-text" key={item.turnId}>
+              {item.title && <strong>{item.title}</strong>}
+              <span key={item.step}>
+                <Markdown allowedElements={[]} unwrapDisallowed>
+                  {item.step}
+                </Markdown>
               </span>
-            ))}
-          </div>
+            </span>
+          ))
+        ) : (
+          <span className="working-text">{label}</span>
         )}
       </div>
     </div>
@@ -175,28 +191,29 @@ function TaskCards({
           {(task.source !== 'web' || task.kind === 'ongoing' || state !== 'idle') && (
             <span className="task-meta">
               {task.source !== 'web' && (
-                <span
-                  className="task-card-logo"
-                  title={
+                <Tooltip
+                  content={
                     task.source === 'telegram'
                       ? 'Telegram'
                       : integrationMetadata(task.source, connection).name
                   }
                 >
-                  <ServiceLogo
-                    slug={task.source}
-                    logoUrl={
-                      task.source === 'telegram' ? '/logos/telegram.svg' : connection?.logoUrl
-                    }
-                    connectionId={connection?.connectionId}
-                    size={16}
-                  />
-                  <span className="sr-only">
-                    {task.source === 'telegram'
-                      ? 'Telegram'
-                      : integrationMetadata(task.source, connection).name}
+                  <span className="task-card-logo">
+                    <ServiceLogo
+                      slug={task.source}
+                      logoUrl={
+                        task.source === 'telegram' ? '/logos/telegram.svg' : connection?.logoUrl
+                      }
+                      connectionId={connection?.connectionId}
+                      size={16}
+                    />
+                    <span className="sr-only">
+                      {task.source === 'telegram'
+                        ? 'Telegram'
+                        : integrationMetadata(task.source, connection).name}
+                    </span>
                   </span>
-                </span>
+                </Tooltip>
               )}
               {task.source !== 'web' && task.kind === 'ongoing' && (
                 <span className="task-dot" aria-hidden="true" />
@@ -238,9 +255,6 @@ function TaskCards({
       data-message-id={id}
       tabIndex={-1}
     >
-      <div className={`assistant-mark${grouped ? ' grouped-mark' : ''}`} aria-hidden="true">
-        <BrandMark small />
-      </div>
       <div className="task-suggestions">
         <p className="task-bubble" data-analytics-private>
           {suggestions.intro}
@@ -263,29 +277,33 @@ export function Chat({
   state,
   streams,
   refresh,
-  resetConversation,
   initialFocusMessageId,
   toolbarActions,
   visible = true,
+  readCursor,
+  readUnavailable = false,
   onReadLatest,
   requestedMessage,
   onRequestHandled,
   onFeedback,
   onDismissFeedbackDiscovery,
+  onReturnToMemory,
 }: {
   ownerId: string;
   state: AppState;
   streams: Record<string, string>;
   refresh(): Promise<void>;
-  resetConversation(threadId: string): Promise<string>;
   initialFocusMessageId?: string;
   toolbarActions?: HTMLElement | null;
   visible?: boolean;
+  readCursor?: ChatReadCursor | null;
+  readUnavailable?: boolean;
   onReadLatest?(threadId: string): void;
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
   onFeedback?(): void;
   onDismissFeedbackDiscovery?(): void;
+  onReturnToMemory?(): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
@@ -324,14 +342,15 @@ export function Chat({
   );
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [connectionNotice, setConnectionNotice] = useState<{
     text: string;
     kind: 'success' | 'error';
   } | null>(null);
-  const [replyTo, setReplyTo] = useState<Message['replyTo']>(null);
+  const [replyTo, setReplyTo] = useState<ComposerReply | null | undefined>(null);
+  const [replyNotice, setReplyNotice] = useState('');
+  const [unavailableQuestions, setUnavailableQuestions] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => setReplyNotice(''), [text, replyTo?.id]);
   const taskReply = useRef<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
@@ -358,6 +377,76 @@ export function Chat({
   const requestedSends = useRef<Array<{ text: string; result?: ComposerSendResult }>>([]);
   const historyVersion = useRef(0);
   const threadId = state.threadId;
+  const chatVisible = useRef(visible);
+  chatVisible.current = visible;
+  const preserveUnreadPosition = useRef(false);
+  if (!visible) preserveUnreadPosition.current = false;
+  const [foreground, setForeground] = useState(
+    () => document.visibilityState === 'visible' && document.hasFocus(),
+  );
+  useEffect(() => {
+    const update = () => {
+      const active = document.visibilityState === 'visible' && document.hasFocus();
+      if (!active)
+        preserveUnreadPosition.current =
+          chatVisible.current && (!stickToBottom.current || Boolean(composer.current?.hasDraft()));
+      setForeground(active);
+    };
+    window.addEventListener('focus', update);
+    window.addEventListener('blur', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.removeEventListener('focus', update);
+      window.removeEventListener('blur', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+  const retainedUnreadVisit = useRef<UnreadVisit | null>(null);
+  const unreadVisit = useMemo(() => {
+    const previous = retainedUnreadVisit.current;
+    if (!visible || readCursor === undefined) return null;
+    if (previous?.ownerId === ownerId && previous.threadId === threadId) {
+      if (previous.messageId || !foreground) return previous;
+    }
+    const visit: UnreadVisit | null = foreground
+      ? {
+          ownerId,
+          threadId,
+          cursor: readCursor,
+          messages: state.messages,
+          hasEarlier: state.hasEarlierMessages === true,
+        }
+      : null;
+    return visit;
+  }, [ownerId, threadId, visible, foreground, readCursor !== undefined]);
+  retainedUnreadVisit.current = unreadVisit;
+  if (unreadVisit && !unreadVisit.cursor && readCursor) unreadVisit.cursor = readCursor;
+  const currentUnreadVisit = useRef(unreadVisit);
+  currentUnreadVisit.current = unreadVisit;
+  const unreadPositioned = useRef<typeof unreadVisit | 'target'>(
+    initialFocusMessageId ? 'target' : null,
+  );
+  const [unreadHistory, setUnreadHistory] = useState<{
+    visit: NonNullable<typeof unreadVisit>;
+    messageId: string | null;
+  } | null>(null);
+  const [unreadFailure, setUnreadFailure] = useState<{
+    visit: NonNullable<typeof unreadVisit>;
+    error: string;
+  } | null>(null);
+  const [unreadAttempt, setUnreadAttempt] = useState(0);
+  const unreadBoundary =
+    unreadHistory?.visit === unreadVisit
+      ? unreadHistory.messageId
+      : unreadVisit?.cursor &&
+          !hasUnreadHistory(unreadVisit.messages, unreadVisit.hasEarlier, unreadVisit.cursor)
+        ? (unreadChatMessageIds(unreadVisit.messages, unreadVisit.cursor).values().next().value ??
+          null)
+        : undefined;
+  if (unreadVisit && unreadBoundary !== undefined) unreadVisit.messageId = unreadBoundary;
+  const unreadPending = !!unreadVisit && unreadBoundary === undefined && !readUnavailable;
+  const unreadError = unreadFailure?.visit === unreadVisit ? unreadFailure.error : '';
+  const unreadDivider = useRef<HTMLDivElement>(null);
   const initializedThread = useRef(threadId);
   const threadRef = useRef(threadId);
   threadRef.current = threadId;
@@ -373,17 +462,31 @@ export function Chat({
     (historyPage.threadId === threadId ? historyPage.hasMore : undefined) ??
     state.hasEarlierMessages === true;
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [activeTurn, setActiveTurn] = useState<string | null>(null);
-  const [visibleTurns, setVisibleTurns] = useState<string[]>([]);
-  const [away, setAway] = useState<{ since: number; shown: boolean } | null>(null);
-  const returning = useRef(0);
+  const [historyError, setHistoryError] = useState('');
+  const historyRequest = useRef<{
+    version: number;
+    cursor: string;
+    controller: AbortController;
+  } | null>(null);
+  const historyCursor = useRef<string | null>(null);
+  const historyAnchor = useRef<{
+    version: number;
+    position: ReturnType<typeof scrollPosition>;
+    height: number;
+    following: boolean;
+  } | null>(null);
+  const focusLoading = useRef(false);
+  const [away, setAway] = useState<{ since: number } | null>(null);
+  const returning = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
-  const returnPosition = useRef<{ top: number; id?: string; offset: number } | null>(null);
+  const returnPosition = useRef<ReturnType<typeof scrollPosition> | null>(null);
   const focusRequest = useRef(0);
   const [canReturn, setCanReturn] = useState(false);
   const stickToBottom = useRef(true);
-  const resetLock = useRef(false);
+  const scrollSize = useRef({ content: 0, viewport: 0 });
+  const latestScrollUpdate = useRef(updateAway);
+  latestScrollUpdate.current = updateAway;
   const streamTimes = useRef(new Map<string, string>());
   const known = useRef<{ threadId: string; messages: Message[] }>({ threadId, messages: [] });
   const persistedMessages = useMemo(() => {
@@ -391,9 +494,28 @@ export function Chat({
       known.current.threadId === threadId ? known.current.messages : [],
       [...(historyPage.threadId === threadId ? historyPage.messages : []), ...state.messages],
     );
-    known.current = { threadId, messages: merged };
-    return merged;
-  }, [threadId, historyPage, state.messages]);
+    const pending = state.pendingAnswerChoiceMessageIds
+      ? new Set(state.pendingAnswerChoiceMessageIds)
+      : null;
+    const messages = merged.map((message) =>
+      message.answerChoices
+        ? {
+            ...message,
+            answerChoicesPending:
+              !unavailableQuestions.has(message.id) &&
+              (pending ? pending.has(message.id) : message.answerChoicesPending),
+          }
+        : message,
+    );
+    known.current = { threadId, messages };
+    return messages;
+  }, [
+    threadId,
+    historyPage,
+    state.messages,
+    state.pendingAnswerChoiceMessageIds,
+    unavailableQuestions,
+  ]);
   const persistedIds = new Set(persistedMessages.map((message) => message.id));
   const acknowledgedIds = useRef(persistedIds);
   acknowledgedIds.current = persistedIds;
@@ -423,11 +545,10 @@ export function Chat({
   const streamEntries = Object.entries(streams).filter(
     ([id, value]) => value && !persistedStreams.has(id),
   );
-  const visibleWork = live.filter((item) => item.taskId || streamEntries.length === 0);
   const streamIds = new Set(streamEntries.map(([id]) => id));
   for (const id of streamTimes.current.keys())
     if (!streamIds.has(id)) streamTimes.current.delete(id);
-  const visibleMessages: Message[] = collapseScreenshotMessages([
+  const displayMessages: Message[] = [
     ...allMessages,
     ...streamEntries.map(([id, value]): Message => {
       if (!streamTimes.current.has(id)) streamTimes.current.set(id, new Date().toISOString());
@@ -441,9 +562,20 @@ export function Chat({
         createdAt: streamTimes.current.get(id)!,
       };
     }),
-  ]);
+  ];
+  const unreadIndex = displayMessages.findIndex((message) => message.id === unreadBoundary);
+  const visibleMessages =
+    unreadIndex > 0
+      ? [
+          ...collapseScreenshotMessages(displayMessages.slice(0, unreadIndex)),
+          ...collapseScreenshotMessages(displayMessages.slice(unreadIndex)),
+        ]
+      : collapseScreenshotMessages(displayMessages);
   const fileKey = visibleMessages
-    .map((message) => message.attachments.map((file) => file.id).join(','))
+    .map(
+      (message) =>
+        `${message.id}:${JSON.stringify(message.presentation ?? null)}:${message.attachments.map((file) => file.id).join(',')}`,
+    )
     .join(';');
   const files = useMemo(() => conversationFiles(visibleMessages), [fileKey]);
   const planning =
@@ -454,6 +586,71 @@ export function Chat({
       ).length
     : 0;
   useLayoutEffect(() => {
+    const element = scroll.current;
+    const page = element?.parentElement;
+    if (!element || !page) return;
+    const update = () =>
+      page.style.setProperty(
+        '--chat-scrollbar-width',
+        `${Math.max(0, element.offsetWidth - element.clientWidth)}px`,
+      );
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [visible]);
+  useLayoutEffect(() => {
+    const anchor = historyAnchor.current;
+    const element = scroll.current;
+    historyAnchor.current = null;
+    if (!anchor || !element || anchor.version !== historyVersion.current) return;
+    if (anchor.following || returning.current) element.scrollTop = element.scrollHeight;
+    else
+      restoreScrollPosition(element, {
+        ...anchor.position,
+        top: anchor.position.top + element.scrollHeight - anchor.height,
+      });
+    scrollSize.current = { content: element.scrollHeight, viewport: element.clientHeight };
+    updateAway();
+  }, [historyPage]);
+  useLayoutEffect(() => {
+    if (!foreground) return;
+    if (
+      unreadVisit &&
+      (readUnavailable || preserveUnreadPosition.current || unreadPositioned.current === 'target')
+    ) {
+      unreadPositioned.current = unreadVisit;
+      return;
+    }
+    if (
+      !unreadVisit ||
+      unreadPending ||
+      unreadPositioned.current === unreadVisit ||
+      focusTarget ||
+      focusLoading.current
+    )
+      return;
+    unreadPositioned.current = unreadVisit;
+    if (unreadBoundary && unreadDivider.current) {
+      stickToBottom.current = false;
+      unreadDivider.current.scrollIntoView({ block: 'start', behavior: 'instant' });
+      updateAway();
+    }
+  }, [
+    unreadVisit,
+    unreadBoundary,
+    unreadPending,
+    historyPage,
+    focusTarget,
+    readUnavailable,
+    foreground,
+  ]);
+  useLayoutEffect(() => {
+    if (unreadPending && unreadPositioned.current !== unreadVisit) return;
     if (stickToBottom.current && !window.getSelection()?.toString())
       bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
     else updateAway();
@@ -463,10 +660,10 @@ export function Chat({
     state.activity,
     streams,
     sending,
-    resetting,
     optimistic,
     visible,
     focusTarget,
+    unreadPending,
   ]);
   useEffect(() => {
     let frame = 0;
@@ -518,12 +715,15 @@ export function Chat({
     focusRequest.current++;
     setCanReturn(false);
     historyVersion.current++;
+    cancelHistory();
+    historyCursor.current = null;
+    focusLoading.current = false;
+    setHistoryError('');
     setHistoryPage({ threadId, messages: [] });
     setLoadingHistory(false);
-    setActiveTurn(null);
-    setVisibleTurns([]);
     setAway(null);
     setReplyTo(null);
+    setUnavailableQuestions(new Set());
     setOptimistic([]);
     sendQueue.current = Promise.resolve(true);
     pendingSends.current = 0;
@@ -576,21 +776,10 @@ export function Chat({
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
       if (typeof detail?.messageId === 'string') {
-        const element = scroll.current;
-        const anchor =
-          element &&
-          Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(
-            (message) =>
-              message.getBoundingClientRect().bottom > element.getBoundingClientRect().top,
-          );
-        returnPosition.current = {
-          top: element?.scrollTop ?? 0,
-          id: anchor?.dataset.messageId,
-          offset:
-            anchor && element
-              ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
-              : 0,
-        };
+        unreadPositioned.current = 'target';
+        returnPosition.current = scrollPosition(scroll.current);
+        cancelHistory();
+        focusLoading.current = true;
         setCanReturn(true);
         const expectedThread = threadRef.current;
         const version = ++focusRequest.current;
@@ -598,6 +787,7 @@ export function Chat({
         void api<Message[]>(`/api/messages/around/${id}`)
           .then((messages) => {
             if (expectedThread !== threadRef.current || version !== focusRequest.current) return;
+            focusLoading.current = false;
             setHistoryPage((current) => ({
               ...current,
               messages: mergeMessages(current.messages, messages),
@@ -605,8 +795,10 @@ export function Chat({
             setFocusTarget({ id, pages: 0 });
           })
           .catch((cause) => {
-            if (expectedThread === threadRef.current && version === focusRequest.current)
+            if (expectedThread === threadRef.current && version === focusRequest.current) {
+              focusLoading.current = false;
               setError(errorMessage(cause));
+            }
           });
       }
     };
@@ -614,8 +806,8 @@ export function Chat({
     return () => window.removeEventListener('nod:focus-message', focusMessage);
   }, []);
   useEffect(() => {
-    if (!focusTarget || loadingHistory) return;
-    if (focusTarget.pages && error) {
+    if (!visible || !focusTarget || loadingHistory) return;
+    if (focusTarget.pages && historyError) {
       setFocusTarget(null);
       return;
     }
@@ -640,23 +832,37 @@ export function Chat({
     }
     setFocusTarget(null);
     setError('Could not find that message in this chat.');
-  }, [focusTarget, loadingHistory, historyPage, hasEarlier, error]);
+  }, [focusTarget, loadingHistory, historyPage, hasEarlier, historyError, visible]);
   async function send(
     value: string,
     attachments: Artifact[],
-    reply: Message['replyTo'] = replyTo,
-    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' = reply &&
+    reply: ComposerReply | null | undefined = replyTo,
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice' = reply &&
     reply.id === taskReply.current
       ? 'task_reply'
       : 'composer',
     recording?: File,
-  ): Promise<ComposerSendResult> {
-    if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
+    questionAnswer?: QuestionAnswer,
+  ): Promise<ComposerSendResult & { error?: string; questionUnavailable?: true }> {
+    if (welcoming || spendingPaused) return { sent: false, restoreText: true };
+    unreadPositioned.current = currentUnreadVisit.current;
+    const replyId = reply?.id;
+    questionAnswer ??=
+      reply &&
+      !unavailableQuestions.has(reply.id) &&
+      (reply.answerQuestion ||
+        allMessages.some((message) => message.id === replyId && message.answerChoicesPending) ||
+        state.pendingAnswerChoiceMessageIds?.includes(reply.id))
+        ? { custom: true }
+        : undefined;
+    const directAnswer = source === 'answer_choice';
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
-    const verificationRequests = (state.verificationRequests ?? []).filter(
+    const verificationRequests = (
+      questionAnswer && 'choiceIds' in questionAnswer ? [] : (state.verificationRequests ?? [])
+    ).filter(
       (request) =>
-        !reply || request.turnId === allMessages.find((message) => message.id === reply.id)?.turnId,
+        !reply || request.turnId === allMessages.find((message) => message.id === replyId)?.turnId,
     );
     const explicitVerification =
       classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
@@ -685,6 +891,7 @@ export function Chat({
           reply?.text ?? null,
           reply?.isQuote === true,
           recordingKey ? recordingIds.current.get(recordingKey) : null,
+          questionAnswer ?? null,
         ]);
     if (privateVerification) retry.current = null;
     const previousAttempt =
@@ -719,8 +926,9 @@ export function Chat({
     outstandingSends.current++;
     let failed = false;
     let retryableFailure = false;
+    let questionUnavailable = false;
     let submittedBody = previousAttempt?.body;
-    if (reply) {
+    if (reply && !directAnswer) {
       taskReply.current = null;
       setReplyTo(null);
     }
@@ -745,9 +953,8 @@ export function Chat({
     historyVersion.current++;
     setLoadingHistory(false);
     setSending(true);
-    setError('');
+    if (!directAnswer) setError('');
     stickToBottom.current = true;
-    const replyId = reply?.id;
     const seenMessageId = persistedMessages.findLast((item) => item.role === 'assistant')?.id;
     try {
       if (!(await previous)) {
@@ -775,6 +982,7 @@ export function Chat({
             : {}),
           ...(seenMessageId ? { seenMessageId } : {}),
           ...(verificationRequestId ? { verificationRequestId } : {}),
+          ...(questionAnswer ? { questionAnswer } : {}),
         });
       submittedBody = messageBody;
       let body: string | FormData = messageBody;
@@ -796,12 +1004,19 @@ export function Chat({
         error?: string;
         attachments?: Artifact[];
         retryable?: boolean;
+        code?: string;
       };
       verificationStatus = result.verificationStatus;
       privateVerification ||= verificationStatus !== undefined;
       if (!response.ok) {
         retryableFailure = result.retryable === true;
-        if (response.status === 409 && verificationStatus === undefined) void refresh();
+        questionUnavailable =
+          response.status === 409 &&
+          result.code === 'question_unavailable' &&
+          Boolean(questionAnswer && replyId) &&
+          !privateVerification;
+        if (response.status === 409 && verificationStatus === undefined)
+          void refresh().catch(() => {});
         throw new Error(result.error || 'The message could not be sent.');
       }
       if (threadRef.current !== sentThread) return { sent: true };
@@ -809,8 +1024,9 @@ export function Chat({
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
       if (!privateVerification)
-        captureAnalytics('nod_chat_message_sent', {
+        captureAnalytics('chat_message_sent', {
           has_attachments: attachments.length > 0 || Boolean(recording),
+          input: recording ? 'voice' : 'text',
           is_reply: Boolean(replyId),
           source,
         });
@@ -855,6 +1071,21 @@ export function Chat({
         return { sent: true };
       }
       failed = true;
+      if (questionUnavailable && replyId) {
+        retry.current = null;
+        setOptimistic((current) => current.filter((item) => item.message.id !== id));
+        setUnavailableQuestions((current) => new Set([...current, replyId]));
+        if (reply) reply = { ...reply, answerQuestion: undefined };
+        setReplyTo((current) =>
+          current?.id === replyId ? { ...current, answerQuestion: undefined } : current,
+        );
+        return {
+          sent: false,
+          restoreText: true,
+          restoreRecording: true,
+          questionUnavailable: true,
+        };
+      }
       if (retryableFailure && recordingKey) recordingIds.current.delete(recordingKey);
       retry.current =
         !privateVerification && !retryableFailure && signature !== null && submittedBody
@@ -867,23 +1098,23 @@ export function Chat({
             }
           : null;
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
-      setError(
-        privateVerification
-          ? attachments.length
-            ? 'Send the verification code by itself, without attachments.'
-            : verificationFailure(verificationStatus, verificationRequests.length > 1)
-          : errorMessage(cause),
-      );
+      const failure = privateVerification
+        ? attachments.length
+          ? 'Send the verification code by itself, without attachments.'
+          : verificationFailure(verificationStatus, verificationRequests.length > 1)
+        : errorMessage(cause);
+      if (!directAnswer) setError(failure);
       captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
       return {
         sent: false,
         restoreText: !privateVerification || !explicitVerification,
         restoreRecording: !privateVerification,
+        error: failure,
       };
     } finally {
       outstandingSends.current--;
       finished(!failed);
-      if (failed && reply && sequence === sendCount.current)
+      if (failed && reply && !directAnswer && sequence === sendCount.current)
         setReplyTo((current) => current ?? reply);
       if (threadRef.current === sentThread && --pendingSends.current === 0) {
         sendQueue.current = Promise.resolve(true);
@@ -892,14 +1123,7 @@ export function Chat({
     }
   }
   useEffect(() => {
-    if (
-      !requestedMessage ||
-      !state.configuration.llmReady ||
-      resetting ||
-      welcoming ||
-      resetLock.current
-    )
-      return;
+    if (!requestedMessage || !state.configuration.llmReady || welcoming) return;
     if (handledRequest.current === requestedMessage.id) return;
     handledRequest.current = requestedMessage.id;
     onRequestHandled?.(requestedMessage.id);
@@ -920,45 +1144,177 @@ export function Chat({
       if (unsent.length) setText((current) => [...unsent, current].filter(Boolean).join('\n\n'));
       composer.current?.focus();
     });
-  }, [requestedMessage, state.configuration.llmReady, resetting, welcoming]);
-  async function history() {
-    const version = ++historyVersion.current;
-    setLoadingHistory(true);
-    setError('');
-    const first = persistedMessages[0];
-    const height = scroll.current?.scrollHeight ?? 0;
-    try {
-      const before = first?.createdAt;
-      const query = new URLSearchParams({
-        threadId,
-        ...(before ? { before } : {}),
-        ...(first ? { beforeId: first.id } : {}),
+  }, [requestedMessage, state.configuration.llmReady, welcoming]);
+  function cancelHistory() {
+    const request = historyRequest.current;
+    if (!request) return;
+    request.controller.abort();
+    historyRequest.current = null;
+    if (historyCursor.current === request.cursor) historyCursor.current = null;
+    historyAnchor.current = null;
+    setLoadingHistory(false);
+  }
+  useEffect(() => {
+    if (!foreground || !unreadVisit?.cursor || !unreadPending || unreadError) return;
+    cancelHistory();
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    void loadUnreadChatBoundary(
+      unreadVisit.messages,
+      unreadVisit.hasEarlier,
+      unreadVisit.cursor,
+      (before, signal) => {
+        const query = new URLSearchParams({
+          threadId,
+          before: before.createdAt,
+          beforeId: before.id,
+        });
+        return api<MessageHistoryPage>(`/api/messages?${query}`, { signal });
+      },
+      signal,
+    )
+      .then((result) => {
+        if (controller.signal.aborted || currentUnreadVisit.current !== unreadVisit) return;
+        const element = scroll.current;
+        if (element)
+          historyAnchor.current = {
+            version: historyVersion.current,
+            position: scrollPosition(element),
+            height: element.scrollHeight,
+            following: stickToBottom.current,
+          };
+        flushSync(() => {
+          setHistoryPage((current) => {
+            const previous = current.threadId === threadId ? current.messages : [];
+            const messages = mergeMessages(previous, result.messages);
+            return {
+              threadId,
+              messages,
+              hasMore:
+                messages[0]?.id === result.messages[0]?.id ? result.hasMore : current.hasMore,
+            };
+          });
+          setUnreadHistory({ visit: unreadVisit, messageId: result.messageId });
+        });
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted && currentUnreadVisit.current === unreadVisit)
+          setUnreadFailure({ visit: unreadVisit, error: errorMessage(cause) });
       });
-      const result = await api<MessageHistoryPage>(`/api/messages?${query}`);
-      if (version !== historyVersion.current || threadRef.current !== threadId) return;
-      setHistoryPage((current) => ({
-        threadId,
-        messages: [...result.messages, ...(current.threadId === threadId ? current.messages : [])],
-        hasMore: result.hasMore,
-      }));
-      requestAnimationFrame(() => {
-        if (scroll.current) scroll.current.scrollTop += scroll.current.scrollHeight - height;
+    return () => controller.abort();
+  }, [unreadVisit, unreadVisit?.cursor, unreadPending, unreadError, unreadAttempt, foreground]);
+  useEffect(() => {
+    if (!visible || historyRequest.current?.version !== historyVersion.current) cancelHistory();
+  });
+  useEffect(() => {
+    const changed = () => {
+      if (document.visibilityState !== 'visible') cancelHistory();
+      else latestScrollUpdate.current();
+    };
+    document.addEventListener('visibilitychange', changed);
+    return () => {
+      document.removeEventListener('visibilitychange', changed);
+      historyRequest.current?.controller.abort();
+      historyRequest.current = null;
+    };
+  }, []);
+  async function history(retryHistory = false) {
+    const first = persistedMessages[0];
+    const element = scroll.current;
+    if (
+      !visible ||
+      !hasEarlier ||
+      !first ||
+      !element?.clientHeight ||
+      !element.getClientRects().length ||
+      document.visibilityState !== 'visible' ||
+      historyRequest.current
+    )
+      return;
+    const cursor = `${threadId}:${first.createdAt}:${first.id}`;
+    if (!retryHistory && (historyError || historyCursor.current === cursor)) return;
+    const request = {
+      version: ++historyVersion.current,
+      cursor,
+      controller: new AbortController(),
+    };
+    historyRequest.current = request;
+    historyCursor.current = cursor;
+    setLoadingHistory(true);
+    setHistoryError('');
+    try {
+      const query = new URLSearchParams({ threadId, before: first.createdAt, beforeId: first.id });
+      const result = await api<MessageHistoryPage>(`/api/messages?${query}`, {
+        signal: request.controller.signal,
+      });
+      if (
+        request.controller.signal.aborted ||
+        request.version !== historyVersion.current ||
+        threadRef.current !== threadId
+      )
+        return;
+      historyAnchor.current = {
+        version: request.version,
+        position: scrollPosition(element),
+        height: element.scrollHeight,
+        following: stickToBottom.current,
+      };
+      const progressed = mergeMessages(persistedMessages, result.messages)[0]?.id !== first.id;
+      historyRequest.current = null;
+      flushSync(() => {
+        setHistoryPage((current) => ({
+          threadId,
+          messages: mergeMessages(
+            current.threadId === threadId ? current.messages : [],
+            result.messages,
+          ),
+          hasMore: result.hasMore && progressed,
+        }));
+        setLoadingHistory(false);
       });
     } catch (cause) {
-      if (version === historyVersion.current && threadRef.current === threadId)
-        setError(errorMessage(cause));
+      if (
+        !request.controller.signal.aborted &&
+        request.version === historyVersion.current &&
+        threadRef.current === threadId
+      )
+        setHistoryError(errorMessage(cause));
     } finally {
-      if (version === historyVersion.current) setLoadingHistory(false);
+      if (historyRequest.current === request) {
+        historyRequest.current = null;
+        if (request.controller.signal.aborted || request.version !== historyVersion.current)
+          historyCursor.current = null;
+        setLoadingHistory(false);
+      }
     }
   }
+  function loadHistoryNearTop() {
+    const element = scroll.current;
+    if (
+      !visible ||
+      focusTarget ||
+      focusLoading.current ||
+      unreadPending ||
+      returning.current ||
+      historyError ||
+      !hasEarlier ||
+      !element ||
+      element.scrollTop > 160
+    )
+      return;
+    void history();
+  }
   function cancelReturn() {
-    returning.current = 0;
+    returning.current = false;
+    unreadPositioned.current = currentUnreadVisit.current;
   }
   function reportRead() {
     const element = scroll.current;
     if (
       !visible ||
       focusTarget ||
+      (readCursor === null && !readUnavailable) ||
+      (unreadPending && unreadPositioned.current !== unreadVisit) ||
       !element ||
       !element.clientHeight ||
       !element.getClientRects().length ||
@@ -977,76 +1333,50 @@ export function Chat({
   }
   function updateAway() {
     const element = scroll.current;
-    if (!element) return;
+    if (!element || !visible || !element.clientHeight) return;
+    if (unreadPending && unreadPositioned.current !== unreadVisit) return;
+    if (
+      stickToBottom.current &&
+      !returning.current &&
+      !window.getSelection()?.toString() &&
+      (scrollSize.current.content !== element.scrollHeight ||
+        scrollSize.current.viewport !== element.clientHeight)
+    )
+      element.scrollTop = element.scrollHeight;
+    scrollSize.current = { content: element.scrollHeight, viewport: element.clientHeight };
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    if (distance >= 160 && Date.now() < returning.current) return;
-    returning.current = 0;
-    stickToBottom.current = distance < 160;
+    if (distance > 2 && returning.current) return;
+    returning.current = false;
+    stickToBottom.current = distance <= 2;
     const since = Date.parse(allMessages.at(-1)?.createdAt ?? '') || Date.now();
-    setAway((current) => {
-      if (distance < 160) return null;
-      const shown = Boolean(current?.shown) || distance > element.clientHeight;
-      return current?.shown === shown ? current : { since: current?.since ?? since, shown };
-    });
+    setAway((current) => (distance <= 2 ? null : (current ?? { since })));
     reportRead();
-  }
-  function updateActiveTurn() {
-    const element = scroll.current;
-    if (!element) return;
-    const viewport = element.getBoundingClientRect();
-    const anchor = viewport.top + Math.min(120, element.clientHeight * 0.25);
-    const turns = Array.from(element.querySelectorAll<HTMLElement>('.message-user'));
-    const positions = turns.map((turn) => ({
-      id: turn.dataset.messageId!,
-      top: turn.getBoundingClientRect().top,
-    }));
-    const visible = visibleConversationTurns(positions, viewport);
-    setVisibleTurns((current) =>
-      current.length === visible.length && current.every((id, index) => id === visible[index])
-        ? current
-        : visible,
-    );
-    const current =
-      turns.filter((turn) => turn.getBoundingClientRect().top <= anchor).at(-1) ?? turns[0];
-    setActiveTurn(current?.dataset.messageId ?? null);
-    reportRead();
+    loadHistoryNearTop();
   }
   useEffect(() => {
-    const frame = requestAnimationFrame(updateActiveTurn);
-    const observer =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateActiveTurn);
+    const frame = requestAnimationFrame(updateAway);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateAway);
     if (scroll.current) observer?.observe(scroll.current);
     if (scroll.current?.firstElementChild) observer?.observe(scroll.current.firstElementChild);
-    window.addEventListener('resize', updateActiveTurn);
+    window.addEventListener('resize', updateAway);
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
-      window.removeEventListener('resize', updateActiveTurn);
+      window.removeEventListener('resize', updateAway);
     };
-  }, [state.messages, historyPage, streams, optimistic, visible, onReadLatest, focusTarget]);
-  async function clearMessages() {
-    if (resetLock.current || !resetTarget || !state.configuration.conversationResetEnabled) return;
-    resetLock.current = true;
-    setResetting(true);
-    setError('');
-    try {
-      const nextThread = await resetConversation(resetTarget);
-      threadRef.current = nextThread;
-      historyVersion.current++;
-      setHistoryPage({ threadId: nextThread, messages: [] });
-      setLoadingHistory(false);
-      setReplyTo(null);
-      setText('');
-      setResetTarget(null);
-      await refresh();
-    } catch (cause) {
-      setResetTarget(null);
-      setError(errorMessage(cause));
-    } finally {
-      resetLock.current = false;
-      setResetting(false);
-    }
-  }
+  }, [
+    state.messages,
+    historyPage,
+    streams,
+    optimistic,
+    visible,
+    onReadLatest,
+    focusTarget,
+    loadingHistory,
+    historyError,
+    hasEarlier,
+    unreadPending,
+  ]);
   async function stop() {
     if (stopping) return;
     const captureAnalytics = analyticsForCurrentSession();
@@ -1067,18 +1397,6 @@ export function Chat({
   const chatActions = (
     <>
       <ChatTools files={files} tasks={state.tasks} />
-      {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={resetting || sending || welcoming}
-          onClick={() => setResetTarget(threadId)}
-        >
-          <Trash2 size={16} aria-hidden="true" />
-          Clear messages
-        </Button>
-      )}
       {onFeedback && (
         <FeedbackLauncher
           onFeedback={onFeedback}
@@ -1090,7 +1408,7 @@ export function Chat({
   return (
     <PrivateEntryWorkspace key={`${ownerId}.${threadId}`} active={visible}>
       <ArtifactWorkspace className="chat-page" files={files}>
-        {desktopSettingsAvailable() ? (
+        {toolbarActions || desktopSettingsAvailable() ? (
           <>
             <h1 className="sr-only">Chat</h1>
             {toolbarActions && createPortal(chatActions, toolbarActions)}
@@ -1101,21 +1419,6 @@ export function Chat({
             {chatActions}
           </header>
         )}
-        <ChatTurnRail
-          messages={allMessages}
-          activeId={activeTurn}
-          visibleIds={visibleTurns}
-          onJump={(id) => {
-            const target = Array.from(
-              scroll.current?.querySelectorAll<HTMLElement>('.message-user') ?? [],
-            ).find((element) => element.dataset.messageId === id);
-            if (!target) return;
-            stickToBottom.current = false;
-            returning.current = 0;
-            setActiveTurn(id);
-            target.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
-          }}
-        />
         <div
           className="conversation-scroll"
           ref={scroll}
@@ -1148,8 +1451,9 @@ export function Chat({
               composer.current?.upload(Array.from(event.dataTransfer.files));
             }
           }}
-          onScroll={() => {
-            updateActiveTurn();
+          onScroll={updateAway}
+          onScrollEnd={() => {
+            returning.current = false;
             updateAway();
           }}
           onWheel={cancelReturn}
@@ -1158,34 +1462,54 @@ export function Chat({
           onKeyDown={cancelReturn}
         >
           <div className="conversation-column">
-            {loadingHistory ? (
-              <div className="history-skeleton" role="status" aria-label="Loading earlier messages">
-                <Skeleton className="ghost-bubble" style={{ width: 'min(240px, 50%)' }} />
-                <div className="history-skeleton-reply">
-                  <div className="assistant-mark">
-                    <BrandMark small />
-                  </div>
-                  <div className="skeleton-lines">
-                    <Skeleton style={{ width: 'min(420px, 70%)' }} />
-                    <Skeleton style={{ width: 'min(360px, 60%)' }} />
-                    <Skeleton style={{ width: 'min(260px, 45%)' }} />
-                  </div>
-                </div>
-                <Skeleton className="ghost-bubble" style={{ width: 'min(180px, 36%)' }} />
+            {unreadError && (
+              <div className="history-control">
+                <Tooltip content={unreadError}>
+                  <span className="history-error" role="alert">
+                    Could not find the first unread message.
+                  </span>
+                </Tooltip>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setUnreadFailure(null);
+                    setUnreadAttempt((value) => value + 1);
+                  }}
+                >
+                  Retry
+                </Button>
               </div>
-            ) : (
-              persistedMessages.length > 0 &&
-              hasEarlier && (
-                <div className="history-control">
-                  <Button variant="ghost" size="sm" onClick={() => void history()}>
-                    Load earlier messages
-                  </Button>
-                </div>
-              )
+            )}
+            {unreadPending && !unreadError && readCursor && (
+              <div className="history-control" role="status">
+                <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                Finding new messages
+              </div>
+            )}
+            {persistedMessages.length > 0 && (hasEarlier || loadingHistory || historyError) && (
+              <div className="history-control" aria-busy={loadingHistory || undefined}>
+                {historyError ? (
+                  <>
+                    <Tooltip content={historyError}>
+                      <span className="history-error" role="alert">
+                        {historyError}
+                      </span>
+                    </Tooltip>
+                    <Button variant="ghost" size="sm" onClick={() => void history(true)}>
+                      Retry
+                    </Button>
+                  </>
+                ) : loadingHistory ? (
+                  <span className="history-loading" role="status">
+                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    Loading earlier messages
+                  </span>
+                ) : null}
+              </div>
             )}
             {visibleMessages.length === 0 &&
               !welcoming &&
-              !resetting &&
               !working &&
               !sending &&
               (state.configuration.llmReady ? <Welcome /> : modelSetup)}
@@ -1208,10 +1532,23 @@ export function Chat({
                       <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
                     </div>
                   )}
+                  {message.id === unreadBoundary && (
+                    <div
+                      className="unread-divider"
+                      ref={unreadDivider}
+                      role="separator"
+                      aria-label="New messages"
+                    >
+                      <span aria-hidden="true">New messages</span>
+                    </div>
+                  )}
                   {message.suggestions ? (
                     <TaskCards
                       id={message.id}
-                      grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                      grouped={
+                        message.id !== unreadBoundary &&
+                        messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)
+                      }
                       suggestions={message.suggestions}
                       connections={connections ?? []}
                       status={(task) =>
@@ -1222,9 +1559,7 @@ export function Chat({
                           persistedIds,
                         )
                       }
-                      disabled={
-                        !state.configuration.llmReady || resetting || welcoming || spendingPaused
-                      }
+                      disabled={!state.configuration.llmReady || welcoming || spendingPaused}
                       onStart={(task, position) => {
                         captureAnalytics('nod_task_card_started', {
                           ...(task.kind
@@ -1256,13 +1591,67 @@ export function Chat({
                   ) : (
                     <MessageBubble
                       message={message}
+                      answersDisabled={
+                        sending || !state.configuration.llmReady || welcoming || spendingPaused
+                      }
+                      onAnswer={async (value, answer) => {
+                        if (replyTo?.id === message.id && composer.current?.hasDraft()) {
+                          composer.current.focus();
+                          throw new Error(
+                            'Send your answer from the composer to include your edits.',
+                          );
+                        }
+                        const result = await send(
+                          value,
+                          [],
+                          { id: message.id, role: 'assistant', text: message.text },
+                          'answer_choice',
+                          undefined,
+                          answer,
+                        );
+                        if (result.questionUnavailable) return 'unavailable';
+                        if (!result.sent && result.error) throw new Error(result.error);
+                        if (
+                          result.sent &&
+                          replyTo?.id === message.id &&
+                          !composer.current?.hasDraft()
+                        )
+                          setReplyTo((current) => (current?.id === message.id ? null : current));
+                        return result.sent;
+                      }}
+                      onWriteAnswer={(value) => {
+                        const input = composer.current;
+                        if (!input) return;
+                        if (replyTo?.id === message.id) {
+                          if (!input.hasDraft()) setText(value);
+                          setReplyTo({ ...replyTo, answerQuestion: true });
+                          setReplyNotice('');
+                        } else if (replyTo || input.hasDraft()) {
+                          setReplyNotice(
+                            'Finish or clear your current draft before answering this question.',
+                          );
+                        } else {
+                          taskReply.current = null;
+                          setReplyTo({
+                            id: message.id,
+                            role: 'assistant',
+                            text: message.text,
+                            answerQuestion: true,
+                          });
+                          setText(value);
+                        }
+                        input.focus();
+                      }}
                       pendingAudio={
                         optimistic.find((item) => item.message.id === message.id)?.audio
                       }
                       handoffPaused={spendingPaused}
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}
-                      grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                      grouped={
+                        message.id !== unreadBoundary &&
+                        messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)
+                      }
                       handoff={
                         message.role === 'assistant' &&
                         !sending &&
@@ -1272,12 +1661,18 @@ export function Chat({
                         message.turnId || persistedIds.has(message.id)
                           ? (quote?: string) => {
                               taskReply.current = null;
+                              const preview = message.audioCaption ?? message.text;
+                              const text =
+                                preview.trim() || !message.presentation
+                                  ? preview
+                                  : presentationText(message.presentation);
                               setReplyTo({
                                 ...message,
+                                ...(message.answerChoicesPending
+                                  ? { answerQuestion: true as const }
+                                  : {}),
                                 isQuote: Boolean(quote?.trim()),
-                                text: quote?.trim()
-                                  ? quote
-                                  : (message.audioCaption ?? message.text),
+                                text: quote?.trim() ? quote : text,
                               });
                               composer.current?.focus();
                             }
@@ -1291,80 +1686,84 @@ export function Chat({
                 </Fragment>
               ))}
               {planning ? (
-                <div className="thinking task-planning" role="status">
-                  <div className="assistant-mark" aria-hidden="true">
-                    <NodGlyph size={24} mode="thinking" />
-                  </div>
-                  <span className="task-bubble">Pulling together a few ideas to get started…</span>
-                </div>
+                <Working label="Pulling together a few ideas to get started" />
               ) : (
-                (visibleWork.length > 0 ||
-                  ((sending || resetting || welcoming) &&
-                    !working &&
-                    streamEntries.length === 0)) && (
-                  <Working
-                    items={visibleWork}
-                    label={resetting ? 'Starting setup' : sending ? 'Sending message' : undefined}
-                  />
-                )
+                <Working items={live} />
               )}
             </div>
             <div ref={bottom} />
           </div>
         </div>
         <div className="chat-bottom conversation-column">
-          {canReturn && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (scroll.current && returnPosition.current !== null) {
-                  stickToBottom.current = false;
-                  const saved = returnPosition.current;
-                  const anchor = Array.from(
-                    scroll.current.querySelectorAll<HTMLElement>('[data-message-id]'),
-                  ).find((message) => message.dataset.messageId === saved.id);
-                  if (anchor)
-                    scroll.current.scrollTop +=
-                      anchor.getBoundingClientRect().top -
-                      scroll.current.getBoundingClientRect().top -
-                      saved.offset;
-                  else scroll.current.scrollTop = saved.top;
-                }
-                setCanReturn(false);
-              }}
-            >
-              Return to where you were
-            </Button>
-          )}
-          {away?.shown && (
-            <Button
-              className={`jump-latest${unseen ? ' has-unseen' : ''}`}
-              variant="outline"
-              size="sm"
-              aria-label={
-                unseen
-                  ? `Back to latest, ${unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
-                  : 'Back to latest'
-              }
-              onClick={() => {
-                stickToBottom.current = true;
-                returning.current = Date.now() + 1000;
-                setAway(null);
-                bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
-              }}
-            >
-              <ArrowDown size={16} />
-              {unseen
-                ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
-                : 'Back to latest'}
-            </Button>
+          {(canReturn || away || onReturnToMemory) && (
+            <div className="chat-jump-actions">
+              {onReturnToMemory && (
+                <Button
+                  className="jump-latest"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setCanReturn(false);
+                    onReturnToMemory();
+                  }}
+                >
+                  <CornerUpLeft size={16} />
+                  Back to Memory
+                </Button>
+              )}
+              {canReturn && !onReturnToMemory && (
+                <Button
+                  className="jump-latest"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (scroll.current && returnPosition.current !== null) {
+                      stickToBottom.current = false;
+                      restoreScrollPosition(scroll.current, returnPosition.current);
+                    }
+                    setCanReturn(false);
+                  }}
+                >
+                  <CornerUpLeft size={16} />
+                  Return to previous position
+                </Button>
+              )}
+              {away && (
+                <Button
+                  className={`jump-latest${unseen ? ' has-unseen' : ''}`}
+                  variant="outline"
+                  size="sm"
+                  aria-label={
+                    unseen
+                      ? `Back to latest, ${unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+                      : 'Back to latest'
+                  }
+                  onClick={() => {
+                    unreadPositioned.current = currentUnreadVisit.current;
+                    stickToBottom.current = true;
+                    returning.current = true;
+                    setAway(null);
+                    bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
+                  }}
+                >
+                  <ArrowDown size={16} />
+                  {unseen
+                    ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+                    : 'Back to latest'}
+                </Button>
+              )}
+            </div>
           )}
           <div
             className="chat-bottom-fade"
-            data-away={away?.shown || undefined}
+            data-away={Boolean(away) || undefined}
             aria-hidden="true"
           />
+          {replyNotice && (
+            <Notice kind="info" onDismiss={() => setReplyNotice('')}>
+              {replyNotice}
+            </Notice>
+          )}
           {error && <Notice>{error}</Notice>}
           {connectionNotice && (
             <Notice kind={connectionNotice.kind} onDismiss={() => setConnectionNotice(null)}>
@@ -1377,7 +1776,12 @@ export function Chat({
               <a href="/usage">Raise the limit in Usage</a> to resume.
             </Notice>
           )}
-          <div hidden={!state.configuration.llmReady && !working && !sending}>
+          <div
+            hidden={!state.configuration.llmReady && !working && !sending}
+            onInputCapture={() => {
+              unreadPositioned.current = currentUnreadVisit.current;
+            }}
+          >
             <Composer
               key={`${ownerId}.${threadId}`}
               active={visible}
@@ -1385,7 +1789,7 @@ export function Chat({
               draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
               privateReply={Boolean(state.verificationRequests?.length)}
               restoreReply={setReplyTo}
-              ready={state.configuration.llmReady && !resetting && !welcoming && !spendingPaused}
+              ready={state.configuration.llmReady && !welcoming && !spendingPaused}
               text={text}
               setText={setText}
               replyTo={replyTo}
@@ -1413,26 +1817,6 @@ export function Chat({
             visibleMessages.length > 0 &&
             modelSetup}
         </div>
-        <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
-          <DialogContent>
-            <DialogTitle>Clear messages?</DialogTitle>
-            <DialogDescription>
-              This starts an empty chat and stops its running tasks.
-            </DialogDescription>
-            <div className="dialog-actions">
-              <Button variant="outline" disabled={resetting} onClick={() => setResetTarget(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={resetting}
-                onClick={() => void clearMessages()}
-              >
-                {resetting ? 'Clearing…' : 'Clear messages'}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </ArtifactWorkspace>
     </PrivateEntryWorkspace>
   );

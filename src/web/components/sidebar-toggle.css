@@ -1,0 +1,127 @@
+.sidebar-edge {
+  position: absolute;
+  inset: 0 auto 0 -22px;
+  z-index: 16;
+  width: 44px;
+  pointer-events: none;
+}
+.sidebar-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 calc(50% - 1px);
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  transition: background 160ms ease;
+}
+.sidebar-edge[data-revealed]::before {
+  background: color-mix(in srgb, var(--border) 75%, transparent);
+}
+.sidebar-edge-toggle.button {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transform: translateY(-50%);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+.sidebar-edge-toggle.button:hover:not(:disabled),
+.sidebar-edge-toggle.button:active:not(:disabled) {
+  background: transparent;
+}
+.sidebar-edge-face {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 14%, var(--surface));
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-secondary);
+  box-shadow:
+    0 1px 3px #0000000d,
+    0 3px 10px #00000005;
+  opacity: 0;
+  transform: scale(0.94);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+:root[data-theme='dark'] .sidebar-edge-face {
+  box-shadow:
+    0 1px 3px #00000033,
+    0 3px 10px #0000001a;
+}
+.sidebar-edge[data-revealed] .sidebar-edge-toggle,
+.sidebar-edge-toggle:focus-visible {
+  pointer-events: auto;
+}
+.sidebar-edge[data-revealed] .sidebar-edge-face,
+.sidebar-edge-toggle:focus-visible .sidebar-edge-face {
+  opacity: 1;
+  transform: scale(1);
+}
+.sidebar-edge-toggle:hover .sidebar-edge-face {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+  color: var(--accent);
+}
+.sidebar-edge-toggle:active .sidebar-edge-face {
+  background: color-mix(in srgb, var(--primary) 25%, var(--surface));
+  box-shadow: 0 1px 2px #0000000a;
+  transform: scale(0.97);
+}
+.sidebar-edge-toggle:focus-visible {
+  outline-offset: -2px;
+}
+.sidebar-edge-symbol {
+  overflow: visible;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sidebar-edge-symbol-divider {
+  transition: transform 180ms var(--ease-reveal);
+}
+.sidebar-edge-toggle[aria-expanded='false'] .sidebar-edge-symbol-divider {
+  transform: translateX(-2.5px);
+}
+@media (any-pointer: coarse), (hover: none) {
+  .sidebar-edge-toggle.button {
+    pointer-events: auto;
+  }
+  .sidebar-edge-face {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (max-width: 800px) {
+  :root:not([data-desktop='true']) .sidebar-edge {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .sidebar-edge {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-edge .sidebar-edge-toggle .sidebar-edge-face {
+    transform: none;
+  }
+  .sidebar-edge-symbol-divider {
+    transition: none;
+  }
+}

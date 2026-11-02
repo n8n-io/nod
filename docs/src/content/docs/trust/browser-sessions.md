@@ -9,12 +9,9 @@ A saved browser session keeps a website signed in inside Nod's private browser, 
 
 ## Save a session
 
-1. In **Vault**, select **Add**, then **Website session**.
-2. Enter the **Website address** and, if you like, an **Account name**. Select **Continue in chat**.
-3. Nod opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
-4. Nod saves the session once it sees you're signed in.
-
-You can also ask Nod in chat to connect to a website and save the session.
+1. Ask Nod in chat to connect to a website and save the session. Include the website address and which account to use.
+2. Nod opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
+3. Nod saves the session once it sees you're signed in. You can manage it in **Vault**.
 
 ## Use a session
 

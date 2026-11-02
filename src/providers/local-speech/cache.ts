@@ -9,6 +9,13 @@ export const localSpeechCacheMarker = JSON.stringify({
   revisions: localSpeechModels.map((model) => model.revision),
 });
 
+export const localTranscriptionCacheMarker = JSON.stringify({
+  version: 1,
+  revisions: localSpeechModels
+    .filter((model) => model.name === 'whisper')
+    .map((model) => model.revision),
+});
+
 export async function matchesSpeechFile(file: string, size: number, sha256: string) {
   try {
     if ((await stat(file)).size !== size) return false;
@@ -20,11 +27,19 @@ export async function matchesSpeechFile(file: string, size: number, sha256: stri
   }
 }
 
-export async function verifySpeechCache(cacheDir: string, marker = true) {
+export async function verifySpeechCache(cacheDir: string, marker = true, transcription = false) {
   try {
-    if (marker && (await readFile(join(cacheDir, 'ready.json'), 'utf8')) !== localSpeechCacheMarker)
+    if (
+      marker &&
+      (await readFile(
+        join(cacheDir, transcription ? 'input-ready.json' : 'ready.json'),
+        'utf8',
+      )) !== (transcription ? localTranscriptionCacheMarker : localSpeechCacheMarker)
+    )
       return false;
-    for (const model of localSpeechModels)
+    for (const model of localSpeechModels.filter(
+      (model) => !transcription || model.name === 'whisper',
+    ))
       for (const file of model.files)
         if (
           !(await matchesSpeechFile(join(cacheDir, model.name, file.path), file.size, file.sha256))

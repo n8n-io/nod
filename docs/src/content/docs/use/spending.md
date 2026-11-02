@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-Nod shows what it spends on models and what it does in your apps. You can set a monthly spending limit and choose when a task checks in with you before it spends more.
+Nod shows which models it used and what it did in your apps. With an API connection, you can also review spending and set a monthly limit.
 
 Nod itself doesn't charge you. Your model provider bills you for the requests Nod makes with your key or plan.
 
@@ -13,32 +13,36 @@ Nod itself doesn't charge you. Your model provider bills you for the requests No
 
 Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app).
 
-- **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Nod did this week, the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own and [your rules](/trust/approvals/#your-rules). Select a value to see more or change it.
-- **The list.** Every request that used a model or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Nod did and the cost, or **ChatGPT plan** or **No price**. Under an action your words allowed, it shows those words, such as _You said "Send Lena the report"_.
+- **The sentence at the top.** With an API model selected, this month's API spending and your monthly limit. Select the total to inspect spending or the limit to change it. With a ChatGPT plan selected, it says your usage comes from that plan.
+- **The list.** Model requests, connected app actions, sign-ins and card uses, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, and what Nod did. Model requests show the models recorded for that run, including helpers and checks. Changing your selected model doesn't change these records. If an older request didn't record its model, the row says so. Under an action your words allowed, it shows those words, such as _You said "Send Lena the report"_.
 
-Standing instructions and rules appear as short labels. Select **follows your instruction** or **your rules** to read or edit the full text.
+With a ChatGPT plan selected, Usage hides cost amounts, forecasts and monthly limit controls, including amounts on older API requests. Those requests still identify their recorded models and API connection. With an API model selected, recorded API costs are visible again; plan usage stays labeled separately and its API-price estimate is never shown as a charge. A run that used both shows its recorded API cost and identifies the models that used the plan.
 
-Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. A recurring schedule that has finished priced runs shows about what it costs a month on **Tasks**, from the cost of its recent runs and how often it runs.
+Scroll down to load earlier activity automatically.
 
-Select this month's total to see a chart and a forecast, such as "On track for $12.40". Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
+Select an activity with an available chat message to open that message in the conversation, including older messages. Sign-ins and card uses open the saved Vault item when it is still available. Entries without an available destination remain plain rows.
 
-![Usage shows model spending, a monthly limit, task check-in, links to instructions and rules, and recent activity.](../../../assets/screens/usage-light.png)
+To review or change [standing instructions](/trust/approvals/#standing-instructions), [rules](/trust/approvals/#your-rules) or task check-ins, ask Nod in chat.
+
+Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. On **Scheduled**, open a schedule’s details to see its runs and their recorded costs. Plan usage and unpriced runs have no cost amount.
+
+With an API model selected, select this month's total to see a chart and a forecast, such as "On track for $12.40". Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
 ## How each model is priced
 
-What Usage shows depends on how you pay for the model.
+How Nod counts usage depends on how you pay for the model.
 
-| You use                                                                                                            | Usage shows                                               | Monthly limit | Task check-ins       |
-| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ------------- | -------------------- |
-| An API key or a cloud account, such as OpenAI, Anthropic, OpenRouter or Amazon Bedrock                             | What each request costs                                   | Counts        | Counts               |
-| A ChatGPT plan                                                                                                     | **ChatGPT plan**, and what the plan covered at API prices | Doesn't count | Counts at API prices |
-| A model with no price, such as an [OpenAI-compatible server](/connect/local-models/), a free model or a token plan | **No price**                                              | Doesn't count | Doesn't count        |
+| You use                                                                                                            | Pricing                                      | Monthly limit | Task check-ins       |
+| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ------------- | -------------------- |
+| A paid model through an API key or a cloud account, such as OpenAI, Anthropic, OpenRouter or Amazon Bedrock        | Estimated API cost                           | Counts        | Counts               |
+| A ChatGPT plan                                                                                                     | API-price estimate of what your plan covered | Doesn't count | Counts at API prices |
+| A model with no price, such as an [OpenAI-compatible server](/connect/local-models/), a free model or a token plan | **No price**                                 | Doesn't count | Doesn't count        |
 
 Costs are Nod's estimates from each model's API price. Your provider's bill is the final word. Any request whose API price Nod doesn't know shows **No price**, on a ChatGPT plan too, as does a voice reply or transcription without a known price.
 
 ## Set a monthly limit
 
-1. Open **Usage**.
+1. Select an API model and open **Usage**.
 2. In the sentence at the top, select **no monthly limit**, or your current limit.
 3. Enter an amount in US dollars, from $1 up, and select **Save**.
 
@@ -62,7 +66,9 @@ When the month's spending reaches your limit:
 
 The pause lifts at the start of next month, or as soon as you raise or remove the limit.
 
-Only paid usage counts toward the limit. See [How each model is priced](#how-each-model-is-priced).
+Only paid usage with a known price counts toward the limit. See [How each model is priced](#how-each-model-is-priced).
+
+Switching to a ChatGPT plan doesn't remove an existing monthly limit or its recorded API spending. If that limit is already reached, new requests stay paused. Select an API model to review the limit.
 
 ## Task check-ins
 
@@ -85,13 +91,7 @@ Usage on a ChatGPT plan counts at the model's API price here, so plan tasks chec
 
 ### Change when tasks check in
 
-1. Open **Usage**.
-2. In the sentence at the top, select the amount after **Tasks check in at**.
-3. Choose **$2**, **$5**, **$20** or **No limit**.
-
-Or tell Nod, for example "Check in when a task passes $20".
-
-![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/usage-task-limit.png)
+Tell Nod in chat, for example "Check in when a task passes $20" or "Stop checking in on tasks". You can also ask what the current check-in amount is.
 
 :::note
 Nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Nod ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.** When the background observer stops at its check-in without asking, it waits on that notice, and checks resume once you reply to it.

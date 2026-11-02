@@ -480,6 +480,15 @@ function Canvas({ workflow }: { workflow: Workflow }) {
     pointers.current.delete(event.pointerId);
   }
   function keyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      (event.shiftKey && event.key !== '+')
+    )
+      return;
     const pan = (
       {
         ArrowLeft: [48, 0],
@@ -504,7 +513,17 @@ function Canvas({ workflow }: { workflow: Workflow }) {
       className="n8n-canvas"
       data-artifact-scroll=""
       onKeyDown={(event) => {
-        if (event.key !== 'Escape' || selected === null) return;
+        if (
+          event.key !== 'Escape' ||
+          selected === null ||
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey
+        )
+          return;
         event.preventDefault();
         close();
       }}
@@ -588,7 +607,16 @@ function Canvas({ workflow }: { workflow: Workflow }) {
                     if (!moved.current) setSelected(index);
                   }}
                   onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    if (
+                      (event.key !== 'Enter' && event.key !== ' ') ||
+                      event.defaultPrevented ||
+                      event.nativeEvent.isComposing ||
+                      event.altKey ||
+                      event.ctrlKey ||
+                      event.metaKey ||
+                      event.shiftKey
+                    )
+                      return;
                     event.preventDefault();
                     setSelected(index);
                   }}
@@ -695,7 +723,8 @@ function Canvas({ workflow }: { workflow: Workflow }) {
           variant="outline"
           size="icon"
           aria-label="Fit to view"
-          title="Fit (0)"
+          title="Fit to view"
+          shortcut="0"
           onClick={() => fit(true)}
         >
           <Scan size={16} />
@@ -723,7 +752,8 @@ function Canvas({ workflow }: { workflow: Workflow }) {
               variant="ghost"
               size="icon"
               aria-label="Close details"
-              title="Close (Esc)"
+              title="Close"
+              shortcut="Esc"
               onClick={close}
             >
               <X size={16} />

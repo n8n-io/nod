@@ -2160,14 +2160,16 @@ test('local speech setup keeps each caller cancellable and stops only after the 
     });
   `,
   );
-  for (const cancelledIndex of [1, 0, 'both', 'close'] as const) {
+  for (const [transcription, cancelledIndex] of [false, true].flatMap((input) =>
+    ([1, 0, 'both', 'close'] as const).map((cancelledIndex) => [input, cancelledIndex] as const),
+  )) {
     let started!: () => void;
     const running = new Promise<void>((resolve) => {
       started = resolve;
     });
     const children: ReturnType<typeof fork>[] = [];
     const provider = createLocalSpeechProvider({
-      cacheDir: join(root, String(cancelledIndex)),
+      cacheDir: join(root, `${transcription}-${cancelledIndex}`),
       fork: (_path, args, options) => {
         const child = fork(worker, args, options);
         children.push(child);
@@ -2178,7 +2180,10 @@ test('local speech setup keeps each caller cancellable and stops only after the 
     try {
       const controllers = [new AbortController(), new AbortController()];
       const results = controllers.map((controller) =>
-        provider.prepare(controller.signal).then(
+        (transcription
+          ? provider.prepareTranscription(controller.signal)
+          : provider.prepare(controller.signal)
+        ).then(
           () => 'ready',
           (error: Error) => error.name,
         ),
@@ -2193,7 +2198,10 @@ test('local speech setup keeps each caller cancellable and stops only after the 
         controllers[1].abort();
         assert.deepEqual(await Promise.all(results), ['AbortError', 'AbortError']);
         await exited;
-        assert.equal(provider.status().state, 'not_downloaded');
+        assert.equal(
+          (transcription ? provider.transcriptionStatus() : provider.status()).state,
+          'not_downloaded',
+        );
       } else {
         controllers[cancelledIndex].abort();
         assert.equal(
@@ -2206,13 +2214,155 @@ test('local speech setup keeps each caller cancellable and stops only after the 
         assert.equal(children[0].signalCode, null);
         children[0].send({ method: 'finish' });
         assert.equal(await results[1 - cancelledIndex], 'ready');
-        assert.equal(provider.configured, true);
+        assert.equal(provider.transcriptionConfigured, true);
+        assert.equal(provider.configured, !transcription);
       }
       assert.equal(children.length, 1);
     } finally {
       await provider.close();
     }
   }
+});
+
+test('local transcription prepares only input assets and keeps voice synthesis unavailable until requested', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-input-'));
+  const worker = join(root, 'worker.mjs');
+  await writeFile(
+    worker,
+    `
+    process.on('message', (message) => {
+      if (message.method === 'prepare') process.send({ id: message.id, type: 'ready' });
+      else if (message.method === 'transcribe') process.send({ id: message.id, type: 'text', text: 'Synthetic recorded words.' });
+    });
+  `,
+  );
+  const requests: { method: string; transcription?: boolean }[] = [];
+  const provider = createLocalSpeechProvider({
+    cacheDir: join(root, 'models'),
+    fork: (_path, args, options) => {
+      const child = fork(worker, args, options);
+      const send = child.send.bind(child);
+      child.send = ((message: { method: string; transcription?: boolean }, ...rest: unknown[]) => {
+        requests.push(message);
+        return Reflect.apply(send, child, [message, ...rest]);
+      }) as typeof child.send;
+      return child;
+    },
+  });
+  t.after(async () => {
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  await Promise.all([provider.prepareTranscription(), provider.prepareTranscription()]);
+  assert.deepEqual(
+    requests.map(({ method, transcription }) => ({ method, transcription })),
+    [{ method: 'prepare', transcription: true }],
+  );
+  assert.equal(provider.transcriptionConfigured, true);
+  assert.equal(provider.configured, false);
+  assert.equal(provider.status().state, 'not_downloaded');
+  assert.equal(provider.transcriptionStatus().state, 'ready');
+  assert.equal(
+    await provider.transcribe!({
+      bytes: new Uint8Array([1]),
+      mimeType: 'audio/wav',
+      name: 'synthetic.wav',
+    }),
+    'Synthetic recorded words.',
+  );
+  await assert.rejects(provider.synthesize('Synthetic reply.'));
+  await provider.prepare();
+  assert.equal(provider.configured, true);
+  assert.equal(requests.at(-1)?.transcription, false);
+  const count = requests.length;
+  await provider.prepareTranscription();
+  assert.equal(requests.length, count);
+});
+
+test('local speech failures stay within their preparation mode and do not block independent input setup', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-failures-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const worker = join(root, 'worker.mjs');
+  await writeFile(
+    worker,
+    `
+    let pending;
+    process.on('message', (message) => {
+      if (message.method === 'fail') {
+        process.send({ id: pending, type: 'failed' });
+        return;
+      }
+      if (message.method !== 'prepare') return;
+      if (process.argv[3] === 'exit-input') process.exit(1);
+      else if (message.transcription) process.send({ id: message.id, type: 'ready' });
+      else {
+        pending = message.id;
+        process.send({ id: message.id, type: 'progress', progress: 1 });
+      }
+    });
+  `,
+  );
+  for (const scenario of ['exit-input', 'independent-input', 'same-mode', 'cancel-input'])
+    await t.test(scenario, async () => {
+      let started!: () => void;
+      let failPreparation!: () => void;
+      const running = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const requests: Array<{ method: string; transcription?: boolean }> = [];
+      const provider = createLocalSpeechProvider({
+        cacheDir: join(root, scenario),
+        fork: (_path, args, options) => {
+          const child = fork(worker, [...args, scenario], options);
+          child.once('message', () => started());
+          const send = child.send.bind(child);
+          failPreparation = () => {
+            send({ method: 'fail' });
+          };
+          child.send = ((
+            message: { method: string; transcription?: boolean },
+            ...rest: unknown[]
+          ) => {
+            requests.push(message);
+            return Reflect.apply(send, child, [message, ...rest]);
+          }) as typeof child.send;
+          return child;
+        },
+      });
+      try {
+        if (scenario === 'exit-input') {
+          await assert.rejects(provider.prepareTranscription(), /Local speech stopped/);
+          assert.equal(provider.transcriptionStatus().state, 'failed');
+          assert.equal(provider.status().state, 'not_downloaded');
+          return;
+        }
+        const failed = assert.rejects(provider.prepare(), /Local speech failed/);
+        await running;
+        const controller = new AbortController();
+        const next =
+          scenario === 'same-mode'
+            ? provider.prepare(controller.signal)
+            : provider.prepareTranscription(controller.signal);
+        await Promise.resolve();
+        if (scenario === 'cancel-input') {
+          const cancelled = assert.rejects(next, { name: 'AbortError' });
+          controller.abort();
+          await cancelled;
+        }
+        failPreparation();
+        if (scenario === 'same-mode') await assert.rejects(next, /Local speech failed/);
+        else if (scenario !== 'cancel-input') await next;
+        await failed;
+        assert.equal(provider.status().state, 'failed');
+        assert.equal(provider.transcriptionConfigured, scenario === 'independent-input');
+        assert.deepEqual(
+          requests.map(({ transcription }) => transcription),
+          scenario === 'independent-input' ? [false, true] : [false],
+        );
+      } finally {
+        await provider.close();
+      }
+    });
 });
 
 test('on-device speech starts only when enabled, isolates the worker environment, and kills cancelled work without replay', async (t) => {
@@ -2996,7 +3146,7 @@ async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};
     CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,answer_choices jsonb,reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -4498,5 +4648,216 @@ test(
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
+  },
+);
+
+test(
+  'channel outbox sends only pending answer choices and rechecks after preparation',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_channel_choices_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+    t.after(async () => {
+      await channels?.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const ownerId = 'fixture-choice-owner';
+    const threadId = await createFixtureTables(pool, ownerId);
+    const sent: Array<{ text: string; files: string[] }> = [];
+    const choices = {
+      multiple: false,
+      options: [
+        { id: randomUUID(), label: 'Work' },
+        { id: randomUUID(), label: 'Personal' },
+      ],
+    };
+    let duringAttachments: (() => Promise<void>) | undefined;
+    let duringPresentation: (() => Promise<void>) | undefined;
+    let resolved = 0;
+    let presented = 0;
+    channels = await createChannels(pool, {
+      ownerId,
+      transport: {
+        channels: [
+          {
+            id: 'telegram',
+            status: 'configured',
+            accountId: 'fixture-account',
+            allowedSenderIds: ['fixture-sender'],
+            supportsAttachments: true,
+            missing: [],
+          },
+        ],
+        receive: async () => ({ status: 200, body: 'ok', messages: [] }),
+        post: async ({ text, attachments }) => {
+          sent.push({ text, files: attachments?.map((file) => file.name) ?? [] });
+          return { id: `fixture-delivery-${sent.length}` };
+        },
+        close: async () => {},
+      },
+      resolveAttachments: async (id, ids) => {
+        assert.equal(id, threadId);
+        assert.equal(ids.length, 1);
+        resolved++;
+        const change = duringAttachments;
+        duringAttachments = undefined;
+        await change?.();
+        return [attachment('planning.txt', 'text/plain', 'Synthetic planning note')];
+      },
+      present: async (_id, input) => {
+        presented++;
+        const change = duringPresentation;
+        duringPresentation = undefined;
+        await change?.();
+        assert.equal(input.kind, 'delivery');
+        return input.kind === 'delivery' ? input.text : 'Synthetic delivery';
+      },
+      submit: async () => {
+        throw new Error('Outbox checks must not submit a turn.');
+      },
+      subscribe: () => () => {},
+      intervalMs: 600_000,
+    });
+    const service = channels;
+    async function queue(withChoices = true, withAttachment = false) {
+      const sourceId = `fixture-source-${randomUUID()}`;
+      const turnId = await fixtureTurn(
+        pool,
+        threadId,
+        ownerId,
+        'telegram:fixture',
+        sourceId,
+        withChoices ? 'waiting' : 'succeeded',
+      );
+      if (withChoices)
+        await pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [turnId]);
+      await pool.query(
+        `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,turn_id,state,owner_id,channel)
+         VALUES($1,'telegram','fixture-account','fixture-sender','fixture-chat','Synthetic request',now(),$2,'submitted',$3,'telegram:fixture')`,
+        [sourceId, turnId, ownerId],
+      );
+      const messageId = randomUUID();
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,answer_choices,attachments)
+         VALUES($1,$2,$3,$4,'assistant',$5,$6,$7)`,
+        [
+          messageId,
+          ownerId,
+          threadId,
+          turnId,
+          withChoices ? 'Which calendar should I use?' : 'Your planning note is ready.',
+          withChoices ? JSON.stringify(choices) : null,
+          JSON.stringify(withAttachment ? [{ id: randomUUID() }] : []),
+        ],
+      );
+      await pool.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
+        messageId,
+        sourceId,
+      ]);
+      return { turnId, messageId };
+    }
+    async function answer(question: { turnId: string; messageId: string }) {
+      const turnId = await fixtureTurn(pool, threadId, ownerId, 'web');
+      await pool.query(
+        `UPDATE turns SET parent_turn_id=$2,created_at=GREATEST(created_at,
+         (SELECT created_at + interval '1 microsecond' FROM turns WHERE id=$2)) WHERE id=$1`,
+        [turnId, question.turnId],
+      );
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,reply_to_message_id)
+         VALUES($1,$2,$3,$4,'user','Work',$5)`,
+        [randomUUID(), ownerId, threadId, turnId, question.messageId],
+      );
+    }
+    async function blocked(messageId: string, before: number) {
+      await service.drain();
+      assert.equal(sent.length, before);
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [messageId]))
+          .rows[0].state,
+        'blocked',
+      );
+      await service.drain();
+      assert.equal(sent.length, before);
+    }
+    await t.test('a pending question delivers its choices and attachment', async () => {
+      const question = await queue(true, true);
+      await service.drain();
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].text, /Which calendar should I use/);
+      assert.match(sent[0].text, /Work/);
+      assert.match(sent[0].text, /Personal/);
+      assert.deepEqual(sent[0].files, ['planning.txt']);
+      assert.equal(
+        (
+          await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+            question.messageId,
+          ])
+        ).rows[0].state,
+        'sent',
+      );
+    });
+    await t.test('completed, cancelled and running questions cannot deliver', async () => {
+      for (const status of ['succeeded', 'cancelled', 'running']) {
+        const question = await queue();
+        await pool.query('UPDATE turns SET status=$2 WHERE id=$1', [question.turnId, status]);
+        await blocked(question.messageId, sent.length);
+      }
+    });
+    await t.test(
+      'an answered question cannot deliver even while its original turn remains waiting',
+      async () => {
+        const question = await queue();
+        await answer(question);
+        await blocked(question.messageId, sent.length);
+      },
+    );
+    await t.test('closing a question during attachment preparation prevents delivery', async () => {
+      const question = await queue(true, true);
+      const before = resolved;
+      duringAttachments = async () => {
+        await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [question.turnId]);
+      };
+      await blocked(question.messageId, sent.length);
+      assert.equal(resolved, before + 1);
+      assert.equal(duringAttachments, undefined);
+    });
+    await t.test('answering during presentation preparation prevents delivery', async () => {
+      const question = await queue(true, true);
+      const before = presented;
+      duringPresentation = () => answer(question);
+      await blocked(question.messageId, sent.length);
+      assert.equal(presented, before + 1);
+      assert.equal(duringPresentation, undefined);
+    });
+    await t.test(
+      'ordinary completed replies remain deliverable with and without attachments',
+      async () => {
+        for (const files of [false, true]) {
+          const before = sent.length;
+          const reply = await queue(false, files);
+          await service.drain();
+          assert.equal(sent.length, before + 1);
+          assert.equal(sent.at(-1)?.text, 'Your planning note is ready.');
+          assert.deepEqual(sent.at(-1)?.files, files ? ['planning.txt'] : []);
+          assert.equal(
+            (
+              await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+                reply.messageId,
+              ])
+            ).rows[0].state,
+            'sent',
+          );
+        }
+      },
+    );
   },
 );
