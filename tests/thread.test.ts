@@ -1977,11 +1977,18 @@ test(
               event.event === 'output_created' &&
               event.properties.run_id === analyticsRuns.get(source.turnId),
           );
-          assert.equal(outputs.length, 1);
-          assert.equal(outputs[0]!.properties.presentation_kind, 'diagram');
-          assert.equal(outputs[0]!.properties.count, 1);
-          assert.equal(outputs[0]!.properties.owner_requested, true);
-          assert.equal(outputs[0]!.properties.work_type, 'immediate');
+          assert.deepEqual(
+            outputs.map(({ properties }) => ({
+              kind: properties.presentation_kind ?? properties.artifact_kind,
+              count: properties.count,
+              owner_requested: properties.owner_requested,
+              work_type: properties.work_type,
+            })),
+            [
+              { kind: 'diagram', count: 1, owner_requested: true, work_type: 'immediate' },
+              { kind: 'audio', count: 1, owner_requested: true, work_type: 'immediate' },
+            ],
+          );
 
           const shown = (
             await db.pool.query(
