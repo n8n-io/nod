@@ -494,7 +494,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         const cost = run.schedule_id === row.id ? costs[run.turn_id] : undefined;
         return typeof cost === 'number' ? [cost] : [];
       });
-      if (!priced.length) continue;
+      if (!priced.some((cost) => cost > 0)) continue;
       const upcoming = scheduler.previewSchedule(row.cron!, { tz: row.timeZone, count: 200, from });
       const last = upcoming.at(-1)?.getTime();
       const count =

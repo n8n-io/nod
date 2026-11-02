@@ -206,6 +206,7 @@ export function createAgentRuntime(dependencies: {
     let lastReply = '';
     let lastPresentation = '';
     let checkInSpent = context.checkIn?.spentUsd ?? 0;
+    let checkInPlan = context.checkIn?.planUsd ?? 0;
     let checkInBlocked = false;
     let checkInStrikes = 0;
     let checkInStopped = false;
@@ -220,7 +221,15 @@ export function createAgentRuntime(dependencies: {
             : undefined;
       if (usage) {
         checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
+        if (usage.costUsd == null) checkInPlan += usage.estimateUsd ?? 0;
       }
+    };
+    const checkInUsed = () => {
+      const plan = Math.min(checkInPlan, checkInSpent);
+      if (plan < 0.005) return dollars(checkInSpent);
+      return checkInSpent - plan < 0.005
+        ? `${dollars(checkInSpent)} of ChatGPT plan usage at API prices`
+        : `${dollars(checkInSpent)} (${dollars(plan)} of it ChatGPT plan usage at API prices)`;
     };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
@@ -431,7 +440,7 @@ export function createAgentRuntime(dependencies: {
         ) {
           if (source === execution) checkInBlocked = true;
           throw new Error(
-            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to state the cost and what continuing would do, then ask whether to keep going. Follow the shared reporting rules for any result you include.`,
+            `This work has used ${checkInUsed()} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in.${checkInPlan >= 0.005 ? ' Plan usage costs the owner nothing extra.' : ''} Do no more work now. Call ask_user to state the cost and what continuing would do, then ask whether to keep going. Follow the shared reporting rules for any result you include.`,
           );
         }
         const id = randomUUID();
@@ -556,7 +565,7 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         if (overBudget())
           throw new Error(
-            `This work has used ${dollars(checkInSpent)}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+            `This work has used ${checkInUsed()}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
           );
       }
       const screenSources = () =>
@@ -956,7 +965,7 @@ export function createAgentRuntime(dependencies: {
             if (incoming.length) {
               context.memoryBrief = undefined;
               reviewedReplies.clear();
-              checkInSpent = checkInStrikes = 0;
+              checkInSpent = checkInPlan = checkInStrikes = 0;
               replyOwed = true;
             }
             for (const message of incoming) {

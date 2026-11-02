@@ -7401,7 +7401,7 @@ test(
       const view = (await app.inject('/api/trust')).json();
       assert.deepEqual(
         { ...view.week, spentUsd: Math.round(view.week.spentUsd * 100) / 100 },
-        { things: 3, actions: 3, spentUsd: 0.65 },
+        { things: 3, actions: 3, spentUsd: 0.65, planUsd: 0 },
       );
       assert.equal(view.month.unpriced, true);
       assert.deepEqual(
@@ -7681,8 +7681,44 @@ test(
           ('other-owner','other',$1,9,'{}',now()-interval '4 minutes')`,
         [task, randomUUID()],
       );
-      assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 4.75 });
-      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      assert.deepEqual(await ledger.checkIn(task, started), {
+        budgetUsd: 5,
+        spentUsd: 4.75,
+        planUsd: 0.25,
+      });
+      assert.deepEqual(await ledger.checkIn(task, resumed), {
+        budgetUsd: 5,
+        spentUsd: 0.75,
+        planUsd: 0.25,
+      });
+      const planned = (await app.inject('/api/trust')).json();
+      assert.deepEqual([planned.week.planUsd, planned.month.planUsd], [0.25, 0.25]);
+      const pricings = randomUUID();
+      const [planTurn, localTurn, failedTurn] = [randomUUID(), randomUUID(), randomUUID()];
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at) VALUES
+          ($1,'owner','user','On the plan',$4,now()-interval '3 minutes'),
+          ($2,'owner','user','On a local model',$4,now()-interval '2 minutes'),
+          ($3,'owner','user','Failed before a reply',$4,now()-interval '1 minute')`,
+        [planTurn, localTurn, failedTurn, pricings],
+      );
+      await pool.query(
+        `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details) VALUES
+          ($1,'owner',$4,NULL,'{"estimateUsd":0.2,"status":"succeeded"}'),
+          ($2,'owner',$5,0,'{"status":"succeeded"}'),
+          ($3,'owner',$6,NULL,'{"status":"failed"}')`,
+        [randomUUID(), randomUUID(), randomUUID(), planTurn, localTurn, failedTurn],
+      );
+      assert.deepEqual(
+        (await app.inject(`/api/trust/entries?session=${pricings}`))
+          .json()
+          .entries.map((entry: TrustEntry) => [entry.title, entry.costUsd, entry.pricing ?? null]),
+        [
+          ['Failed before a reply', null, null],
+          ['On a local model', null, 'unpriced'],
+          ['On the plan', null, 'plan'],
+        ],
+      );
       const unscopedUsage = randomUUID();
       await ledger.withTurn(resumed, () =>
         ledger
@@ -7696,7 +7732,11 @@ test(
           })
           .curate({ task: 'review', instructions: 'Synthetic review', input: {} }),
       );
-      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.85 });
+      assert.deepEqual(await ledger.checkIn(task, resumed), {
+        budgetUsd: 5,
+        spentUsd: 0.85,
+        planUsd: 0.25,
+      });
       await pool.query('DELETE FROM model_usage WHERE id=$1', [unscopedUsage]);
       const preprocessing = randomUUID();
       await pool.query(
@@ -7711,20 +7751,32 @@ test(
       } finally {
         attribution.release();
       }
-      assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 5.15 });
+      assert.deepEqual(await ledger.checkIn(task, started), {
+        budgetUsd: 5,
+        spentUsd: 5.15,
+        planUsd: 0.25,
+      });
       assert.equal(
         (await pool.query('SELECT turn_id FROM model_usage WHERE id=$1', [preprocessing])).rows[0]
           .turn_id,
         started,
       );
-      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      assert.deepEqual(await ledger.checkIn(task, resumed), {
+        budgetUsd: 5,
+        spentUsd: 0.75,
+        planUsd: 0.25,
+      });
 
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at)
          VALUES($1,'owner','task','Also compare buses',$2,now()-interval '6 minutes')`,
         [randomUUID(), task],
       );
-      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.25 });
+      assert.deepEqual(await ledger.checkIn(task, resumed), {
+        budgetUsd: 5,
+        spentUsd: 0.25,
+        planUsd: 0.25,
+      });
       const limits = async (payload: object) =>
         (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload })).json();
       assert.deepEqual(await limits({ taskUsd: 20 }), { limit: null, taskUsd: 20 });

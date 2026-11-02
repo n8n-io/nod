@@ -173,6 +173,13 @@ function Month({ view }: { view: TrustView }) {
           format,
         )
       : undefined;
+  const notes = [
+    month.planUsd > 0 &&
+      `Your ChatGPT plan covered about ${money(month.planUsd)}${month.spentUsd > 0 ? ' more' : ''} at API prices.`,
+    month.unpriced && 'Some usage has no price in Nod, such as a local or free model.',
+  ].filter((note): note is string => Boolean(note));
+  const chart = month.spentUsd > 0 || !notes.length;
+  const Note = chart ? 'small' : 'span';
   return (
     <div className="usage-month" data-analytics-private>
       {month.spentUsd > 0 && (
@@ -181,8 +188,10 @@ function Month({ view }: { view: TrustView }) {
           {crossing && `, reaching your limit around ${crossing}`}
         </span>
       )}
-      <Chart month={month} limit={limit?.monthlyUsd} />
-      {month.unpriced && <small>Some usage has no price, so it isn’t counted here.</small>}
+      {chart && <Chart month={month} limit={limit?.monthlyUsd} />}
+      {notes.map((note) => (
+        <Note key={note}>{note}</Note>
+      ))}
     </div>
   );
 }
@@ -245,7 +254,10 @@ function MonthlyLimit({
           Remove
         </Button>
       )}
-      <small>At the limit, new requests pause until {resets}.</small>
+      <small>
+        At the limit, new requests pause until {resets}.
+        {(view.month.planUsd > 0 || view.month.unpriced) && ' Only paid usage counts.'}
+      </small>
       {error && <Notice>{error}</Notice>}
     </form>
   );
@@ -280,7 +292,11 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
           </button>
         ))}
       </div>
-      <small>Nod asks before a task spends more.</small>
+      <small>
+        Nod asks before a task spends more.
+        {view.month.planUsd > 0 && ' ChatGPT plan usage counts at API prices.'}
+        {view.month.unpriced && ' Usage without a price doesn’t count.'}
+      </small>
       {error && <Notice>{error}</Notice>}
     </div>
   );
@@ -377,6 +393,7 @@ function Sentence({
     timeZone: format.timeZone,
   });
   const resets = date(Date.parse(month.start) + month.days * day + day / 2, format);
+  const plan = month.planUsd > 0 ? ' beyond your ChatGPT plan' : '';
   const limitForm = (close: () => void) => (
     <MonthlyLimit
       view={view}
@@ -419,7 +436,10 @@ function Sentence({
     <>
       <p className="statement-summary usage-sentence">
         Nod spent{' '}
-        <StatementValue text={money(month.spentUsd)} label={`Spending in ${name}`}>
+        <StatementValue
+          text={limit || month.spentUsd > 0 ? money(month.spentUsd) : 'nothing'}
+          label={`Spending in ${name}`}
+        >
           {() => <Month view={view} />}
         </StatementValue>
         {limit ? (
@@ -428,13 +448,12 @@ function Sentence({
             of{' '}
             <StatementValue text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
-            </StatementValue>{' '}
-            in {name}
+            </StatementValue>
+            {plan} in {name}
           </>
         ) : (
           <>
-            {' '}
-            in {name}, with{' '}
+            {plan} in {name}, with{' '}
             <StatementValue text="no monthly limit" label="Monthly limit">
               {limitForm}
             </StatementValue>
@@ -561,7 +580,15 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           </small>
         ))}
       </span>
-      {entry.costUsd !== null && <span className="usage-row-cost">{money(entry.costUsd)}</span>}
+      {entry.costUsd !== null ? (
+        <span className="usage-row-cost">{money(entry.costUsd)}</span>
+      ) : (
+        entry.pricing && (
+          <span className="usage-row-cost is-label">
+            {entry.pricing === 'plan' ? 'ChatGPT plan' : 'No price'}
+          </span>
+        )
+      )}
     </div>
   );
 }

@@ -138,15 +138,15 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 
 ## What changes with these connections
 
-| Area                | With a local or OpenAI-compatible model                                                                                                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Spending            | Nod doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you.        |
-| Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                                    |
-| Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                             |
-| Decision checks     | Your selected model handles confirmation replies and email checks unless `TYPESAFE_API_KEY` configures a decision model. See [Decision checks](/connect/models/#decision-checks).                     |
-| Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                      |
-| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                      |
-| Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go). |
+| Area                | With a local or OpenAI-compatible model                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spending            | Nod doesn't know the server's prices, so **Usage** shows its requests as **No price**. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/#how-each-model-is-priced). A paid service still bills you. |
+| Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                                                                     |
+| Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                                                              |
+| Decision checks     | Your selected model handles confirmation replies and email checks unless `TYPESAFE_API_KEY` configures a decision model. See [Decision checks](/connect/models/#decision-checks).                                                      |
+| Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                                                       |
+| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                                                       |
+| Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go).                                  |
 
 ## Troubleshooting
 

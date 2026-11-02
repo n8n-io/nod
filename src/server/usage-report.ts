@@ -14,12 +14,14 @@ const dollars = (value: number) =>
     ? '<$0.01'
     : `$${Number.isInteger(value) && value >= 1 ? value : value.toFixed(2)}`;
 
+const plan = (planUsd: number) => (planUsd > 0 ? ' beyond your ChatGPT plan' : '');
+
 function summary(view: TrustView) {
   const { week } = view;
   const actions = week.actions
     ? ` It used your apps ${week.actions === 1 ? 'once' : `${week.actions} times`}.`
     : '';
-  return `In the last 7 days, Nod did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
+  return `In the last 7 days, Nod did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${week.spentUsd > 0 ? dollars(week.spentUsd) : 'nothing'}${plan(week.planUsd)}.`;
 }
 
 function month({ view, timeZone, locale }: UsageReport) {
@@ -28,12 +30,24 @@ function month({ view, timeZone, locale }: UsageReport) {
     year: 'numeric',
     timeZone,
   });
-  const { limit } = view;
-  const spent = `${name}: ${dollars(view.month.spentUsd)}${limit ? ` of a ${dollars(limit.monthlyUsd)} limit` : ''}.`;
+  const { limit, month } = view;
+  const amount =
+    limit || month.spentUsd > 0
+      ? `${dollars(month.spentUsd)}${limit ? ` of a ${dollars(limit.monthlyUsd)} limit` : ''}`
+      : 'nothing';
+  const notes = [
+    month.planUsd > 0 &&
+      ` Your ChatGPT plan covered about ${dollars(month.planUsd)}${month.spentUsd > 0 ? ' more' : ''} at API prices.`,
+    month.unpriced && ' Some usage has no price in Nod, such as a local or free model.',
+  ]
+    .filter(Boolean)
+    .join('');
+  const spent = `${name}: ${amount}${plan(month.planUsd)}.${notes}`;
   if (limit?.reached)
     return `${spent} The limit is reached, so new chat and background requests pause until next month. Raise or remove the limit in Usage to resume. Running turns can finish.`;
-  const over = limit && view.month.forecastUsd > limit.monthlyUsd ? ', above your limit' : '';
-  return `${spent} On track for ${dollars(view.month.forecastUsd)}${over}.`;
+  if (!month.spentUsd) return spent;
+  const over = limit && month.forecastUsd > limit.monthlyUsd ? ', above your limit' : '';
+  return `${spent} On track for ${dollars(month.forecastUsd)}${over}.`;
 }
 
 export function usageFileName(exported: Date) {
@@ -119,7 +133,13 @@ export function usagePdf(report: UsageReport, exported: Date) {
       9,
       false,
       14,
-      entry.costUsd === null ? '-' : dollars(entry.costUsd),
+      entry.costUsd !== null
+        ? dollars(entry.costUsd)
+        : entry.pricing === 'plan'
+          ? 'ChatGPT plan'
+          : entry.pricing === 'unpriced'
+            ? 'No price'
+            : '-',
     );
   }
   if (!entries.length) line('Nothing yet this month.', 9);

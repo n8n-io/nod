@@ -158,7 +158,7 @@ export interface RuntimeContext {
   memory?: string;
   memoryBrief?: MemoryBrief;
   learnedSkills?: Array<{ name: string; description: string }>;
-  checkIn?: { budgetUsd: number; spentUsd: number };
+  checkIn?: { budgetUsd: number; spentUsd: number; planUsd?: number };
   previousFailure?: string;
   taskContext?: {
     id: string;
