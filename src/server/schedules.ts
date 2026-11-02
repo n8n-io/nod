@@ -12,6 +12,7 @@ import type {
 } from '../shared/contracts.ts';
 import type { enqueueTurn } from './thread.ts';
 import { activeThreadSql } from './history.ts';
+import { supersededSql } from './turn-chain.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 
@@ -260,6 +261,31 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       )
         return false;
       job.signal.throwIfAborted();
+      if (row.kind === 'once') {
+        await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
+          row.id,
+          ownerId,
+        ]);
+        await enqueue(client, { ...row, enabled: false }, null);
+      } else {
+        await enqueue(
+          client,
+          row,
+          nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
+        );
+      }
+      if (
+        row.kind === 'recurring' &&
+        (
+          await client.query(
+            `SELECT 1 FROM schedule_runs r JOIN turns u ON u.owner_id=r.owner_id AND u.session_id=r.turn_id
+             WHERE r.owner_id=$1 AND r.schedule_id=$2 AND (u.status IN ('queued','running')
+               OR (u.status='waiting' AND NOT ${supersededSql('u', 'newer.started_at>=u.started_at')})) LIMIT 1`,
+            [ownerId, row.id],
+          )
+        ).rowCount
+      )
+        return true;
       const turnId = await enqueueTurn(
         `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
         {
@@ -289,19 +315,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
         ],
       );
-      if (row.kind === 'once') {
-        await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
-          row.id,
-          ownerId,
-        ]);
-        await enqueue(client, { ...row, enabled: false }, null);
-      } else {
-        await enqueue(
-          client,
-          row,
-          nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
-        );
-      }
       job.signal.throwIfAborted();
       return true;
     });
