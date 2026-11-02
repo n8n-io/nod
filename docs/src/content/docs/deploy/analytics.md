@@ -9,7 +9,7 @@ This page explains what usage data Nod collects, how to turn it on or off, and w
 
 Usage data is on by default for each new owner, and you can turn it off at any time. Nod sends product events and masked session recordings to the Nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
 
-Nod never sends what you write, what Nod replies, what your apps return, or what you type into a form. Events describe what kind of thing happened, using fixed lists of values, counts and durations.
+Nod never sends what you write, what Nod replies, what your apps return, or what you type into a form. The one exception is a survey answer you choose to send; see [Surveys](#surveys). Events describe what kind of thing happened, using fixed lists of values, counts and durations.
 
 ## Turn usage data on or off
 
@@ -113,6 +113,18 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 Answer-choice views count once per question in a sharing period, when the choices are in the viewport and the app is visible. These events never include questions, option text, or their IDs. Failed or unavailable submissions, option toggles, and custom answers don't count as accepted selections.
 
 Usage data is on by default, so onboarding step events are sent from the welcome screen on. The native welcome is not recorded. Setup finishes after the last required step. If you turned usage sharing off, onboarding sends nothing. Email can be skipped.
+
+### Surveys
+
+While **Share usage data** is on, the Nod team can show a short survey in the app, such as how likely you are to recommend Nod on a scale from 0 to 10, and why. A survey appears only after you've sent Nod messages on at least 3 different days; that count stays on your computer. The questions and who sees them are set in PostHog. The survey asks one question at a time. A score is sent as soon as you pick it, so it counts even if you close the survey before giving a reason. What you type is sent only when you select **Send**, and you can close a survey without answering.
+
+| Event              | When                                                 | Properties                                                                                                                                                                                                                                |
+| ------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `survey shown`     | A survey appears                                     | `$survey_id`, `$survey_iteration`                                                                                                                                                                                                         |
+| `survey sent`      | You pick a score, and again when you select **Send** | `$survey_id`, `$survey_iteration`, `$survey_submission_id`, `$survey_completed`, `$survey_questions` (the survey's question IDs and wording), and your answers so far: scores from 0 to 10 and the text you typed, up to 2,000 characters |
+| `survey dismissed` | You close a survey                                   | `$survey_id`, `$survey_iteration`; after a score was sent, also `$survey_submission_id` and `$survey_partially_completed`. Never what you typed before closing                                                                            |
+
+A typed survey answer is the only text you write that analytics send, so leave private details out of it. To choose which surveys to show, the app asks PostHog for active surveys and checks their targeting with only the project's public identifier and your pseudonymous installation ID. Recordings block the survey window.
 
 ### What Nod does
 

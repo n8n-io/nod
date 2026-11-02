@@ -227,6 +227,9 @@ describe('account routes', () => {
       async read() {
         return record;
       },
+      async activeDays() {
+        return 0;
+      },
       async update(_owner, input) {
         calls.writes++;
         const saved = record;

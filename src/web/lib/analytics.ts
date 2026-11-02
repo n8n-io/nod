@@ -142,13 +142,31 @@ const viewListeners = new Set<() => void>();
 
 type AnalyticsRequest = Parameters<PostHog['_send_request']>[0];
 
+function surveyFlagsRequest(request: AnalyticsRequest) {
+  try {
+    const url = new URL(request.url);
+    return (
+      url.pathname === '/flags/' &&
+      url.searchParams.get('only_evaluate_survey_feature_flags') === 'true' &&
+      !Array.isArray(request.data)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function dispatchRequest(request: AnalyticsRequest, send: (request: AnalyticsRequest) => void) {
   if (!configuration?.enabled) return;
-  const events = Array.isArray(request.data) ? request.data : request.data ? [request.data] : [];
+  const flags = surveyFlagsRequest(request);
+  const data = request.data;
+  const events = flags || !data ? [] : Array.isArray(data) ? data : [data];
   if (events.some((event) => eventGenerations.get(event) !== generation)) return;
   const current = generation;
   send({
     ...request,
+    ...(flags && !Array.isArray(data)
+      ? { data: { token: data?.token, distinct_id: data?.distinct_id } }
+      : {}),
     preferSyncCompression: true,
     callback: (response) => {
       if (current === generation && configuration?.enabled) request.callback?.(response);
@@ -250,10 +268,51 @@ const replayProperties: Record<string, readonly unknown[]> = {
   ],
 };
 
+const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const surveyId = new RegExp(`^${uuid}$`, 'i');
+const surveyResponse = new RegExp(`^\\$survey_response(_\\d+|_${uuid})?$`, 'i');
+const surveyEvents = ['survey shown', 'survey sent', 'survey dismissed'];
+
+function surveyProperties(event: string, properties: Record<string, unknown>) {
+  if (typeof properties.$survey_id !== 'string' || !surveyId.test(properties.$survey_id))
+    return null;
+  const kept: Record<string, unknown> = { $survey_id: properties.$survey_id };
+  const iteration = properties.$survey_iteration;
+  if (typeof iteration === 'number' && Number.isSafeInteger(iteration) && iteration >= 0)
+    kept.$survey_iteration = iteration;
+  const submission = properties.$survey_submission_id;
+  if (typeof submission === 'string' && surveyId.test(submission))
+    kept.$survey_submission_id = submission;
+  if (event === 'survey dismissed' && properties.$survey_partially_completed === true)
+    kept.$survey_partially_completed = true;
+  if (event !== 'survey sent') return kept;
+  if (typeof properties.$survey_completed === 'boolean')
+    kept.$survey_completed = properties.$survey_completed;
+  if (Array.isArray(properties.$survey_questions))
+    kept.$survey_questions = properties.$survey_questions.flatMap((question: unknown) => {
+      const { id, question: text } = (question ?? {}) as Record<string, unknown>;
+      return typeof id === 'string' && surveyId.test(id) && typeof text === 'string'
+        ? [{ id, question: text.slice(0, 500) }]
+        : [];
+    });
+  for (const [key, value] of Object.entries(properties)) {
+    if (!surveyResponse.test(key)) continue;
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 10)
+      kept[key] = value;
+    else if (typeof value === 'string') kept[key] = value.slice(0, 2000);
+  }
+  return kept;
+}
+
 function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event || !configuration?.enabled) return null;
   const allowed = eventProperties[event.event as keyof AnalyticsEvents];
-  if (event.event !== '$snapshot' && event.event !== '$pageview' && !allowed) return null;
+  const survey = surveyEvents.includes(event.event)
+    ? surveyProperties(event.event, event.properties)
+    : undefined;
+  if (survey === null) return null;
+  if (event.event !== '$snapshot' && event.event !== '$pageview' && !allowed && !survey)
+    return null;
   if (
     (event.event === 'answer_choices_viewed' ||
       event.event === 'answer_choices_selected' ||
@@ -279,6 +338,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
     if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
       properties[key] = value;
   }
+  Object.assign(properties, survey);
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
   );
@@ -358,12 +418,12 @@ function applyConfiguration(
       logs: { captureConsoleLogs: false, beforeSend: () => null },
       metrics: { network: false },
       disable_session_recording: true,
-      disable_surveys: true,
+      disable_surveys_automatic_display: true,
       disable_product_tours: true,
       disable_conversations: true,
       disable_web_experiments: true,
       disable_external_dependency_loading: true,
-      advanced_disable_feature_flags: true,
+      advanced_only_evaluate_survey_feature_flags: true,
       person_profiles: 'never',
       save_referrer: false,
       save_campaign_params: false,
@@ -424,6 +484,106 @@ export function analyticsForCurrentSession(): typeof captureAnalytics {
     if (current === generation && account === requestAccountVersion())
       captureAnalytics(event, ...args);
   };
+}
+
+export type AnalyticsSurveyQuestion = {
+  id: string;
+  text: string;
+  optional: boolean;
+} & ({ kind: 'rating'; scale: 3 | 5 | 7 | 10; low?: string; high?: string } | { kind: 'open' });
+
+export type AnalyticsSurvey = {
+  id: string;
+  iteration: number | null;
+  questions: AnalyticsSurveyQuestion[];
+};
+
+function readSurvey(value: unknown): AnalyticsSurvey | undefined {
+  const survey = (value ?? {}) as Record<string, unknown>;
+  if (typeof survey.id !== 'string' || !surveyId.test(survey.id)) return;
+  if (!Array.isArray(survey.questions) || !survey.questions.length) return;
+  const label = (text: unknown) => (typeof text === 'string' && text.trim() ? text : undefined);
+  const questions = survey.questions.map((value: unknown): AnalyticsSurveyQuestion | undefined => {
+    const question = (value ?? {}) as Record<string, unknown>;
+    const text = label(question.question);
+    if (typeof question.id !== 'string' || !surveyId.test(question.id) || !text) return;
+    const base = { id: question.id, text, optional: question.optional === true };
+    if (question.type === 'open') return { ...base, kind: 'open' };
+    if (question.type !== 'rating' || ![3, 5, 7, 10].includes(question.scale as number)) return;
+    return {
+      ...base,
+      kind: 'rating',
+      scale: question.scale as 3 | 5 | 7 | 10,
+      low: label(question.lowerBoundLabel),
+      high: label(question.upperBoundLabel),
+    };
+  });
+  if (questions.some((question) => !question)) return;
+  const iteration = survey.current_iteration;
+  return {
+    id: survey.id,
+    iteration: typeof iteration === 'number' && Number.isSafeInteger(iteration) ? iteration : null,
+    questions: questions as AnalyticsSurveyQuestion[],
+  };
+}
+
+export function watchAnalyticsSurvey(listener: (survey?: AnalyticsSurvey) => void) {
+  const stops: (() => void)[] = [];
+  let subscribed = false;
+  const check = () => {
+    try {
+      if (!posthog || !initialized || !configuration?.enabled || !configuration.surveys)
+        return listener(undefined);
+      if (!subscribed) {
+        subscribed = true;
+        stops.push(posthog.onFeatureFlags(check), posthog.onSurveysLoaded(check));
+      }
+      const current = generation;
+      posthog.getActiveMatchingSurveys((surveys) => {
+        if (current !== generation || !configuration?.enabled) return;
+        const survey = surveys.map(readSurvey).find(Boolean);
+        if (survey) listener(survey);
+      });
+    } catch {}
+  };
+  viewListeners.add(check);
+  check();
+  return () => {
+    viewListeners.delete(check);
+    for (const stop of stops) stop();
+  };
+}
+
+export function captureSurvey(
+  event: 'shown' | 'sent' | 'dismissed',
+  survey: AnalyticsSurvey,
+  response?: {
+    submission: string;
+    answers?: Record<string, number | string>;
+    completed?: boolean;
+  },
+) {
+  try {
+    if (!configuration?.enabled) return;
+    posthog?.capture(`survey ${event}`, {
+      $survey_id: survey.id,
+      $survey_iteration: survey.iteration,
+      ...(response && { $survey_submission_id: response.submission }),
+      ...(event === 'dismissed' && response && { $survey_partially_completed: true }),
+      ...(event === 'sent' &&
+        response?.answers && {
+          $survey_completed: response.completed === true,
+          $survey_questions: survey.questions.map(({ id, text }) => ({ id, question: text })),
+          ...Object.fromEntries(
+            Object.entries(response.answers).map(([id, value]) => [
+              `$survey_response_${id}`,
+              value,
+            ]),
+          ),
+        }),
+    });
+    if (event === 'shown') localStorage.setItem('lastSeenSurveyDate', new Date().toISOString());
+  } catch {}
 }
 
 export function observeAnalyticsView<Event extends 'answer_choices_viewed'>(

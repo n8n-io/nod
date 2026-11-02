@@ -3070,7 +3070,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('answer-choice analytics count visible questions and accepted answers within their consent and account', async () => {
+test('UI analytics keep answer choices, the survey card and survey flag requests within their consent and account', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -3085,7 +3085,7 @@ test('answer-choice analytics count visible questions and accepted answers withi
         requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
         cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
       });
-      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLButtonElement', 'Event', 'MouseEvent', 'MutationObserver'])
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLButtonElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'MouseEvent', 'KeyboardEvent', 'MutationObserver'])
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       let visibility = 'visible';
@@ -3098,17 +3098,24 @@ test('answer-choice analytics count visible questions and accepted answers withi
         intersect(...values) { this.callback(values.map(value => ({ target: this.element, isIntersecting: value }))); }
       };
       globalThis.fetch = async () => { throw new Error('This fixture cannot use the network.'); };
-      const sent = [];
+      const sent = [], requests = [];
       const client = {
         init(_key, options) { this.options = options; },
         capture(event, properties = {}) {
           const value = this.options.before_send({ event, properties });
-          if (value) this._send_request({ data: [value] });
+          if (value) this._send_request({ url: 'https://eu.i.posthog.com/e/', data: [value] });
           return value;
         },
-        _send_request(request) { sent.push(...request.data); },
+        _send_request(request) {
+          requests.push(request);
+          if (Array.isArray(request.data)) sent.push(...request.data);
+        },
         set_config(options) { this.options = { ...this.options, ...options }; },
         reset() {}, startSessionRecording() {}, stopSessionRecording() {},
+        surveys: [],
+        getActiveMatchingSurveys(callback) { callback(this.surveys); },
+        onFeatureFlags() { return () => {}; },
+        onSurveysLoaded() { return () => {}; },
       };
       const { createElement, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
@@ -3118,7 +3125,7 @@ test('answer-choice analytics count visible questions and accepted answers withi
       const configuration = { enabled: true, distinctId: 'synthetic-installation', environment: 'development' };
       setRequestAccount('synthetic-owner-one');
       setAnalyticsClient(client);
-      const consent = enabled => configureAnalytics({ ...configuration, enabled }, 'web');
+      const consent = (enabled, surveys = true) => configureAnalytics({ ...configuration, enabled, surveys }, 'web');
       consent(true);
       const container = document.querySelector('#root');
       const root = createRoot(container);
@@ -3266,7 +3273,119 @@ test('answer-choice analytics count visible questions and accepted answers withi
       assert.equal(selected().at(-1).properties.selected_count, 6);
       assert.ok(!JSON.stringify(sent).includes('PRIVATE_'));
       assert.ok(sent.every(item => item.properties.analytics_schema === 'nod_v3'));
+      const survey = '0190c1a2-0000-7000-8000-000000000001';
+      const score = '$survey_response_0190c1a2-0000-7000-8000-000000000002';
+      const reason = '$survey_response_0190c1a2-0000-7000-8000-000000000003';
+      const beforeSurvey = sent.length;
+      client.capture('survey sent', {
+        $survey_id: survey, $survey_iteration: 0, $survey_completed: true,
+        $survey_submission_id: '0190c1a2-0000-7000-8000-000000000004',
+        [score]: 9, [reason]: 'Synthetic reason. '.repeat(200), $survey_response: 9,
+        $survey_name: 'PRIVATE_NAME', sessionRecordingUrl: 'https://PRIVATE_URL.invalid',
+        $survey_questions: [{ id: 'PRIVATE_QUESTION_ID', question: 'PRIVATE_QUESTION', response: 9 }],
+        $set: { ['$survey_responded/' + survey]: true, PRIVATE_PERSON: true },
+      });
+      client.capture('survey sent', { $survey_id: 'PRIVATE_SURVEY', [score]: 9 });
+      client.capture('survey sent', { $survey_id: survey, [score]: 11, [reason + '_PRIVATE']: 'PRIVATE_TEXT' });
+      client.capture('survey dismissed', { $survey_id: survey, [reason]: 'PRIVATE_PARTIAL', $survey_partially_completed: true });
+      client.capture('survey abandoned', { $survey_id: survey });
+      const surveys = sent.slice(beforeSurvey);
+      assert.deepEqual(surveys.map(item => item.event), ['survey sent', 'survey sent', 'survey dismissed']);
+      assert.equal(surveys[0].properties[score], 9);
+      assert.equal(surveys[0].properties.$survey_response, 9);
+      assert.equal(surveys[0].properties[reason].length, 2000);
+      assert.equal(surveys[0].properties.$survey_completed, true);
+      assert.equal(surveys[0].properties.$process_person_profile, false);
+      assert.equal(surveys[1].properties[score], undefined);
+      assert.ok(!JSON.stringify(surveys).includes('PRIVATE_'));
+      const { SurveyCard } = await import('./src/web/components/survey-card.tsx');
+      const card = () => document.querySelector('.survey-card');
+      const write = (element, value) => act(() => {
+        Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value').set.call(element, value);
+        element.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      });
+      const rating = '0190c1a2-0000-7000-8000-00000000000b';
+      const why = '0190c1a2-0000-7000-8000-00000000000c';
+      const questions = [
+        { id: rating, type: 'rating', scale: 10, question: 'Synthetic score question', lowerBoundLabel: 'Low', upperBoundLabel: 'High' },
+        { id: why, type: 'open', question: 'Synthetic reason question', optional: true },
+      ];
+      client.surveys = [
+        { id: '0190c1a2-0000-7000-8000-00000000000a', type: 'api', questions: [{ id: why, type: 'multiple_choice', question: 'Unsupported', choices: ['A', 'B'] }] },
+        { id: survey, type: 'api', current_iteration: null, questions },
+      ];
+      await act(() => root.render(null));
+      consent(true, false);
+      const beforeCard = sent.length;
+      await act(() => root.render(createElement(SurveyCard)));
+      assert.equal(card(), null);
+      await act(() => consent(true));
+      assert.ok(card().hasAttribute('data-analytics-private'));
+      assert.equal(card().querySelector('textarea'), null);
+      await act(() => card().querySelectorAll('.survey-scale-option')[9].click());
+      await write(card().querySelector('textarea'), '  Synthetic reason  ');
+      await act(() => card().querySelector('button[type="submit"]').click());
+      const answered = sent.slice(beforeCard);
+      assert.deepEqual(answered.map(item => item.event), ['survey shown', 'survey sent', 'survey sent']);
+      assert.equal(answered[1].properties['$survey_response_' + rating], 9);
+      assert.equal(answered[1].properties['$survey_response_' + why], undefined);
+      assert.equal(answered[1].properties.$survey_completed, false);
+      assert.equal(answered[2].properties.$survey_id, survey);
+      assert.equal(answered[2].properties['$survey_response_' + rating], 9);
+      assert.equal(answered[2].properties['$survey_response_' + why], 'Synthetic reason');
+      assert.equal(answered[2].properties.$survey_completed, true);
+      assert.match(answered[2].properties.$survey_submission_id, /^[0-9a-f-]{36}$/);
+      assert.equal(answered[1].properties.$survey_submission_id, answered[2].properties.$survey_submission_id);
+      assert.deepEqual(answered[2].properties.$survey_questions, [
+        { id: rating, question: 'Synthetic score question' },
+        { id: why, question: 'Synthetic reason question' },
+      ]);
+      await act(() => root.render(null));
+      client.surveys = [{ id: '0190c1a2-0000-7000-8000-00000000000d', type: 'api', questions }];
+      const beforeDismiss = sent.length;
+      await act(() => root.render(createElement(SurveyCard)));
+      await act(() => card().querySelector('.survey-scale-option').click());
+      await write(card().querySelector('textarea'), 'PRIVATE_UNSENT_REASON');
+      await act(() => card().querySelector('.survey-card-close').click());
+      assert.equal(card(), null);
+      const dismissed = sent.slice(beforeDismiss);
+      assert.deepEqual(dismissed.map(item => item.event), ['survey shown', 'survey sent', 'survey dismissed']);
+      assert.equal(dismissed[1].properties['$survey_response_' + rating], 0);
+      assert.equal(dismissed[2].properties.$survey_partially_completed, true);
+      assert.equal(dismissed[2].properties.$survey_submission_id, dismissed[1].properties.$survey_submission_id);
+      assert.ok(!JSON.stringify(dismissed).includes('PRIVATE_'));
+      await act(() => root.render(null));
+      client.surveys = [{ id: '0190c1a2-0000-7000-8000-00000000000e', type: 'api', questions }];
+      const beforeWhole = sent.length;
+      await act(() => root.render(createElement(SurveyCard)));
+      await act(() => card().querySelector('.survey-card-close').click());
+      const unanswered = sent.slice(beforeWhole);
+      assert.deepEqual(unanswered.map(item => item.event), ['survey shown', 'survey dismissed']);
+      assert.equal(unanswered[1].properties.$survey_submission_id, undefined);
+      assert.equal(unanswered[1].properties.$survey_partially_completed, undefined);
+      await act(() => root.render(null));
+      await act(() => root.render(createElement(SurveyCard)));
+      assert.ok(card());
+      await act(() => consent(false));
+      assert.equal(card(), null);
+      await act(() => root.render(null));
+      consent(true);
+      const flags = (url, distinctId) => client._send_request({
+        url, method: 'POST',
+        data: {
+          token: 'synthetic-token', distinct_id: distinctId, $anon_distinct_id: 'PRIVATE_ANON',
+          person_properties: { $initial_current_url: 'https://PRIVATE_URL.invalid' }, timezone: 'PRIVATE_ZONE',
+        },
+      });
+      const beforeFlags = requests.length;
+      flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'synthetic-installation');
+      flags('https://eu.i.posthog.com/flags/?v=2', 'PRIVATE_ALL_FLAGS');
+      assert.equal(requests.length, beforeFlags + 1);
+      assert.deepEqual(requests.at(-1).data, { token: 'synthetic-token', distinct_id: 'synthetic-installation' });
       consent(false);
+      flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'synthetic-installation');
+      client.capture('survey sent', { $survey_id: survey, [score]: 9 });
+      assert.equal(requests.length, beforeFlags + 1);
       await act(() => root.unmount());
       dom.window.close();
     `,

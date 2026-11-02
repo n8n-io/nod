@@ -4,6 +4,8 @@ import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/acco
 import type { AccountStore } from './account-store.ts';
 import { analyticsModel, type Analytics } from './analytics.ts';
 
+const surveyActiveDays = 3;
+
 const accountUpdate = z
   .object({
     theme: z.enum(['light', 'dark', 'system']).optional(),
@@ -65,6 +67,7 @@ export function createAccountSession(options: {
   }
   async function response(): Promise<SessionResponse> {
     const account = await readAccount();
+    const analytics = options.analytics?.configuration(owner);
     return {
       user,
       settings: {
@@ -77,7 +80,15 @@ export function createAccountSession(options: {
         developer: Boolean(options.developerIds?.has(owner)),
         traces: options.traces === true,
       },
-      ...(options.analytics ? { analytics: options.analytics.configuration(owner) } : {}),
+      ...(analytics && {
+        analytics: analytics.enabled
+          ? {
+              ...analytics,
+              surveys:
+                (await options.accounts.activeDays(owner, surveyActiveDays)) >= surveyActiveDays,
+            }
+          : analytics,
+      }),
     };
   }
   function guard(request: FastifyRequest, reply: FastifyReply) {

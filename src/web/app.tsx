@@ -29,6 +29,7 @@ import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shar
 import type { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
+import { SurveyCard } from './components/survey-card';
 import { AccountSettings, isSettingsPage, settingsSections } from './components/account-settings';
 import { capturePageview } from './lib/analytics';
 import type { AccountControls, AccountTab } from './components/account-menu';
@@ -557,71 +558,74 @@ function AuthenticatedApp({
           }}
         />
       ) : (
-        <Workspace
-          path={path}
-          session={session}
-          account={account}
-          initialFocusMessageId={browserNotificationTarget}
-          onFocusMessageHandled={() => setBrowserNotificationTarget(undefined)}
-          onReturnToMemory={memorySource ? () => openSettings('Memory') : undefined}
-          settings={
-            <AccountSettings
-              account={account}
-              open={settingsOpen}
-              initialTab={settingsTab}
-              openRequest={settingsRequest}
-              onOpenSource={(messageId) => {
-                setMemorySource(true);
-                window.dispatchEvent(
-                  new CustomEvent('nod:focus-message', {
-                    detail: { messageId, source: 'memory' },
-                  }),
-                );
-              }}
-              onOpenChange={(open) => {
-                if (!open) {
-                  const previous = settingsReturn.current;
-                  navigate(previous.path);
-                  window.requestAnimationFrame(() => {
-                    if (window.location.pathname !== previous.path) return;
-                    if (
-                      previous.trigger?.isConnected &&
-                      !previous.trigger.closest('[hidden], [inert]')
-                    ) {
-                      previous.trigger.focus({ preventScroll: true });
-                      if (document.activeElement === previous.trigger) return;
-                    }
-                    const composer =
-                      previous.path === '/'
-                        ? document.querySelector<HTMLElement>(
-                            '.composer-editor[contenteditable="true"]',
-                          )
-                        : null;
-                    (composer ?? document.getElementById('workspace'))?.focus({
-                      preventScroll: true,
+        <>
+          <SurveyCard />
+          <Workspace
+            path={path}
+            session={session}
+            account={account}
+            initialFocusMessageId={browserNotificationTarget}
+            onFocusMessageHandled={() => setBrowserNotificationTarget(undefined)}
+            onReturnToMemory={memorySource ? () => openSettings('Memory') : undefined}
+            settings={
+              <AccountSettings
+                account={account}
+                open={settingsOpen}
+                initialTab={settingsTab}
+                openRequest={settingsRequest}
+                onOpenSource={(messageId) => {
+                  setMemorySource(true);
+                  window.dispatchEvent(
+                    new CustomEvent('nod:focus-message', {
+                      detail: { messageId, source: 'memory' },
+                    }),
+                  );
+                }}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    const previous = settingsReturn.current;
+                    navigate(previous.path);
+                    window.requestAnimationFrame(() => {
+                      if (window.location.pathname !== previous.path) return;
+                      if (
+                        previous.trigger?.isConnected &&
+                        !previous.trigger.closest('[hidden], [inert]')
+                      ) {
+                        previous.trigger.focus({ preventScroll: true });
+                        if (document.activeElement === previous.trigger) return;
+                      }
+                      const composer =
+                        previous.path === '/'
+                          ? document.querySelector<HTMLElement>(
+                              '.composer-editor[contenteditable="true"]',
+                            )
+                          : null;
+                      (composer ?? document.getElementById('workspace'))?.focus({
+                        preventScroll: true,
+                      });
                     });
-                  });
+                  }
+                }}
+                onTabChange={(tab, replace) => {
+                  if (replace) {
+                    replaceNavigation(settingsPath(tab));
+                  } else navigate(settingsPath(tab));
+                }}
+                onReplayOnboarding={
+                  import.meta.env?.DEV === true && !desktopSettingsAvailable()
+                    ? () => navigate('/onboarding?replay=1')
+                    : undefined
                 }
-              }}
-              onTabChange={(tab, replace) => {
-                if (replace) {
-                  replaceNavigation(settingsPath(tab));
-                } else navigate(settingsPath(tab));
-              }}
-              onReplayOnboarding={
-                import.meta.env?.DEV === true && !desktopSettingsAvailable()
-                  ? () => navigate('/onboarding?replay=1')
-                  : undefined
-              }
-            />
-          }
-          onFeedback={openFeedback}
-          onDismissFeedbackDiscovery={
-            feedbackDiscovery && !feedbackOpen && !settingsOpen
-              ? dismissFeedbackDiscovery
-              : undefined
-          }
-        />
+              />
+            }
+            onFeedback={openFeedback}
+            onDismissFeedbackDiscovery={
+              feedbackDiscovery && !feedbackOpen && !settingsOpen
+                ? dismissFeedbackDiscovery
+                : undefined
+            }
+          />
+        </>
       )}
       <FeedbackDialog
         key={session.user!.id}

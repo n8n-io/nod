@@ -44,6 +44,7 @@ import './components/account-settings.css';
 import './components/time-picker.css';
 import './components/voice-settings.css';
 import './components/feedback.css';
+import './components/survey-card.css';
 import './components/editor-formatting.css';
 import './components/feedback-attachments.css';
 import './components/feedback-diagnostics.css';

@@ -12,7 +12,7 @@ What Nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 ## The rules every event follows
 
 - **Opt-in only.** Never call PostHog directly. Server events go through `capture` in [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts), UI events through `captureAnalytics` in [`src/web/lib/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics.ts). Both drop the event unless the deployment and the owner allow it.
-- **No content.** Never send text the owner or Nod wrote, tool arguments or results, names, email addresses, account names, Nod's own owner, thread, turn or message IDs, URLs, paths or raw error text. The random `task_id` and `run_id` made only for analytics are allowed.
+- **No content.** Never send text the owner or Nod wrote, tool arguments or results, names, email addresses, account names, Nod's own owner, thread, turn or message IDs, URLs, paths or raw error text. The random `task_id` and `run_id` made only for analytics are allowed. Survey answers the owner chooses to send are the one exception; see [Surveys](#surveys).
 - **Bounded values only.** Use enums, booleans, non-negative integers, durations in milliseconds and normalized public domains from `analyticsDomain`. A free string is a leak waiting to happen.
 - **Describe kinds, not instances.** Send `tool: 'browser'`, not the page Nod opened. Send `provider: 'compatible'` and `model: 'custom'`, not the name of a server the owner runs.
 - **Count actual changes.** Fire after the change commits or the server answers 2xx, not when a button is clicked "to save".
@@ -41,6 +41,18 @@ Answer-choice-specific properties are limited to `multiple`, `option_count`, and
 Use server and app events for tool use, model cost, turn timing and delivery. Keep their stated limits. A finished turn does not prove that the complete requested job is done.
 
 Do not add a model call to infer analytics labels from private conversations. Older task and frustration events are historical data. Keep dashboard descriptions clear about their date range and limitations.
+
+## Surveys
+
+Surveys are defined in PostHog, with their questions and targeting, and drawn by Nod's own [`SurveyCard`](https://github.com/n8n-io/nod/blob/main/src/web/components/survey-card.tsx). PostHog's own popup is off (`disable_surveys_automatic_display`); `posthog-js/dist/surveys.js` is bundled only for its eligibility checks. Create surveys as type `api` and check that the survey's internal targeting flag is active after launch.
+
+- The server sets `surveys` in the session's analytics configuration once the owner has sent messages on 3 different days (UTC, `activeDays` in the account store). Until then `watchAnalyticsSurvey` reports no survey. The day count never leaves the machine.
+- `watchAnalyticsSurvey` hands the card the first eligible survey whose questions are all ratings (scale 3, 5, 7 or 10) or open text with UUID IDs. A survey with any other question type isn't shown.
+- `captureSurvey` sends `survey shown`, `survey sent` and `survey dismissed` in PostHog's API-survey format. The card shows one question at a time. A picked score is sent at once as `survey sent` with `$survey_completed: false`, whatever the survey's partial-responses setting; typed text is sent only with **Next** or **Send**. Closing sends `survey dismissed` without answers, with the submission ID and `$survey_partially_completed` after a partial send.
+- `sanitizeEvent` keeps survey events only with a UUID `$survey_id`, plus the iteration and submission ID, and `$survey_partially_completed` on `survey dismissed`. On `survey sent` it also keeps `$survey_completed`, `$survey_questions` as question ID and wording, and `$survey_response…` values: integers from 0 to 10, or text cut to 2,000 characters. Survey names, `$set` and recording links are dropped.
+- PostHog gives almost every survey an internal targeting flag, so the client sets `advanced_only_evaluate_survey_feature_flags`, not `advanced_disable_feature_flags`. `dispatchRequest` lets only survey-flag requests through and cuts them to the project token and distinct ID. Don't turn on other feature flags.
+- A survey answer is text the owner chooses to send. Don't write survey questions that ask for messages, names, account details or anything else in [What never leaves Nod](/deploy/analytics/#what-never-leaves-nod).
+- The card carries `data-analytics-private`, so recordings block it.
 
 ## Keep recordings private
 

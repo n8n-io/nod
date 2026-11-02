@@ -95,7 +95,7 @@ Usage analytics are on by default for new owners; owners who already saved a cho
 
 The recipient is the Nod team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
 
-Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Recordings block private content and entry forms.
+Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Recordings block private content and entry forms. The exception is a survey the Nod team shows in the app: if you send an answer, it goes to the same PostHog project, including any text you type. See [Surveys](/deploy/analytics/#surveys).
 
 Events can include normalized public domains, purchase amounts and currencies, Vault item types, tool use, approvals, model tokens and cost, turn timing, and failures. Nod does not make model calls to read conversations or infer task categories and frustration for analytics.
 

@@ -5,6 +5,7 @@ import type { AccountSettings, AccountUpdate } from '../shared/account.ts';
 export interface AccountStore {
   readConsent(ownerId: string): Promise<{ enabled: boolean; revision: string }>;
   read(ownerId: string): Promise<AccountSettings>;
+  activeDays(ownerId: string, limit: number): Promise<number>;
   update(
     ownerId: string,
     input: AccountUpdate,
@@ -56,6 +57,16 @@ export function createAccountStore(database: Pool): AccountStore & {
         [ownerId],
       );
       return result.rows[0] ?? { enabled: true, revision: '1' };
+    },
+    async activeDays(ownerId, limit) {
+      const result = await database.query<{ days: number }>(
+        `SELECT count(*)::int AS days FROM (
+           SELECT DISTINCT (created_at AT TIME ZONE 'UTC')::date FROM messages
+           WHERE owner_id=$1 AND role='user' LIMIT $2
+         ) used`,
+        [ownerId, limit],
+      );
+      return result.rows[0]?.days ?? 0;
     },
     async read(ownerId) {
       const result = await database.query<AccountSettings>(
