@@ -51,7 +51,7 @@ Committed output delivery, visible presentation, artifact view, and artifact act
 
 Session recordings are disabled. Don't load a recorder, capture DOM snapshots, or forward replay identifiers. The UI capture boundary rejects snapshot events and replay properties.
 
-Use normalized app routes for navigation. Keep the `https://nod.invalid` placeholder host; real hosts, private IDs, query strings, and fragments must not enter analytics.
+Use normalized app routes for navigation. Keep the `https://app.nod.example` placeholder host; real hosts, private IDs, query strings, and fragments must not enter analytics.
 
 `data-analytics-private` still prevents user-triggered feedback screenshots on sensitive screens. Keep those markers when changing a private surface.
 

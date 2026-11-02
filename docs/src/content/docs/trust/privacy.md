@@ -95,7 +95,7 @@ Usage analytics are on by default for new owners; owners who already saved a cho
 
 The recipient is the Nod team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
 
-Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Analytics never record your screen or session.
+Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Analytics never capture screen recordings or session replays.
 
 Setting-change events identify a fixed control and bounded state, such as on, off, or configured. They exclude rule text, voice names, exact quiet-hour times, location and timezone or locale values, and spending-limit amounts. Navigation uses fixed page names without query strings or private IDs.
 
