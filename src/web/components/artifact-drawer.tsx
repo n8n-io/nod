@@ -39,6 +39,11 @@ import { Tooltip } from './tooltip';
 import { SharedMessageCard } from './shared-message-card';
 import { StickerPlayer } from './sticker-player';
 import { AudioPlayer } from './audio-player';
+import {
+  analyticsForCurrentSession,
+  captureAnalytics,
+  observeAnalyticsView,
+} from '../lib/analytics';
 import { AttachmentVideo } from './attachment-video';
 import { MessagePresentation } from './message-presentation';
 import { presentationText } from '../../shared/presentation';
@@ -159,7 +164,10 @@ const ArtifactView = memo(function ArtifactView({
   if (item.presentation)
     return (
       <div className="artifact-stage is-presentation" data-artifact-scroll="">
-        <MessagePresentation value={item.presentation} />
+        <MessagePresentation
+          value={item.presentation}
+          analyticsKey={item.id.slice('presentation:'.length)}
+        />
       </div>
     );
   if (
@@ -259,6 +267,13 @@ function ArtifactDrawer({
   const [stage, setStage] = useState('#f1f1f1');
   const index = items.indexOf(current);
   const kind = current.presentation ? null : attachmentKind(current.mimeType ?? '', current.name);
+  useEffect(() => {
+    if (!visible || !root.current || current.presentation) return;
+    return observeAnalyticsView(root.current, `${current.id}:drawer`, 'artifact_viewed', {
+      kind: kind ?? 'file',
+      location: 'drawer',
+    });
+  }, [current.id, current.presentation, kind, visible]);
   const vector = kind === 'image' && vectorImage(current.mimeType ?? '', current.name);
   const modes =
     kind === 'markdown' || kind === 'html' || kind === 'csv' || kind === 'n8n-workflow' || vector;
@@ -413,14 +428,21 @@ function ArtifactDrawer({
     handle.addEventListener('pointercancel', stop, { once: true });
   }
   async function copy() {
+    const capture = analyticsForCurrentSession();
     try {
       setCopyError('');
       if (current.presentation) {
         await navigator.clipboard.writeText(presentationText(current.presentation));
+        capture('presentation_action', {
+          kind: current.presentation.type,
+          location: 'drawer',
+          action: 'copy',
+        });
       } else {
         const response = await apiResponse(current.url);
         if (!response.ok) throw new Error('The file could not be loaded.');
         await navigator.clipboard.writeText(await response.text());
+        capture('artifact_action', { kind: kind ?? 'file', location: 'drawer', action: 'copy' });
       }
       setCopied(true);
     } catch {
@@ -562,7 +584,7 @@ function ArtifactDrawer({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
               </Button>
             )}
-            {!current.presentation && <FileActions item={current} />}
+            {!current.presentation && <FileActions item={current} location="drawer" />}
             <Button
               variant="ghost"
               size="icon"
@@ -640,7 +662,24 @@ export function ArtifactWorkspace({
   );
   return (
     <ArtifactDrawerContext.Provider value={value}>
-      <div className={className}>
+      <div
+        className={className}
+        onClick={(event) => {
+          if (event.defaultPrevented || !(event.target instanceof Element)) return;
+          const link = event.target.closest<HTMLAnchorElement>('a[download]');
+          const url = link?.getAttribute('href');
+          if (!url || !ownedArtifactUrl(url)) return;
+          const file = [...files, ...drafts].find(
+            (item) => item.url === url || item.downloadUrl === url,
+          );
+          if (!file) return;
+          captureAnalytics('artifact_action', {
+            kind: attachmentKind(file.mimeType ?? '', file.name) ?? 'file',
+            location: link?.closest('.artifact-drawer') ? 'drawer' : 'message',
+            action: 'download_requested',
+          });
+        }}
+      >
         {children}
         {displayed && (
           <ArtifactDrawer

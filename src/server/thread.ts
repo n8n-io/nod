@@ -47,7 +47,13 @@ import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
-import { analyticsModel, type AnalyticsEvent, type CaptureAnalytics } from './analytics.ts';
+import {
+  analyticsModel,
+  snapshotAnalytics,
+  type AnalyticsEvent,
+  type CaptureAnalytics,
+} from './analytics.ts';
+import { attachmentKind } from '../shared/attachment-kind.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
@@ -128,6 +134,7 @@ export interface ThreadDependencies {
     input: { kind: 'interrupted' } | { kind: 'failed'; error: string },
   ) => Promise<string>;
   observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
+  taskClassification?: boolean;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -319,6 +326,7 @@ export async function insertAssistantMessage(
   replyToMessageId?: string,
   presentation?: Presentation,
   answerChoices?: AnswerChoices,
+  analytics?: CaptureAnalytics,
 ) {
   const visual = presentation === undefined ? undefined : presentationSchema.parse(presentation);
   const choices =
@@ -379,6 +387,22 @@ export async function insertAssistantMessage(
       choices ? JSON.stringify(choices) : null,
     ],
   );
+  if (analytics) {
+    const kinds = new Map<NonNullable<ReturnType<typeof attachmentKind>> | 'file', number>();
+    for (const attachment of new Map(attachments.map((item) => [item.id, item])).values()) {
+      const kind = attachmentKind(attachment.mimeType, attachment.name) ?? 'file';
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    afterCommit(client, () => {
+      if (visual)
+        analytics({
+          event: 'output_created',
+          properties: { presentation_kind: visual.type, count: 1 },
+        });
+      for (const [artifact_kind, count] of kinds)
+        analytics({ event: 'output_created', properties: { artifact_kind, count } });
+    });
+  }
   return id;
 }
 
@@ -687,7 +711,10 @@ export async function cancelTurns(
   client: PoolClient,
   threadId: string,
   scope: { sessionId?: string; background?: boolean } = {},
+  analytics?: CaptureAnalytics,
+  actor: 'owner' | 'agent' = 'owner',
 ) {
+  const capture = snapshotAnalytics(analytics);
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const current = await client.query(
     "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
@@ -709,6 +736,11 @@ export async function cancelTurns(
         )
       ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
     : [];
+  if (tasks.length)
+    afterCommit(client, () => {
+      for (const _task of tasks)
+        capture?.({ event: 'task_finished', properties: { status: 'cancelled', actor } });
+    });
   return {
     tasks,
     ids: current.rows.map((row) => row.id as string),
@@ -724,9 +756,10 @@ export function abortTurns(ids: string[]) {
   for (const id of ids) running.get(id)?.abort();
 }
 
-export async function stopThread() {
+export async function stopThread(analytics?: CaptureAnalytics) {
+  const capture = snapshotAnalytics(analytics);
   const cancelled = await transaction(
-    async (client) => cancelTurns(client, (await lockThread(client)).id),
+    async (client) => cancelTurns(client, (await lockThread(client)).id, {}, capture),
     pool,
   );
   abortTurns(cancelled.ids);
@@ -734,12 +767,13 @@ export async function stopThread() {
   return { browsers: cancelled.browsers };
 }
 
-export async function resetThread(expectedThreadId: string) {
+export async function resetThread(expectedThreadId: string, analytics?: CaptureAnalytics) {
+  const capture = snapshotAnalytics(analytics);
   const result = await transaction(async (client) => {
     const thread = await lockThread(client);
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
-    const cancelled = await cancelTurns(client, thread.id);
+    const cancelled = await cancelTurns(client, thread.id, {}, capture);
     await client.query('UPDATE threads SET archived_at=now(),updated_at=now() WHERE id=$1', [
       thread.id,
     ]);
@@ -1271,6 +1305,40 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   };
 }
 
+async function analyticsWork(turn: any) {
+  const chain = await pool.query<{
+    source: TurnSource;
+    background: boolean;
+    session_id: string;
+    depth: number;
+    owner_requested: boolean;
+  }>(
+    `WITH RECURSIVE chain AS (
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,u.message_id,0 AS depth,ARRAY[u.id] AS path
+      FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
+      UNION ALL
+      SELECT u.id,u.parent_turn_id,u.source,u.background,u.session_id,u.message_id,c.depth+1,c.path||u.id
+      FROM chain c JOIN turns u ON u.id=c.parent_turn_id AND u.owner_id=$2 AND u.thread_id=$3
+      WHERE NOT u.id=ANY(c.path)
+    ) SELECT source,background,session_id,depth,
+      source='user' OR (source IN ('task','resume') AND EXISTS (
+        SELECT 1 FROM messages m WHERE m.id=chain.message_id AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='user'
+      )) AS owner_requested
+      FROM chain WHERE session_id=$4 ORDER BY depth`,
+    [turn.id, ownerId, turn.thread_id, turn.session_id],
+  );
+  const root = chain.rows.at(-1) ?? turn;
+  const request = chain.rows.find((row) => row.source !== 'resume' || row.owner_requested);
+  return {
+    work_type: (root.source === 'schedule'
+      ? 'scheduled'
+      : root.background || root.source === 'event' || root.source === 'task'
+        ? 'background'
+        : 'immediate') as 'immediate' | 'scheduled' | 'background',
+    owner_requested: request?.owner_requested ?? turn.source === 'user',
+  };
+}
+
 async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
@@ -1278,22 +1346,29 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const model = selectedModel?.configured
     ? analyticsModel(selectedModel.provider, selectedModel.name)
     : undefined;
+  const work = dependencies.analytics
+    ? await analyticsWork(turn).catch(() => undefined)
+    : undefined;
   const analyticsProperties = {
+    ...work,
+    ...(dependencies.taskClassification ? { task_taxonomy_version: 1 as const } : {}),
     source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel
       : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
     background: Boolean(turn.background),
-    ...(model
-      ? { model_provider: model.provider, ...(model.model ? { model: model.model } : {}) }
-      : {}),
+    ...model,
   };
-  let outcome: Extract<AnalyticsEvent, { event: 'nod_turn_completed' }>['properties']['outcome'] =
+  let outcome: Extract<AnalyticsEvent, { event: 'turn_completed' }>['properties']['outcome'] =
     'failed';
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   let limited = false;
   let failure: 'model' | 'unknown' = 'unknown';
-  dependencies.analytics?.({ event: 'nod_turn_started', properties: analyticsProperties });
+  if (work)
+    dependencies.analytics?.({
+      event: 'turn_started',
+      properties: { ...analyticsProperties, ...work },
+    });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
   const ref: TurnRef = { threadId, turnId, browserId: turn.session_id };
@@ -1367,6 +1442,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           streamId,
           replyToMessageId,
           presentation,
+          undefined,
+          dependencies.analytics,
         );
       });
       const spoken = presentation && !text.trim() ? presentationText(presentation) : text;
@@ -1516,7 +1593,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ...(await artifacts.storeArtifact(Buffer.from(bytes), name, mimeType, threadId, client)),
           ...(source ? { source } : {}),
         };
-        if (publish) await insertAssistantMessage(client, ref, text, [artifact]);
+        if (publish)
+          await insertAssistantMessage(
+            client,
+            ref,
+            text,
+            [artifact],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            dependencies.analytics,
+          );
         return artifact;
       });
       refresh();
@@ -1815,7 +1903,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
                 threadId,
                 client,
               );
-              await insertAssistantMessage(client, ref, '', [artifact], undefined, finalReply.id);
+              await insertAssistantMessage(
+                client,
+                ref,
+                '',
+                [artifact],
+                undefined,
+                finalReply.id,
+                undefined,
+                undefined,
+                dependencies.analytics,
+              );
             });
             refresh();
           }
@@ -1854,6 +1952,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           undefined,
           undefined,
           answerChoices,
+          dependencies.analytics,
         );
         if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
           await dependencies.bindVerificationQuestion?.(turnId, messageId, client);
@@ -1880,19 +1979,21 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
-    dependencies.analytics?.({
-      event: 'nod_turn_completed',
-      properties: {
-        ...analyticsProperties,
-        outcome,
-        duration_ms: Math.max(0, Date.now() - startedAt),
-        queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
-        ...(waitingReason ? { waiting_reason: waitingReason } : {}),
-        ...(outcome === 'failed'
-          ? { failure_reason: limited ? ('spending_limit' as const) : failure }
-          : {}),
-      },
-    });
+    if (work)
+      dependencies.analytics?.({
+        event: 'turn_completed',
+        properties: {
+          ...analyticsProperties,
+          ...work,
+          outcome,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
+          ...(waitingReason ? { waiting_reason: waitingReason } : {}),
+          ...(outcome === 'failed'
+            ? { failure_reason: limited ? ('spending_limit' as const) : failure }
+            : {}),
+        },
+      });
     running.delete(turnId);
   }
 }

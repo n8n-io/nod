@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AccountStore } from './account-store.ts';
-import { analyticsModel, type Analytics } from './analytics.ts';
+import { analyticsModel, snapshotAnalytics, type Analytics } from './analytics.ts';
+import { captureSettingChanges } from './analytics-settings.ts';
 
 const surveyActiveDays = 3;
 
@@ -33,6 +34,25 @@ export function createAccountSession(options: {
   const owner = user.id;
   let accountVersion = 0;
   let pending: Promise<unknown> | undefined;
+  let usageVersion = 0;
+  let usagePublication: { version: number; revision: string; usageVersion: number } | undefined;
+  function applyConsent(consent: { enabled: boolean; revision: string }) {
+    const current = options.analytics?.consent(owner);
+    options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+    const publication = usagePublication;
+    usagePublication = undefined;
+    if (
+      publication &&
+      consent.enabled &&
+      publication.version === current?.version &&
+      publication.revision === consent.revision &&
+      publication.usageVersion === usageVersion
+    )
+      options.analytics?.capture(owner, {
+        event: 'setting_changed',
+        properties: { setting: 'usage_data', actor: 'owner', state: 'on' },
+      });
+  }
   async function readAccount() {
     for (;;) {
       await pending?.catch(() => {});
@@ -40,24 +60,47 @@ export function createAccountSession(options: {
       const account = await options.accounts.read(owner);
       const consent = await options.accounts.readConsent(owner);
       if (accountVersion !== version || pending) continue;
-      options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+      applyConsent(consent);
       options.onTraces?.(account.traces);
       return { ...account, usageData: consent.enabled };
     }
   }
   async function updateAccount(input: AccountUpdate) {
     const version = ++accountVersion;
+    const initialConsent = options.analytics?.consent(owner);
+    const capture = snapshotAnalytics(options.analytics?.forOwner(owner));
+    if (input.usageData === false) {
+      usageVersion++;
+      usagePublication = undefined;
+    }
+    const currentUsageVersion = usageVersion;
     if (input.usageData === false) options.analytics?.setUsageData(owner, false);
     if (input.traces === false) options.onTraces?.(false);
     const update = (pending ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
+        const before = await options.accounts.read(owner);
         const account = await options.accounts.update(owner, input);
         const consent = await options.accounts.readConsent(owner);
+        if (
+          input.usageData === true &&
+          !before.usageData &&
+          initialConsent &&
+          currentUsageVersion === usageVersion
+        )
+          usagePublication = {
+            version: initialConsent.version,
+            revision: consent.revision,
+            usageVersion: currentUsageVersion,
+          };
         if (accountVersion === version) {
-          options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+          applyConsent(consent);
           options.onTraces?.(account.traces);
         }
+        captureSettingChanges(capture, 'owner', before, account, {
+          theme: 'theme',
+          traces: 'conversation_traces',
+        });
         return { ...account, usageData: consent.enabled };
       });
     pending = update;
@@ -66,30 +109,31 @@ export function createAccountSession(options: {
     });
   }
   async function response(): Promise<SessionResponse> {
-    const account = await readAccount();
-    const analytics = options.analytics?.configuration(owner);
-    return {
-      user,
-      settings: {
-        theme: account.theme,
-        onboardingCompleted: account.onboardingCompleted,
-        usageData: account.usageData,
-        traces: account.traces,
-      },
-      capabilities: {
-        developer: Boolean(options.developerIds?.has(owner)),
-        traces: options.traces === true,
-      },
-      ...(analytics && {
-        analytics: analytics.enabled
-          ? {
-              ...analytics,
-              surveys:
-                (await options.accounts.activeDays(owner, surveyActiveDays)) >= surveyActiveDays,
-            }
-          : analytics,
-      }),
-    };
+    for (;;) {
+      const version = accountVersion;
+      const account = await readAccount();
+      const analytics = options.analytics?.configuration(owner);
+      const surveys =
+        analytics?.enabled &&
+        (await options.accounts.activeDays(owner, surveyActiveDays)) >= surveyActiveDays;
+      if (accountVersion !== version || pending) continue;
+      return {
+        user,
+        settings: {
+          theme: account.theme,
+          onboardingCompleted: account.onboardingCompleted,
+          usageData: account.usageData,
+          traces: account.traces,
+        },
+        capabilities: {
+          developer: Boolean(options.developerIds?.has(owner)),
+          traces: options.traces === true,
+        },
+        ...(analytics && {
+          analytics: analytics.enabled ? { ...analytics, surveys } : analytics,
+        }),
+      };
+    }
   }
   function guard(request: FastifyRequest, reply: FastifyReply) {
     if (request.headers.origin !== origin || request.headers['sec-fetch-site'] === 'cross-site') {
@@ -142,6 +186,7 @@ export function createAccountSession(options: {
     app.patch('/api/account', async (request, reply) => {
       if (!guard(request, reply)) return;
       const input = accountUpdate.parse(request.body);
+      const capture = snapshotAnalytics(options.analytics?.forOwner(owner));
       if (input.traces === true && options.traces !== true)
         return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
@@ -175,15 +220,15 @@ export function createAccountSession(options: {
       if (onboardingCompletedNow) {
         const model = options.model?.();
         options.analytics?.capture(owner, {
-          event: 'nod_onboarding_completed',
+          event: 'onboarding_completed',
           ...(model?.configured
-            ? { properties: { model_provider: analyticsModel(model.provider).provider } }
+            ? { properties: { provider: analyticsModel(model.provider).provider } }
             : {}),
         });
       }
       if (input.theme !== undefined)
-        options.analytics?.capture(owner, {
-          event: 'nod_settings_updated',
+        capture?.({
+          event: 'settings_updated',
           properties: { section: 'account', operation: 'update' },
         });
       reply.header('cache-control', 'no-store');

@@ -1,7 +1,7 @@
 export const posthogConfig = {
   key: 'phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV',
   host: 'https://eu.i.posthog.com',
-  schemaVersion: 'nod_v3',
+  schemaVersion: 'v4',
   docsUrl: 'https://nod-docs.pages.dev/deploy/analytics/',
 } as const;
 

@@ -3,9 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
-import { analyticsDomain } from './analytics-connections.ts';
 
-type SecureEntry = Extract<AnalyticsEvent, { event: 'nod_secure_entry_changed' }>['properties'];
+type SecureEntry = Extract<AnalyticsEvent, { event: 'secure_entry_changed' }>['properties'];
 
 interface SecureEntryUse {
   kind: string;
@@ -24,25 +23,7 @@ export function captureSecureEntry(
       : use.kind === 'otp'
         ? 'code'
         : 'sign_in';
-  const domain = kind !== 'code' && use.origin ? analyticsDomain(use.origin) : undefined;
-  const amount = use.payment && Math.round(use.payment.amount * 1000) / 1000;
-  analytics?.({
-    event: 'nod_secure_entry_changed',
-    properties: {
-      kind,
-      status,
-      ...(domain ? { domain } : {}),
-      ...(kind === 'payment' &&
-      use.payment &&
-      /^[A-Z]{3}$/.test(use.payment.currency) &&
-      amount !== undefined &&
-      Number.isFinite(amount) &&
-      amount >= 0 &&
-      amount <= 1_000_000
-        ? { currency: use.payment.currency, amount }
-        : {}),
-    },
-  });
+  analytics?.({ event: 'secure_entry_changed', properties: { kind, status } });
 }
 
 export class VaultUseError extends Error {

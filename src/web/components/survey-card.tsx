@@ -59,9 +59,15 @@ function SurveyForm({ survey, onClose }: { survey: AnalyticsSurvey; onClose(): v
   const last = step === survey.questions.length - 1;
 
   useEffect(() => {
-    if (shown.current) return;
-    shown.current = true;
-    captureSurvey('shown', survey);
+    const show = () => {
+      if (shown.current || document.visibilityState !== 'visible' || !card.current?.isConnected)
+        return;
+      shown.current = true;
+      captureSurvey('shown', survey);
+    };
+    show();
+    document.addEventListener('visibilitychange', show);
+    return () => document.removeEventListener('visibilitychange', show);
   }, [survey]);
 
   useEffect(() => {

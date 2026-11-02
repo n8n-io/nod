@@ -35,7 +35,6 @@ import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
-import { analyticsDomain } from './analytics-connections.ts';
 import { lockKey, lockSetup, locksTable } from './locks.ts';
 const passwordInput = z
   .object({
@@ -678,23 +677,20 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     item_type: 'login' | 'card',
     operation: 'create' | 'update' | 'delete',
     source?: 'user' | 'agent',
-    origin?: string,
   ) {
-    const domain = item_type === 'login' && origin ? analyticsDomain(origin) : undefined;
     options.analytics?.({
-      event: 'nod_vault_changed',
+      event: 'vault_changed',
       properties: {
         item_type,
         operation,
         ...(source ? { source } : {}),
-        ...(domain ? { domain } : {}),
       },
     });
   }
 
   async function save(ownerId: string, raw: unknown, source?: 'user') {
     const saved = await transaction((client) => saveEntry(ownerId, raw, client), pool);
-    if (saved.operation) track('login', saved.operation, source, saved.entry.origin);
+    if (saved.operation) track('login', saved.operation, source);
     return saved.entry;
   }
 
@@ -778,7 +774,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .strict();
     const credentialKey = await key();
     const result = { imported: 0, existing: 0, skipped: 0, authenticatorKeys: 0 };
-    const origins: string[] = [];
     await transaction(async (client) => {
       await lockKey(client, `nod-vault-items:${owner}`);
       const { rows } = await client.query<EntryRow>(
@@ -846,19 +841,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         );
         result.imported++;
         if (authenticator) result.authenticatorKeys++;
-        origins.push(origin);
       }
     }, pool);
-    for (let index = 0; index < origins.length; index += 100) {
-      options.analytics?.({
-        event: 'nod_vault_imported',
-        properties: {
-          domains: origins
-            .slice(index, index + 100)
-            .map((origin) => analyticsDomain(origin) ?? 'unavailable'),
-        },
-      });
-    }
+    if (result.imported)
+      options.analytics?.({ event: 'vault_imported', properties: { count: result.imported } });
     return result;
   }
 
@@ -910,7 +896,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       return metadata(result.rows[0], input.username);
     }, pool);
-    if (changed) track('login', 'update', 'user', entry.origin);
+    if (changed) track('login', 'update', 'user');
     return entry;
   }
 
@@ -1519,7 +1505,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         ),
       pool,
     );
-    if (saved.operation) track('login', saved.operation, 'user', row.origin);
+    if (saved.operation) track('login', saved.operation, 'user');
     return consume(token, { kind: 'saved', entryId: saved.entry.id });
   }
 
@@ -1835,7 +1821,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         }
       },
     });
-    if (savedOperation) track('login', savedOperation, 'user', input.origin);
+    if (savedOperation) track('login', savedOperation, 'user');
     return result === true;
   }
 
@@ -2311,7 +2297,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
            SELECT 'login' AS kind, origin FROM login UNION ALL SELECT 'card' AS kind, NULL AS origin FROM card`,
           [z.uuid().parse(request.params.id), owner],
         );
-        for (const row of removed.rows) track(row.kind, 'delete', 'user', row.origin ?? undefined);
+        for (const row of removed.rows) track(row.kind, 'delete', 'user');
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>

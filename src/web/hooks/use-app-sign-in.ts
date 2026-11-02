@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { AppSetupStatus } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
-import { analyticsForCurrentSession } from '../lib/analytics';
+import { analyticsForCurrentSession, appConnectionAnalytics } from '../lib/analytics';
 import { cancelSetup, connectionUrl, setupLinkHash } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
@@ -40,7 +40,9 @@ export function useAppSignIn({
   const [completed, setCompleted] = useState<SignInTarget>();
   const request = useRef<AbortController | null>(null);
   const signInWindow = useRef<Window | null>(null);
-  const attempt = useRef<(SignInTarget & { id: string }) | undefined>(undefined);
+  const attempt = useRef<(SignInTarget & { id: string; url: string; report(): void }) | undefined>(
+    undefined,
+  );
   const active = useRef(false);
   const latest = useRef({ name, onSettled, onSetup });
   latest.current = { name, onSettled, onSetup };
@@ -74,6 +76,20 @@ export function useAppSignIn({
         )
           return;
         const selected = attempt.current;
+        if (connection === 'connected') {
+          void (async () => {
+            try {
+              const hash = await setupLinkHash(selected.url);
+              const result = await api<AppSetupStatus>('/api/apps/setup-status', {
+                method: 'POST',
+                body: JSON.stringify({ hashes: [hash], pairingUrl: selected.url }),
+                signal: AbortSignal.timeout(10_000),
+                cache: 'no-store',
+              });
+              if (result.completed.includes(hash)) selected.report();
+            } catch {}
+          })();
+        }
         clearAttempt();
         const success = connection === 'connected' || connection === 'continued';
         setCompleted(success ? selected : undefined);
@@ -106,6 +122,7 @@ export function useAppSignIn({
       window.clearTimeout(poll);
       window.clearTimeout(grace);
       clearAttempt();
+      if (result === 'connected') currentAttempt.report();
       setCompleted(result === 'connected' ? currentAttempt : undefined);
       setPending(undefined);
       setError(outcomeMessage(latest.current.name(currentAttempt.service), result));
@@ -186,7 +203,8 @@ export function useAppSignIn({
     if (request.current) return;
     const { service: slug, connectionId } = target;
     const capture = analyticsForCurrentSession();
-    capture('nod_app_connect_clicked', { entry, result: 'opened' });
+    const completion = appConnectionAnalytics(entry);
+    capture('app_connect_clicked', { entry, result: 'opened' });
     clearAttempt();
     const external = desktopLinksAvailable();
     const popup = external
@@ -229,12 +247,18 @@ export function useAppSignIn({
         setup.searchParams.has('connect')
       ) {
         popup?.close();
+        completion.transfer(setup.searchParams.get('connect')!);
         latest.current.onSetup(`${setup.pathname}${setup.search}`);
         return;
       }
       if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
         throw new Error(outcomeMessage(latest.current.name(slug), 'failed'));
-      attempt.current = { ...target, id: response.attempt };
+      attempt.current = {
+        ...target,
+        id: response.attempt,
+        url,
+        report: completion.complete,
+      };
       flushSync(() => {
         setSignInUrl(url);
       });
@@ -248,7 +272,7 @@ export function useAppSignIn({
       if (controller.signal.aborted || request.current !== controller) return;
       clearAttempt();
       setError(errorMessage(cause));
-      capture('nod_ui_error', { area: entry, action: 'connect' });
+      capture('ui_error', { area: entry, action: 'connect' });
     } finally {
       if (request.current === controller) {
         request.current = null;

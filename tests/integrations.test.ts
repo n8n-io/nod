@@ -2184,6 +2184,7 @@ async function appsFixture(
       | 'writingStyle'
       | 'removeActivity'
       | 'admission'
+      | 'analytics'
     >
   > = {},
 ) {
@@ -8692,7 +8693,8 @@ test(
   'source identity survives a login refresh and rejects an in-flight account swap',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    const f = await appsFixture(t);
+    const captured: import('../src/server/analytics.ts').AnalyticsEvent[] = [];
+    const f = await appsFixture(t, {}, { analytics: (event) => captured.push(event) });
     const connected = await f.connect('gmail');
     assert.ok(connected.connectionId);
     const { identity } = createComposioProvider({
@@ -8777,6 +8779,13 @@ test(
       ),
       /changed before/,
     );
+    const reads = captured.filter((event) => event.event === 'service_used');
+    assert.equal(reads.length, 2);
+    assert.equal(reads[0]!.properties.app, 'gmail');
+    assert.equal(reads[0]!.properties.outcome, 'succeeded');
+    assert.equal(reads[1]!.properties.outcome, 'failed');
+    for (const value of ['owner@example.test', 'replacement-physical-id', connected.connectionId])
+      assert.equal(JSON.stringify(reads).includes(value), false);
   },
 );
 
@@ -8993,6 +9002,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
 test('generic source privacy checks hide access mail and cannot delay Stop', async () => {
   const { createObservationSources } = await import('../src/server/observation-sources.ts');
   const secret = 'synthetic-known-source-secret';
+  const analytics: import('../src/server/analytics.ts').AnalyticsEvent[] = [];
   let release: () => void = () => {};
   let begin: () => void = () => {};
   let hold = false;
@@ -9040,6 +9050,7 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
     ],
     {
       secrets: [secret],
+      analytics: (event) => analytics.push(event),
       check: async (mail) => {
         assert.equal(JSON.stringify(mail).includes(secret), false);
         begin();
@@ -9052,6 +9063,21 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
   assert.equal(JSON.stringify(result).includes(secret), false);
   assert.equal(JSON.stringify(result).includes('843921'), false);
   assert.match(JSON.stringify(result), /content is private/);
+  assert.equal(analytics.length, 1);
+  assert.deepEqual(analytics[0], {
+    event: 'source_read',
+    properties: {
+      source_type: 'other',
+      operation: 'records',
+      outcome: 'succeeded',
+      duration_ms: (analytics[0] as any).properties.duration_ms,
+      record_count: 1,
+      unavailable_count: 0,
+    },
+  });
+  assert.ok(Number((analytics[0] as any).properties.duration_ms) >= 0);
+  for (const value of [secret, 'records:feed', 'Private feed', '843921', 'item/1'])
+    assert.equal(JSON.stringify(analytics).includes(value), false);
   hold = true;
   entered = new Promise<void>((resolve) => {
     begin = resolve;
@@ -9061,7 +9087,11 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
   await entered;
   controller.abort();
   await assert.rejects(stopped);
+  assert.equal(analytics.length, 2);
+  assert.equal((analytics[1] as any).properties.outcome, 'cancelled');
   release();
+  await Promise.resolve();
+  assert.equal(analytics.length, 2);
   const recovering = createObservationSources(
     [
       {

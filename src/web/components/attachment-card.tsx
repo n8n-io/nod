@@ -7,6 +7,7 @@ import { FileGlyph } from './attachment-glyph';
 import { AudioPlayer } from './audio-player';
 import { SharedMessageCard } from './shared-message-card';
 import { useArtifactDrawer } from './artifact-context';
+import { observeAnalyticsView } from '../lib/analytics';
 import {
   ImageGallery,
   ownedArtifactUrl,
@@ -279,6 +280,28 @@ export function MessageAttachments({
   const drawer = useArtifactDrawer();
   const container = useRef<HTMLDivElement>(null);
   const { visual, rest } = messageFiles(attachments);
+  const exposure = JSON.stringify(
+    [...visual.slice(0, 4), ...rest].map((item) => [item.id, item.mimeType, item.name]),
+  );
+  useEffect(() => {
+    if (!container.current) return;
+    const elements = [
+      ...container.current.querySelectorAll<HTMLElement>('.attachment-image-item'),
+      ...container.current.querySelectorAll<HTMLElement>('.attachment-cards > *'),
+    ];
+    const files = JSON.parse(exposure) as [string, string | undefined, string][];
+    const stop = files.flatMap(([id, mimeType, name], index) =>
+      elements[index]
+        ? [
+            observeAnalyticsView(elements[index], `${id}:message`, 'artifact_viewed', {
+              kind: attachmentKind(mimeType ?? '', name) ?? 'file',
+              location: 'message',
+            }),
+          ]
+        : [],
+    );
+    return () => stop.forEach((release) => release());
+  }, [exposure]);
   const selected = [...visual, ...rest].some((item) => item.id === drawer.selectedId)
     ? drawer.selectedId
     : null;

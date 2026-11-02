@@ -28,5 +28,4 @@ export interface Turn {
   visited(browserId: string, url: string): void;
   delegate?(title: string, instruction: string): Promise<string>;
   setStatus?(text: string): Promise<string>;
-  pageVisited?(url: string, subagent: boolean): void;
 }

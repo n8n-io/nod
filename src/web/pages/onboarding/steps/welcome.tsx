@@ -48,7 +48,7 @@ export function Welcome({
   }, [onNext]);
 
   return (
-    <section className="ob-step ob-welcome" data-analytics-public>
+    <section className="ob-step ob-welcome">
       <div className="ob-welcome-content">
         <h1 className="ob-welcome-wordmark" aria-label="Nod">
           <NodGlyph size={48} mode="bounce" className="ob-welcome-mark" />

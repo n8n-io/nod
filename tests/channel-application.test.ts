@@ -458,22 +458,22 @@ test('analytics drops revoked owner queues while preserving another owner and re
   for (const owner of ['alex', 'sam', 'never']) {
     if (owner !== 'never') analytics.setUsageData(owner, true);
     analytics.capture(owner, {
-      event: owner === 'sam' ? 'nod_chat_stopped' : 'nod_conversation_reset',
+      event: owner === 'sam' ? 'chat_stopped' : 'conversation_reset',
     });
   }
   analytics.setUsageData('alex', false);
   await analytics.shutdown();
   assert.deepEqual(
     received.map((event) => [event.distinct_id, event.event]),
-    [[local, 'nod_chat_stopped']],
+    [[local, 'chat_stopped']],
   );
 
   received.length = 0;
   const ownerBound = createPostHogAnalytics();
   const signal = new AbortController().signal;
-  ownerBound.capture({ distinctId: local, event: 'nod_chat_stopped', properties: {} }, signal);
+  ownerBound.capture({ distinctId: local, event: 'chat_stopped', properties: {} }, signal);
   ownerBound.capture(
-    { distinctId: `local:${randomUUID()}`, event: 'nod_chat_stopped', properties: {} },
+    { distinctId: `local:${randomUUID()}`, event: 'chat_stopped', properties: {} },
     signal,
   );
   await ownerBound.shutdown();

@@ -3100,7 +3100,7 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       globalThis.fetch = async () => { throw new Error('This fixture cannot use the network.'); };
       const sent = [], requests = [];
       const client = {
-        init(_key, options) { this.options = options; },
+        init(key, options) { this.token = key; this.options = options; },
         capture(event, properties = {}) {
           const value = this.options.before_send({ event, properties });
           if (value) this._send_request({ url: 'https://eu.i.posthog.com/e/', data: [value] });
@@ -3111,9 +3111,18 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
           if (Array.isArray(request.data)) sent.push(...request.data);
         },
         set_config(options) { this.options = { ...this.options, ...options }; },
-        reset() {}, startSessionRecording() {}, stopSessionRecording() {},
+        reset() {
+          for (const key of Object.keys(localStorage))
+            if (key.startsWith('seenSurvey_') || key.startsWith('inProgressSurvey_') || key === 'lastSeenSurveyDate')
+              localStorage.removeItem(key);
+        },
+        reloadFeatureFlags() {}, startSessionRecording() {}, stopSessionRecording() {},
         surveys: [],
-        getActiveMatchingSurveys(callback) { callback(this.surveys); },
+        surveyCallbacks: [],
+        getActiveMatchingSurveys(callback) {
+          if (this.deferSurveys) this.surveyCallbacks.push(callback);
+          else callback(this.surveys);
+        },
         onFeatureFlags() { return () => {}; },
         onSurveysLoaded() { return () => {}; },
       };
@@ -3126,6 +3135,21 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       setRequestAccount('synthetic-owner-one');
       setAnalyticsClient(client);
       const consent = (enabled, surveys = true) => configureAnalytics({ ...configuration, enabled, surveys }, 'web');
+      consent(true);
+      const seenSurveyKey = 'seenSurvey_0190c1a2-0000-7000-8000-000000000001';
+      const inProgressKey = 'inProgressSurvey_0190c1a2-0000-7000-8000-000000000001';
+      const lastSeenDate = '2026-01-01T00:00:00.000Z';
+      localStorage.setItem(seenSurveyKey, 'true');
+      localStorage.setItem('lastSeenSurveyDate', lastSeenDate);
+      localStorage.setItem(inProgressKey, 'PRIVATE_UNSENT_DRAFT');
+      consent(false);
+      consent(true);
+      assert.equal(localStorage.getItem(seenSurveyKey), 'true');
+      assert.equal(localStorage.getItem('lastSeenSurveyDate'), lastSeenDate);
+      assert.equal(localStorage.getItem(inProgressKey), null);
+      configureAnalytics({ ...configuration, surveys: true, distinctId: 'synthetic-installation-two' }, 'web');
+      assert.equal(localStorage.getItem(seenSurveyKey), null);
+      assert.equal(localStorage.getItem('lastSeenSurveyDate'), null);
       consent(true);
       const container = document.querySelector('#root');
       const root = createRoot(container);
@@ -3272,7 +3296,11 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       assert.equal(selected().length, 4);
       assert.equal(selected().at(-1).properties.selected_count, 6);
       assert.ok(!JSON.stringify(sent).includes('PRIVATE_'));
-      assert.ok(sent.every(item => item.properties.analytics_schema === 'nod_v3'));
+      assert.ok(sent.every(item => item.properties.analytics_schema === 'v4'));
+      assert.ok(sent.every(item => !item.event.startsWith('nod_')));
+      assert.equal(client.options.disable_session_recording, true);
+      client.capture('$snapshot', { snapshot_data: 'PRIVATE_REPLAY' });
+      assert.equal(sent.length, beforeInvalid + 4);
       const survey = '0190c1a2-0000-7000-8000-000000000001';
       const score = '$survey_response_0190c1a2-0000-7000-8000-000000000002';
       const reason = '$survey_response_0190c1a2-0000-7000-8000-000000000003';
@@ -3317,11 +3345,22 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       await act(() => root.render(null));
       consent(true, false);
       const beforeCard = sent.length;
+      const beforeSurveyDate = localStorage.getItem('lastSeenSurveyDate');
+      await visible(false);
       await act(() => root.render(createElement(SurveyCard)));
       assert.equal(card(), null);
       await act(() => consent(true));
       assert.ok(card().hasAttribute('data-analytics-private'));
       assert.equal(card().querySelector('textarea'), null);
+      assert.equal(sent.length, beforeCard);
+      assert.equal(localStorage.getItem('lastSeenSurveyDate'), beforeSurveyDate);
+      await visible(true);
+      assert.equal(sent.length, beforeCard + 1);
+      assert.equal(sent.at(-1).event, 'survey shown');
+      assert.ok(localStorage.getItem('lastSeenSurveyDate'));
+      await visible(false);
+      await visible(true);
+      assert.equal(sent.length, beforeCard + 1);
       await act(() => card().querySelectorAll('.survey-scale-option')[9].click());
       await write(card().querySelector('textarea'), '  Synthetic reason  ');
       await act(() => card().querySelector('button[type="submit"]').click());
@@ -3364,24 +3403,68 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       assert.equal(unanswered[1].properties.$survey_submission_id, undefined);
       assert.equal(unanswered[1].properties.$survey_partially_completed, undefined);
       await act(() => root.render(null));
+      const followup = '0190c1a2-0000-7000-8000-000000000010';
+      client.surveys = [{
+        id: '0190c1a2-0000-7000-8000-00000000000f', type: 'api',
+        questions: [...questions, { id: followup, type: 'open', question: 'Synthetic follow-up', optional: true }],
+      }];
+      const beforeNext = sent.length;
       await act(() => root.render(createElement(SurveyCard)));
+      await act(() => card().querySelectorAll('.survey-scale-option')[8].click());
+      await write(card().querySelector('textarea'), 'Synthetic intermediate answer');
+      assert.equal(sent.length, beforeNext + 2);
+      await act(() => card().querySelector('button[type="submit"]').click());
+      const intermediate = sent.at(-1);
+      assert.equal(intermediate.event, 'survey sent');
+      assert.equal(intermediate.properties['$survey_response_' + why], 'Synthetic intermediate answer');
+      assert.equal(intermediate.properties['$survey_response_' + followup], undefined);
+      assert.equal(intermediate.properties.$survey_completed, false);
+      await write(card().querySelector('textarea'), 'PRIVATE_UNSENT_FOLLOWUP');
+      await act(() => card().querySelector('.survey-card-close').click());
+      assert.equal(sent.at(-1).event, 'survey dismissed');
+      assert.equal(sent.at(-1).properties.$survey_submission_id, intermediate.properties.$survey_submission_id);
+      assert.ok(!JSON.stringify(sent.slice(beforeNext)).includes('PRIVATE_'));
+      await act(() => root.render(null));
+      client.deferSurveys = true;
+      await act(() => root.render(createElement(SurveyCard)));
+      assert.equal(card(), null);
+      assert.ok(client.surveyCallbacks.length);
+      await act(() => consent(true, false));
+      const beforeLateSurvey = sent.length;
+      await act(() => client.surveyCallbacks.splice(0).forEach(callback => callback(client.surveys)));
+      assert.equal(card(), null);
+      assert.equal(sent.length, beforeLateSurvey);
+      client.deferSurveys = false;
+      await act(() => consent(true));
       assert.ok(card());
       await act(() => consent(false));
       assert.equal(card(), null);
       await act(() => root.render(null));
       consent(true);
+      let flagsCompleted = false;
       const flags = (url, distinctId) => client._send_request({
         url, method: 'POST',
         data: {
-          token: 'synthetic-token', distinct_id: distinctId, $anon_distinct_id: 'PRIVATE_ANON',
+          token: client.token, distinct_id: distinctId, $anon_distinct_id: 'PRIVATE_ANON',
           person_properties: { $initial_current_url: 'https://PRIVATE_URL.invalid' }, timezone: 'PRIVATE_ZONE',
         },
+        callback: () => { flagsCompleted = true; },
       });
       const beforeFlags = requests.length;
       flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'synthetic-installation');
       flags('https://eu.i.posthog.com/flags/?v=2', 'PRIVATE_ALL_FLAGS');
+      flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'PRIVATE_PREVIOUS_INSTALLATION');
+      flags('https://untrusted.fixture.invalid/flags/?only_evaluate_survey_feature_flags=true', 'synthetic-installation');
+      client._send_request({ url: 'https://eu.i.posthog.com/PRIVATE_PATH', method: 'GET' });
       assert.equal(requests.length, beforeFlags + 1);
-      assert.deepEqual(requests.at(-1).data, { token: 'synthetic-token', distinct_id: 'synthetic-installation' });
+      assert.deepEqual(requests.at(-1).data, { token: client.token, distinct_id: 'synthetic-installation' });
+      const flagsCallback = requests.at(-1).callback;
+      consent(true, false);
+      flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'synthetic-installation');
+      client._send_request({ url: 'https://eu.i.posthog.com/api/surveys/?token=' + client.token, method: 'GET' });
+      flagsCallback({ statusCode: 200, json: { featureFlags: {} } });
+      assert.equal(flagsCompleted, false);
+      assert.equal(requests.length, beforeFlags + 1);
       consent(false);
       flags('https://eu.i.posthog.com/flags/?v=2&only_evaluate_survey_feature_flags=true', 'synthetic-installation');
       client.capture('survey sent', { $survey_id: survey, [score]: 9 });
@@ -3871,6 +3954,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const cancelled = microphone();
         await act(async () => microphoneRequests[0].resolve(cancelled));
         assert.equal(cancelled.track.stopped, true);
+        await settle(() => document.activeElement === document.querySelector('[contenteditable]'));
         assert.equal(recorders.length, 0);
         assert.equal(currentText, 'Keep this synthetic draft');
         await click('Record an audio message');
@@ -3884,7 +3968,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests[2].resolve(recorded));
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
-        assert.ok(document.activeElement === document.querySelector('[aria-label="Send audio message"]'), 'Expected focus: ' + (document.querySelector('[aria-label="Send audio message"]'))?.getAttribute('aria-label'));
+        assert.ok(document.activeElement === document.querySelector('[aria-label="Send audio message"]'), 'Recording must focus Send audio message');
         assert.equal(document.querySelector('[aria-label="Stop all work"]'), null);
         assert.equal(recorded.track.stopped, false);
         assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
@@ -5710,6 +5794,145 @@ test('chat waits for an authored activity description while keeping active work 
         assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
       } finally {
         await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
+test('analytics follow visible Settings sections, Apps tabs and the Scheduled page', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid/settings', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement',
+        'HTMLButtonElement', 'Event', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 640 }]; };
+      window.HTMLElement.prototype.scrollTo = function() {};
+      const responses = {
+        '/api/preferences': { quietHoursEnabled: false, quietStart: '22:00', quietEnd: '08:00',
+          locale: 'en-GB', timeZone: 'Europe/Lisbon', hourCycle: 'h23', speechReply: 'auto', speechVoice: null },
+        '/api/models': { connections: [], selection: null },
+        '/api/speech': { transcription: false, synthesis: false, voices: [], speechVoice: null, speechReply: 'auto' },
+        '/api/memory': { saving: true, sensitive: false, notes: [], skills: [], archive: [] },
+        '/api/apps': [], '/api/apps/catalog': [], '/api/schedules': [],
+      };
+      globalThis.fetch = async (path, options = {}) => {
+        assert.equal(options.method ?? 'GET', 'GET');
+        assert.ok(Object.hasOwn(responses, path), 'Unexpected fixture request: ' + path);
+        return Response.json(responses[path]);
+      };
+      const sent = [];
+      const client = {
+        init(_key, options) { this.options = options; },
+        capture(event, properties = {}) {
+          const value = this.options.before_send({ event, properties });
+          if (value) this._send_request({ url: this.options.api_host + '/e/', data: [value] });
+          return value;
+        },
+        _send_request(request) { sent.push(...request.data); },
+        set_config(options) { this.options = { ...this.options, ...options }; }, reset() {},
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AccountSettings } = await import('./src/web/components/account-settings.tsx');
+      const { Apps } = await import('./src/web/pages/apps.tsx');
+      const { Scheduled } = await import('./src/web/pages/tasks.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      const { configureAnalytics, setAnalyticsClient, capturePageview } = await import('./src/web/lib/analytics.ts');
+      setRequestAccount('synthetic-owner');
+      setAnalyticsClient(client);
+      const consent = enabled => configureAnalytics({ enabled, distinctId: 'synthetic-installation', environment: 'development' }, 'web');
+      consent(true);
+      const account = { user: { id: 'synthetic-owner', email: null, name: 'PRIVATE_OWNER', avatarUrl: null },
+        theme: 'system', usageData: true, saving: false, onSettings() {}, async onTheme() {},
+        async onUsageData() {}, async onTraces() {} };
+      const root = createRoot(document.querySelector('#root'));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected page transition to settle');
+      };
+      const events = event => sent.filter(item => item.event === event);
+      const settings = () => events('settings_viewed').map(item => item.properties.tab);
+      const tabs = () => events('tab_viewed').map(item => [item.properties.page, item.properties.tab]);
+      const sectionLabels = ['General', 'Notifications', 'Models', 'Voice & audio', 'Memory', 'Privacy & data'];
+      try {
+        await act(async () => root.render(createElement(AccountSettings, {
+          account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
+        })));
+        await settle(() => document.querySelector('.memory-panel'));
+        assert.deepEqual(settings(), ['general']);
+        const navigation = [...document.querySelectorAll('.settings-nav-item')];
+        assert.deepEqual(navigation.map(item => item.textContent), sectionLabels);
+        for (const item of navigation.slice(1)) await act(async () => item.click());
+        assert.deepEqual(settings(), ['general', 'notifications', 'models', 'voice', 'memory', 'privacy']);
+        await act(async () => navigation.at(-1).click());
+        assert.equal(settings().length, 6);
+        const scroller = document.querySelector('.settings-scroll');
+        Object.defineProperties(scroller, { scrollHeight: { value: 2000 }, clientHeight: { value: 400 } });
+        document.querySelectorAll('.settings-category > h2').forEach((heading, index) => {
+          heading.getBoundingClientRect = () => ({ top: index * 100 });
+        });
+        await act(async () => scroller.dispatchEvent(new Event('scroll')));
+        assert.equal(settings().at(-1), 'notifications');
+        const beforeDisabled = sent.length;
+        consent(false);
+        await act(async () => navigation[2].click());
+        assert.equal(sent.length, beforeDisabled);
+        consent(true);
+        await act(async () => navigation[3].click());
+        assert.equal(settings().at(-1), 'voice');
+        for (const path of ['/settings', '/settings/notifications', '/settings/models', '/settings/voice', '/settings/memory', '/settings/privacy']) {
+          window.history.replaceState(null, '', path);
+          capturePageview(path);
+          assert.equal(events('$pageview').at(-1).properties.route, '/settings');
+          assert.equal(events('$pageview').at(-1).properties.$current_url, 'https://app.example/settings');
+        }
+        window.history.replaceState(null, '', '/apps');
+        await act(async () => root.render(createElement(Apps, { onAsk() {} })));
+        await settle(() => document.querySelectorAll('[role="tab"]').length === 2);
+        assert.deepEqual(tabs(), [['apps', 'all']]);
+        const connected = [...document.querySelectorAll('[role="tab"]')].find(item => item.textContent.startsWith('Connected'));
+        await act(async () => connected.click());
+        await act(async () => connected.click());
+        assert.deepEqual(tabs(), [['apps', 'all'], ['apps', 'connected']]);
+        const connectMcp = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === 'Connect MCP');
+        await act(async () => connectMcp.click());
+        assert.equal(events('app_connect_clicked').length, 1);
+        assert.equal(events('app_connect_clicked')[0].properties.entry, 'apps');
+        assert.equal(events('app_connection_completed').length, 0);
+        window.history.replaceState(null, '', '/tasks');
+        await act(async () => root.render(createElement(Scheduled, { onAsk() {} })));
+        await settle(() => document.querySelector('.schedule-empty'));
+        assert.equal(document.querySelector('h1').textContent.trim(), 'Scheduled');
+        assert.equal(document.querySelector('[role="tab"]'), null);
+        assert.deepEqual(tabs(), [['apps', 'all'], ['apps', 'connected']]);
+        capturePageview('/tasks');
+        assert.equal(events('$pageview').at(-1).properties.route, '/tasks');
+        assert.ok(sent.every(item => item.properties.analytics_schema === 'v4'));
+        assert.ok(sent.every(item => !item.event.startsWith('nod_')));
+        assert.ok(!JSON.stringify(sent).includes('PRIVATE_'));
+      } finally {
+        consent(false);
+        await act(async () => root.unmount());
+        pageDataCache.clear();
         dom.window.close();
       }
     `,

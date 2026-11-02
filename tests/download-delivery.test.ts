@@ -278,7 +278,7 @@ test(
       channels.registerRoutes(app);
       await threads.startThreadWorkers({
         analytics: ({ event }) => {
-          if (event === 'nod_turn_completed') completedTurns += 1;
+          if (event === 'turn_completed') completedTurns += 1;
         },
         browserStep: async () => 'run',
         readArtifact: async (threadId, path) =>

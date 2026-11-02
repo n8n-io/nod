@@ -14,8 +14,9 @@ import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
-import { transaction } from './transaction.ts';
-import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
+import { afterCommit, transaction } from './transaction.ts';
+import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
 
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Usage to resume.';
@@ -67,9 +68,14 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
     typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
   const charged = cost(usage.costUsd);
   const estimated = cost(usage.estimateUsd);
-  const spent = charged ?? estimated;
+  const apiPriced =
+    usage.pricing !== 'unavailable' &&
+    charged !== null &&
+    (charged > 0 || usage.pricing === 'reported');
+  const planPriced = estimated !== null && estimated > 0;
+  const spent = apiPriced ? charged : planPriced ? estimated : null;
   return {
-    event: 'nod_model_used',
+    event: 'model_used',
     properties: {
       ...analyticsModel(usage.provider, usage.model),
       purpose: usage.category,
@@ -81,7 +87,7 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
         ? { cached_input_tokens: tokens(usage.cacheReadTokens) }
         : {}),
       ...(spent !== null ? { cost_usd: Math.round(spent * 1e6) / 1e6 } : {}),
-      pricing: charged !== null ? 'api' : estimated !== null ? 'plan_estimate' : 'unavailable',
+      pricing: apiPriced ? 'api' : planPriced ? 'plan_estimate' : 'unavailable',
       ...(usage.durationMs > 0 && Number.isFinite(usage.durationMs)
         ? { duration_ms: Math.round(usage.durationMs) }
         : {}),
@@ -238,13 +244,15 @@ export function createLedger({
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'vision' || request.task === 'attention'
-                  ? 'agent'
-                  : request.task === 'review' || request.task === 'access'
-                    ? 'review'
-                    : request.task === 'plan'
-                      ? 'tasks'
-                      : 'memory',
+                request.task === 'classify'
+                  ? 'task_classification'
+                  : request.task === 'vision' || request.task === 'attention'
+                    ? 'agent'
+                    : request.task === 'review' || request.task === 'access'
+                      ? 'review'
+                      : request.task === 'plan'
+                        ? 'tasks'
+                        : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,
@@ -590,13 +598,20 @@ export function createLedger({
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
-  async function setLimits(input: unknown, shared?: PoolClient) {
+  async function setLimits(input: unknown, actor: SettingActor = 'owner', shared?: PoolClient) {
     const body = limitsInput.parse(input);
+    const capture = snapshotAnalytics(analytics);
     const write = async (client: PoolClient) => {
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],
       );
+      const before = (
+        await client.query(
+          'SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1 FOR UPDATE',
+          [ownerId],
+        )
+      ).rows[0];
       for (const [key, column] of [
         ['monthlyUsd', 'monthly_usd'],
         ['taskUsd', 'task_usd'],
@@ -606,9 +621,20 @@ export function createLedger({
             ownerId,
             body[key],
           ]);
+      const after = (
+        await client.query('SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1', [
+          ownerId,
+        ])
+      ).rows[0];
       await client.query(
         `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
         [ownerId],
+      );
+      afterCommit(client, () =>
+        captureSettingChanges(capture, actor, before, after, {
+          monthly_usd: 'monthly_spending_limit',
+          task_usd: 'task_spending_limit',
+        }),
       );
     };
     if (shared) {

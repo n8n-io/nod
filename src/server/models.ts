@@ -36,7 +36,8 @@ import {
   memoryModels,
 } from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
-import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
+import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import type { SettingActor } from './analytics-settings.ts';
 import { logFailure } from './failure-log.ts';
 
 const keySchema = z
@@ -261,10 +262,11 @@ export function createModelService(options: {
     provider: ModelProvider,
     method: ModelMethod,
     status: 'connected' | 'disconnected' | 'failed',
+    capture = analytics,
   ) {
     if (provider === 'elevenlabs') return;
-    analytics?.({
-      event: 'nod_model_connection_changed',
+    capture?.({
+      event: 'model_connection_changed',
       properties: { provider, method, status },
     });
   }
@@ -374,6 +376,30 @@ export function createModelService(options: {
         models[0];
       if (definition) return { row, definition };
     }
+  }
+  function classificationModel() {
+    const selected = selection && { ...selection };
+    const row = rows.find((row) => row.id === selected?.connectionId);
+    if (!row || !selected || row.status !== 'connected') return undefined;
+    const main = row.models.find((model) => model.choice.id === selected.modelId);
+    const definition = row.models.find(
+      (model) => model.choice.id === memoryModels[row.provider] && !model.choice.audio,
+    );
+    if (!main || !definition) return undefined;
+    const price = modelPricing(definition);
+    const mainPrice = modelPricing(main);
+    if (
+      !price ||
+      price === 'variable' ||
+      price.input + price.output <= 0 ||
+      !mainPrice ||
+      mainPrice === 'variable' ||
+      mainPrice.input + mainPrice.output <= 0 ||
+      price.input > mainPrice.input ||
+      price.output > mainPrice.output
+    )
+      return undefined;
+    return { row, definition };
   }
   async function read(id: string) {
     const result = await store.change(async (state) => {
@@ -874,9 +900,10 @@ export function createModelService(options: {
         return save('compatible', 'api_key', value, definitions);
       });
     },
-    async select(input: ModelSelection) {
+    async select(input: ModelSelection, actor: SettingActor = 'owner') {
       const value = modelSelectionInput.parse(input);
-      await store.change((state) => {
+      const capture = snapshotAnalytics(analytics);
+      const changed = await store.change((state) => {
         const row = state.connections.find((item) => item.id === value.connectionId);
         const model =
           row?.status === 'connected' &&
@@ -884,23 +911,49 @@ export function createModelService(options: {
         if (!row || !model || !model.choice.efforts.includes(value.effort))
           throw new ConnectionError('Choose an available model and effort.');
         if (model.choice.audio && !textCompanion(row)) throw missingTextCompanion();
+        const changed = {
+          model:
+            state.selection?.connectionId !== value.connectionId ||
+            state.selection?.modelId !== value.modelId,
+          effort: state.selection?.effort !== value.effort,
+        };
         state.selection = value;
         state.selectionSet = true;
+        return changed;
       });
+      if (changed.model)
+        capture?.({
+          event: 'setting_changed',
+          properties: { setting: 'model_selection', actor, state: 'configured' },
+        });
+      if (changed.effort)
+        capture?.({
+          event: 'setting_changed',
+          properties: { setting: 'model_effort', actor, state: value.effort },
+        });
       await reload();
     },
     async remove(id: string) {
+      const capture = snapshotAnalytics(analytics);
       for (const [state, attempt] of attempts) if (attempt.connectionId === id) await cancel(state);
       const removed = await store.change((state) => {
         const row = state.connections.find((item) => item.id === id);
         if (row?.managed)
           throw new ConnectionError('This connection is managed in server settings.');
         state.connections = state.connections.filter((item) => item.id !== id);
-        if (state.selection?.connectionId === id) state.selection = null;
-        return row;
+        const selectionCleared = state.selection?.connectionId === id;
+        if (selectionCleared) state.selection = null;
+        return { row, selectionCleared };
       });
+      if (removed.selectionCleared)
+        for (const setting of ['model_selection', 'model_effort'] as const)
+          capture?.({
+            event: 'setting_changed',
+            properties: { setting, actor: 'owner', state: 'cleared' },
+          });
       await reload();
-      if (removed) connectionChanged(removed.provider, removed.method, 'disconnected');
+      if (removed.row && capture)
+        connectionChanged(removed.row.provider, removed.row.method, 'disconnected', capture);
     },
     analyticsConnections() {
       return rows.flatMap((row) => {
@@ -938,6 +991,22 @@ export function createModelService(options: {
     async resolveImage(): Promise<ModelAccess> {
       const candidate = imageModel();
       if (!candidate) throw new ConnectionError('Connect a model that accepts images in Models.');
+      const { row, definition } = candidate;
+      return {
+        provider: row.provider,
+        method: row.method,
+        definition,
+        effort: lightestEffort(definition.choice.efforts),
+        read: () => read(row.id),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
+      };
+    },
+    hasClassificationModel() {
+      return Boolean(classificationModel());
+    },
+    async resolveClassification(): Promise<ModelAccess | undefined> {
+      const candidate = classificationModel();
+      if (!candidate) return undefined;
       const { row, definition } = candidate;
       return {
         provider: row.provider,

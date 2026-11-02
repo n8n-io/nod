@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Pool, PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
@@ -23,7 +24,8 @@ import {
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
-import { transaction } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { lockProactivity, lockSetup } from './locks.ts';
 import { refresh } from './events.ts';
 import { publicText, ownerLanguage } from './communication.ts';
@@ -214,6 +216,7 @@ function ownerTimes(records: Array<{ data: Record<string, unknown> }>, timeZone:
 export function createProactivity(options: {
   pool: Pool;
   ownerId: string;
+  analytics?: CaptureAnalytics;
   sources(client?: PoolClient): Promise<ObservationSource[]>;
   redact?(text: string): string;
   read(turn: TurnRef, input: SourceQuery, signal: AbortSignal): Promise<unknown>;
@@ -733,6 +736,7 @@ export function createProactivity(options: {
     expectedPolicy?: string,
     signal = AbortSignal.timeout(sourceTimeout),
   ) {
+    const capture = snapshotAnalytics(options.analytics);
     const input = update.parse(raw);
     if (
       input.action === 'save' &&
@@ -984,6 +988,21 @@ export function createProactivity(options: {
         ])
       ).rows[0];
       const issue = publicIssue(row);
+      if (
+        allowed ||
+        !previous ||
+        !isDeepStrictEqual(
+          { ...previous.proposal, sources: sourceVersions(previous.sources) },
+          { ...row.proposal, sources: sourceVersions(row.sources) },
+        ) ||
+        previous.next_check?.getTime() !== row.next_check?.getTime()
+      )
+        afterCommit(client, () =>
+          capture?.({
+            event: 'prepared_work_saved',
+            properties: { outcome: allowed ? 'notified' : 'prepared' },
+          }),
+        );
       return { status: allowed ? 'notified' : 'prepared', issue };
     });
     refresh();
@@ -1467,11 +1486,18 @@ export function createProactivity(options: {
     };
   }
   async function control(raw: Record<string, unknown>, turn?: TurnRef) {
+    const capture = snapshotAnalytics(options.analytics);
     const input = ownerControl.parse(raw);
     const run = async (client: PoolClient) => {
       await lockProactivity(client, ownerId);
       if (turn && !(await ownerStarted(client, turn)))
         throw new Error('Only a turn started by an owner message can change prepared work.');
+      const previous = (
+        await client.query<Row>(
+          'SELECT * FROM proactive_issues WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          [input.id, ownerId],
+        )
+      ).rows[0];
       const state =
         input.action === 'dismiss' ? 'dismissed' : input.action === 'handled' ? 'resolved' : null;
       const row = (
@@ -1490,6 +1516,15 @@ export function createProactivity(options: {
         )
       ).rows[0];
       if (!row) throw new Error('This prepared work is unavailable.');
+      if (
+        previous.state !== row.state ||
+        previous.feedback !== row.feedback ||
+        previous.snoozed_until?.getTime() !== row.snoozed_until?.getTime() ||
+        previous.next_check?.getTime() !== row.next_check?.getTime()
+      )
+        afterCommit(client, () =>
+          capture?.({ event: 'prepared_work_updated', properties: { action: input.action } }),
+        );
       return publicIssue(row);
     };
     const saved = turn ? await withTurnLock(turn.turnId, run) : await transaction(run, pool);

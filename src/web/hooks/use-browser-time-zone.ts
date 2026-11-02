@@ -8,8 +8,10 @@ export function useBrowserTimeZone() {
   const unset = data?.timeZone === null;
   useEffect(() => {
     if (unset)
-      void savePreferences({ timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(
-        () => {},
-      );
+      void savePreferences(
+        { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        undefined,
+        'automatic',
+      ).catch(() => {});
   }, [unset]);
 }

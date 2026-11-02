@@ -6,6 +6,7 @@
   font-display: swap;
 }
 :root {
+  --desktop-titlebar-height: 48px;
   font:
     14px/1.5 'Geist',
     -apple-system,
@@ -23,11 +24,12 @@
 }
 body {
   margin: 0;
+  padding-top: var(--desktop-titlebar-height);
 }
 .titlebar {
   position: fixed;
   inset: 0 0 auto;
-  height: 52px;
+  height: var(--desktop-titlebar-height);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -84,10 +86,10 @@ button:focus-visible {
 }
 
 .server-setup {
-  min-height: 100vh;
+  min-height: calc(100dvh - var(--desktop-titlebar-height));
   display: grid;
   place-items: center;
-  padding: 72px 32px 32px;
+  padding: 24px 32px 32px;
 }
 
 .server-form {

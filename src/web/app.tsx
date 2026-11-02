@@ -665,14 +665,16 @@ function AccountApp({
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
     if (path === '/memory' && session.settings?.onboardingCompleted) return;
     capturePageview(
-      !session.settings?.onboardingCompleted && !secure
+      (!session.settings?.onboardingCompleted || replayingOnboarding(path)) && !secure
         ? '/onboarding'
         : path === '/onboarding'
           ? '/'
-          : (path === '/browser' && !session.capabilities.developer) ||
-              /^\/(?:vault|credentials|payments)\/?$/.test(path)
-            ? '/not-found'
-            : path,
+          : (secure && (path !== '/browser' || session.capabilities.developer)) ||
+              settingsPage(path) ||
+              sidebarItems.some((item) => item.path === path) ||
+              preparedWorkId(path)
+            ? path
+            : '/not-found',
     );
   }, [path, sessionState.loading, session]);
   useEffect(() => {

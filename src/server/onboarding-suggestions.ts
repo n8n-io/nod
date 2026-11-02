@@ -292,6 +292,7 @@ function fallbackSuggestions(options: { gmail: boolean; telegram: boolean }): Pr
 
 export function createOnboardingSuggestions(options: {
   ownerId: string;
+  observe?<T>(operation: () => Promise<T>): Promise<T>;
   curator: MemoryCurator;
   answers(): Promise<string[]>;
   timeZone(): Promise<string | null>;
@@ -551,7 +552,7 @@ export function createOnboardingSuggestions(options: {
       return preparing;
     }
     stale = false;
-    preparing = (async () => {
+    const run = async () => {
       try {
         for (;;) {
           const controller = new AbortController();
@@ -574,7 +575,8 @@ export function createOnboardingSuggestions(options: {
         preparingController = undefined;
         preparing = undefined;
       }
-    })();
+    };
+    preparing = options.observe ? options.observe(run) : run();
     return preparing;
   }
 

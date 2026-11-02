@@ -33,7 +33,7 @@ export function OnboardingFrame({
     <div className="ob" data-step={step}>
       {!welcome && (
         <header className="ob-header">
-          <div className="ob-brand" data-analytics-public>
+          <div className="ob-brand">
             <NodGlyph mode="still" />
             <span>Nod</span>
           </div>
@@ -49,7 +49,7 @@ export function OnboardingFrame({
               />
             ))}
           </div>
-          <div className="ob-header-end" data-analytics-public>
+          <div className="ob-header-end">
             {onFeedback && (
               <Button
                 id="feedback-launcher"

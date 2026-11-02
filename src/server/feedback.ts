@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { FeedbackDelivery, FeedbackEnvelope, FeedbackFile } from '../ports/feedback.ts';
-import type { CaptureAnalytics } from './analytics.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { parseFeedbackActivity, type FeedbackActivity } from '../shared/feedback-activity.ts';
 import { feedbackTechnicalContext } from './feedback-context.ts';
 import type { FeedbackClientError } from './bug-report.ts';
@@ -191,6 +191,7 @@ export async function registerFeedback(
     return report;
   });
   app.post('/api/feedback', { bodyLimit: feedbackLimits.requestBytes }, async (request, reply) => {
+    const capture = snapshotAnalytics(options.analytics);
     const startedAt = Date.now();
     reply.header('Cache-Control', 'no-store');
     if (!options.delivery.configured) throw fail('Feedback sending is not configured yet.', 503);
@@ -260,8 +261,8 @@ export async function registerFeedback(
         return await save({ submissionId: input.submissionId, status: 'rejected' });
       const delivered = await save(await options.delivery.submit(envelope));
       if (delivered.status === 'submitted' || delivered.status === 'partial')
-        options.analytics?.({
-          event: 'nod_feedback_sent',
+        capture?.({
+          event: 'feedback_sent',
           properties: {
             category: input.category,
             has_attachments: input.attachments.length > 0,

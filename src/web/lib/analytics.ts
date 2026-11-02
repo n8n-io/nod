@@ -2,60 +2,79 @@ import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
 import { modelProviders, type ModelProvider } from '../../shared/models';
 import { desktopSettingsAvailable } from './desktop';
-import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
+import { analyticsHost, analyticsRoute, sanitizedAnalyticsUrl } from './analytics-privacy';
 import { feedbackActivity } from './feedback-activity';
 import { requestAccountVersion } from './api';
+import type { AttachmentKind } from '../../shared/attachment-kind';
+import type { Presentation } from '../../shared/presentation';
 
 type AnalyticsEvents = {
-  nod_onboarding_step_viewed: {
+  onboarding_step_viewed: {
     step: 'welcome' | 'email' | 'brain' | 'privacy';
     direction: 'forward' | 'back';
   };
-  nod_onboarding_step_skipped: { step: 'email' };
-  nod_settings_viewed: {
-    tab:
-      'general' | 'notifications' | 'models' | 'voice' | 'app_connections' | 'memory' | 'privacy';
+  onboarding_step_skipped: { step: 'email' };
+  local_setting_changed:
+    | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
+    | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
+    | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
+  notification_opened: { kind: 'reply' };
+  app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
+  presentation_viewed: { kind: Presentation['type'] };
+  presentation_action: {
+    kind: Presentation['type'];
+    action: 'open' | 'copy';
+    location: 'message' | 'drawer';
   };
   answer_choices_viewed: { multiple: boolean; option_count: number };
   answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
+  artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
+  artifact_action: {
+    kind: AttachmentKind | 'file';
+    location: 'message' | 'drawer' | 'commands' | 'composer';
+    action: 'copy' | 'download' | 'download_requested' | 'open' | 'reveal' | 'reuse_requested';
+  };
+  settings_viewed: {
+    tab: 'general' | 'notifications' | 'models' | 'voice' | 'memory' | 'privacy';
+  };
   chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
     source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
     input: 'text' | 'voice';
   };
-  nod_chat_stop_requested: undefined;
-  nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
-  nod_setup_link_clicked: { setup: 'app' | 'vault' | 'browser' };
-  nod_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
-  nod_message_reaction_changed: {
+  chat_stop_requested: undefined;
+  task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
+  setup_link_clicked: { setup: 'app' | 'vault' | 'browser' };
+  browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
+  message_reaction_changed: {
     operation: 'add' | 'remove' | 'change';
     reaction: 'thumbs_up' | 'heart' | 'joy' | 'party' | 'wow' | 'pray' | 'thumbs_down' | 'other';
     method: 'quick' | 'picker' | 'double_click' | 'menu' | 'pin';
     role: 'assistant' | 'user';
   };
-  nod_message_action: {
+  message_action: {
     action: 'copy' | 'reply';
     role: 'assistant' | 'user';
     method: 'button' | 'context_menu';
   };
-  nod_app_connect_clicked: {
+  app_connect_clicked: {
     entry: 'apps' | 'chat' | 'onboarding' | 'manage';
     result: 'opened' | 'needs_access_setup';
   };
-  nod_model_selected: {
+  model_selected: {
     provider: ModelProvider | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
-  nod_attachment_added: {
+  attachment_added: {
     method: 'picker' | 'drop' | 'paste';
     kind: 'image' | 'pdf' | 'other';
     count: '1' | '2-5' | '6+';
   };
-  nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  nod_tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
-  nod_ui_error: {
+  task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
+  tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
+  ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
   };
@@ -66,14 +85,50 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
+const presentationKinds = [
+  'image',
+  'map',
+  'flights',
+  'seats',
+  'booking',
+  'chart',
+  'apps',
+  'diagram',
+];
+const artifactKinds = [
+  'image',
+  'sticker',
+  'audio',
+  'video',
+  'pdf',
+  'markdown',
+  'html',
+  'csv',
+  'spreadsheet',
+  'document',
+  'presentation',
+  'archive',
+  'n8n-workflow',
+  'text',
+  'file',
+];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  nod_onboarding_step_viewed: {
+  onboarding_step_viewed: {
     step: ['welcome', 'email', 'brain', 'privacy'],
     direction: ['forward', 'back'],
   },
-  nod_onboarding_step_skipped: { step: ['email'] },
-  nod_settings_viewed: {
-    tab: ['general', 'notifications', 'models', 'voice', 'app_connections', 'memory', 'privacy'],
+  onboarding_step_skipped: { step: ['email'] },
+  local_setting_changed: {
+    setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
+    value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
+  },
+  notification_opened: { kind: ['reply'] },
+  app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
+  presentation_viewed: { kind: presentationKinds },
+  presentation_action: {
+    kind: presentationKinds,
+    action: ['open', 'copy'],
+    location: ['message', 'drawer'],
   },
   answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
   answer_choices_selected: {
@@ -81,47 +136,56 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     option_count: [1, 2, 3, 4, 5, 6],
     selected_count: [1, 2, 3, 4, 5, 6],
   },
+  artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
+  artifact_action: {
+    kind: artifactKinds,
+    location: ['message', 'drawer', 'commands', 'composer'],
+    action: ['copy', 'download', 'download_requested', 'open', 'reveal', 'reuse_requested'],
+  },
+  settings_viewed: {
+    tab: ['general', 'notifications', 'models', 'voice', 'memory', 'privacy'],
+  },
   chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
     source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
     input: ['text', 'voice'],
   },
-  nod_chat_stop_requested: {},
-  nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
-  nod_setup_link_clicked: { setup: ['app', 'vault', 'browser'] },
-  nod_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
-  nod_message_reaction_changed: {
+  chat_stop_requested: {},
+  task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
+  setup_link_clicked: { setup: ['app', 'vault', 'browser'] },
+  browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
+  message_reaction_changed: {
     operation: ['add', 'remove', 'change'],
     reaction: ['thumbs_up', 'heart', 'joy', 'party', 'wow', 'pray', 'thumbs_down', 'other'],
     method: ['quick', 'picker', 'double_click', 'menu', 'pin'],
     role: roles,
   },
-  nod_message_action: {
+  message_action: {
     action: ['copy', 'reply'],
     role: roles,
     method: ['button', 'context_menu'],
   },
-  nod_app_connect_clicked: {
+  app_connect_clicked: {
     entry: ['apps', 'chat', 'onboarding', 'manage'],
     result: ['opened', 'needs_access_setup'],
   },
-  nod_model_selected: {
+  model_selected: {
     provider: [...modelProviders, 'other'],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },
-  nod_attachment_added: {
+  attachment_added: {
     method: ['picker', 'drop', 'paste'],
     kind: ['image', 'pdf', 'other'],
     count: ['1', '2-5', '6+'],
   },
-  nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
-  nod_tab_viewed: {
+  task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
+  tab_viewed: {
     page: ['apps'],
     tab: ['all', 'connected'],
   },
-  nod_ui_error: {
+  ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
     action: ['load', 'save', 'send', 'connect', 'disconnect', 'prepare', 'stop', 'render'],
   },
@@ -131,45 +195,69 @@ let configuration: AnalyticsConfiguration | undefined;
 let posthog: PostHog | undefined;
 let initialized = false;
 let identity: string | null | undefined;
+let surveyIdentity: string | null | undefined;
 let surface: 'web' | 'desktop' = 'web';
 let lastPage: string | undefined;
-let recordingFrame: number | undefined;
 let generation = 0;
 const eventGenerations = new WeakMap<object, number>();
 const guardedClients = new WeakSet<PostHog>();
 const viewed = new Set<string>();
 const viewListeners = new Set<() => void>();
+const discoveryConnections = new Map<string, () => void>();
 
 type AnalyticsRequest = Parameters<PostHog['_send_request']>[0];
 
-function surveyFlagsRequest(request: AnalyticsRequest) {
-  try {
-    const url = new URL(request.url);
-    return (
-      url.pathname === '/flags/' &&
-      url.searchParams.get('only_evaluate_survey_feature_flags') === 'true' &&
-      !Array.isArray(request.data)
-    );
-  } catch {
-    return false;
-  }
-}
-
 function dispatchRequest(request: AnalyticsRequest, send: (request: AnalyticsRequest) => void) {
   if (!configuration?.enabled) return;
-  const flags = surveyFlagsRequest(request);
-  const data = request.data;
-  const events = flags || !data ? [] : Array.isArray(data) ? data : [data];
-  if (events.some((event) => eventGenerations.get(event) !== generation)) return;
+  let url: URL;
+  try {
+    url = new URL(request.url);
+    if (url.origin !== new URL(posthogConfig.host).origin) return;
+  } catch {
+    return;
+  }
+  const flags = url.pathname === '/flags/';
+  const definitions = url.pathname === '/api/surveys/';
+  const surveyRequest = flags || definitions;
+  let data = request.data;
+  if (surveyRequest) {
+    if (!configuration.surveys) return;
+    if (flags) {
+      if (
+        request.method !== 'POST' ||
+        url.searchParams.get('only_evaluate_survey_feature_flags') !== 'true' ||
+        !data ||
+        Array.isArray(data) ||
+        data.token !== posthogConfig.key ||
+        data.distinct_id !== configuration.distinctId
+      )
+        return;
+      data = { token: posthogConfig.key, distinct_id: configuration.distinctId };
+      url.search = '?v=2&only_evaluate_survey_feature_flags=true';
+    } else {
+      if (request.method !== 'GET' || url.searchParams.get('token') !== posthogConfig.key) return;
+      data = undefined;
+      url.search = new URLSearchParams({ token: posthogConfig.key }).toString();
+    }
+  } else {
+    const events = !data ? [] : Array.isArray(data) ? data : [data];
+    if (!events.length || events.some((event) => eventGenerations.get(event) !== generation))
+      return;
+  }
   const current = generation;
   send({
     ...request,
-    ...(flags && !Array.isArray(data)
-      ? { data: { token: data?.token, distinct_id: data?.distinct_id } }
-      : {}),
+    url: url.href,
+    data,
+    timestampMode: surveyRequest ? 'query' : request.timestampMode,
     preferSyncCompression: true,
     callback: (response) => {
-      if (current === generation && configuration?.enabled) request.callback?.(response);
+      if (
+        current === generation &&
+        configuration?.enabled &&
+        (!surveyRequest || configuration.surveys)
+      )
+        request.callback?.(response);
     },
   });
 }
@@ -193,17 +281,16 @@ export function setAnalyticsClient(client: PostHog) {
 function suspendAnalytics() {
   generation++;
   viewed.clear();
+  discoveryConnections.clear();
   configuration = undefined;
   identity = undefined;
   lastPage = undefined;
-  if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
-  recordingFrame = undefined;
   if (!posthog || !initialized) return;
-  const recording = posthog.sessionRecording as unknown as
-    { _discardRecording(discardProducerEvents: boolean): void } | undefined;
-  recording?._discardRecording(true);
-  posthog.stopSessionRecording();
-  posthog.set_config({ opt_out_capturing_by_default: true });
+  posthog.set_config({
+    opt_out_capturing_by_default: true,
+    disable_surveys: true,
+    advanced_disable_feature_flags: true,
+  });
   posthog.__request_queue = [];
   posthog._requestQueue?.unload();
   posthog._retryQueue?.unload();
@@ -226,47 +313,7 @@ const sdkProperties = [
   '$viewport_height',
   '$viewport_width',
   '$time',
-  '$snapshot_data',
-  '$snapshot_bytes',
-  '$snapshot_source',
 ];
-
-const triggerStatuses = ['trigger_activated', 'trigger_pending', 'trigger_disabled'];
-const replayProperties: Record<string, readonly unknown[]> = {
-  $recording_status: [
-    'disabled',
-    'sampled',
-    'active',
-    'buffering',
-    'paused',
-    'lazy_loading',
-    'awaiting_config',
-    'missing_config',
-    'rrweb_error',
-  ],
-  $sdk_debug_replay_url_trigger_status: triggerStatuses,
-  $sdk_debug_replay_event_trigger_status: triggerStatuses,
-  $sdk_debug_replay_linked_flag_trigger_status: triggerStatuses,
-  $sdk_debug_recording_script_not_loaded: [true, false],
-  $sdk_debug_replay_stale_config: [true, false],
-  $sdk_debug_replay_rrweb_error: [true, false],
-  $sdk_debug_rrweb_attached: [true, false],
-  $sdk_debug_rrweb_start_attempted: [true, false],
-  $sdk_debug_replay_flush_hold_reason: [
-    'no_interaction_since_recording_started',
-    'no_interaction_since_session_rotated',
-  ],
-  $session_recording_start_reason: [
-    'sampling_overridden',
-    'recording_initialized',
-    'linked_flag_matched',
-    'linked_flag_overridden',
-    'sampled',
-    'session_id_changed',
-    'url_trigger_matched',
-    'event_trigger_matched',
-  ],
-};
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const surveyId = new RegExp(`^${uuid}$`, 'i');
@@ -308,15 +355,17 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event || !configuration?.enabled) return null;
   const allowed = eventProperties[event.event as keyof AnalyticsEvents];
   const survey = surveyEvents.includes(event.event)
-    ? surveyProperties(event.event, event.properties)
+    ? configuration.surveys
+      ? surveyProperties(event.event, event.properties)
+      : null
     : undefined;
   if (survey === null) return null;
-  if (event.event !== '$snapshot' && event.event !== '$pageview' && !allowed && !survey)
-    return null;
+  if (event.event !== '$pageview' && !allowed && !survey) return null;
   if (
     (event.event === 'answer_choices_viewed' ||
       event.event === 'answer_choices_selected' ||
-      event.event === 'chat_message_sent') &&
+      event.event === 'chat_message_sent' ||
+      event.event === 'presentation_action') &&
     Object.entries(allowed).some(([key, values]) => !values.includes(event.properties[key]))
   )
     return null;
@@ -327,17 +376,6 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   );
   for (const [key, values] of Object.entries(allowed ?? {}))
     if (values.includes(event.properties[key])) properties[key] = event.properties[key];
-  for (const [key, values] of Object.entries(replayProperties))
-    if (values.includes(event.properties[key])) properties[key] = event.properties[key];
-  for (const key of [
-    '$sdk_debug_replay_internal_buffer_length',
-    '$sdk_debug_replay_internal_buffer_size',
-    '$sdk_debug_replay_flushed_size',
-  ]) {
-    const value: unknown = event.properties[key];
-    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
-      properties[key] = value;
-  }
   Object.assign(properties, survey);
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
@@ -355,7 +393,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       route,
       $current_url: sanitizedAnalyticsUrl(route),
       $pathname: route,
-      $host: 'nod.invalid',
+      $host: analyticsHost,
       $process_person_profile: false,
       $geoip_disable: true,
     },
@@ -390,13 +428,28 @@ function applyConfiguration(
     return;
   }
   surface = nextSurface;
+  const surveysChanged = Boolean(configuration?.surveys) !== Boolean(next.surveys);
   const changed = identity !== next.distinctId;
   if (changed) suspendAnalytics();
   if (initialized && changed) {
+    const seen: [string, string][] = [];
+    if (surveyIdentity === next.distinctId) {
+      try {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith('seenSurvey_') || key === 'lastSeenSurveyDate') {
+            const value = localStorage.getItem(key);
+            if (value !== null) seen.push([key, value]);
+          }
+        }
+      } catch {}
+    }
     posthog.reset({
       resetDeviceID: true,
       bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
     });
+    try {
+      for (const [key, value] of seen) localStorage.setItem(key, value);
+    } catch {}
     posthog.set_config({ opt_out_capturing_by_default: false });
     posthog._retryQueue?.resume();
   }
@@ -404,7 +457,6 @@ function applyConfiguration(
   if (!initialized) {
     posthog.init(posthogConfig.key, {
       api_host: posthogConfig.host,
-      ui_host: 'https://eu.posthog.com',
       persistence: 'memory',
       autocapture: false,
       capture_pageview: false,
@@ -414,42 +466,40 @@ function applyConfiguration(
       capture_heatmaps: false,
       rageclick: false,
       capture_performance: false,
-      enable_recording_console_log: false,
       logs: { captureConsoleLogs: false, beforeSend: () => null },
       metrics: { network: false },
       disable_session_recording: true,
+      disable_surveys: !next.surveys,
       disable_surveys_automatic_display: true,
+      advanced_enable_surveys: true,
       disable_product_tours: true,
       disable_conversations: true,
       disable_web_experiments: true,
       disable_external_dependency_loading: true,
+      advanced_disable_feature_flags: !next.surveys,
       advanced_only_evaluate_survey_feature_flags: true,
       person_profiles: 'never',
       save_referrer: false,
       save_campaign_params: false,
       ip: false,
-      session_recording: recordingOptions,
       bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
       loaded: () => posthog && guardRetryQueue(posthog),
       before_send: sanitizeEvent,
       get_current_url: sanitizedAnalyticsUrl,
     });
     initialized = true;
-  } else if (changed && !posthog._lastRemoteConfig?.ok) {
-    posthog._remoteConfigLoader?.load();
+  } else if (changed || surveysChanged) {
+    posthog.set_config({
+      disable_surveys: !next.surveys,
+      advanced_disable_feature_flags: !next.surveys,
+    });
   }
   if (changed) {
     identity = next.distinctId;
+    surveyIdentity = next.distinctId;
     lastPage = undefined;
-    const current = generation;
-    if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
-    recordingFrame = requestAnimationFrame(() => {
-      recordingFrame = undefined;
-      try {
-        if (current === generation && configuration?.enabled) posthog?.startSessionRecording();
-      } catch {}
-    });
   }
+  if (next.surveys && (changed || surveysChanged)) posthog.reloadFeatureFlags();
 }
 
 export function captureAnalytics<Event extends keyof AnalyticsEvents>(
@@ -467,14 +517,6 @@ function captureEvent(
     feedbackActivity.record(event, properties);
     if (configuration?.enabled) posthog?.capture(event, properties);
   } catch {}
-}
-
-export function analyticsReplaySession() {
-  try {
-    return (configuration?.enabled && posthog?.get_session_id()) || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export function analyticsForCurrentSession(): typeof captureAnalytics {
@@ -530,8 +572,10 @@ function readSurvey(value: unknown): AnalyticsSurvey | undefined {
 export function watchAnalyticsSurvey(listener: (survey?: AnalyticsSurvey) => void) {
   const stops: (() => void)[] = [];
   let subscribed = false;
+  let disposed = false;
   const check = () => {
     try {
+      if (disposed) return;
       if (!posthog || !initialized || !configuration?.enabled || !configuration.surveys)
         return listener(undefined);
       if (!subscribed) {
@@ -540,7 +584,8 @@ export function watchAnalyticsSurvey(listener: (survey?: AnalyticsSurvey) => voi
       }
       const current = generation;
       posthog.getActiveMatchingSurveys((surveys) => {
-        if (current !== generation || !configuration?.enabled) return;
+        if (disposed || current !== generation || !configuration?.enabled || !configuration.surveys)
+          return;
         const survey = surveys.map(readSurvey).find(Boolean);
         if (survey) listener(survey);
       });
@@ -549,6 +594,7 @@ export function watchAnalyticsSurvey(listener: (survey?: AnalyticsSurvey) => voi
   viewListeners.add(check);
   check();
   return () => {
+    disposed = true;
     viewListeners.delete(check);
     for (const stop of stops) stop();
   };
@@ -564,7 +610,7 @@ export function captureSurvey(
   },
 ) {
   try {
-    if (!configuration?.enabled) return;
+    if (!configuration?.enabled || !configuration.surveys) return;
     posthog?.capture(`survey ${event}`, {
       $survey_id: survey.id,
       $survey_iteration: survey.iteration,
@@ -586,12 +632,28 @@ export function captureSurvey(
   } catch {}
 }
 
-export function observeAnalyticsView<Event extends 'answer_choices_viewed'>(
-  element: HTMLElement,
-  key: string,
-  event: Event,
-  properties: AnalyticsEvents[Event],
+export function appConnectionAnalytics(
+  entry: AnalyticsEvents['app_connection_completed']['entry'],
 ) {
+  const capture = analyticsForCurrentSession();
+  let reported = false;
+  const complete = () => {
+    if (reported) return;
+    reported = true;
+    capture('app_connection_completed', { entry });
+  };
+  return { complete, transfer: (id: string) => discoveryConnections.set(id, complete) };
+}
+
+export function takeAppConnectionAnalytics(id: string) {
+  const complete = discoveryConnections.get(id);
+  discoveryConnections.delete(id);
+  return complete;
+}
+
+export function observeAnalyticsView<
+  Event extends 'presentation_viewed' | 'artifact_viewed' | 'answer_choices_viewed',
+>(element: HTMLElement, key: string, event: Event, properties: AnalyticsEvents[Event]) {
   const account = requestAccountVersion();
   let intersecting = false;
   let disposed = false;

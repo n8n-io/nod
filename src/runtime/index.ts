@@ -147,7 +147,6 @@ export function createAgentRuntime(dependencies: {
   skills?: SkillLibrary;
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
-  pageVisited?(url: string, subagent: boolean): void;
   keepWarm?(threadId: string): Promise<boolean>;
   prepareMemory?(
     context: RuntimeContext,
@@ -862,7 +861,6 @@ export function createAgentRuntime(dependencies: {
           },
         },
         computer: browser,
-        pageVisited: dependencies.pageVisited,
         reply: async (
           text: string,
           id?: string,

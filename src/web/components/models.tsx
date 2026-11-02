@@ -252,7 +252,6 @@ export function CloudKeyFields({
                 workspaces.some((item) => item.id === value.workspaceId) ? value.workspaceId : ''
               }
               disabled={disabled}
-              data-analytics-private
               onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
             >
               <option value="" disabled>
@@ -279,7 +278,6 @@ export function CloudKeyFields({
               autoComplete="off"
               spellCheck={false}
               disabled={disabled}
-              data-analytics-private
               onChange={(event) => onChange({ ...value, workspaceId: event.target.value })}
             />
           </Field>
@@ -546,7 +544,7 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
             {selectedConnection && (
               <ModelProviderLogo provider={selectedConnection.provider} size={24} />
             )}
-            <div className="model-current-label" data-analytics-private>
+            <div className="model-current-label">
               <strong>{selectedModel?.name ?? 'Choose a model'}</strong>
               <span>
                 {selectedConnection
@@ -593,7 +591,7 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
               <ModelProviderLogo provider={provider} size={24} />
               <div className="model-service-identity">
                 <strong>{modelProviderNames[provider]}</strong>
-                <span data-analytics-private>
+                <span>
                   {accounts.length === 1
                     ? connectionName(accounts[0]!, true)
                     : `${accounts.length} connections`}
@@ -702,7 +700,7 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
                   .filter((connection) => connection.provider === panel.provider)
                   .map((connection) => (
                     <div className="model-connection" key={connection.id}>
-                      <div className="model-connection-label" data-analytics-private>
+                      <div className="model-connection-label">
                         <ModelConnectionAvatar connection={connection} />
                         <div className="model-connection-identity">
                           <strong>{connectionName(connection, true)}</strong>
@@ -837,7 +835,6 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
               ) : (
                 <form
                   className="model-key-form"
-                  data-analytics-private
                   onSubmit={(event) => {
                     event.preventDefault();
                     void saveKey();
@@ -919,7 +916,7 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
             </>
           )}
           {flow.signIn && (
-            <div className="model-sign-in" data-analytics-private>
+            <div className="model-sign-in">
               <p>Finish sign-in in your browser.</p>
               <div className="model-service-actions">
                 <Button type="button" variant="secondary" size="sm" onClick={flow.reopen}>
@@ -1097,14 +1094,14 @@ export function ModelPicker({
         modelSelection(choice.source, choice.item.id),
       )
     ) {
-      capture('nod_model_selected', {
+      capture('model_selected', {
         provider: choice.source.provider in modelProviderNames ? choice.source.provider : 'other',
         entry: surface,
         recommended: choice.recommended,
       });
       setOpen(false);
     } else {
-      capture('nod_ui_error', { area: 'models', action: 'save' });
+      capture('ui_error', { area: 'models', action: 'save' });
       requestAnimationFrame(() => focusOption(key));
     }
   }
@@ -1263,11 +1260,7 @@ export function ModelPicker({
                 role="group"
                 aria-labelledby={`${id}-${source.id}`}
               >
-                <div
-                  id={`${id}-${source.id}`}
-                  className="model-option-group-heading"
-                  data-analytics-private
-                >
+                <div id={`${id}-${source.id}`} className="model-option-group-heading">
                   <ModelProviderLogo provider={source.provider} />
                   <strong>{modelProviderNames[source.provider]}</strong>
                   <span>{connectionName(source, true)}</span>

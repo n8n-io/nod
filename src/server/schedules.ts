@@ -732,7 +732,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     afterCommit(shared ?? pool, () => {
       refresh();
       dependencies.analytics?.({
-        event: 'nod_schedule_changed',
+        event: 'schedule_changed',
         properties: {
           operation: 'create',
           ...scheduleAnalytics(row),
@@ -808,7 +808,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     afterCommit(shared ?? pool, () => {
       refresh();
       dependencies.analytics?.({
-        event: 'nod_schedule_changed',
+        event: 'schedule_changed',
         properties: {
           operation: 'update',
           ...scheduleAnalytics(row),
@@ -835,7 +835,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     refresh();
     dependencies.analytics?.({
-      event: 'nod_schedule_changed',
+      event: 'schedule_changed',
       properties: { operation: 'delete', ...scheduleAnalytics(row), actor: 'user' },
     });
     return { ok: true };

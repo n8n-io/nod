@@ -34,11 +34,7 @@ import { Button, Notice } from '../components/ui';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
-import {
-  analyticsForCurrentSession,
-  analyticsReplaySession,
-  captureAnalytics,
-} from '../lib/analytics';
+import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import {
   collapseScreenshotMessages,
   mergeMessages,
@@ -49,6 +45,8 @@ import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
 import { recordingSource } from '../lib/recording';
 import type { ImagePreview } from '../components/attachment-images';
+import { reuseFile } from '../components/file-actions';
+import { ownedArtifactUrl } from '../lib/attachment-url';
 import {
   hasUnreadHistory,
   loadUnreadChatBoundary,
@@ -103,7 +101,7 @@ function restoreScrollPosition(element: HTMLElement, position: ReturnType<typeof
 }
 function Welcome() {
   return (
-    <div className="welcome" data-analytics-public>
+    <div className="welcome">
       <BrandMark />
       <h2>What’s on your mind?</h2>
     </div>
@@ -183,7 +181,6 @@ function TaskCards({
           type="button"
           className="task-card"
           data-state={state}
-          data-analytics-private
           disabled={disabled || state !== 'idle'}
           onClick={() => onStart(task, suggestions.tasks.indexOf(task))}
         >
@@ -256,9 +253,7 @@ function TaskCards({
       tabIndex={-1}
     >
       <div className="task-suggestions">
-        <p className="task-bubble" data-analytics-private>
-          {suggestions.intro}
-        </p>
+        <p className="task-bubble">{suggestions.intro}</p>
         <div className="task-cards">{learned.map(card)}</div>
         {common.length > 0 && (
           <div className="task-cards task-cards-common">
@@ -966,7 +961,6 @@ export function Chat({
           restoreRecording: !privateVerification,
         };
       }
-      const replaySession = analyticsReplaySession();
       const messageBody =
         submittedBody ??
         JSON.stringify({
@@ -994,10 +988,7 @@ export function Chat({
       const response = await apiResponse(recording ? '/api/messages/audio' : '/api/messages', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: {
-          ...(!recording ? { 'Content-Type': 'application/json' } : {}),
-          ...(replaySession ? { 'x-nod-replay-session': replaySession } : {}),
-        },
+        headers: recording ? undefined : { 'Content-Type': 'application/json' },
         body,
       });
       const result = (await response.json()) as Partial<SubmitMessageResponse> & {
@@ -1104,7 +1095,7 @@ export function Chat({
           : verificationFailure(verificationStatus, verificationRequests.length > 1)
         : errorMessage(cause);
       if (!directAnswer) setError(failure);
-      captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+      captureAnalytics('ui_error', { area: 'chat', action: 'send' });
       return {
         sent: false,
         restoreText: !privateVerification || !explicitVerification,
@@ -1385,11 +1376,11 @@ export function Chat({
     setError('');
     try {
       await post('/api/thread/stop');
-      captureAnalytics('nod_chat_stop_requested');
+      captureAnalytics('chat_stop_requested');
       await refresh();
     } catch (cause) {
       if (threadRef.current === stoppedThread) setError(errorMessage(cause));
-      captureAnalytics('nod_ui_error', { area: 'chat', action: 'stop' });
+      captureAnalytics('ui_error', { area: 'chat', action: 'stop' });
     } finally {
       if (threadRef.current === stoppedThread) setStopping(false);
     }
@@ -1442,9 +1433,8 @@ export function Chat({
             if (artifact) {
               event.preventDefault();
               try {
-                window.dispatchEvent(
-                  new CustomEvent('nod:attach-artifact', { detail: JSON.parse(artifact) }),
-                );
+                const item = JSON.parse(artifact);
+                if (item && ownedArtifactUrl(item.url)) reuseFile(item, 'composer');
               } catch {}
             } else if (event.dataTransfer.files.length) {
               event.preventDefault();
@@ -1561,7 +1551,7 @@ export function Chat({
                       }
                       disabled={!state.configuration.llmReady || welcoming || spendingPaused}
                       onStart={(task, position) => {
-                        captureAnalytics('nod_task_card_started', {
+                        captureAnalytics('task_card_started', {
                           ...(task.kind
                             ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
                             : {}),

@@ -420,9 +420,9 @@ export function FeedbackDiagnostics({
                               ? `Opened ${label(String(properties.screen ?? '').slice(1), 'Chat')}`
                               : entry.event === 'request_failed'
                                 ? `${context} request failed`
-                                : entry.event === 'nod_ui_error'
+                                : entry.event === 'ui_error'
                                   ? `${context} error`
-                                  : entry.event === 'nod_service_used'
+                                  : entry.event === 'service_used'
                                     ? `${context} action`
                                     : `${context} connection`;
                           return (

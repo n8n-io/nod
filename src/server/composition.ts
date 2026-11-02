@@ -26,7 +26,8 @@ import {
   type CaptureAnalytics,
 } from './analytics.ts';
 import { clearConversationAnalytics } from './conversation-analytics.ts';
-import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
+import { createTaskClassification } from './task-classification.ts';
+import { captureConnectionInventory } from './analytics-connections.ts';
 import {
   BrowserActionError,
   type BrowserAction,
@@ -202,6 +203,7 @@ export interface ApplicationAdapters {
   keyStore: CredentialKeyStore;
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
+  classificationCurator?: MemoryCurator;
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
@@ -522,6 +524,13 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    classificationCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      resolve: () => models.resolveClassification(),
+      configured: () => models.hasClassificationModel(),
+    }),
     imageCurator: createPiMemoryCurator({
       get provider() {
         return models.current.provider;
@@ -639,18 +648,28 @@ async function initializeApplication(
     if (activity) diagnostics.log?.record('activity', activity);
     analytics.capture(ownerId, event, delivery);
     if (
-      event.event === 'nod_connection_changed' &&
+      event.event === 'connection_changed' &&
       ['connected', 'disconnected'].includes(event.properties.status)
     )
       void observeConnections?.('apps');
     if (
-      (event.event === 'nod_model_connection_changed' && event.properties.status !== 'failed') ||
-      (event.event === 'nod_settings_updated' && event.properties.section === 'models')
+      (event.event === 'model_connection_changed' && event.properties.status !== 'failed') ||
+      (event.event === 'settings_updated' && event.properties.section === 'models')
     )
       void observeConnections?.('models');
   };
+  captureAnalytics.snapshot = () => {
+    const consent = analytics.consent(ownerId);
+    return (event, delivery) => {
+      if (
+        consent.enabled &&
+        !consent.signal.aborted &&
+        consent.version === analytics.consent(ownerId).version
+      )
+        captureAnalytics(event, delivery);
+    };
+  };
   const analyticsConsent = () => analytics.consent(ownerId);
-  const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const closing = new AbortController();
@@ -711,6 +730,16 @@ async function initializeApplication(
   await ledger.initialize();
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
+  const taskClassification = createTaskClassification({
+    pool,
+    ownerId,
+    curator: adapters.classificationCurator && ledger.curator(adapters.classificationCurator),
+    analytics: captureAnalytics,
+    consent: analyticsConsent,
+    secrets,
+    signal: closing.signal,
+  });
+  await taskClassification.initialize();
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
     : curator;
@@ -731,7 +760,6 @@ async function initializeApplication(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
   );
-  const fetches = new Map<string, string[]>();
   const analyzeImages =
     adapters.imageCurator && createImageAnalysis(ledger.curator(adapters.imageCurator));
   const runtime = createAgentRuntime({
@@ -749,7 +777,6 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
-    pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
     keepWarm: async (threadId) =>
       !(await ledger.limitReached()) && (await activeThread(pool, ownerId)).id === threadId,
     observe: (turnId, event) => {
@@ -773,28 +800,7 @@ async function initializeApplication(
           callId: id,
         },
       );
-      if (event.type === 'tool_end') {
-        captureAnalytics(toolUsed(event));
-        const fetched = fetches.get(event.id);
-        fetches.delete(event.id);
-        if (fetched && event.status === 'succeeded')
-          for (const address of fetched)
-            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
-      }
-      if (
-        event.type === 'tool_start' &&
-        ['fetch_content', 'get_search_content'].includes(event.name) &&
-        event.input &&
-        typeof event.input === 'object'
-      ) {
-        const { url, urls } = event.input as { url?: unknown; urls?: unknown };
-        fetches.set(
-          event.id,
-          [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])].filter(
-            (address): address is string => typeof address === 'string',
-          ),
-        );
-      }
+      if (event.type === 'tool_end') captureAnalytics(toolUsed(event));
       adapters.observe?.(turnId, event);
     },
   });
@@ -825,7 +831,12 @@ async function initializeApplication(
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
-  const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const memory = createMemoryService({
+    pool,
+    ownerId,
+    store: memoryStore,
+    analytics: captureAnalytics,
+  });
   const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   const communication = createCommunication({
@@ -874,6 +885,7 @@ async function initializeApplication(
   const tasks = createTasks({
     pool,
     ownerId,
+    analytics: captureAnalytics,
     refresh,
     clearBrowser: (id) => adapters.computer.clear(id),
   });
@@ -885,6 +897,7 @@ async function initializeApplication(
   let proactivity!: ReturnType<typeof createProactivity>;
   let privateReady = false;
   const triage = createTriage({
+    analytics: captureAnalytics,
     consumers,
     signal: async (sourceId, client, summary) => {
       if (!privateReady) throw new Error('Background sources are starting.');
@@ -951,7 +964,11 @@ async function initializeApplication(
     readWorkspaceFile: (turn, path, maxBytes) =>
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
-    writingStyle,
+    writingStyle: {
+      ...writingStyle,
+      learn: (...args) =>
+        analytics.withSystemWork(ownerId, 'writing_style', () => writingStyle.learn(...args)),
+    },
     wake: triage.recordEvent,
     settle: () => proactivity.due(),
     lockActivity: (client) => lockProactivity(client, ownerId),
@@ -1134,7 +1151,7 @@ async function initializeApplication(
         : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
-            ? withTurnLock(turnLock, (client) => ledger.setLimits(args, client))
+            ? withTurnLock(turnLock, (client) => ledger.setLimits(args, 'agent', client))
             : scheduleWrite
               ? withTurnLock(turnLock, (client) =>
                   personal.manage(action.slice('NOD_'.length), args, provenance, { client }),
@@ -1181,7 +1198,6 @@ async function initializeApplication(
                         mailCheck,
                       );
                     })());
-      analytics.actionExecuted(ownerId, action);
       return result;
     },
     async (action, args, expectedRevision, client) => {
@@ -1286,6 +1302,7 @@ async function initializeApplication(
   };
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
+    observe: (run) => analytics.withSystemWork(ownerId, 'onboarding', run),
     curator: onboardingCurator,
     timeZone: async () => (await getPreferences()).timeZone,
     mailCheck,
@@ -1437,11 +1454,12 @@ async function initializeApplication(
       createTaskObservations(pool, ownerId, createRedactor(secrets)),
       ...(adapters.observations ?? []),
     ],
-    { secrets, check: mailCheck },
+    { secrets, check: mailCheck, analytics: captureAnalytics },
   );
   proactivity = createProactivity({
     pool,
     ownerId,
+    analytics: captureAnalytics,
     redact: createTextRedactor(secrets),
     sources: (client) => observations.sources(client),
     read: async (turn, input, signal) => {
@@ -1510,17 +1528,33 @@ async function initializeApplication(
   };
   if (options.workers !== false) {
     if (options.heartbeat !== false) await triage.initializeHeartbeat();
-    await initializeMemoryLearning({ boss, consumers, run: learning.run });
+    await initializeMemoryLearning({
+      boss,
+      consumers,
+      run: () => analytics.withSystemWork(ownerId, 'memory_learning', learning.run),
+    });
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
+      taskClassification: true,
       observeTurn: (turnId, operation) =>
-        analytics.withRun(ownerId, operation, turnId).finally(() => {
-          void admission
-            .run(() => proactivity.due())
-            ?.catch((error) => logFailure('proactivity_wake', error));
-        }),
+        analytics
+          .withRun(ownerId, async () => {
+            try {
+              await operation();
+            } finally {
+              const consent = analytics.currentRun(ownerId)?.consent;
+              void admission
+                .run(() => ledger.withTurn(turnId, () => taskClassification.run(turnId, consent)))
+                ?.catch(() => {});
+            }
+          })
+          .finally(() => {
+            void admission
+              .run(() => proactivity.due())
+              ?.catch((error) => logFailure('proactivity_wake', error));
+          }),
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
@@ -1894,7 +1928,6 @@ async function initializeApplication(
         if (action === 'SEARCH_TOOLS') {
           await options.admit?.(false);
           const result = await integrations.execute(ownerId, action, args, turn, options.signal);
-          analytics.actionExecuted(ownerId, action);
           return result;
         }
         const verdict = await trust.check(turn, action, args);
@@ -1926,7 +1959,6 @@ async function initializeApplication(
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
             );
-            analytics.actionExecuted(ownerId, action);
             return result;
           },
           details: {
@@ -1955,7 +1987,6 @@ async function initializeApplication(
   const app = await createApp({
     failureLog: diagnostics.failure,
     analytics: captureAnalytics,
-    linkReplay: analytics.linkReplay,
     admission,
     artifacts,
     submitMessage: userMessages.submit,

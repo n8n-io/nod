@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { isSpeechVoiceId } from '../shared/speech.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
+import { afterCommit, transaction } from './transaction.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 const preferencesSchema = z
@@ -83,7 +86,7 @@ export function validatePreferences(raw: unknown) {
   }
   return patch;
 }
-export function createPreferencesStore(pool: Pool, ownerId: string) {
+export function createPreferencesStore(pool: Pool, ownerId: string, analytics?: CaptureAnalytics) {
   const validate = validatePreferences;
   return {
     validate,
@@ -93,10 +96,17 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       ]);
       return result.rows[0] ?? { ...defaultPreferences };
     },
-    async update(raw: unknown, expectedRules?: string, shared?: PoolClient): Promise<Preferences> {
+    async update(
+      raw: unknown,
+      actor: SettingActor = 'owner',
+      expectedRules?: string,
+      shared?: PoolClient,
+    ): Promise<Preferences> {
       const patch = validate(raw);
-      const result = await (shared ?? pool).query(
-        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
+      const capture = snapshotAnalytics(analytics);
+      const save = async (connection: Pick<Pool, 'query'>) => {
+        const result = await connection.query(
+          `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply,proactive_paused)
         VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'auto'),COALESCE($20::boolean,$21::boolean))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),
         time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
@@ -106,36 +116,66 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
         proactive_paused=COALESCE($20,preferences.proactive_paused)
         WHERE $22::text IS NULL OR preferences.rules=$22
         RETURNING ${columns}`,
-        [
-          ownerId,
-          patch.notificationRule ?? null,
-          patch.timeZone ?? null,
-          patch.quietStart ?? null,
-          patch.quietEnd ?? null,
-          patch.quietHoursEnabled ?? null,
-          defaultPreferences.notificationRule,
-          defaultPreferences.quietStart,
-          defaultPreferences.quietEnd,
-          defaultPreferences.quietHoursEnabled,
-          patch.locale ?? null,
-          patch.hourCycle ?? null,
-          defaultPreferences.hourCycle,
-          patch.locale !== undefined,
-          patch.timeZone !== undefined,
-          patch.rules ?? null,
-          patch.speechVoice ?? null,
-          patch.speechReply ?? null,
-          patch.speechVoice !== undefined,
-          patch.proactivePaused ?? null,
-          defaultPreferences.proactivePaused,
-          expectedRules ?? null,
-        ],
-      );
-      if (!result.rows[0])
-        throw Object.assign(new Error('Your rules changed. Review them before asking again.'), {
-          statusCode: 409,
-        });
-      return result.rows[0];
+          [
+            ownerId,
+            patch.notificationRule ?? null,
+            patch.timeZone ?? null,
+            patch.quietStart ?? null,
+            patch.quietEnd ?? null,
+            patch.quietHoursEnabled ?? null,
+            defaultPreferences.notificationRule,
+            defaultPreferences.quietStart,
+            defaultPreferences.quietEnd,
+            defaultPreferences.quietHoursEnabled,
+            patch.locale ?? null,
+            patch.hourCycle ?? null,
+            defaultPreferences.hourCycle,
+            patch.locale !== undefined,
+            patch.timeZone !== undefined,
+            patch.rules ?? null,
+            patch.speechVoice ?? null,
+            patch.speechReply ?? null,
+            patch.speechVoice !== undefined,
+            patch.proactivePaused ?? null,
+            defaultPreferences.proactivePaused,
+            expectedRules ?? null,
+          ],
+        );
+        if (!result.rows[0])
+          throw Object.assign(new Error('Your rules changed. Review them before asking again.'), {
+            statusCode: 409,
+          });
+        return result.rows[0] as Preferences;
+      };
+      if (!analytics) return save(shared ?? pool);
+      const run = async (client: PoolClient) => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `preferences:${ownerId}`,
+        ]);
+        const previous = await client.query(
+          `SELECT ${columns} FROM preferences WHERE owner_id=$1`,
+          [ownerId],
+        );
+        const before: Preferences = previous.rows[0] ?? { ...defaultPreferences };
+        const after = await save(client);
+        afterCommit(client, () =>
+          captureSettingChanges(capture, actor, before, after, {
+            speechVoice: 'speech_voice',
+            speechReply: 'speech_reply',
+            notificationRule: 'notification_rule',
+            rules: 'rules',
+            timeZone: 'time_zone',
+            locale: 'locale',
+            hourCycle: 'hour_cycle',
+            quietHoursEnabled: 'quiet_hours',
+            quietStart: 'quiet_start',
+            quietEnd: 'quiet_end',
+            proactivePaused: 'proactivity_paused',
+          }),
+        );
+        return after;
+      };
+      return shared ? run(shared) : transaction(run, pool);
     },
   };
 }

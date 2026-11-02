@@ -62,19 +62,19 @@ const fields: Record<string, Record<string, readonly unknown[] | number>> = {
     status: 599,
     reason: ['http', 'network', 'timeout', 'invalid_response'],
   },
-  nod_ui_error: { area: areas, action: actions },
-  nod_connection_changed: {
+  ui_error: { area: areas, action: actions },
+  connection_changed: {
     app: [...integrationServiceIds, 'custom'],
     connection_method: methods,
     status: statuses,
     failure_reason: failures,
   },
-  nod_model_connection_changed: {
+  model_connection_changed: {
     provider: providers,
     method: ['api_key', 'subscription', 'oauth'],
     status: statuses,
   },
-  nod_service_used: {
+  service_used: {
     app: [...integrationServiceIds, 'custom'],
     connection_method: methods,
     outcome: ['succeeded', 'failed', 'cancelled'],
