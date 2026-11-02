@@ -69,15 +69,15 @@ The current contract is `nod_v4`. It starts fresh. There is no historical migrat
 
 ## Read the dashboards
 
-The [Nod PostHog project](https://eu.posthog.com/project/231804) has five dashboards:
+The team maintains five analytics dashboards:
 
-| Dashboard                                                                                   | Questions                                                                                                                       |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [Nod · Product health](https://eu.posthog.com/project/231804/dashboard/1036780)             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                             |
-| [Nod · Activation and connections](https://eu.posthog.com/project/231804/dashboard/1036781) | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
-| [Nod · Reliability and cost](https://eu.posthog.com/project/231804/dashboard/1037782)       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
-| [Nod · Outputs and interaction](https://eu.posthog.com/project/231804/dashboard/1036782)    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
-| [Nod · Navigation and controls](https://eu.posthog.com/project/231804/dashboard/1072707)    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
+| Dashboard                        | Questions                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Nod · Product health             | Active installations, owner-requested work, execution outcomes, and return cohorts.                                             |
+| Nod · Activation and connections | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
+| Nod · Reliability and cost       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
+| Nod · Outputs and interaction    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
+| Nod · Navigation and controls    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
 All insights filter `analytics_schema=nod_v4` and `environment=production`, include internal and external installations, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 

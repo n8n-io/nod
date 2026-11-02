@@ -93,7 +93,7 @@ This export is separate from the sharing switches in Settings. Your collector co
 
 Usage analytics are on by default for new owners; owners who already saved a choice keep it. Turn off **Share usage data** in **Settings → General** to stop them. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
-The recipient is the Nod team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
+Usage data leaves your installation and goes to the Nod team at n8n. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
 
 Analytics have no fields for raw messages, replies, tool arguments or results, Vault values, card details, full page addresses, names or email addresses. Analytics never capture screen recordings or session replays.
 

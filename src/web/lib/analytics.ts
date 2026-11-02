@@ -329,7 +329,6 @@ function applyConfiguration(
   if (!initialized) {
     posthog.init(posthogConfig.key, {
       api_host: posthogConfig.host,
-      ui_host: 'https://eu.posthog.com',
       persistence: 'memory',
       autocapture: false,
       capture_pageview: false,
