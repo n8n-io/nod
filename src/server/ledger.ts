@@ -244,13 +244,15 @@ export function createLedger({
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'vision' || request.task === 'attention'
-                  ? 'agent'
-                  : request.task === 'review' || request.task === 'access'
-                    ? 'review'
-                    : request.task === 'plan'
-                      ? 'tasks'
-                      : 'memory',
+                request.task === 'classify'
+                  ? 'task_classification'
+                  : request.task === 'vision' || request.task === 'attention'
+                    ? 'agent'
+                    : request.task === 'review' || request.task === 'access'
+                      ? 'review'
+                      : request.task === 'plan'
+                        ? 'tasks'
+                        : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,

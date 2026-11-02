@@ -124,6 +124,7 @@ export interface ThreadDependencies {
     input: { kind: 'interrupted' } | { kind: 'failed'; error: string },
   ) => Promise<string>;
   observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
+  taskClassification?: boolean;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -1281,6 +1282,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     : undefined;
   const analyticsProperties = {
     ...work,
+    ...(dependencies.taskClassification ? { task_taxonomy_version: 1 as const } : {}),
     source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel

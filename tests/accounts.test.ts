@@ -1598,6 +1598,195 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal((await owner.resolve()).definition.choice.images, false);
   });
 
+  test('classification resolves an approved small model only on the selected owned connection', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    let smallAvailable = true;
+    const backend = createPiModelBackend({
+      fetch: async (_input, init) => {
+        const key = new Headers(init?.headers).get('authorization');
+        const models =
+          key === 'Bearer fixture-classification-main-only' || !smallAvailable
+            ? ['gpt-6.1-sol']
+            : ['gpt-6.1-sol', 'gpt-6-luna'];
+        return Response.json({ data: models.map((id) => ({ id })) });
+      },
+    });
+    const owner = await f.create('fixture-classification-owner', backend);
+    const other = await f.create('fixture-classification-other', backend);
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    await other.addKey('openai', 'fixture-classification-other-key');
+    const connectionId = await owner.addKey('openai', 'fixture-classification-small-key');
+    const selection = { connectionId, modelId: 'gpt-6.1-sol', effort: 'high' as const };
+    await owner.select(selection);
+    assert.equal(owner.hasClassificationModel(), true);
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.provider, 'openai');
+    assert.equal(access.definition.choice.id, 'gpt-6-luna');
+    assert.equal(access.effort, 'off');
+    assert.deepEqual(await access.read(), {
+      type: 'api_key',
+      key: 'fixture-classification-small-key',
+    });
+    assert.deepEqual(owner.view().selection, selection);
+    await owner.select({ ...selection, modelId: 'gpt-6-luna', effort: 'off' });
+    assert.equal((await owner.resolveClassification())?.definition.choice.id, 'gpt-6-luna');
+    const mainOnly = await owner.addKey('openai', 'fixture-classification-main-only');
+    await owner.select({ ...selection, connectionId: mainOnly });
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    await owner.select(selection);
+    smallAvailable = false;
+    await owner.refreshCatalog(connectionId);
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    assert.deepEqual(owner.view().selection, selection);
+    assert.equal((await owner.resolve(true)).definition.choice.id, 'gpt-6.1-sol');
+  });
+
+  test('classification rejects missing, unpriced and more expensive small models', async (t) => {
+    const f = await fixture(t);
+    const original = await f.backend.catalog('openai', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-classification-catalog',
+    });
+    const variants = [
+      { name: 'missing price', cost: undefined },
+      { name: 'synthetic zero', cost: { input: 0, output: 0 } },
+      { name: 'variable price', cost: { input: -1, output: 0.5 } },
+      { name: 'invalid price', cost: { input: 'private-value', output: 0.5 } },
+      { name: 'higher input', cost: { input: 3, output: 0.5 } },
+      { name: 'higher output', cost: { input: 0.1, output: 11 } },
+    ];
+    for (const [index, variant] of variants.entries())
+      await t.test(variant.name, async () => {
+        const backend = {
+          ...f.backend,
+          catalog: async () =>
+            original.map((definition) =>
+              definition.choice.id === 'gpt-6-luna'
+                ? { ...definition, spec: { ...definition.spec, cost: variant.cost } }
+                : definition,
+            ),
+        };
+        const owner = await f.create(`fixture-classification-price-${index}`, backend);
+        await owner.addKey('openai', 'fixture-classification-price-key');
+        assert.equal(owner.hasClassificationModel(), false);
+        assert.equal(await owner.resolveClassification(), undefined);
+      });
+    for (const [index, variant] of variants.slice(0, 4).entries())
+      await t.test(`selected model ${variant.name}`, async () => {
+        const owner = await f.create(`fixture-classification-selected-price-${index}`, {
+          ...f.backend,
+          catalog: async () =>
+            original.map((definition) =>
+              definition.choice.id === 'gpt-6.1-sol'
+                ? { ...definition, spec: { ...definition.spec, cost: variant.cost } }
+                : definition,
+            ),
+        });
+        await owner.addKey('openai', 'fixture-classification-selected-price-key');
+        assert.equal(owner.hasClassificationModel(), false);
+        assert.equal(await owner.resolveClassification(), undefined);
+      });
+    await t.test('free OpenRouter selection never incurs paid classification', async () => {
+      const owner = await f.create('fixture-classification-openrouter-free', {
+        ...f.backend,
+        catalog: async () =>
+          original.map((definition) => {
+            const id =
+              definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
+            return {
+              choice: {
+                ...definition.choice,
+                id,
+                ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
+              },
+              spec: {
+                ...definition.spec,
+                provider: 'openrouter',
+                id,
+                ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
+              },
+            };
+          }),
+      });
+      const connectionId = await owner.addKey('openrouter', 'fixture-classification-free-key');
+      await owner.select({ connectionId, modelId: 'openrouter/free', effort: 'off' });
+      assert.equal(owner.hasClassificationModel(), false);
+      assert.equal(await owner.resolveClassification(), undefined);
+    });
+  });
+
+  test('classification keeps subscription access on the approved small model', async (t) => {
+    const f = await fixture(t);
+    const catalog = await f.backend.catalog('openai', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-classification-subscription-catalog',
+    });
+    const owner = await f.create('fixture-classification-subscription', {
+      ...f.backend,
+      catalog: async () => catalog,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    const selection = owner.view().selection;
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.method, 'subscription');
+    assert.equal(access.definition.choice.id, 'gpt-6-luna');
+    const credential = await access.read();
+    assert.equal(credential?.type, 'oauth');
+    assert.ok(credential?.type === 'oauth');
+    assert.deepEqual(credential, subscriptionCredential(credential.expires));
+    assert.deepEqual(owner.view().selection, selection);
+  });
+
+  test('classification uses the same Anthropic workspace and refuses unsupported connection types', async (t) => {
+    const f = await fixture(t);
+    const definitions = (await f.backend.catalog('anthropic', 'api_key')).filter((model) =>
+      ['claude-opus-5-5', 'claude-haiku-5-5'].includes(model.choice.id),
+    );
+    const owner = await f.create('fixture-classification-anthropic', {
+      ...f.backend,
+      catalog: async () => definitions,
+    });
+    const connectionId = await owner.addKey('anthropic', 'fixture-classification-anthropic-key', {
+      workspaceId: 'wrkspc_synthetic',
+    });
+    await owner.select({ connectionId, modelId: 'claude-opus-5-5', effort: 'high' });
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.provider, 'anthropic');
+    assert.equal(access.definition.choice.id, 'claude-haiku-5-5');
+    assert.deepEqual(await access.read(), {
+      type: 'api_key',
+      key: 'fixture-classification-anthropic-key',
+      workspaceId: 'wrkspc_synthetic',
+    });
+    for (const provider of ['azure', 'amazon-bedrock', 'compatible'] as const)
+      await t.test(provider, async () => {
+        const unsupported = await f.create(`fixture-classification-${provider}`, {
+          ...f.backend,
+          catalog: async () => [definitions[0]],
+        });
+        if (provider === 'compatible') await unsupported.addEndpoint('http://127.0.0.1:1234/v1');
+        else
+          await unsupported.addKey(provider, 'fixture-classification-cloud-key', {
+            region: 'eu-west-1',
+            url: 'https://synthetic.openai.azure.com',
+            model: definitions[0].choice.id,
+            deployment: 'synthetic-deployment',
+          });
+        assert.equal(await unsupported.resolveClassification(), undefined);
+      });
+  });
+
   test('audio models pair with text support from the same owned connection without changing selection', async (t) => {
     const f = await fixture(t);
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');

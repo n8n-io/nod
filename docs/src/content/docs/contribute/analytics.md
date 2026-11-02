@@ -22,6 +22,8 @@ Use `provider` for the model provider across onboarding, connection, selection, 
 
 Don't infer completed tasks or frustration from conversations. Execution success, useful output, and user satisfaction are separate questions.
 
+The bounded task classifier is the only analytics model inference. It assigns a fixed primary purpose while usage sharing is enabled; it doesn't infer personal characteristics, sensitive subject matter, satisfaction, or success. Keep its inputs and output within the [published contract](/deploy/analytics/#task-categories).
+
 ## Add an event
 
 ### Server events
@@ -31,9 +33,19 @@ Don't infer completed tasks or frustration from conversations. Execution success
 3. For a simple successful API mutation, use the existing `analyticsRoutes` map when it fits.
 4. Let the capture boundary attach schema, environment, version, and runtime context.
 
-Server events captured within a turn carry `run_id`, `work_type`, and `owner_requested` for model, tool, service, source-read, and committed-output measurements. Resumes retain the origin's category. Use installation identity plus analytics `run_id` to join these server events. UI presentation and artifact events don't carry `run_id` and can't be joined this way. Never send private turn or message IDs.
+Server events captured within a turn carry `run_id`, `work_type`, and `owner_requested` for model, tool, service, source-read, and committed-output measurements. Resumes retain the origin's execution mode. `task_type` is a separate inferred purpose. Use installation identity plus analytics `run_id` to join these server events. UI presentation and artifact events don't carry `run_id` and can't be joined this way. Never send private turn or message IDs.
 
 Wrap autonomous memory maintenance, onboarding preparation, and writing-style learning with `withSystemWork`. These operations carry `work_type=background`, `owner_requested=false`, and a bounded `system_activity`, without creating a run. An existing turn context takes precedence. Model usage without either context carries `work_type=unclassified`; keep it visible in cost reporting rather than guessing its origin from model purpose.
+
+### Task classification
+
+[`src/server/task-classification.ts`](https://github.com/n8n-io/nod/blob/main/src/server/task-classification.ts) runs after execution without delaying the response. It emits `task_classified` within the original analytics run. Its strict response accepts only `task_type` from the fixed taxonomy; the event adds `classification_status` and `task_taxonomy_version=1`. Starts and completions carry the same version marker so queries can identify supported segments.
+
+Only the bounded original owner request, saved task brief, or schedule instruction reaches the classifier: redact known secrets, cap at 6,000 characters, and exclude assistant replies and tool history. Observer/event work, onboarding work, and cancelled, interrupted, or skipped segments produce `not_applicable`. An unusable empty request also produces `not_applicable`.
+
+Use `hasClassificationModel()` and `resolveClassification()` from the model service. Both share the same selection policy: an approved small text model in the selected connection's catalog, known positive prices for both models, and classifier input/output rates no higher than the selected model. Free, missing-price, and variable-price selections are unavailable. Don't fall back to the main model, another connection, or a synthetic zero-price model. An unsupported provider is unavailable. The curator's `classify` operation is untraced, uses the lowest reasoning effort, a 10-second request deadline, 512 output tokens, and zero retries at both the application and provider-client layers. Record its usage once through the ledger as `task_classification`; include it in total spend.
+
+Cache classification results by owned origin, taxonomy version, and consent revision. Reuse results for resumes and later task-session segments, but classify new chat requests separately. Preserve owner isolation, cancellation on opt-out, and rejection of callbacks from earlier sharing periods. A result may be `unavailable` or `failed`; don't repeatedly spend on retries for that origin.
 
 ### UI events
 
@@ -81,6 +93,8 @@ The team maintains five analytics dashboards:
 | Outputs and interaction    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
 | Navigation and controls    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
+Task-category views answer five further questions: which purposes appear, how their execution duration and outcomes compare, what their known model costs are, how much classification coverage is missing or unavailable, and what the classifier itself costs. Keep purpose, execution mode, and outcome as separate dimensions.
+
 All insights filter `analytics_schema=v4` and `environment=production`, include internal and external installations, and carry the schema tag. Empty charts before release are expected. Don't mix old schema history into them.
 
 Internal/test exclusions are off for these dashboards. The production sample intentionally includes staff using release builds. A separate project for internal use is deferred; don't describe this mixed sample as external users.
@@ -89,12 +103,13 @@ Internal/test exclusions are off for these dashboards. The production sample int
 
 - **Active use:** An owner-authored message in chat or Tasks: `owner_requested=true` and `source` equal to `user` or `task`. These saved charts exclude all `resume` events, including genuine confirmation messages. Identity counts represent sharing installations, not all installations or individual humans.
 - **Execution:** Outcomes describe segments. Waiting isn't success or failure; a completed segment doesn't verify the whole task.
+- **Task categories:** Join classification to execution using installation identity and analytics `run_id`. Count segments, not whole jobs or unique requests; resumed segments can reuse a category. Use the taxonomy marker on starts/completions for the coverage denominator and allow 60 seconds after completion for classification. Keep open segments, results still within that grace period, missing events, and explicit statuses separate. `classified` with `unknown` means the model couldn't choose one primary purpose; `unavailable`, `failed`, and `not_applicable` also use `unknown` but must not be folded into that group. Earlier events without the marker are outside this denominator. Categories are inferred intent, not validated outcomes.
 - **First attempt after setup:** Cohorts start at each installation's first observed onboarding completion, calculated before date selection. Select its first owner-requested chat or Tasks execution start within seven elapsed days. Join only that installation and analytics run ID to the completion. Later retries and resumes don't replace the first result. Open start windows, elapsed windows without starts, missing run IDs, and starts without completions remain separate. All selected onboarding cohorts enter the denominator; incomplete observations aren't failures. The eventual-success funnel answers a different question.
 - **Declared tasks and prepared work:** Task finish events measure committed `done` or `cancelled` transitions. Prepared-work events measure changed preparation, saved offer messages, and changed owner-requested controls, including usefulness feedback. These aren't verified task outcomes or satisfaction scores. No-op and rolled-back writes are excluded.
 - **Return after first success:** The first observed `v4` successful owner-requested execution segment starts the cohort, including a resumed segment. Returns require a later owner-authored chat or Tasks start; all resume starts are excluded. D1, W1, W2, and W4 use elapsed windows of 1–2, 7–14, 14–21, and 28–35 days. Only installations whose entire window has elapsed, as of the earlier of now and the selected end date, enter each denominator. Find the first success globally before applying the selected cohort range, which defaults to 90 days. The 30% W4 reference is a target for this observed sample, not proof of useful whole-job completion or a forecast. Execution starts can be later than message submission because of queueing; messages merged into a running turn create no separate start.
 - **Attempt retention:** The separate native retention charts start at the first observed owner-authored request, including existing installations and failed attempts. D0 is cohort size; D1 and W1/W2/W4 measure another request in elapsed, noncumulative windows. These diagnose return after trying Nod and use a different denominator from return after first success.
 - **Connection entry:** Connect clicks and confirmed completions retain their original `apps`, `chat`, `onboarding`, or `manage` entry. The counts don't join individual attempts and aren't a conversion rate.
-- **Costs:** Model estimates exclude unpriced usage, browser fees, and independent integration charges. Tool duration isn't billed browser runtime. Per-segment cost joins installation identity and analytics `run_id`, then groups actual usage by provider and model. Whole-segment estimates and each model's contribution are separate rows; multi-model segments overlap across model rows. Missing prices or missing usage records are not free usage. Standalone system and unclassified requests without a run stay outside per-segment estimates. Segments are not complete multi-turn jobs.
+- **Costs:** Model estimates exclude unpriced usage, browser fees, and independent integration charges. Tool duration isn't billed browser runtime. Per-segment cost joins installation identity and analytics `run_id`, then groups actual usage by provider and model. Whole-segment estimates and each model's contribution are separate rows; multi-model segments overlap across model rows. Include `purpose=task_classification` in totals and report its overhead separately; these requests can arrive after completion. Missing prices or missing usage records are not free usage. Standalone system and unclassified requests without a run stay outside per-segment estimates. Segments are not complete multi-turn jobs.
 - **Outputs:** Committed delivery, visibility, copying, and saving are separate observations. Their totals aren't a per-output conversion funnel.
 - **Navigation:** Page and tab views measure observed reach, not time spent or intent. An installation can appear in several rows.
 - **Settings:** `setting_changed` follows a committed value change, attributed to owner, agent, or system. System identifies app-reported automatic browser-timezone initialization; this telemetry hint grants no authority. `settings_updated` counts accepted requests and can include unchanged writes. Its operation names describe the request, not a confirmed connection or disconnection. Local browser notifications record `dismissed` when the owner saves **Not now**, not when a delivered notification closes.
@@ -113,6 +128,8 @@ Run a query before saving it, then read back the saved definition and execute th
 
 Check property types against the capture schema. Enum properties such as `status` use String; token counts, durations, and costs use Numeric. Verify received values as well as query execution: a wrong property type can turn a stored value into a blank breakdown.
 
+Use taxonomy version `1` explicitly for category queries. A taxonomy meaning change requires a new version; never let a model invent new labels. Deduplicate repeated observations by installation and run before joining, retain missing classification and pricing coverage, and avoid multiplying cost rows when joining usage to completion.
+
 For installation checks, show event details from the application's property allowlist. Preserve zero and false values, omit absent properties, and exclude SDK metadata. Keep these development views separate from production dashboards.
 
 Check pricing before rounding costs. Preserve explicitly reported API zero and positive plan estimates. A zero SDK estimate or a missing price is unavailable; omit `cost_usd` rather than treating it as free usage.
@@ -128,6 +145,8 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 5. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
 
 Fixture results prove controlled transport behavior, not live delivery or production retention. Read every property boundary as well as testing it.
+
+For classification changes, test strict output parsing, fixed buckets, origin reuse, owner isolation, opt-out during a call, stale sharing periods, unsupported model catalogs, pricing guards, output/deadline/retry limits, and single-counted usage with synthetic data. Keep a frozen set of representative and ambiguous requests for a separate category-quality evaluation; deterministic transport tests don't establish classification accuracy.
 
 ## Related resources
 

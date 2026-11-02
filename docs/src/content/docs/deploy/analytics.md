@@ -9,7 +9,7 @@ Nod shares bounded product events so the team can understand usage, reliability,
 
 Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, credentials, and free-form input are excluded.
+Messages, generated content, connected-app results, credentials, and free-form input are excluded from analytics events. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
 ## Turn usage sharing on or off
 
@@ -61,7 +61,7 @@ Packaged release builds with a plain `x.y.z` version report `production`. Local 
 - Raw errors, console output, and network headers or bodies.
 - Owner-configured model names and endpoints. These report bounded categories such as `compatible` and `custom`.
 
-The schema doesn't infer task categories, completed goals, or frustration from conversations.
+Task categories describe the inferred purpose of a request. They don't establish completed goals, usefulness, satisfaction, or frustration.
 
 ## Event properties
 
@@ -71,7 +71,7 @@ UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Serve
 
 Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
-Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
+Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating execution mode. The separate `task_type` describes the request's purpose. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
 Owner-authored messages in Tasks are owner-requested background work. Work category and owner request are separate dimensions; automatic task activity isn't owner-requested.
 
@@ -110,14 +110,15 @@ Connecting email is optional. Model setup can be bypassed when already configure
 
 | Event                                                   | What it records                                                                                                                                                                      |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `turn_started`                                          | Source, channel, background flag, work category, owner-requested flag, and selected public model when available.                                                                     |
+| `turn_started`                                          | Source, channel, background flag, execution mode, owner-requested flag, selected public model when available, and task taxonomy version when supported.                              |
 | `turn_completed`                                        | The same context, outcome, execution/queue milliseconds, and bounded waiting or failure reason.                                                                                      |
+| `task_classified`                                       | One fixed task purpose, classification status, and taxonomy version for an execution segment.                                                                                        |
 | `task_finished`                                         | Committed task status (`done` or `cancelled`) and actor (`owner` or `agent`).                                                                                                        |
 | `prepared_work_saved`                                   | A changed preparation or saved offer message, with `prepared` or `notified` outcome.                                                                                                 |
 | `prepared_work_updated`                                 | Changed owner-requested control: `useful`, `not_useful`, `handled`, `dismiss`, or `snooze`.                                                                                          |
 | `chat_stopped`, `task_stopped`, `conversation_reset`    | Server-accepted stop or completed reset.                                                                                                                                             |
 | `tool_used`                                             | Fixed tool category, outcome, milliseconds, and subagent flag.                                                                                                                       |
-| `model_used`                                            | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.                                    |
+| `model_used`                                            | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`, `task_classification`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.             |
 | `model_connection_changed`, `model_connection_observed` | Provider, API-key/subscription/OAuth method, status or selected-model state, and bounded effort.                                                                                     |
 | `connection_changed`, `connection_observed`             | Public app or `custom`, connection method, and status/bounded failure reason where applicable.                                                                                       |
 | `service_used`                                          | App, method, outcome, milliseconds, bounded failure reason, and optional preparation phase.                                                                                          |
@@ -147,6 +148,48 @@ Setting changes exclude rejected and unchanged writes. Turning usage sharing off
 Server settings cover theme, conversation traces, usage sharing, voice and speech replies, notification rules, personal rules, timezone, locale, hour cycle, quiet hours, paused proactivity, memory controls, spending limits, and model/effort selection. Values are bounded states such as on/off, configured/default/cleared, or a fixed mode. Voice names, rule text, exact times, locale/timezone values, and spending amounts are excluded.
 
 The `system` setting actor identifies app-reported automatic browser-timezone initialization. It isn't an owner choice or an authorization signal.
+
+### Task categories
+
+Nod assigns one broad purpose to eligible requests after the execution segment ends. Classification runs separately and doesn't delay the reply. `task_classified` joins to the segment using installation identity and the random analytics `run_id`; it doesn't reveal the task's title or exact request.
+
+Taxonomy version `1` has these fixed values:
+
+| `task_type`            | Intended result                                               |
+| ---------------------- | ------------------------------------------------------------- |
+| `research`             | Find, check, or compare information and options.              |
+| `communication`        | Prepare, send, or organize correspondence.                    |
+| `content_creation`     | Write, edit, or produce documents, presentations, or media.   |
+| `data_analysis`        | Calculate or analyze structured data.                         |
+| `file_management`      | Find, organize, move, or convert existing files.              |
+| `scheduling`           | Arrange meetings, calendar entries, or reminders.             |
+| `monitoring`           | Watch for changes or report changes against an earlier state. |
+| `app_setup`            | Connect or configure apps and integrations.                   |
+| `translation`          | Change content from one language to another.                  |
+| `software_development` | Build, debug, or change code and technical automation.        |
+| `transaction`          | Buy, book, pay, cancel, or submit a concrete transaction.     |
+| `advice`               | Explain, teach, plan, or advise without an outside action.    |
+| `other`                | A clear purpose outside the named categories.                 |
+| `unknown`              | No clear purpose or no single primary purpose.                |
+
+A compound request receives its primary purpose, not a new label for every combination. Categories describe intended work, not the tools used or whether it succeeded.
+
+The classifier receives at most 6,000 characters from the original owner request, saved task brief, or schedule instruction, with known secrets redacted. Nod doesn't add assistant replies, tool history, or attachments. This bounded input still reaches your model provider; only the fixed category, status, version, and existing execution context enter the classification event. Classification requests are excluded from conversation traces.
+
+Nod uses an approved small text model on the currently selected connection, at its lowest reasoning effort. Both models must have known positive catalog prices, and neither the classifier's input nor output rate may be higher. Free, unknown-price, and variable-price selections skip classification, as do unsupported connections or unavailable suitable models. An already selected approved small model can classify too. There is no fallback to the main model or another connection. Each call has a 10-second deadline, a 512-token output limit, and no retries. Its usage remains in model-cost totals and is identifiable by `purpose=task_classification`.
+
+The result is reused for resumed segments and later segments in the same task session during the same sharing period. A new chat request is classified separately. Observer/event work, onboarding work, and cancelled, interrupted, or skipped segments are not classified. Turning sharing off cancels in-flight classification and prevents its result from being sent. Turning it back on doesn't revive the old result.
+
+| `classification_status` | Meaning                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `classified`            | The model returned an allowed category, including `unknown` when unclear. |
+| `unavailable`           | No eligible classifier was available or capacity prevented dispatch.      |
+| `failed`                | The request failed, timed out, or returned an invalid response.           |
+| `not_applicable`        | The segment is excluded or has no usable request text.                    |
+
+The last three statuses use `task_type=unknown`. Read both properties: a model's uncertainty, an unavailable classifier, and a failed request are different observations. An absent classification event is a separate missing observation, not `unknown`.
+
+Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Start and completion events carry `task_taxonomy_version=1` when this measurement is supported. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
 
 ### Outputs and answer choices
 

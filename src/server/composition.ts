@@ -26,6 +26,7 @@ import {
   type CaptureAnalytics,
 } from './analytics.ts';
 import { clearConversationAnalytics } from './conversation-analytics.ts';
+import { createTaskClassification } from './task-classification.ts';
 import { captureConnectionInventory } from './analytics-connections.ts';
 import {
   BrowserActionError,
@@ -202,6 +203,7 @@ export interface ApplicationAdapters {
   keyStore: CredentialKeyStore;
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
+  classificationCurator?: MemoryCurator;
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
@@ -522,6 +524,13 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    classificationCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      resolve: () => models.resolveClassification(),
+      configured: () => models.hasClassificationModel(),
+    }),
     imageCurator: createPiMemoryCurator({
       get provider() {
         return models.current.provider;
@@ -721,6 +730,16 @@ async function initializeApplication(
   await ledger.initialize();
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
+  const taskClassification = createTaskClassification({
+    pool,
+    ownerId,
+    curator: adapters.classificationCurator && ledger.curator(adapters.classificationCurator),
+    analytics: captureAnalytics,
+    consent: analyticsConsent,
+    secrets,
+    signal: closing.signal,
+  });
+  await taskClassification.initialize();
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
     : curator;
@@ -1518,12 +1537,24 @@ async function initializeApplication(
       present: communication.present,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
-      observeTurn: (_turnId, operation) =>
-        analytics.withRun(ownerId, operation).finally(() => {
-          void admission
-            .run(() => proactivity.due())
-            ?.catch((error) => logFailure('proactivity_wake', error));
-        }),
+      taskClassification: true,
+      observeTurn: (turnId, operation) =>
+        analytics
+          .withRun(ownerId, async () => {
+            try {
+              await operation();
+            } finally {
+              const consent = analytics.currentRun(ownerId)?.consent;
+              void admission
+                .run(() => ledger.withTurn(turnId, () => taskClassification.run(turnId, consent)))
+                ?.catch(() => {});
+            }
+          })
+          .finally(() => {
+            void admission
+              .run(() => proactivity.due())
+              ?.catch((error) => logFailure('proactivity_wake', error));
+          }),
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),

@@ -377,6 +377,30 @@ export function createModelService(options: {
       if (definition) return { row, definition };
     }
   }
+  function classificationModel() {
+    const selected = selection && { ...selection };
+    const row = rows.find((row) => row.id === selected?.connectionId);
+    if (!row || !selected || row.status !== 'connected') return undefined;
+    const main = row.models.find((model) => model.choice.id === selected.modelId);
+    const definition = row.models.find(
+      (model) => model.choice.id === memoryModels[row.provider] && !model.choice.audio,
+    );
+    if (!main || !definition) return undefined;
+    const price = modelPricing(definition);
+    const mainPrice = modelPricing(main);
+    if (
+      !price ||
+      price === 'variable' ||
+      price.input + price.output <= 0 ||
+      !mainPrice ||
+      mainPrice === 'variable' ||
+      mainPrice.input + mainPrice.output <= 0 ||
+      price.input > mainPrice.input ||
+      price.output > mainPrice.output
+    )
+      return undefined;
+    return { row, definition };
+  }
   async function read(id: string) {
     const result = await store.change(async (state) => {
       const row = state.connections.find((item) => item.id === id);
@@ -967,6 +991,22 @@ export function createModelService(options: {
     async resolveImage(): Promise<ModelAccess> {
       const candidate = imageModel();
       if (!candidate) throw new ConnectionError('Connect a model that accepts images in Models.');
+      const { row, definition } = candidate;
+      return {
+        provider: row.provider,
+        method: row.method,
+        definition,
+        effort: lightestEffort(definition.choice.efforts),
+        read: () => read(row.id),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
+      };
+    },
+    hasClassificationModel() {
+      return Boolean(classificationModel());
+    },
+    async resolveClassification(): Promise<ModelAccess | undefined> {
+      const candidate = classificationModel();
+      if (!candidate) return undefined;
       const { row, definition } = candidate;
       return {
         provider: row.provider,

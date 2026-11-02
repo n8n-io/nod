@@ -21,6 +21,22 @@ const connectionProperties = z.object({
   connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
 });
 const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const taskType = z.enum([
+  'research',
+  'communication',
+  'content_creation',
+  'data_analysis',
+  'file_management',
+  'scheduling',
+  'monitoring',
+  'app_setup',
+  'translation',
+  'software_development',
+  'transaction',
+  'advice',
+  'other',
+  'unknown',
+]);
 export const analyticsTool = z.enum([
   'apps',
   'ask_user',
@@ -55,8 +71,21 @@ const turnProperties = z.object({
   owner_requested: z.boolean(),
   provider: analyticsModelProvider.optional(),
   model: analyticsModel.optional(),
+  task_taxonomy_version: z.literal(1).optional(),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
+  z
+    .object({
+      event: z.literal('task_classified'),
+      properties: z
+        .object({
+          task_type: taskType,
+          classification_status: z.enum(['classified', 'unavailable', 'failed', 'not_applicable']),
+          task_taxonomy_version: z.literal(1),
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       event: z.literal('onboarding_completed'),
@@ -364,7 +393,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .object({
           provider: analyticsModelProvider,
           model: analyticsModel.optional(),
-          purpose: z.enum(['agent', 'memory', 'review', 'tasks']),
+          purpose: z.enum(['agent', 'memory', 'review', 'tasks', 'task_classification']),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           input_tokens: duration,
           output_tokens: duration,

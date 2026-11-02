@@ -24,6 +24,7 @@ const untraced = new Set([
   'review',
   'style',
   'skill',
+  'classify',
 ]);
 
 function json(text: string) {
@@ -40,7 +41,7 @@ function json(text: string) {
 
 export function createPiMemoryCurator(options: {
   provider: string;
-  resolve?: () => Promise<ModelAccess>;
+  resolve?: () => Promise<ModelAccess | undefined>;
   configured?: () => boolean;
   model?: string;
   lightest?: boolean;
@@ -51,6 +52,7 @@ export function createPiMemoryCurator(options: {
   let loaded: ReturnType<typeof load> | undefined;
   async function load() {
     const access = await options.resolve?.();
+    if (options.resolve && !access) throw new Error('The selected model is unavailable.');
     if (access)
       return {
         ...(await createPiModelRuntime(access)),
@@ -116,8 +118,12 @@ export function createPiMemoryCurator(options: {
         let reply: AssistantMessage | undefined;
         try {
           reply = await runtime.completeSimple(model, context, {
-            signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-            maxTokens: 8192,
+            signal: AbortSignal.any([
+              AbortSignal.timeout(task === 'classify' ? 10_000 : 45_000),
+              ...(signal ? [signal] : []),
+            ]),
+            maxTokens: task === 'classify' ? 512 : 8192,
+            ...(task === 'classify' ? { maxRetries: 0, timeoutMs: 10_000 } : {}),
             reasoning: effort === 'off' ? undefined : effort,
           });
         } finally {
@@ -152,7 +158,9 @@ export function createPiMemoryCurator(options: {
       let reply = await complete();
       for (
         let attempt = 0;
-        attempt < (task === 'vision' ? 0 : 2) && reply.stopReason === 'error' && !signal?.aborted;
+        attempt < (task === 'vision' || task === 'classify' ? 0 : 2) &&
+        reply.stopReason === 'error' &&
+        !signal?.aborted;
         attempt++
       )
         reply = await complete();
@@ -164,7 +172,9 @@ export function createPiMemoryCurator(options: {
         throw new Error(
           task === 'vision'
             ? 'The image model is unavailable.'
-            : 'The memory model is unavailable.',
+            : task === 'classify'
+              ? 'The classification model is unavailable.'
+              : 'The memory model is unavailable.',
         );
       return json(
         reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
