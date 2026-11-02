@@ -4,10 +4,6 @@ import { SetupProgress } from '../../src/web/components/setup-progress';
 import { PasswordInput } from '../../src/web/components/password-input';
 import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
-import { EmailPreview } from '../../src/web/pages/onboarding/steps/connection-preview';
-import composioLogo from '../../public/logos/composio.svg?url';
-import gmailLogo from '../../public/logos/gmail.svg?url';
-import outlookLogo from '../../public/logos/outlook.svg?url';
 import { startupMessage, type StartupStage } from '../../src/shared/desktop-startup';
 import { initializeFocusVisibility } from '../../src/web/lib/focus';
 import '../../src/web/theme.css';
@@ -16,8 +12,6 @@ import '../../src/web/components/setup-progress.css';
 import '../../src/web/components/controls.css';
 import '../../src/web/pages/onboarding/onboarding.css';
 import '../../src/web/pages/onboarding/steps/welcome.css';
-import '../../src/web/components/connect-row.css';
-import '../../src/web/pages/onboarding/steps/personal-connection.css';
 
 type RuntimeStatus = {
   phase?: string;
@@ -493,20 +487,6 @@ function Startup() {
         : active.message ||
           (firstSetup ? 'Preparing your workspace and browser.' : 'Opening your saved workspace.');
 
-  if (firstSetup && welcomeStep === 'waiting' && !failure && !status.remote && !unlocking)
-    return (
-      <>
-        <div className="titlebar" aria-hidden="true" />
-        <OnboardingFrame step="email">
-          <div className="ob-screen">
-            <EmailPreview
-              logos={{ gmail: gmailLogo, outlook: outlookLogo, composio: composioLogo }}
-            />
-          </div>
-        </OnboardingFrame>
-      </>
-    );
-
   return (
     <>
       <div className="titlebar" aria-hidden="true" />
@@ -526,7 +506,7 @@ function Startup() {
             ? 'Nod needs another try'
             : status.remote
               ? 'Connecting to your server…'
-              : startupMessage(active.stage)
+              : active.message || startupMessage(active.stage)
         }
         description={unlocking || error ? description : undefined}
         error={error}

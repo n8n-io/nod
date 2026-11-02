@@ -47,7 +47,6 @@ export function PersonalConnection({
   onNext,
   onBack,
   onSkip,
-  onReady,
 }: StepProps & {
   kind: 'email' | 'calendar';
   providerSlugs: readonly PersonalProvider[];
@@ -75,7 +74,6 @@ export function PersonalConnection({
   const manageTrigger = useRef<HTMLButtonElement | null>(null);
   const manageCard = useRef<HTMLElement | null>(null);
   const active = useRef(false);
-  const readyReported = useRef(false);
 
   useEffect(() => {
     active.current = true;
@@ -99,12 +97,6 @@ export function PersonalConnection({
   const connected = providers.some((entry) => entry.account);
   const managed = connectionGroups(apps.data ?? []).find((group) => group.key === manageService);
   const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
-  useEffect(() => {
-    if (!readyReported.current && !loading && onReady) {
-      readyReported.current = true;
-      onReady();
-    }
-  }, [loading, onReady]);
   const unavailable = loading
     ? ''
     : !configuration.data || !apps.data
