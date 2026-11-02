@@ -7,7 +7,7 @@ sidebar:
 
 Nod shares bounded product events so the team can understand usage, reliability, and cost. These analytics never capture screen recordings or session replays.
 
-Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n, including from independent source installations. The collection destination is fixed; there is no runtime override.
+Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
 Messages, generated content, connected-app results, credentials, and free-form input are excluded.
 
