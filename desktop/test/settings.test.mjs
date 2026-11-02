@@ -1042,7 +1042,7 @@ test('native Welcome waits for local selection and storage before system-key acc
   }
 });
 
-test('local selection starts preparation and hands off to app onboarding once the engine is ready', async (t) => {
+test('local selection shows startup progress and hands off to app onboarding before workspace readiness', async (t) => {
   const output = await mkdtemp(join(tmpdir(), 'nod-native-storage-gate-'));
   t.after(() => rm(output, { recursive: true, force: true }));
   await buildDesktopUI(output);
@@ -1101,9 +1101,9 @@ test('local selection starts preparation and hands off to app onboarding once th
         assert.ok(predicate());
       };
       await settle(() => page.window.document.querySelector('[data-step="welcome"] button'));
-      let waited = false;
+      let emailRendered = false;
       const observer = new page.window.MutationObserver(() => {
-        waited ||= Boolean(page.window.document.querySelector('[data-step="email"]'));
+        emailRendered ||= Boolean(page.window.document.querySelector('[data-step="email"]'));
       });
       observer.observe(page.window.document, { childList: true, subtree: true });
       t.after(() => observer.disconnect());
@@ -1123,13 +1123,23 @@ test('local selection starts preparation and hands off to app onboarding once th
         usageData: true,
         continued: false,
       });
-      await settle(() => page.window.document.querySelector('[data-step="email"]'));
-      assert.equal(page.window.document.querySelector('[role="switch"]'), null);
-      assert.ok(
-        [...page.window.document.querySelectorAll('[data-step="email"] button')].every(
-          (button) => button.disabled,
-        ),
+      assert.equal(
+        Boolean(page.window.document.querySelector('[data-step="email"]')),
+        false,
+        'The native shell must not present unusable email connection controls.',
       );
+      await settle(() => page.window.document.querySelector('main [role="status"]'));
+      assert.equal(page.window.document.querySelector('[role="switch"]'), null);
+      if (scenario === 'waiting') {
+        publish({
+          phase: 'starting',
+          engineReady: false,
+          runtime: { phase: 'preparing', stage: 'workspace' },
+        });
+        await new Promise((accept) => setTimeout(accept, 20));
+        assert.ok(page.window.document.querySelector('main [role="status"]'));
+        assert.equal(choices.length, 1);
+      }
       if (scenario === 'retry') {
         const failure = {
           phase: 'error',
@@ -1159,6 +1169,7 @@ test('local selection starts preparation and hands off to app onboarding once th
         continued: true,
       });
       await settle(() => calls.length === (scenario === 'retry' ? 3 : 2));
+      assert.equal(emailRendered, false);
       runtime.resolve({ phase: 'ready', engineReady: true, runtime: { phase: 'ready' } });
       await new Promise((accept) => setTimeout(accept, 20));
       assert.equal(choices.length, 2);
@@ -1461,6 +1472,7 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     {
       initialState: 'fresh',
       allowStart: true,
+      reportReady: false,
       prepareRuntime: async ({ onStorageReady }) => {
         await storage.promise;
         const runtime = { env: { DATABASE_URL: 'postgresql://synthetic.invalid/test' } };
@@ -1488,10 +1500,22 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     assert.equal(f.children.length, 0);
     assert.equal(writes, 0);
     storage.resolve();
-    await connected.promise;
+    for (let attempt = 0; f.children.length === 0 && attempt < 100; attempt++)
+      await new Promise((accept) => setTimeout(accept, 10));
     assert.equal(f.children.length, 1);
     const engine = f.children[0];
     assert.equal(engine.environment.NOD_DESKTOP_RUNTIME_PENDING, 'true');
+    assert.notEqual(f.status().engineReady, true);
+    assert.equal(writes, 0);
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
+    engine.emit('message', { type: 'nod-ready', port: Number(engine.port) });
+    await connected.promise;
+    assert.equal(f.status().engineReady, true);
+    assert.equal(f.status().phase, 'preparing');
+    assert.notEqual(f.status().runtime.phase, 'ready');
     assert.equal(
       engine.sent.some((message) => message.type === 'nod-runtime-ready'),
       false,
