@@ -491,6 +491,15 @@ test(
           let job = await jobFor(schedule.id);
           clock = new Date(schedule.nextRun!);
           await deliver([job]);
+          const [firstRun] = await runs(schedule.id);
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.3)',
+            [randomUUID(), ownerId, firstRun!.turnId],
+          );
+          assert.equal(await monthly(), null);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+            firstRun!.turnId,
+          ]);
           job = await jobFor(schedule.id);
           clock = new Date('2035-10-28T09:05:00.000Z');
           await deliver([job]);
@@ -555,11 +564,10 @@ test(
                 );
             },
           );
-          for (const [index, turnId] of turns.entries())
-            await db.pool.query(
-              'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,$4)',
-              [randomUUID(), ownerId, turnId, index ? 0.3 : 0.1],
-            );
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.1)',
+            [randomUUID(), ownerId, turns[0]],
+          );
           assert.deepEqual(await costs(schedule.id), { [turns[0]!]: 0.1, [turns[1]!]: 0.3 });
           await t.test(
             'history stays pageable when recorded cost lookup is unavailable',
@@ -601,7 +609,7 @@ test(
               assert.deepEqual(recovered.json<ScheduleHistory>(), expected);
             },
           );
-          assert.equal(await monthly(), null);
+          assert.equal(Math.round((await monthly())! * 100) / 100, 9);
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
             turns,
           ]);
@@ -649,6 +657,39 @@ test(
             (await priced.listSchedules()).find((item) => item.id === planSchedule.id)!.monthlyUsd,
             null,
           );
+        },
+      );
+      await t.test(
+        'a recurring schedule starts no run while its last run is busy or waiting on the owner',
+        async () => {
+          const before = clock;
+          const schedule = await create({ cron: '*/15 * * * *' });
+          const fire = async () => {
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            return (await runs(schedule.id)).map((run) => run.turnId);
+          };
+          const [first] = await fire();
+          assert.deepEqual(await fire(), [first]);
+          for (const status of ['running', 'waiting']) {
+            await db.pool.query('UPDATE turns SET status=$2,started_at=now() WHERE id=$1', [
+              first,
+              status,
+            ]);
+            assert.deepEqual(await fire(), [first]);
+          }
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,session_id,parent_turn_id,background,status,started_at)
+             SELECT $1,owner_id,thread_id,'resume','Synthetic answer.',id,id,true,'succeeded',now() FROM turns WHERE id=$2`,
+            [randomUUID(), first],
+          );
+          assert.equal((await fire()).length, 2);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
+            (await runs(schedule.id)).map((run) => run.turnId),
+          ]);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
         },
       );
       await t.test(
