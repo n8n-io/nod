@@ -34,7 +34,7 @@ What Nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 5. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in the introduction, before connecting a model. The welcome screen and introduction aren't reported later.
 6. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
 
-Answer-choice events contain only `multiple`, `option_count`, and, after an accepted selection, `selected_count`. Counts must be integers from one to six. Missing or invalid required values drop the whole event. Never include question or option IDs or text. Custom composer answers and failed, rejected, or unavailable submissions aren't selections. `chat_message_sent` includes `input` as `text` or `voice`; selected choices use `source: answer_choice` and `input: text`.
+Answer-choice-specific properties are limited to `multiple`, `option_count`, and, after an accepted selection, `selected_count`. Counts must be integers from one to six. Missing or invalid required values drop the whole event. Never include question or option IDs or text. Custom composer answers and failed, rejected, or unavailable submissions aren't selections. `chat_message_sent` includes `input` as `text` or `voice`; selected choices use `source: answer_choice` and `input: text`.
 
 ## Count observed work
 
