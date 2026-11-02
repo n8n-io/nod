@@ -43,8 +43,17 @@ export function MessageLinkTooltip({
     tooltip.style.left = `${Math.max(8, Math.min(tip.x, window.innerWidth - width - 8))}px`;
     const top = tip.below ? tip.y : tip.y - height;
     tooltip.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8)) + (tip.below ? 0 : height)}px`;
-    tip.anchor.setAttribute('aria-describedby', tipId);
-    return () => tip.anchor.removeAttribute('aria-describedby');
+    const descriptions =
+      tip.anchor.getAttribute('aria-describedby')?.split(/\s+/).filter(Boolean) ?? [];
+    tip.anchor.setAttribute('aria-describedby', [...new Set([...descriptions, tipId])].join(' '));
+    return () => {
+      const remaining = tip.anchor
+        .getAttribute('aria-describedby')
+        ?.split(/\s+/)
+        .filter((value) => value && value !== tipId);
+      if (remaining?.length) tip.anchor.setAttribute('aria-describedby', remaining.join(' '));
+      else tip.anchor.removeAttribute('aria-describedby');
+    };
   }, [content, text, tip, tipId]);
 
   useEffect(() => {
@@ -52,20 +61,25 @@ export function MessageLinkTooltip({
     if (!target) return;
     let timer: number | undefined;
     const show = (event: Event) => {
+      if (event.type === 'pointerover' && (event as PointerEvent).pointerType !== 'mouse') return;
       const link = externalAnchor(event.target);
-      if (!link) return;
+      if (!link || (event.type === 'focusin' && !link.anchor.matches(':focus-visible'))) return;
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        if (!target.contains(link.anchor) || link.anchor.getAttribute('href') !== link.url) return;
-        const rect = link.anchor.getBoundingClientRect();
-        const below = rect.top < 72;
-        setTip({
-          ...link,
-          x: rect.left,
-          y: below ? rect.bottom + 6 : rect.top - 6,
-          below,
-        });
-      }, 150);
+      timer = window.setTimeout(
+        () => {
+          if (!target.contains(link.anchor) || link.anchor.getAttribute('href') !== link.url)
+            return;
+          const rect = link.anchor.getBoundingClientRect();
+          const below = rect.top < 72;
+          setTip({
+            ...link,
+            x: rect.left,
+            y: below ? rect.bottom + 6 : rect.top - 6,
+            below,
+          });
+        },
+        event.type === 'focusin' ? 0 : 100,
+      );
     };
     const hide = () => {
       window.clearTimeout(timer);
@@ -79,6 +93,7 @@ export function MessageLinkTooltip({
     const click = (event: Event) => {
       const link = externalAnchor(event.target);
       if (link) opened(link.url, 'text');
+      dismiss();
     };
     const keep = () => window.clearTimeout(timer);
     const tooltip = tipElement.current;
@@ -86,6 +101,7 @@ export function MessageLinkTooltip({
       window.clearTimeout(timer);
       setTip(null);
     };
+    const pointerdown = () => dismiss();
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || !tip) return;
       if (document.activeElement === tooltip) tip.anchor.focus();
@@ -94,8 +110,9 @@ export function MessageLinkTooltip({
     const moved = (event: Event) => {
       if (!tooltip?.contains(event.target as Node)) dismiss();
     };
-    target.addEventListener('mouseover', show);
-    target.addEventListener('mouseout', leave);
+    target.addEventListener('pointerover', show);
+    target.addEventListener('pointerdown', pointerdown);
+    target.addEventListener('pointerout', leave);
     target.addEventListener('focusin', show);
     target.addEventListener('focusout', leave);
     target.addEventListener('click', click);
@@ -110,8 +127,9 @@ export function MessageLinkTooltip({
     }
     return () => {
       window.clearTimeout(timer);
-      target.removeEventListener('mouseover', show);
-      target.removeEventListener('mouseout', leave);
+      target.removeEventListener('pointerover', show);
+      target.removeEventListener('pointerdown', pointerdown);
+      target.removeEventListener('pointerout', leave);
       target.removeEventListener('focusin', show);
       target.removeEventListener('focusout', leave);
       target.removeEventListener('click', click);
@@ -134,7 +152,7 @@ export function MessageLinkTooltip({
             id={tipId}
             data-analytics-private
             tabIndex={-1}
-            className={`message-link-tooltip${tip.below ? ' message-link-tooltip-below' : ''}`}
+            className={`tooltip-surface message-link-tooltip${tip.below ? ' message-link-tooltip-below' : ''}`}
             href={tip.url}
             target="_blank"
             rel="noopener noreferrer"

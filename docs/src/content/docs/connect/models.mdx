@@ -13,7 +13,7 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 
 ## Supported connections
 
-Search the provider list to connect any of these services. Regional and token-plan entries use the key issued for that particular service.
+Select **Add connection** (or **Add** when you already have a connection), then search for a service. Regional and token-plan entries use the key issued for that particular service.
 
 | Connection                         | Setup                                                     | Initial choice                           |
 | ---------------------------------- | --------------------------------------------------------- | ---------------------------------------- |
@@ -30,7 +30,7 @@ Search the provider list to connect any of these services. Regional and token-pl
 
 Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Groq, Hugging Face, Kimi Coding China, Meta, MiniMax, Mistral, Moonshot AI, NVIDIA, OpenCode Zen and Go, Qwen Token Plan, Radius, Together AI, Vercel AI Gateway, xAI, Xiaomi MiMo and token plans, and Z.AI. The picker includes their supported regional variants.
 
-When an account model list is available, Nod loads it. For services with only a bundled catalog, Nod says **Key saved** and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
+When an account model list is available, Nod loads it. For services with only a bundled catalog, Nod saves the key and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
 
 You can change the initial choice. Nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 3.8 Flash is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
 
@@ -42,13 +42,13 @@ Google does not permit third-party assistants to reuse [Gemini CLI OAuth](https:
 
 ## Connect a service
 
-Select **Settings** at the bottom of the sidebar, then **Models**. Search for a service or select a common provider. Onboarding shows the same options before your first chat.
+Select **Settings** at the bottom of the sidebar, then **Models**. Select **Add connection** or **Add**, then choose a provider. Onboarding shows the same options before your first chat.
 
 If a key has a recognizable format for a different provider, Nod shows the mismatch beside the key field before sending or saving it. Choose the matching provider or paste that provider's key. Unfamiliar formats still use the provider's normal connection checks; a matching format alone does not prove a key works.
 
-Select your current model to open **Choose a model**. Search by model or provider, then select a model for your next message. Recommended choices appear first, and a check marks your current choice. **Reads images** identifies models that can view images directly; **Extra thinking** identifies models that can think before replying. Capabilities shared by every available model appear once above the list. During onboarding, **More providers** opens the full list to browse or search.
+Select **Change** beside **Your model** to open **Choose a model**. Search by model, provider or account, or filter by provider. Models are grouped by connection, with recommended choices first in each group. A check marks both your current model and its connection. Image, audio and thinking icons identify each model’s capabilities; hover over an icon for its label. You can use the arrow keys, Home and End to move through models, then Enter to choose one. During onboarding, **More providers** opens the full list to browse or search.
 
-If a connection stops working, its row in **Settings > Models** says what it needs: **Reconnect** a sign-in, or remove a key or server connection and add it again. When it's the connection you selected, chat links to that screen.
+Select **Manage** beside a provider to see its accounts, add another connection or remove one. If a connection stops working, **Reconnect** restores a sign-in. For a key or server, add the details again; remove the old connection if you no longer need it. When it's the connection you selected, chat links to that screen.
 
 To change to an available model, you can also tell Nod which model and service to use. This works in Nod, Telegram, and WhatsApp. Nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
@@ -57,8 +57,8 @@ To change to an available model, you can also tell Nod which model and service t
 
 <Steps>
 
-1. Next to **OpenAI**, select **Add API key**.
-2. Paste your key into **OpenAI API key**, then select **Save connection**.
+1. Choose **OpenAI**, then **Use an API key**.
+2. Paste your key into **API key**, then select **Connect**.
 
 </Steps>
 
@@ -67,7 +67,7 @@ To change to an available model, you can also tell Nod which model and service t
 
 <Steps>
 
-1. Next to **OpenAI**, select **Sign in with ChatGPT**.
+1. Choose **OpenAI**, then **Sign in with ChatGPT**.
 2. Sign in to ChatGPT in the browser tab that opens, and allow Nod to use your ChatGPT plan.
 3. Return to Nod. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
 
@@ -82,9 +82,9 @@ ChatGPT sign-in listens on port `1455` where Nod's server runs. If another progr
 
 <Steps>
 
-1. Next to **Anthropic**, select **Add API key**.
-2. Paste your key into **Anthropic API key**.
-3. Select **Save connection**.
+1. Choose **Anthropic**.
+2. Paste your key into **API key**.
+3. Select **Connect**.
 
 </Steps>
 
@@ -97,8 +97,8 @@ If the connection fails because workspace discovery isn't available, **Enter wor
 
 <Steps>
 
-1. Next to **OpenRouter**, select **Sign in** to have OpenRouter create a key for Nod in your browser, or **Add API key** to paste a key.
-2. Finish the sign-in, or select **Save connection** for a key.
+1. Choose **OpenRouter**, then **Sign in with OpenRouter** to create a key for Nod in your browser, or **Use an API key** to paste a key.
+2. Finish the sign-in, or select **Connect** for a key.
 
 </Steps>
 
@@ -112,7 +112,7 @@ The `openrouter/free` and `openrouter/auto` routers can select different models 
 <Steps>
 
 1. Select **Google Gemini**, then open the link to create a key in AI Studio.
-2. Copy the key into **Google Gemini API key** and select **Save connection**.
+2. Copy the key into **API key** and select **Connect**.
 3. Keep Gemini 3.8 Flash for a capable starting choice, or choose another listed model.
 
 </Steps>
@@ -124,9 +124,9 @@ The key is separate from Google identity sign-in. Free-tier quotas can limit lon
 
 <Steps>
 
-1. Search for your provider in **Models**.
+1. Select **Add connection** or **Add**, then search for your provider.
 2. Open its key page if you need a key, then paste the key into the private field.
-3. Select **Save key** or **Save connection**, then use the recommended model or choose another.
+3. Select **Save key** or **Connect**, then use the recommended model or choose another.
 
 </Steps>
 
@@ -142,9 +142,9 @@ Kimi Coding China uses Kimi's China endpoint. Its key must be valid for that reg
 <Steps>
 
 1. In the Amazon Bedrock console, create a long-term key under **API keys**. Short-term keys expire within hours.
-2. In Nod, next to **Amazon Bedrock**, select **Add API key**.
-3. Enter the **Region** your models run in, such as `us-east-1`, and paste the key into **Amazon Bedrock API key**.
-4. Select **Save connection**, then choose a model.
+2. In Nod, choose **Amazon Bedrock** from the provider list.
+3. Enter the **Region** your models run in, such as `us-east-1`, and paste the key into **API key**.
+4. Select **Save key** or **Connect**, then choose a model.
 
 </Steps>
 
@@ -158,8 +158,8 @@ The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListIn
 <Steps>
 
 1. In the Google Cloud console, create an API key for Vertex AI: an express mode key, or a standard key bound to a service account with Vertex AI access in a project with billing.
-2. In Nod, next to **Google Vertex AI**, select **Add API key**.
-3. Paste the key into **Google Vertex AI API key**, then select **Save connection**.
+2. In Nod, choose **Google Vertex AI** from the provider list.
+3. Paste the key into **API key**, then select **Save key** or **Connect**.
 4. Choose a model.
 
 </Steps>
@@ -172,9 +172,9 @@ Nod checks the key with a free token count and lists the Gemini models on Vertex
 <Steps>
 
 1. In Azure AI Foundry, open your model deployment and copy its endpoint, deployment name and key.
-2. In Nod, next to **Azure OpenAI**, select **Add API key**.
+2. In Nod, choose **Azure OpenAI** from the provider list.
 3. Enter the **Endpoint**, such as `https://your-resource.openai.azure.com`, and the **Deployment name**. If the deployment has its model's name, Nod fills in **Model**. Otherwise, choose the model the deployment runs.
-4. Paste the key into **Azure OpenAI API key**, then select **Save connection**.
+4. Paste the key into **API key**, then select **Save key** or **Connect**.
 
 </Steps>
 
@@ -187,9 +187,9 @@ Each deployment is one connection with one model. Add another connection for eac
 
 <Steps>
 
-1. Next to **OpenAI-compatible**, select **Add server**.
+1. Choose **OpenAI-compatible** from the provider list.
 2. Check the **Server address**. Nod fills in Ollama's address, `http://localhost:11434/v1`. Add an **API key** only if the server needs one.
-3. Select **Save connection**.
+3. Select **Connect**.
 
 </Steps>
 
@@ -200,20 +200,20 @@ Use this for Ollama, LM Studio, vLLM, llama.cpp and hosted services with an Open
 
 ## Switch and manage connections
 
-All the models from your connections appear in one searchable list. Choosing a model also chooses the connection that pays for it.
+All the models from your connections appear in one searchable list, grouped by connection. Choosing a model also chooses the connection that pays for it.
 
-OpenRouter models show input and output token prices beside each model name, in USD per million tokens. Prices can wrap to the next line on small screens. The list identifies free tokens and prices that vary by model. These are the rates from the last model list update. Actual charges can vary with routing, caching, context length, and extra services. To update prices, refresh the OpenRouter connection in **Models**. See [OpenRouter's model pricing](https://openrouter.ai/docs/guides/overview/models#pricing-object).
+OpenRouter models show input and output token prices beside each model name, in USD per million tokens. Prices can wrap to the next line on small screens. The list identifies free tokens and prices that vary by model. These are the rates from the last model list update. Actual charges can vary with routing, caching, context length, and extra services. See [OpenRouter's model pricing](https://openrouter.ai/docs/guides/overview/models#pricing-object).
 
 You can connect several accounts of one service, such as two ChatGPT accounts or a personal and a work API key. A ChatGPT connection shows the account's email. A key connection, including one an OpenRouter sign-in created, shows the key's last four characters, which the model never sees. Signing in again with an account you already connected, or adding the same key or server address to the same service again, updates that connection instead of adding another.
 
 If your selected connection is removed or needs reconnecting, the next connection you add or reconnect in **Models** becomes your model. If only your model disappears from a working connection, Nod keeps your choice and asks you to choose another. Nod doesn't switch by itself after a failed request.
 
-| To                      | Do this                                                                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| Switch model            | Open **Settings → Models**, then pick a model.                                                        |
-| Update a model list     | In **Models**, select the refresh button next to the connection.                                      |
-| Fix a broken connection | Do what its row says: **Reconnect** a sign-in, or remove a key or server connection and add it again. |
-| Remove a connection     | Select the remove button next to it. If it was selected, choose a new model.                          |
+| To                        | Do this                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Switch model              | Open **Settings → Models**, then pick a model.                                                               |
+| Load a missing model list | Select **Manage** beside the provider, then **Load models** or **Try again**.                                |
+| Fix a broken connection   | Open **Manage** and **Reconnect** a sign-in, or add the key or server details again.                         |
+| Remove a connection       | Open **Manage** and select **Remove connection** beside the account. If it was selected, choose a new model. |
 
 ## One model for everything
 
@@ -250,7 +250,7 @@ In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to u
 A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice without another account]
-Open **Settings → General → Voice**. Leave **Voice provider** on **Automatic** to use an available speech connection and match voices to the conversation language. Or choose a provider and compare **Assistant voice** samples. **Connect** or **Manage** beside the provider opens setup on the same page. Choose [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model.
+Open **Settings → Voice & audio**. Open **Voice** to compare samples, or choose **Automatic** to match voices to the conversation language. Provider connections and free voice downloads are in the same chooser. Use [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model. OpenAI speech requires API access, separate from a ChatGPT plan.
 :::
 
 ## Set connections in server settings

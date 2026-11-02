@@ -246,9 +246,11 @@
 }
 
 .memory-settings {
-  display: grid;
-  gap: 16px;
-  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 28px;
+  margin-bottom: 24px;
 }
 .memory-setting-copy {
   display: grid;
@@ -256,7 +258,7 @@
 }
 .memory-setting {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--text-secondary);
   font-size: var(--text-control);
@@ -397,4 +399,113 @@
 }
 textarea.memory-skill-body {
   color: var(--foreground);
+}
+
+.memory-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.memory-note-menu.action-menu-surface {
+  min-width: 194px;
+}
+.memory-menu-separator {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--border);
+}
+.memory-provenance {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+  line-height: 1.5;
+}
+.memory-provenance > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  margin-inline: -8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  list-style: none;
+  cursor: pointer;
+}
+.memory-provenance > summary::-webkit-details-marker {
+  display: none;
+}
+.memory-provenance > summary:hover {
+  background: var(--nav-hover);
+  color: var(--foreground);
+}
+.memory-provenance > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.memory-provenance > summary svg {
+  flex: none;
+  transition: transform 160ms ease;
+}
+.memory-provenance[open] > summary svg {
+  transform: rotate(180deg);
+}
+.memory-provenance > dl {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.memory-provenance > dl > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+}
+.memory-provenance dt {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.memory-provenance dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.memory-provenance .memory-source + .memory-source {
+  margin-top: 12px;
+}
+.memory-provenance .memory-source figcaption {
+  padding-left: 0;
+  font-size: 12px;
+}
+.memory-source-link.button {
+  justify-self: start;
+  min-height: 28px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  color: var(--link);
+}
+.memory-history {
+  display: grid;
+  gap: 8px;
+}
+.memory-end-date.button {
+  justify-self: start;
+  margin-left: -12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.memory-row:disabled,
+.memory-stage:disabled {
+  cursor: default;
+}
+.memory-row:disabled:not([aria-current='true']):hover,
+.memory-stage:disabled:not([aria-pressed='true']):hover {
+  background: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .memory-provenance > summary svg {
+    transition: none;
+  }
 }

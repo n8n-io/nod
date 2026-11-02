@@ -739,8 +739,8 @@ async function initializeApplication(
     withExecution: ledger.withExecution,
     prepareMemory: (context, execution, canContinue) =>
       ledger.withExecution(execution, () => memoryRecall.prepare(context, canContinue)),
-    reviewMemoryReply: (context, text, execution) =>
-      ledger.withExecution(execution, () => memoryRecall.review(context, text)),
+    reviewMemoryReply: (context, text, execution, visual) =>
+      ledger.withExecution(execution, () => memoryRecall.review(context, text, visual)),
     analyzeImages:
       analyzeImages &&
       ((images, request, signal, execution) =>
@@ -1684,6 +1684,13 @@ async function initializeApplication(
             'schedule_cancel',
           ].includes(action)
         ) {
+          if (
+            action === 'schedule_create' &&
+            (await turnOrigin(turn.turnId))?.source === 'schedule'
+          )
+            throw new Error(
+              'A scheduled run cannot create schedules. Do the work this schedule asks for in this run instead.',
+            );
           const input = await personal.validateReview(action, args);
           const schedule =
             action === 'schedule_cancel' || action === 'schedule_update'

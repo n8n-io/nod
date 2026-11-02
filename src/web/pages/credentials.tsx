@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronLeft, KeyRound, LockKeyhole, ArrowUpRight } from '../components/icons';
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  KeyRound,
+  LockKeyhole,
+  ArrowUpRight,
+} from '../components/icons';
 import type {
   CredentialRequest,
   PasswordManagerLogin,
@@ -60,6 +67,21 @@ function BackToChat({ onClose }: { onClose?(): void }) {
         Back to chat
       </a>
     </Button>
+  );
+}
+
+function SignInMethodIcon({ label }: { label: string }) {
+  const provider = /\b(google|apple|facebook)\b/i.exec(label)?.[1].toLowerCase();
+  return provider ? (
+    <img
+      className={`credential-method-logo${provider === 'google' ? '' : ' is-monochrome'}`}
+      src={`/logos/sign-in/${provider}.svg`}
+      alt=""
+      width={20}
+      height={20}
+    />
+  ) : (
+    <KeyRound size={20} aria-hidden="true" />
   );
 }
 
@@ -499,7 +521,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               <Check size={24} />
             </div>
             <h1>{request?.kind === 'method' ? 'Continuing sign-in' : 'Details submitted'}</h1>
-            <p>Nod will continue from the website’s response.</p>
+            <p>Your task will continue in chat.</p>
             <BackToChat onClose={onClose} />
           </div>
         ) : request?.status === 'entering' ? (
@@ -547,8 +569,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               </div>
             </header>
             {request?.kind === 'method' && (
-              <div className="credential-accounts">
-                <h2>Choose how to sign in</h2>
+              <div className="credential-accounts credential-methods">
                 {request.methods?.map((method) => (
                   <Button
                     key={method.id}
@@ -556,8 +577,9 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                     disabled={saving}
                     onClick={() => void useMethod(method.id)}
                   >
+                    <SignInMethodIcon label={method.label} />
                     <span>{method.label}</span>
-                    <ArrowUpRight size={16} aria-hidden="true" />
+                    <ChevronRight size={16} aria-hidden="true" />
                   </Button>
                 ))}
               </div>

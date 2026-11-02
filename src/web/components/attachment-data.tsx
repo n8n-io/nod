@@ -1,8 +1,10 @@
+import { Tooltip } from './tooltip';
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useState,
   type ReactElement,
@@ -28,6 +30,7 @@ import {
 } from './attachment-frame';
 import { SlidesView } from './attachment-slides';
 import { Button, Skeleton } from './ui';
+import { Tabs } from './tabs';
 
 type DataKind =
   | 'markdown'
@@ -94,17 +97,18 @@ export function PreviewLoading() {
 function SpreadsheetLink({ href }: { href: string }) {
   const host = new URL(href).hostname;
   return (
-    <a
-      className="attachment-table-link"
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={href}
-      aria-label={`Open ${host}`}
-    >
-      {host}
-      <ExternalLink size={16} aria-hidden="true" />
-    </a>
+    <Tooltip content={href}>
+      <a
+        className="attachment-table-link"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open ${host}`}
+      >
+        {host}
+        <ExternalLink size={16} aria-hidden="true" />
+      </a>
+    </Tooltip>
   );
 }
 
@@ -186,7 +190,9 @@ function columnName(index: number) {
 }
 
 function SheetView({ sheets, onDetail }: { sheets: Sheet[]; onDetail(detail: string): void }) {
+  const tabsId = useId();
   const [selected, setSelected] = useState(0);
+  const multiple = sheets.length > 1;
   const sheet = sheets[selected];
   const width = Math.max(0, ...sheet.rows.map((row) => row.length));
   const headings = Array.from({ length: width }, (_, index) =>
@@ -213,8 +219,10 @@ function SheetView({ sheets, onDetail }: { sheets: Sheet[]; onDetail(detail: str
       {width ? (
         <div
           className="artifact-sheet-scroll"
-          role="region"
-          aria-label={sheet.name}
+          id={`${tabsId}-content`}
+          role={multiple ? 'tabpanel' : 'region'}
+          aria-label={multiple ? undefined : sheet.name}
+          aria-labelledby={multiple ? `${tabsId}-${selected}` : undefined}
           tabIndex={0}
           data-artifact-scroll=""
         >
@@ -233,15 +241,20 @@ function SheetView({ sheets, onDetail }: { sheets: Sheet[]; onDetail(detail: str
               {rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   <th scope="row">{rowIndex + 1}</th>
-                  {headings.map((_, column) => (
-                    <td
-                      key={column}
-                      className={numeric[column] ? 'is-number' : undefined}
-                      title={(row[column]?.length ?? 0) > 40 ? row[column] : undefined}
-                    >
-                      <SpreadsheetCell value={row[column] ?? ''} />
-                    </td>
-                  ))}
+                  {headings.map((_, column) => {
+                    const cell = (
+                      <td key={column} className={numeric[column] ? 'is-number' : undefined}>
+                        <SpreadsheetCell value={row[column] ?? ''} />
+                      </td>
+                    );
+                    return (row[column]?.length ?? 0) > 40 ? (
+                      <Tooltip key={column} content={row[column]}>
+                        {cell}
+                      </Tooltip>
+                    ) : (
+                      cell
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -251,24 +264,27 @@ function SheetView({ sheets, onDetail }: { sheets: Sheet[]; onDetail(detail: str
           )}
         </div>
       ) : (
-        <div className="artifact-empty" role="status">
-          This sheet is empty.
+        <div
+          className="artifact-empty"
+          id={`${tabsId}-content`}
+          role={multiple ? 'tabpanel' : undefined}
+          aria-labelledby={multiple ? `${tabsId}-${selected}` : undefined}
+          tabIndex={multiple ? 0 : undefined}
+        >
+          <span role="status">This sheet is empty.</span>
         </div>
       )}
-      {sheets.length > 1 && (
-        <div className="artifact-sheet-tabs" role="tablist" aria-label="Sheets">
-          {sheets.map((item, index) => (
-            <button
-              type="button"
-              role="tab"
-              key={`${item.name}:${index}`}
-              aria-selected={index === selected}
-              onClick={() => setSelected(index)}
-            >
-              {item.name}
-            </button>
-          ))}
-        </div>
+      {multiple && (
+        <Tabs
+          id={tabsId}
+          panelId={`${tabsId}-content`}
+          className="artifact-sheet-tabs"
+          size="compact"
+          label="Sheets"
+          value={String(selected)}
+          items={sheets.map((item, index) => ({ value: String(index), label: item.name }))}
+          onValueChange={(value) => setSelected(Number(value))}
+        />
       )}
     </div>
   );
@@ -492,12 +508,14 @@ export default function AttachmentData({
   kind,
   mode,
   stage,
+  thumbnail = false,
   onDetail,
 }: {
   item: ImagePreview;
   kind: DataKind;
   mode: 'preview' | 'code';
   stage: string;
+  thumbnail?: boolean;
   onDetail(detail: string): void;
 }) {
   const [buffer, setBuffer] = useState<ArrayBuffer | null>(null);
@@ -654,7 +672,14 @@ export default function AttachmentData({
     );
   if (kind === 'markdown') return <MarkdownView text={source} />;
   if (kind === 'html' && frame)
-    return <SandboxedFrame html={frame} title={item.name} scripts onLeave={() => setLeft(true)} />;
+    return (
+      <SandboxedFrame
+        html={frame}
+        title={item.name}
+        scripts={!thumbnail}
+        onLeave={() => setLeft(true)}
+      />
+    );
   if (csv) return <SheetView sheets={csv} onDetail={onDetail} />;
   return <PreviewUnavailable item={item} />;
 }

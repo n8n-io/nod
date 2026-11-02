@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   saveConnection: (input) => invoke('nod:connection:save', input),
   openConnectionSettings: () => invoke('nod:connection:open'),
   closeConnectionSettings: () => invoke('nod:connection:close'),
+  continueOnboarding: () => invoke('nod:onboarding:continue'),
   saveSettings: (input) => invoke('nod:settings:save', input),
   getPreferences: () => invoke('nod:preferences:get'),
   prepare: (options) => invoke('nod:prepare', options),

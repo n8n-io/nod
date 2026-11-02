@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Notice } from './ui';
 import { errorMessage } from '../lib/api';
@@ -27,20 +28,21 @@ export function InlineName({
   }, [error, busy]);
   if (!editing)
     return (
-      <button
-        ref={trigger}
-        type="button"
-        className="inline-name"
-        title={`Edit ${label}`}
-        aria-label={`Edit ${label}: ${value}`}
-        onClick={() => {
-          setDraft(value);
-          setError('');
-          setEditing(true);
-        }}
-      >
-        {value}
-      </button>
+      <Tooltip content={`Edit ${label}`}>
+        <button
+          ref={trigger}
+          type="button"
+          className="inline-name"
+          aria-label={`Edit ${label}: ${value}`}
+          onClick={() => {
+            setDraft(value);
+            setError('');
+            setEditing(true);
+          }}
+        >
+          {value}
+        </button>
+      </Tooltip>
     );
   return (
     <form

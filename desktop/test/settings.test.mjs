@@ -4176,19 +4176,152 @@ test('macOS settings reject async decryption through a key other than the OS key
   assert.equal(await readFile(f.path, 'utf8'), previous);
 });
 
-test('native onboarding replay reaches product onboarding without restarting or resetting the profile', async (t) => {
-  const f = await runningDesktop(t, () => assert.fail('Replay must not make an engine request.'));
-  await f.storage.store.environment();
-  const before = await readFile(f.storage.path, 'utf8');
-  f.showEngine();
-  const chat = f.windows.at(-1);
-  f.replayOnboarding();
-  await new Promise(setImmediate);
-  assert.equal(f.windows.length, 1);
-  assert.equal(chat.url, 'http://127.0.0.1:4310/onboarding?replay=1');
-  assert.equal(chat.isDestroyed(), false);
-  assert.equal(f.children.length, 0);
-  assert.equal(await readFile(f.storage.path, 'utf8'), before);
+test('native onboarding replay keeps server recovery reachable without restarting or resetting either profile', async (t) => {
+  const output = await mkdtemp(join(tmpdir(), 'nod-native-replay-'));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  await buildDesktopUI(output);
+  const html = await readFile(join(output, 'index.html'), 'utf8');
+  const script = await readFile(join(output, 'setup.js'), 'utf8');
+  const settle = async (predicate) => {
+    for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.ok(predicate());
+  };
+  for (const remote of [false, true])
+    await t.test(remote ? 'remote' : 'local', async (t) => {
+      const requests = [];
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          requests.push(url);
+          return Response.json({
+            user: { id: 'synthetic-owner' },
+            settings: { onboardingCompleted: true },
+          });
+        },
+        { readyRenderers: false },
+      );
+      t.after(() => {
+        for (const window of f.windows) if (!window.isDestroyed()) window.destroy();
+      });
+      await f.storage.store.environment();
+      const origin = remote ? 'https://assistant.example.test' : 'http://127.0.0.1:4310';
+      if (remote) {
+        const connection = { url: origin, token: randomBytes(32).toString('base64url') };
+        await f.storage.store.saveConnection(connection);
+        await f.startRemote(connection);
+      } else f.showEngine();
+      const before = await readFile(f.storage.path, 'utf8');
+      const initialRequests = requests.length;
+      const chat = f.windows.at(-1);
+      await f.rendererReady(chat);
+      const eventFor = (window) => ({
+        sender: window.webContents,
+        senderFrame: window.webContents.mainFrame,
+      });
+      for (const channel of ['nod:connection:open', 'nod:onboarding:continue'])
+        assert.throws(() => f.handlers.get(channel)(eventFor(chat)));
+      function mount(window) {
+        const page = new JSDOM(html, {
+          url: `file:///synthetic/setup.html?${new URLSearchParams(window.query)}`,
+          runScripts: 'outside-only',
+        });
+        t.after(() => page.window.close());
+        page.window.matchMedia = () => ({ matches: false });
+        const invoke = async (name) => f.handlers.get(name)(eventFor(window));
+        page.window.nodDesktop = {
+          ready: () => invoke('nod:renderer-ready'),
+          getPreferences: () => invoke('nod:preferences:get'),
+          getConnection: () => invoke('nod:connection:get'),
+          openConnectionSettings: () => invoke('nod:connection:open'),
+          closeConnectionSettings: () => invoke('nod:connection:close'),
+          continueOnboarding: () => invoke('nod:onboarding:continue'),
+          onPreferences() {},
+        };
+        page.window.eval(script);
+        return page.window.document;
+      }
+      f.replayOnboarding();
+      const entry = f.windows.at(-1);
+      const document = mount(entry);
+      await settle(
+        () => entry.isVisible() && document.querySelector('.setup-entry-actions button'),
+      );
+      assert.equal(entry.query.onboarding, 'true');
+      assert.equal(entry.query.remote, String(remote));
+      assert.equal(chat.url, origin);
+      f.showEngine();
+      assert.equal(entry.isFocused(), true);
+      for (const channel of ['nod:connection:open', 'nod:onboarding:continue']) {
+        assert.throws(() =>
+          f.handlers.get(channel)({
+            sender: entry.webContents,
+            senderFrame: { ...entry.webContents.mainFrame },
+          }),
+        );
+        assert.throws(() =>
+          f.handlers.get(channel)({
+            sender: chat.webContents,
+            senderFrame: entry.webContents.mainFrame,
+          }),
+        );
+      }
+      document.querySelector('.setup-entry-actions button:last-child').click();
+      await settle(() => f.windows.at(-1) !== entry);
+      let server = f.windows.at(-1);
+      let connection = mount(server);
+      await settle(
+        () =>
+          server.isVisible() &&
+          connection.querySelector('button[type="submit"]')?.disabled === false,
+      );
+      assert.equal(entry.isDestroyed(), true);
+      assert.equal(connection.querySelector('#server-address').value, remote ? origin : '');
+      assert.equal(connection.querySelector('#server-token').value, '');
+      assert.equal(connection.querySelectorAll('.server-actions button').length, remote ? 2 : 1);
+      assert.throws(() => f.handlers.get('nod:onboarding:continue')(eventFor(server)));
+      f.replayOnboarding();
+      await settle(() => f.windows.at(-1) !== server);
+      assert.equal(server.isDestroyed(), true);
+      const replayed = f.windows.at(-1);
+      assert.equal(replayed.query.onboarding, 'true');
+      const replayedDocument = mount(replayed);
+      await settle(
+        () =>
+          replayed.isVisible() &&
+          replayedDocument.querySelector('.setup-entry-actions button:last-child'),
+      );
+      replayedDocument.querySelector('.setup-entry-actions button:last-child').click();
+      await settle(() => f.windows.at(-1) !== replayed);
+      server = f.windows.at(-1);
+      connection = mount(server);
+      await settle(() => server.isVisible() && connection.querySelector('.server-actions button'));
+      connection.querySelector('.server-actions button').click();
+      await settle(() => f.windows.at(-1) !== server);
+      const returned = f.windows.at(-1);
+      assert.equal(returned.query.onboarding, 'true');
+      const returnedDocument = mount(returned);
+      await settle(
+        () => returned.isVisible() && returnedDocument.querySelector('.setup-entry-actions button'),
+      );
+      returnedDocument.querySelector('.setup-entry-actions button').click();
+      await settle(() => returned.isDestroyed());
+      assert.equal(chat.url, origin);
+      assert.equal(chat.isFocused(), true);
+      f.replayOnboarding();
+      const continued = f.windows.at(-1);
+      const continuedDocument = mount(continued);
+      await settle(
+        () => continued.isVisible() && continuedDocument.querySelector('.ob-welcome button'),
+      );
+      continuedDocument.querySelector('.ob-welcome button').click();
+      await settle(() => chat.url === `${origin}/onboarding?replay=1`);
+      assert.equal(continued.isDestroyed(), true);
+      assert.equal(chat.isDestroyed(), false);
+      assert.equal(f.children.length, 0);
+      assert.equal(requests.length, initialRequests);
+      assert.equal(await readFile(f.storage.path, 'utf8'), before);
+    });
 });
 
 test('unavailable or plaintext key stores refuse secret persistence and decryption', async (t) => {
@@ -4549,6 +4682,8 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
     'saveAppPreferences',
     'getConnection',
     'saveConnection',
+    'openConnectionSettings',
+    'continueOnboarding',
     'importRuntime',
   ])
     assert.equal(bridge[field], undefined);

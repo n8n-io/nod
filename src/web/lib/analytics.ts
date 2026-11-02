@@ -4,6 +4,7 @@ import { modelProviders, type ModelProvider } from '../../shared/models';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 import { feedbackActivity } from './feedback-activity';
+import { requestAccountVersion } from './api';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
@@ -12,12 +13,16 @@ type AnalyticsEvents = {
   };
   nod_onboarding_step_skipped: { step: 'email' };
   nod_settings_viewed: {
-    tab: 'general' | 'models' | 'app_connections' | 'memory';
+    tab:
+      'general' | 'notifications' | 'models' | 'voice' | 'app_connections' | 'memory' | 'privacy';
   };
-  nod_chat_message_sent: {
+  answer_choices_viewed: { multiple: boolean; option_count: number };
+  answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
+  chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
-    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply';
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' | 'answer_choice';
+    input: 'text' | 'voice';
   };
   nod_chat_stop_requested: undefined;
   nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
@@ -49,9 +54,7 @@ type AnalyticsEvents = {
     count: '1' | '2-5' | '6+';
   };
   nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  nod_tab_viewed:
-    | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
-    | { page: 'apps'; tab: 'all' | 'connected' };
+  nod_tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
   nod_ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
@@ -70,12 +73,19 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_onboarding_step_skipped: { step: ['email'] },
   nod_settings_viewed: {
-    tab: ['general', 'models', 'app_connections', 'memory'],
+    tab: ['general', 'notifications', 'models', 'voice', 'app_connections', 'memory', 'privacy'],
   },
-  nod_chat_message_sent: {
+  answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
+  answer_choices_selected: {
+    multiple: [true, false],
+    option_count: [1, 2, 3, 4, 5, 6],
+    selected_count: [1, 2, 3, 4, 5, 6],
+  },
+  chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
-    source: ['composer', 'task_card', 'ask_nod', 'task_reply'],
+    source: ['composer', 'task_card', 'ask_nod', 'task_reply', 'answer_choice'],
+    input: ['text', 'voice'],
   },
   nod_chat_stop_requested: {},
   nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2, 3, 4, 5] },
@@ -108,8 +118,8 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
   nod_tab_viewed: {
-    page: ['tasks', 'apps'],
-    tab: ['current', 'scheduled', 'previous', 'all', 'connected'],
+    page: ['apps'],
+    tab: ['all', 'connected'],
   },
   nod_ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
@@ -127,6 +137,8 @@ let recordingFrame: number | undefined;
 let generation = 0;
 const eventGenerations = new WeakMap<object, number>();
 const guardedClients = new WeakSet<PostHog>();
+const viewed = new Set<string>();
+const viewListeners = new Set<() => void>();
 
 type AnalyticsRequest = Parameters<PostHog['_send_request']>[0];
 
@@ -162,6 +174,7 @@ export function setAnalyticsClient(client: PostHog) {
 
 function suspendAnalytics() {
   generation++;
+  viewed.clear();
   configuration = undefined;
   identity = undefined;
   lastPage = undefined;
@@ -241,6 +254,13 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event || !configuration?.enabled) return null;
   const allowed = eventProperties[event.event as keyof AnalyticsEvents];
   if (event.event !== '$snapshot' && event.event !== '$pageview' && !allowed) return null;
+  if (
+    (event.event === 'answer_choices_viewed' ||
+      event.event === 'answer_choices_selected' ||
+      event.event === 'chat_message_sent') &&
+    Object.entries(allowed).some(([key, values]) => !values.includes(event.properties[key]))
+  )
+    return null;
   const properties = Object.fromEntries(
     sdkProperties
       .filter((key) => key in event.properties)
@@ -297,6 +317,7 @@ export function configureAnalytics(
       suspendAnalytics();
     } catch {}
   }
+  for (const listener of viewListeners) listener();
 }
 
 function applyConfiguration(
@@ -375,9 +396,16 @@ export function captureAnalytics<Event extends keyof AnalyticsEvents>(
   event: Event,
   ...args: AnalyticsEvents[Event] extends undefined ? [] : [AnalyticsEvents[Event]]
 ) {
+  captureEvent(event, args[0]);
+}
+
+function captureEvent(
+  event: keyof AnalyticsEvents,
+  properties?: AnalyticsEvents[keyof AnalyticsEvents],
+) {
   try {
-    feedbackActivity.record(event, args[0]);
-    if (configuration?.enabled) posthog?.capture(event, args[0]);
+    feedbackActivity.record(event, properties);
+    if (configuration?.enabled) posthog?.capture(event, properties);
   } catch {}
 }
 
@@ -391,8 +419,54 @@ export function analyticsReplaySession() {
 
 export function analyticsForCurrentSession(): typeof captureAnalytics {
   const current = generation;
+  const account = requestAccountVersion();
   return (event, ...args) => {
-    if (current === generation) captureAnalytics(event, ...args);
+    if (current === generation && account === requestAccountVersion())
+      captureAnalytics(event, ...args);
+  };
+}
+
+export function observeAnalyticsView<Event extends 'answer_choices_viewed'>(
+  element: HTMLElement,
+  key: string,
+  event: Event,
+  properties: AnalyticsEvents[Event],
+) {
+  const account = requestAccountVersion();
+  let intersecting = false;
+  let disposed = false;
+  const capture = () => {
+    if (
+      disposed ||
+      !intersecting ||
+      !configuration?.enabled ||
+      account !== requestAccountVersion() ||
+      document.visibilityState !== 'visible' ||
+      !element.isConnected ||
+      element.closest('[hidden]')
+    )
+      return;
+    const identity = `${event}:${key}:${JSON.stringify(properties)}`;
+    if (viewed.has(identity)) return;
+    viewed.add(identity);
+    captureEvent(event, properties);
+  };
+  const observer =
+    typeof IntersectionObserver === 'undefined'
+      ? undefined
+      : new IntersectionObserver((entries) => {
+          for (const entry of entries)
+            if (entry.target === element) intersecting = entry.isIntersecting;
+          capture();
+        });
+  observer?.observe(element);
+  document.addEventListener('visibilitychange', capture);
+  viewListeners.add(capture);
+  return () => {
+    disposed = true;
+    observer?.disconnect();
+    document.removeEventListener('visibilitychange', capture);
+    viewListeners.delete(capture);
   };
 }
 

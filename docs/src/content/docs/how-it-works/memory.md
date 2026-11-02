@@ -42,7 +42,7 @@ flowchart TD
 
 - The **index** lists every entry's full text in the owner context, one line each as `area/slug: text`, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
-- An **entry** shows its full text, status, source messages and evidence count. Pi receives only the saved support quote, not the whole source message. An older note without a saved quote keeps its source reference. The Memory tab still shows the full message to its owner.
+- An **entry** shows its full text, status, source messages and evidence count. Pi receives only the saved support quote, not the whole source message. An older note without a saved quote keeps its source reference. Settings → Memory offers a link only when the server verifies that the source belongs to the owner’s active conversation. Historical sources keep their saved support quote or available message excerpt. Missing sources remain unavailable; message lookup is never widened to make a link work.
 
 `memory_find` matches words in the slug, abstract and text. This direct tool uses no model or embeddings. Before an owner request, Nod also uses the memory model to select relevant facts and expand search terms.
 
@@ -74,17 +74,25 @@ For totals and comparisons, Nod can select up to 100 facts. Other requests use u
 
 `history_search` returns `totalMatches`, `nextCursor` and `complete`. Continue with `cursor: nextCursor`, keeping the same query, dates and order. `before` limits the message date; it is not a relevance-page cursor. `order` can be `relevance` or `newest`. Dates filter when messages were sent, not when their events happened. A reset conversation is not searched.
 
+Counts need all relevant searches, event dates, duplicate removal and the requested conditions.
+
 :::caution[Search coverage]
-`complete` covers the matches for one search. It does not prove that the search found every real event. Counts need all relevant searches, event dates, duplicate removal and the requested conditions.
+`complete` covers one search's matches, not every real event or change. Partial or unknown coverage cannot establish an exhaustive total or that nothing exists or changed outside the searched scope.
 :::
 
 ### Check the answer
 
-When selected evidence, a configured memory model and spending capacity are available, the memory model checks each reply before delivery. It can revise personal claims or make advice use a relevant fact. A reply after work the check can't see, such as an app action, a web page or a workspace file, is delivered unchanged, so a true result is never doubted for lack of evidence. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. For a visual presentation, the check receives its full text form with the accompanying message. If the check revises that answer, Nod delivers the revised text instead of the visual. It does not rewrite presentation fields or links.
+The memory model can check replies based on memory and conversation history before delivery. This requires selected evidence, a configured memory model and spending capacity. After an app action, web read, workspace operation or other outside work in a turn, later replies bypass this memory review. The visual corrections and follow-up checks below apply only while the reply remains eligible.
 
-The check must keep plans separate from completed events and possessions separate from purchases. It must also keep an earlier assistant statement separate from a verified correction. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
+The check can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. These records remain untrusted data. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. A new memory or history read causes an unchanged answer to be checked again.
 
-Selection uses up to two model calls. A text reply can add one check; the same draft is checked once per turn. These calls count in **Usage** and the session's spending check-in. Each call has a 20-second deadline. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
+For an eligible visual presentation, the check receives its structured fields, full text form and accompanying message. It judges the prose and structured claims separately, so correcting prose can preserve a supported visual. When structured details need correction, the check prefers a supported repair of the same type. It can omit unsupported optional fields while retaining the supported core and meaningful uncertainty. Optional roles and details need primary-source or owner evidence that establishes the exact claim. A source naming an entity does not establish its role. The check omits optional claims based only on earlier assistant wording or an ambiguous source. Missing evidence from a selected or truncated packet alone does not make a claim unsupported. Nod uses a repair only when the reviewer explicitly affirms its claims and it passes the normal presentation, link and private-data checks. Referenced images still have to belong to the conversation. A missing, rejected or invalid repair leaves the complete corrected plain-text answer as the fallback. The delivery receipt tells the agent whether the visual was included, corrected or omitted.
+
+For an eligible follow-up after successful delivery, the check also receives the last text and visual text form actually published in that turn, separately from factual evidence. This record is limited to 20,000 characters, with known secrets removed, unsafe text withheld and incomplete content marked. It proves delivery, not the truth of the delivered claims or completion of any other action. Failed, cancelled and duplicate replies do not replace it. With a complete record, the same check can omit a recap only when it affirms both factual support and redundancy. A dedicated check reviews only the current follow-up. When a follow-up mixes repeated details with useful new content, it removes the repeated clauses and returns only the useful addition. It keeps caveats, questions, errors and necessary corrections without answering the original request again, adding unrelated claims or narrating the review. A discovered factual error in already-published output still needs a concise correction, even if the follow-up omits it. Missing or partial delivery context and inconsistent reviewer verdicts cannot authorize silence. The record stays within the turn and is cleared with the selected evidence when new owner instructions arrive.
+
+The check must keep plans separate from completed events and possessions separate from purchases. Earlier assistant messages establish what was said, not whether it was true. The check cannot use them alone to add a factual detail. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
+
+Selection uses up to two model calls. An eligible reply can add one check. The runtime reuses the result while the draft and review context are unchanged. These calls count in **Usage** and the session's spending check-in. Each call has a 20-second deadline. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
 
 :::caution[Model limits]
 Selection and reply checks can make mistakes. If a call fails or returns invalid data, Nod keeps its word-search fallback or original answer; it does not claim that the answer passed a check.
@@ -206,3 +214,11 @@ Nod writes a skill from what it did and read, so a web page or an email can shap
 - [Agent runtime](/how-it-works/agent-runtime/)
 - [Skill library](/how-it-works/skills/)
 - [Your data and privacy](/trust/privacy/)
+
+## Owner edits and archive
+
+Settings writes use the owner’s existing Memory service. Editing note text clears its old source IDs, support quote, abstract and typed fact details; changing only its end date preserves them. The previous text remains in the archive while space is available; the oldest archived notes are dropped first when memory reaches its 256 KiB limit.
+
+**Archive note** moves the active entry into **Let go** with a manual reason. It preserves the text, source evidence, fact details and earlier versions, and works while saving new notes is off. **Bring back** restores it as confirmed, keeping an end date that is still valid. **Forget note** remains a separate deletion operation.
+
+The source-navigation flag is read-time metadata, not saved memory content. It never grants access to another owner’s message or a reset conversation. Learned skills expose their originating task text, not a chat-message navigation target.

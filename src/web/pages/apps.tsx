@@ -1,13 +1,17 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import * as Popover from '@radix-ui/react-popover';
-import { AlertCircle, ChevronDown, ListFilter, X } from '../components/icons';
+import { AlertCircle, ListFilter, MessageCircle, Plus, Users, X } from '../components/icons';
 import type { AppSetupStatus, Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
 import { AppDiscoveryDialog } from '../components/app-discovery-dialog';
+import { ManualMcpDialog } from '../components/manual-mcp-dialog';
+import { IntegrationCard } from '../components/integration-card';
+import { SearchPicker } from '../components/search-picker';
+import { Tabs } from '../components/tabs';
+import { Tooltip } from '../components/tooltip';
 import { AppAccountManager } from '../components/app-account-manager';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl, setupLinkHash } from '../lib/connection-url';
@@ -21,7 +25,7 @@ import {
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
 import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
-import { Button, Checkbox, Loading, Notice, SearchField } from '../components/ui';
+import { Button, Loading, Notice, SearchField } from '../components/ui';
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
@@ -43,128 +47,6 @@ function categoryLabel(value: string) {
   return `${label.charAt(0).toLocaleUpperCase()}${label.slice(1)}`.replace(
     /\b(ai|api|crm|erp|hr|it|llm|mcp|pdf|seo|sms|sql|ui|url|ux)\b/gi,
     (word) => word.toUpperCase(),
-  );
-}
-
-function AppDescription({ name, description }: { name: string; description?: string }) {
-  const descriptionId = useId();
-  const text = useRef<HTMLSpanElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pinned = useRef(false);
-  const [truncated, setTruncated] = useState(false);
-  const [open, setOpen] = useState(false);
-
-  useLayoutEffect(() => {
-    const element = text.current;
-    if (!element) return;
-    const measure = () => {
-      const next = element.scrollHeight > element.clientHeight + 1;
-      setTruncated(next);
-      if (!next) {
-        pinned.current = false;
-        setOpen(false);
-      }
-    };
-    measure();
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    observer?.observe(element);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [description, truncated]);
-
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
-
-  function preview() {
-    clearTimeout(closeTimer.current);
-    setOpen(true);
-  }
-
-  function closePreview() {
-    clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => {
-      if (
-        !pinned.current &&
-        document.activeElement !== trigger.current &&
-        !content.current?.contains(document.activeElement)
-      ) {
-        setOpen(false);
-      }
-    }, 160);
-  }
-
-  const summary = (
-    <span ref={text} className="app-description-text">
-      {description}
-    </span>
-  );
-  if (!truncated) return <p className="app-card-description">{summary}</p>;
-  return (
-    <Popover.Root
-      open={open}
-      onOpenChange={(next) => {
-        pinned.current = false;
-        setOpen(next);
-      }}
-    >
-      <Popover.Trigger
-        ref={trigger}
-        className="app-card-description app-description-trigger"
-        aria-label={`Read full description of ${name}`}
-        aria-describedby={open ? descriptionId : undefined}
-        onPointerEnter={(event) => event.pointerType === 'mouse' && preview()}
-        onPointerLeave={closePreview}
-        onFocus={preview}
-        onBlur={closePreview}
-        onKeyDown={(event) => {
-          const panel = content.current;
-          if (!panel || !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) return;
-          event.preventDefault();
-          const distance = event.key.startsWith('Page') ? panel.clientHeight : 40;
-          panel.scrollTop += event.key.endsWith('Up') ? -distance : distance;
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          pinned.current = !pinned.current;
-          setOpen(pinned.current);
-        }}
-      >
-        {summary}
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          ref={content}
-          className="menu app-description-popover"
-          side="bottom"
-          align="start"
-          sideOffset={8}
-          collisionPadding={12}
-          aria-label={`${name} description`}
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onEscapeKeyDown={() => {
-            if (content.current?.contains(document.activeElement)) trigger.current?.focus();
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'Tab') return;
-            event.preventDefault();
-            trigger.current?.focus();
-            pinned.current = false;
-            setOpen(false);
-          }}
-          onPointerEnter={() => clearTimeout(closeTimer.current)}
-          onPointerLeave={closePreview}
-          onBlur={closePreview}
-        >
-          <strong>{name}</strong>
-          <p id={descriptionId}>{description}</p>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
   );
 }
 
@@ -203,8 +85,6 @@ export function Apps({
   }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [categoryQuery, setCategoryQuery] = useState('');
-  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
   const [announcement, setAnnouncement] = useState('');
@@ -218,13 +98,26 @@ export function Apps({
       addAccount: boolean;
     }
   >();
+  const [manualMcp, setManualMcp] = useState(false);
+  const manualMcpTrigger = useRef<HTMLButtonElement>(null);
+  const manualMcpOrigin = useRef<HTMLButtonElement | null>(null);
+  function openManualMcp(trigger: HTMLButtonElement) {
+    manualMcpOrigin.current = trigger;
+    setManualMcp(true);
+  }
   const [manageService, setManageService] = useState<string | null>(null);
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
-  const discoveryId = new URLSearchParams(window.location.search).get('connect');
+  const [discoveryId, setDiscoveryId] = useState(() =>
+    new URLSearchParams(window.location.search).get('connect'),
+  );
+  useEffect(() => {
+    const sync = () => setDiscoveryId(new URLSearchParams(window.location.search).get('connect'));
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
   const page = useRef<HTMLDivElement>(null);
   const catalogEnd = useRef<HTMLDivElement>(null);
   const appSearch = useRef<HTMLInputElement>(null);
-  const categorySearch = useRef<HTMLInputElement>(null);
   const manageTitle = useRef<HTMLHeadingElement>(null);
   const manageKeyboard = useRef(false);
   const dialogService = useRef('');
@@ -241,9 +134,6 @@ export function Apps({
   const categories = [
     ...new Set(groups.flatMap(({ service }) => (service.categories ?? []).map(categoryKey))),
   ].sort((left, right) => categoryLabel(left).localeCompare(categoryLabel(right)));
-  const categoryMatches = categories.filter((name) =>
-    categoryLabel(name).toLocaleLowerCase().includes(categoryQuery.trim().toLocaleLowerCase()),
-  );
   const search = query.trim().toLocaleLowerCase();
   const filtered = searchApps(groups, query).filter(
     (group) =>
@@ -480,6 +370,7 @@ export function Apps({
           body: JSON.stringify({
             returnTo: external ? 'desktop' : 'window',
             ...(restarting?.attempt ? { restartAttempt: restarting.attempt } : {}),
+            ...(addAccount && connection.accessPaths?.length ? { newAccount: true } : {}),
             ...(!addAccount || connection.accessPaths?.length
               ? { connectionId: connection.connectionId }
               : {}),
@@ -505,6 +396,7 @@ export function Apps({
           throw new Error('The app sign-in could not be opened. Try again.');
         popup?.close();
         window.history.pushState(null, '', `${proposal.pathname}${proposal.search}`);
+        setDiscoveryId(proposal.searchParams.get('connect'));
         setManageService(null);
         setSignIn(undefined);
         setBusy('');
@@ -595,60 +487,89 @@ export function Apps({
   function cards(items: typeof groups, catalogCards = false) {
     return (
       <div className={catalogCards ? 'app-grid app-catalog-grid' : 'app-grid'}>
-        {items.map(({ key, service, accounts }) => (
-          <article key={key} className="app-card" aria-labelledby={`app-${key}`}>
-            <ServiceLogo {...service} />
-            <div className="app-card-copy">
-              <h3 id={`app-${key}`} title={service.name}>
-                {service.name}
-              </h3>
-              <AppDescription name={service.name} description={service.description} />
-              {service.status === 'not_configured' && (
-                <p className="app-status">Sign-in unavailable</p>
-              )}
-              {accounts.some((account) => connectionIssue(account)) && (
-                <p className="app-status" data-status="attention">
-                  <AlertCircle size={16} aria-hidden="true" />
-                  Sign-in required
-                </p>
-              )}
-            </div>
-            {accounts.length ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="app-manage"
-                data-manage-service={key}
-                data-pointer-restored={pointerRestoredService === key || undefined}
-                aria-label={`Manage ${service.name} accounts`}
-                onKeyDown={() => setPointerRestoredService(null)}
-                onBlur={() => setPointerRestoredService(null)}
-                onClick={(event) => {
-                  dialogService.current = key;
-                  manageKeyboard.current = event.detail === 0;
-                  setPointerRestoredService(null);
-                  setError('');
-                  setManageService(key);
-                }}
-              >
-                Manage
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="app-connect"
-                data-connect-service={key}
-                aria-label={`Connect ${service.name}`}
-                aria-busy={busy === `connect:${service.slug}`}
-                disabled={service.status === 'not_configured' || locked}
-                onClick={() => void connect(service, 'apps')}
-              >
-                {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
-              </Button>
-            )}
-          </article>
-        ))}
+        {items.map(({ key, service, accounts }) => {
+          const addAccount =
+            accounts.find(
+              (account) => account.slug === service.slug && account.status !== 'not_configured',
+            ) ??
+            accounts.find((account) => account.status !== 'not_configured') ??
+            service;
+          const issue = accounts.some((account) => connectionIssue(account));
+          return (
+            <IntegrationCard
+              key={key}
+              id={`app-${key}`}
+              className="app-card"
+              name={service.name}
+              logo={<ServiceLogo {...service} />}
+              description={service.description}
+              badge={
+                service.status === 'not_configured' && (
+                  <Tooltip content="Sign-in unavailable">
+                    <span className="app-card-attention">
+                      <AlertCircle size={14} aria-label="Sign-in unavailable" />
+                    </span>
+                  </Tooltip>
+                )
+              }
+              actions={
+                accounts.length ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="app-manage"
+                      data-manage-service={key}
+                      data-pointer-restored={pointerRestoredService === key || undefined}
+                      aria-label={`Manage ${service.name} accounts (${accounts.length})${issue ? ', sign-in required' : ''}`}
+                      title={`${accounts.length} ${accounts.length === 1 ? 'account' : 'accounts'}${issue ? ' · Sign-in required' : ''} · Manage accounts`}
+                      onKeyDown={() => setPointerRestoredService(null)}
+                      onBlur={() => setPointerRestoredService(null)}
+                      onClick={(event) => {
+                        dialogService.current = key;
+                        manageKeyboard.current = event.detail === 0;
+                        setPointerRestoredService(null);
+                        setError('');
+                        setManageService(key);
+                      }}
+                    >
+                      <Users size={16} aria-hidden="true" />
+                      <span className="app-account-count" aria-hidden="true">
+                        {accounts.length > 99 ? '99+' : accounts.length}
+                      </span>
+                      {issue && <span className="app-account-attention" aria-hidden="true" />}
+                    </Button>
+                    {!addAccount.browserUrl && !addAccount.savedLogin && (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Connect another ${service.name} account`}
+                        title={`Connect another ${service.name} account`}
+                        disabled={locked || addAccount.status === 'not_configured'}
+                        onClick={() => void connect(addAccount, 'apps', true)}
+                      >
+                        <Plus size={16} aria-hidden="true" />
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="app-connect"
+                    data-connect-service={key}
+                    aria-label={`Connect ${service.name}`}
+                    aria-busy={busy === `connect:${service.slug}`}
+                    disabled={service.status === 'not_configured' || locked}
+                    onClick={() => void connect(service, 'apps')}
+                  >
+                    {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
+                  </Button>
+                )
+              }
+            />
+          );
+        })}
       </div>
     );
   }
@@ -659,6 +580,15 @@ export function Apps({
       </div>
       <header className="page-heading secondary-heading">
         <PageTitle path="/apps" />
+        <Button
+          ref={manualMcpTrigger}
+          variant="outline"
+          size="sm"
+          onClick={(event) => openManualMcp(event.currentTarget)}
+        >
+          <Plus size={16} aria-hidden="true" />
+          Connect MCP
+        </Button>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
       {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
@@ -678,48 +608,21 @@ export function Apps({
         ) : null
       ) : (
         <>
-          <div
+          <Tabs
+            id={tabsId}
+            panelId={`${tabsId}-panel`}
             className="apps-views"
-            role="tablist"
-            aria-label="App views"
-            onKeyDown={(event) => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-              event.preventDefault();
-              const next =
-                event.key === 'Home'
-                  ? 'all'
-                  : event.key === 'End'
-                    ? 'connected'
-                    : view === 'all'
-                      ? 'connected'
-                      : 'all';
-              selectView(next);
+            label="App views"
+            value={view}
+            items={[
+              { value: 'all', label: 'All', count: groups.length },
+              { value: 'connected', label: 'Connected', count: connectedCount },
+            ]}
+            onValueChange={(value) => {
+              selectView(value);
               setVisibleCount(24);
-              event.currentTarget
-                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
-                ?.focus();
             }}
-          >
-            {(['all', 'connected'] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                id={`${tabsId}-${value}`}
-                data-view={value}
-                role="tab"
-                tabIndex={view === value ? 0 : -1}
-                aria-selected={view === value}
-                aria-controls={`${tabsId}-panel`}
-                onClick={() => {
-                  selectView(value);
-                  setVisibleCount(24);
-                }}
-              >
-                {value === 'all' ? 'All apps' : 'Connected'}
-                <span>{value === 'all' ? groups.length : connectedCount}</span>
-              </button>
-            ))}
-          </div>
+          />
           <div className="app-catalog-search">
             <SearchField
               inputRef={appSearch}
@@ -736,83 +639,26 @@ export function Apps({
                 setVisibleCount(24);
               }}
             />
-            <Popover.Root
-              open={categoriesOpen}
-              onOpenChange={(open) => {
-                setCategoriesOpen(open);
-                setCategoryQuery('');
+            <SearchPicker
+              multiple
+              triggerLabel="Categories"
+              icon={<ListFilter size={16} aria-hidden="true" />}
+              className="app-category-trigger"
+              value={selectedCategories}
+              options={categories.map((value) => ({ value, label: categoryLabel(value) }))}
+              labels={{
+                choose: 'Filter by categories',
+                search: 'Search categories',
+                placeholder: 'Search categories',
+                clear: 'Clear category search',
+                list: 'App categories',
+                empty: 'No matching categories.',
               }}
-              modal
-            >
-              <Popover.Trigger
-                type="button"
-                className="button button-outline app-category-trigger"
-                data-filtered={selectedCategories.length > 0 || undefined}
-              >
-                <ListFilter size={16} aria-hidden="true" />
-                Categories
-                {selectedCategories.length > 0 && (
-                  <span className="app-category-count">{selectedCategories.length}</span>
-                )}
-                <ChevronDown size={12} aria-hidden="true" />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content
-                  className="menu app-category-panel"
-                  aria-label="Filter by categories"
-                  align="end"
-                  sideOffset={8}
-                  collisionPadding={12}
-                  onOpenAutoFocus={(event) => {
-                    event.preventDefault();
-                    categorySearch.current?.focus({ preventScroll: true });
-                  }}
-                >
-                  <SearchField
-                    inputRef={categorySearch}
-                    type="search"
-                    aria-label="Search categories"
-                    placeholder="Search categories"
-                    value={categoryQuery}
-                    onChange={(event) => setCategoryQuery(event.target.value)}
-                    onClear={() => setCategoryQuery('')}
-                  />
-                  <div className="app-category-options" role="group" aria-label="App categories">
-                    {categoryMatches.map((name) => (
-                      <label
-                        key={name}
-                        className="app-category-option"
-                        data-selected={selectedCategories.includes(name) || undefined}
-                      >
-                        <Checkbox
-                          checked={selectedCategories.includes(name)}
-                          onChange={() => toggleCategory(name)}
-                        />
-                        <span>{categoryLabel(name)}</span>
-                      </label>
-                    ))}
-                    {!categoryMatches.length && (
-                      <p className="app-category-empty">No matching categories.</p>
-                    )}
-                  </div>
-                  <div className="app-category-actions">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!selectedCategories.length}
-                      onClick={clearCategories}
-                    >
-                      Clear all
-                    </Button>
-                    <Popover.Close asChild>
-                      <Button variant="outline" size="sm">
-                        Done
-                      </Button>
-                    </Popover.Close>
-                  </div>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
+              onChange={(values) => {
+                setSelectedCategories(values);
+                setVisibleCount(24);
+              }}
+            />
           </div>
           {selectedCategories.length > 0 && (
             <div className="app-category-filters" aria-label="Selected categories">
@@ -856,13 +702,13 @@ export function Apps({
             )}
             {connected.length > 0 && (
               <section className="apps-group" aria-label="Connected apps">
-                {view === 'all' && <h2 id="apps-connected">Connected apps</h2>}
+                {view === 'all' && <h2 id="apps-connected">Connected</h2>}
                 {cards(connected)}
               </section>
             )}
             {view === 'all' && available.length > 0 && (
               <section className="apps-group" aria-labelledby="apps-available">
-                <h2 id="apps-available">{connected.length ? 'More apps' : 'Available apps'}</h2>
+                <h2 id="apps-available">More</h2>
                 {cards(available.slice(0, visibleCount), true)}
                 {available.length > visibleCount && (
                   <div className="app-catalog-end" ref={catalogEnd} aria-hidden="true" />
@@ -901,7 +747,7 @@ export function Apps({
                     } else if (view === 'connected') {
                       setView('all');
                       setVisibleCount(24);
-                      page.current?.querySelector<HTMLButtonElement>('[data-view="all"]')?.focus();
+                      document.getElementById(`${tabsId}-all`)?.focus();
                     } else {
                       void refreshCatalog();
                       appSearch.current?.focus();
@@ -921,25 +767,28 @@ export function Apps({
               </div>
             )}
             {view === 'all' && !catalogLoading && !catalogError && (
-              <div className="app-catalog-footer">
-                <p>
-                  {query.trim()
-                    ? `Explore other ways to connect “${query.trim()}”.`
-                    : 'Explore other ways to connect your tools.'}
-                </p>
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    onAsk(
-                      query.trim()
-                        ? `Help me connect ${query.trim()}. Check available integrations, or help me set up a custom connection.`
-                        : 'Help me connect another app. Find a way to connect based on what I need.',
-                    )
-                  }
-                >
-                  Ask Nod in chat
-                </Button>
-              </div>
+              <IntegrationCard
+                id="app-connection-help"
+                className="app-connection-help"
+                name="Connect another tool"
+                logo={<MessageCircle aria-hidden="true" />}
+                description="Tell Nod what you use and get help setting it up."
+                actions={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      onAsk(
+                        query.trim()
+                          ? `Help me connect ${query.trim()}. Guide me through setting it up.`
+                          : 'Help me connect a tool. Ask me which tool I want to connect, then guide me through setting it up.',
+                      )
+                    }
+                  >
+                    Ask Nod
+                  </Button>
+                }
+              />
             )}
           </div>
         </>
@@ -979,13 +828,43 @@ export function Apps({
           manageKeyboard.current = true;
         }}
       />
+      {manualMcp && (
+        <ManualMcpDialog
+          onClose={() => setManualMcp(false)}
+          onCreated={(id) => {
+            window.history.pushState(null, '', `/apps?connect=${id}`);
+            dialogService.current = '';
+            setDiscoveryId(id);
+            setManualMcp(false);
+          }}
+          returnFocus={() => manualMcpOrigin.current ?? manualMcpTrigger.current}
+        />
+      )}
       {discoveryId && (
         <AppDiscoveryDialog
           key={discoveryId}
           id={discoveryId}
-          onClose={() => window.location.assign('/apps')}
+          returnFocus={() =>
+            Array.from(
+              page.current?.querySelectorAll<HTMLButtonElement>(
+                '[data-manage-service],[data-connect-service]',
+              ) ?? [],
+            ).find(
+              (button) =>
+                button.dataset.manageService === dialogService.current ||
+                button.dataset.connectService === dialogService.current,
+            ) ??
+            manualMcpOrigin.current ??
+            manualMcpTrigger.current
+          }
+          onClose={() => {
+            window.history.replaceState(null, '', '/apps');
+            setDiscoveryId(null);
+            void refresh();
+          }}
           onConnected={(name) => {
             window.history.replaceState(null, '', '/apps');
+            setDiscoveryId(null);
             setAnnouncement(`${name} connected.`);
             void refresh();
             void refreshCatalog();

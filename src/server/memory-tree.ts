@@ -96,6 +96,7 @@ const archivedSchema = entryFields
       'stale',
       'obsolete',
       'contradicted',
+      'manual',
     ]),
     by: path.optional(),
   })

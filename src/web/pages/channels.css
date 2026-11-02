@@ -94,44 +94,6 @@
   gap: 16px;
 }
 
-.channel-option {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px 16px;
-  min-width: 0;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--dialog-radius);
-  background: var(--surface);
-}
-
-.channel-option > img {
-  align-self: start;
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-}
-
-.channel-option-copy {
-  min-width: 0;
-}
-
-.channel-option-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  min-height: 24px;
-}
-
-.channel-option-title h3 {
-  font-size: var(--text-control);
-  font-weight: 500;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
 .channel-chip {
   padding: 4px 12px;
   border-radius: var(--radius-full);
@@ -147,50 +109,25 @@
   color: var(--warning);
 }
 
-.channel-option-benefit,
-.channel-account-label,
-.channel-account-status {
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.channel-account-label {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 8px;
-  color: var(--text-secondary);
-}
-
-.channel-account-label > span {
-  color: var(--muted-foreground);
-}
-
 .channel-account-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
-@container (max-width: 580px) {
+@container (max-width: 960px) {
   .channel-options {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-@container (max-width: 400px) {
+@container (max-width: 480px) {
   .channel-option {
-    padding: 16px;
+    grid-template-columns: 28px minmax(0, 1fr);
   }
-}
-
-@media (pointer: coarse) {
-  .channel-connect,
-  .channel-account-actions > .button {
-    min-height: 40px;
+  .channel-option .integration-card-actions {
+    grid-column: 2;
   }
 }
 
@@ -314,19 +251,66 @@
   margin: 24px 0;
 }
 
-.channel-manage-identity {
+.channel-authorized-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.channel-identity-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.channel-chat {
   display: grid;
-  gap: 4px;
-  padding: 8px 0;
+  gap: 12px;
+  margin-top: 28px;
 }
 
-.channel-manage-identity strong {
-  color: var(--foreground);
-  font-size: var(--text-body);
+.channel-chat > h3 {
+  font-size: var(--text-control);
   font-weight: 500;
+  line-height: 1.5;
 }
 
-.channel-manage-identity span {
+.channel-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.channel-chat-phone:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.channel-chat-qr {
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--input-radius);
+  background: #fff;
+  line-height: 0;
+}
+
+.channel-chat-phone > p {
+  flex: 1 1 160px;
+  min-width: 0;
   color: var(--muted-foreground);
   font-size: var(--text-control);
+  line-height: 1.5;
+}
+
+@media (max-width: 420px) {
+  .channel-chat-actions > .button {
+    width: 100%;
+  }
 }

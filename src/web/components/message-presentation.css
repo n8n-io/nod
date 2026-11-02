@@ -1,4 +1,6 @@
 .message-presentation {
+  --presentation-actions-inset: 0px;
+  position: relative;
   container-type: inline-size;
   width: 100%;
   margin: 14px 0 6px;
@@ -11,13 +13,20 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+.message-presentation:has(> .presentation-expand) {
+  --presentation-actions-inset: 40px;
+}
 .chat-page .message .message-row > .message-bubble:has(.message-presentation) {
   width: min(calc(100% - var(--message-action-space)), 680px);
   max-width: calc(100% - var(--message-action-space));
 }
 .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
   width: 100%;
-  padding-right: 40px;
+}
+.chat-page .message .message-bubble > .message-body:has(> .message-presentation:only-child) {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .chat-page .message-body > .message-presentation:first-child {
   margin-top: 0;
@@ -25,20 +34,53 @@
 .chat-page .message-body > .message-presentation:last-child {
   margin-bottom: 0;
 }
-.presentation-heading {
-  padding: 18px 20px 16px;
+.presentation-expand.button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: opacity 120ms var(--ease-enter);
 }
-.presentation-heading h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  text-wrap: balance;
+.presentation-flights,
+.presentation-booking {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
-.presentation-heading p {
-  margin: 6px 0 0;
-  color: var(--muted-foreground);
-  font-size: 13px;
+.presentation-flights .flight-actions > .presentation-expand {
+  top: 2px;
+  right: 12px;
+}
+.presentation-flights .flight-airline-symbol > .presentation-expand,
+.presentation-booking .booking-symbol > .presentation-expand {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
+}
+.presentation-booking .booking-photo-frame > .presentation-expand {
+  top: auto;
+  right: 6px;
+  bottom: 6px;
+}
+.presentation-booking .booking-actions > .presentation-expand {
+  position: static;
+  flex: 0 0 auto;
+}
+.artifact-stage.is-presentation {
+  display: block;
+  overflow: auto;
+  padding: 24px;
+}
+.artifact-stage.is-presentation .message-presentation {
+  max-width: 1100px;
+  margin: 0 auto;
 }
 .message-presentation a {
   display: inline-flex;
@@ -49,6 +91,48 @@
 }
 .message-presentation a svg {
   flex: 0 0 auto;
+}
+.presentation-sources {
+  border-top: 1px solid var(--border);
+  padding: 4px 16px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.presentation-sources summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  min-height: 32px;
+  margin-inline-start: -8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  list-style: none;
+}
+.presentation-sources summary::-webkit-details-marker {
+  display: none;
+}
+.presentation-sources[open] summary svg {
+  transform: rotate(180deg);
+}
+.presentation-sources > div {
+  display: grid;
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+.presentation-sources p,
+.presentation-sources ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.presentation-sources a {
+  min-height: 28px;
+}
+.presentation-booking > .presentation-sources {
+  border: 0;
+  padding-block: 0;
 }
 .message-presentation :is(button, summary, a):focus-visible,
 .message-presentation [tabindex='0']:focus-visible {
@@ -65,7 +149,7 @@
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  border-radius: 5px;
+  border-radius: var(--radius-full);
   padding: 3px 7px;
   font-size: 11px;
   font-weight: 550;
@@ -97,154 +181,20 @@
   max-height: 480px;
   object-fit: contain;
 }
-.places-map {
-  position: relative;
-  height: 250px;
-  background: var(--surface-subtle);
-  border-block: 1px solid var(--border);
+.diagram-scroll {
+  min-width: 0;
   overflow: hidden;
-}
-.places-map iframe {
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-.places-map-label {
-  position: absolute;
-  top: 12px;
-  left: 16px;
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-.places-plot {
-  position: absolute;
-  inset: 24px 20px 44px;
-  background-image: radial-gradient(var(--border) 1px, transparent 1px);
-  background-size: 16px 16px;
-}
-.place-pin {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  color: var(--foreground);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  cursor: pointer;
-  font-weight: 550;
-}
-.place-pin[aria-pressed='true'] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--surface);
-  z-index: 1;
-}
-.load-map {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: max-content;
-  max-width: calc(100% - 24px);
-  min-height: 36px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--control-radius);
-  transform: translateX(-50%);
-  background: var(--surface);
-  color: var(--foreground);
-  cursor: pointer;
-  font-size: 12px;
-  box-shadow: var(--shadow-sm);
-}
-.load-map span {
-  color: var(--muted-foreground);
-  font-size: 10px;
-}
-.places-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.places-list li {
-  display: grid;
+  background: var(--surface-subtle);
   border-bottom: 1px solid var(--border);
 }
-.places-list li.is-selected {
-  background: var(--accent-soft);
-}
-.place-select {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  padding: 14px 20px 0;
-  border: 0;
-  text-align: left;
-  color: var(--foreground);
-  background: none;
-  cursor: pointer;
-}
-.place-select > span:last-child {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.place-select strong {
-  font-size: 13px;
-  font-weight: 550;
-}
-.place-select span span {
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-.place-index {
-  display: grid;
-  place-items: center;
-  flex: 0 0 24px;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--surface);
-  font-size: 11px;
-}
-.place-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 16px;
-  padding: 0 20px 4px 56px;
-  font-size: 12px;
-}
-.place-links a {
-  min-height: 44px;
-}
-.place-detail {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 20px;
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-.diagram-scroll {
-  max-height: 420px;
-  overflow: auto;
-  background: var(--surface-subtle);
-  border-block: 1px solid var(--border);
-  overscroll-behavior: contain;
-}
-.diagram-canvas {
+.diagram-fit {
   position: relative;
   margin: auto;
+}
+.diagram-canvas {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: top left;
 }
 .diagram-canvas svg {
   position: absolute;
@@ -318,20 +268,31 @@
   flex-basis: 100%;
   color: var(--muted-foreground);
 }
-@media (max-width: 640px) {
-  .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
-    padding-right: 12px;
-  }
-  .chat-page .message-body > .message-presentation:first-child {
-    margin-top: 26px;
-  }
-}
 @media (hover: hover) and (pointer: fine) {
+  :is(.presentation-flights, .presentation-booking) .presentation-expand.button {
+    opacity: 0;
+    pointer-events: none;
+  }
+  :is(.presentation-flights, .presentation-booking):is(:hover, :focus-within)
+    .presentation-expand.button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .message-presentation > .presentation-expand.button {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .message-presentation:is(:hover, :focus-within) > .presentation-expand.button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .presentation-sources summary:hover {
+    color: var(--foreground);
+    background: var(--control);
+  }
   .message-presentation a:hover {
     text-decoration: underline;
-  }
-  .place-select:hover {
-    background: var(--control);
   }
   .diagram-node:hover {
     border-color: var(--accent);
@@ -344,6 +305,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .presentation-expand.button,
   .diagram-node {
     transition: none;
   }

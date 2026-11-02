@@ -13,7 +13,12 @@ import { phonemize } from '@pedrobef/vozz/g2p';
 import { phonemizeSpeech } from './phonemizer.ts';
 import { localSpeechModels } from './models.ts';
 import { decodeLocalAudio } from './audio.ts';
-import { localSpeechCacheMarker, matchesSpeechFile, verifySpeechCache } from './cache.ts';
+import {
+  localSpeechCacheMarker,
+  localTranscriptionCacheMarker,
+  matchesSpeechFile,
+  verifySpeechCache,
+} from './cache.ts';
 
 const cacheDir = process.argv[2];
 if (!cacheDir || !process.send) process.exit(1);
@@ -63,14 +68,19 @@ function createTranscriber() {
   });
 }
 
-async function load() {
-  if (!transcriber && !(await verifySpeechCache(cacheDir, false))) throw new Error('cache');
+async function load(transcription = false) {
+  if (
+    (!transcriber || (!transcription && !synthesizer)) &&
+    !(await verifySpeechCache(cacheDir, false, transcription))
+  )
+    throw new Error('cache');
   transcriber ??= await createTranscriber();
-  synthesizer ??= await createSynthesizer();
+  if (!transcription) synthesizer ??= await createSynthesizer();
 }
 
-async function prepare(id: number) {
-  const total = localSpeechModels.reduce(
+async function prepare(id: number, transcription: boolean) {
+  const models = localSpeechModels.filter((model) => !transcription || model.name === 'whisper');
+  const total = models.reduce(
     (sum, model) => sum + model.files.reduce((sum, file) => sum + file.size, 0),
     0,
   );
@@ -81,7 +91,7 @@ async function prepare(id: number) {
       type: 'progress',
       progress: Math.floor(((completed + loaded) / total) * 100),
     });
-  for (const model of localSpeechModels) {
+  for (const model of models) {
     for (const file of model.files) {
       const destination = join(cacheDir, model.name, file.path);
       if (!(await matchesSpeechFile(destination, file.size, file.sha256))) {
@@ -123,9 +133,14 @@ async function prepare(id: number) {
       progress();
     }
   }
-  await load();
-  await writeFile(join(cacheDir, 'ready.json.download'), localSpeechCacheMarker, { mode: 0o600 });
-  await rename(join(cacheDir, 'ready.json.download'), join(cacheDir, 'ready.json'));
+  await load(transcription);
+  const name = transcription ? 'input-ready.json' : 'ready.json';
+  await writeFile(
+    join(cacheDir, `${name}.download`),
+    transcription ? localTranscriptionCacheMarker : localSpeechCacheMarker,
+    { mode: 0o600 },
+  );
+  await rename(join(cacheDir, `${name}.download`), join(cacheDir, name));
 }
 
 async function generate(text: string, voice: LocalVoice) {
@@ -218,15 +233,16 @@ process.on('message', async (raw: unknown) => {
     voice?: string;
     bytes?: Uint8Array;
     mimeType?: string;
+    transcription?: boolean;
   };
   if (!Number.isSafeInteger(message.id) || busy) return;
   busy = true;
   try {
     if (message.method === 'prepare') {
-      await prepare(message.id);
+      await prepare(message.id, message.transcription === true);
       process.send!({ id: message.id, type: 'ready' });
     } else {
-      await load();
+      await load(message.method === 'transcribe');
       if (
         message.method === 'transcribe' &&
         message.bytes instanceof Uint8Array &&

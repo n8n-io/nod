@@ -1,0 +1,79 @@
+.integration-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+}
+.integration-card-logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  color: var(--muted-foreground);
+}
+.integration-card-logo > :is(img, svg) {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.integration-card-copy {
+  min-width: 0;
+}
+.integration-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.integration-card-heading > h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-size: var(--text-control);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.integration-card-description,
+.integration-card-detail {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.5;
+}
+.integration-card-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.integration-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.integration-card-actions .button-icon {
+  width: 32px;
+  height: 32px;
+}
+@container (max-width: 400px) {
+  .integration-card {
+    gap: 12px;
+    padding: 16px;
+  }
+}
+@media (pointer: coarse) {
+  .integration-card-actions .button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}

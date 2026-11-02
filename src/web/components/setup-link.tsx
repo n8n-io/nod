@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2 } from './icons';
@@ -196,34 +197,35 @@ function SetupAction({
       </div>
     );
   return (
-    <a
-      data-setup={setup}
-      href={href}
-      target={href.startsWith('/apps?connect=') ? undefined : '_blank'}
-      rel={
-        setup === 'vault' && (vaultLink.test(href) || href.startsWith('/payments/'))
-          ? 'opener'
-          : 'noopener noreferrer'
-      }
-      referrerPolicy="no-referrer"
-      onClick={(event) => {
-        captureAnalytics('nod_setup_link_clicked', { setup });
-        if (
-          setup === 'vault' &&
-          !event.button &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.shiftKey &&
-          !event.altKey &&
-          entry?.open(href, event.currentTarget)
-        )
-          event.preventDefault();
-      }}
-      title={href.startsWith('https://') ? new URL(href).host : undefined}
-    >
-      <Icon size={16} aria-hidden="true" />
-      {label}
-    </a>
+    <Tooltip content={href.startsWith('https://') ? new URL(href).host : undefined}>
+      <a
+        data-setup={setup}
+        href={href}
+        target={href.startsWith('/apps?connect=') ? undefined : '_blank'}
+        rel={
+          setup === 'vault' && (vaultLink.test(href) || href.startsWith('/payments/'))
+            ? 'opener'
+            : 'noopener noreferrer'
+        }
+        referrerPolicy="no-referrer"
+        onClick={(event) => {
+          captureAnalytics('nod_setup_link_clicked', { setup });
+          if (
+            setup === 'vault' &&
+            !event.button &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.shiftKey &&
+            !event.altKey &&
+            entry?.open(href, event.currentTarget)
+          )
+            event.preventDefault();
+        }}
+      >
+        <Icon size={16} aria-hidden="true" />
+        {label}
+      </a>
+    </Tooltip>
   );
 }
 

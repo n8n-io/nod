@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ArrowUp, Paperclip } from './icons';
+import { ArrowUp, Mic, Paperclip } from './icons';
 import { BrandMark } from './brand';
 import { Skeleton } from './ui';
 import { readUiPreference } from '../lib/ui-preferences';
-import { desktopSettingsAvailable } from '../lib/desktop';
 
 function useElapsed(afterMs: number) {
   const [passed, setPassed] = useState(false);
@@ -32,23 +31,33 @@ export function ChatSkeleton({
   const conversation = readUiPreference('nod.chat-layout') === 'conversation';
   return (
     <div className="chat-page chat-skeleton" aria-busy="true">
-      {!desktopSettingsAvailable() && <div className="chat-report-action" aria-hidden="true" />}
       <div className="conversation-scroll">
         <div className="conversation-column" aria-hidden="true">
           {conversation ? (
             <div className="messages">
               {ghostTurns.flatMap((turn, index) => [
                 <div key={`user-${index}`} className="message message-user">
-                  <Skeleton className="ghost-bubble" style={{ width: turn.user }} />
+                  <div className="message-content">
+                    <div className="message-row">
+                      <div className="message-bubble" style={{ width: turn.user }}>
+                        <div className="message-body ghost-user-bubble">
+                          <Skeleton style={{ width: '68%' }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>,
                 <div key={`assistant-${index}`} className="message message-assistant">
-                  <div className="assistant-mark">
-                    <BrandMark small />
-                  </div>
-                  <div className="skeleton-lines">
-                    {turn.lines.map((width, line) => (
-                      <Skeleton key={line} style={{ width }} />
-                    ))}
+                  <div className="message-content">
+                    <div className="message-row">
+                      <div className="message-bubble" style={{ width: '78%' }}>
+                        <div className="message-body skeleton-lines">
+                          {turn.lines.map((width, line) => (
+                            <Skeleton key={line} style={{ width }} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>,
               ])}
@@ -62,6 +71,7 @@ export function ChatSkeleton({
         </div>
       </div>
       <div className="chat-bottom conversation-column">
+        <div className="chat-bottom-fade" aria-hidden="true" />
         <p className="skeleton-note" role="status">
           {long ? (
             <span key="long">Still working on it.</span>
@@ -74,14 +84,18 @@ export function ChatSkeleton({
         <div className="composer ghost-composer" aria-hidden="true">
           <p>Message Nod…</p>
           <div className="composer-tools">
-            <div className="composer-left">
+            <div className="composer-left" />
+            <div className="composer-right">
               <span className="button button-ghost button-icon">
                 <Paperclip size={16} />
               </span>
+              <span className="button button-ghost button-icon">
+                <Mic size={16} />
+              </span>
+              <span className="button button-icon send-button ghost-send">
+                <ArrowUp size={18} />
+              </span>
             </div>
-            <span className="button button-icon send-button ghost-send">
-              <ArrowUp size={18} />
-            </span>
           </div>
         </div>
       </div>
