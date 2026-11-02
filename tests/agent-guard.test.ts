@@ -168,13 +168,31 @@ test('answer choices remain ordinary questions with runtime-owned IDs and bounde
 test('live status stays out of chat replies and removes known secrets', async () => {
   const events: Array<{ type: string; summary: string }> = [];
   const statuses = ['Finding flights back from Copenhagen', 'Comparing flight prices'];
+  let delegated = false;
   const result = await fixture(
-    async (tools, emit) => {
+    async (tools, emit, options) => {
+      if (options.parentRunId) {
+        assert.equal(tools.has('set_status'), false);
+        delegated = true;
+        emit({ type: 'final', text: 'The synthetic flight comparison is complete.' });
+        return;
+      }
+      const status = tools.get('set_status')!;
+      assert.ok(status.eager, 'Live status must be available before tool discovery.');
+      for (const prompt of [options.systemPrompt, options.compactInstructions?.systemPrompt])
+        assert.ok(
+          prompt?.includes(status.name),
+          'Every model context needs the status capability.',
+        );
       await call(tools, 'set_status', { text: statuses[0] });
       await call(tools, 'set_status', { text: statuses[1] });
       await call(tools, 'set_status', { text: 'Checking synthetic-private-code' });
       await assert.rejects(call(tools, 'set_status', { text: ' '.repeat(3) }));
       await assert.rejects(call(tools, 'set_status', { text: 'x'.repeat(141) }));
+      await call(tools, 'delegate', {
+        title: 'Check synthetic flights',
+        instruction: 'Compare the two synthetic flight options.',
+      });
       emit({ type: 'final', text: 'Two flights meet your budget.' });
     },
     {
@@ -184,6 +202,7 @@ test('live status stays out of chat replies and removes known secrets', async ()
     },
     { redactError: (text) => String(text).replaceAll('synthetic-private-code', '[redacted]') },
   );
+  assert.equal(delegated, true);
   assert.deepEqual(
     events.filter(({ type }) => type === 'step').map(({ summary }) => summary),
     [...statuses, 'Checking [redacted]'],

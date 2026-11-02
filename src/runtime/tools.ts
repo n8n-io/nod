@@ -188,6 +188,7 @@ export const toolDefinitions = {
     'set_status',
     "Replace the live activity line without a chat message. Name current work briefly in the owner's language; never claim completion.",
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
+    true,
   ),
   skills: defineTool(
     'skills',
