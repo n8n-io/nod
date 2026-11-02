@@ -1900,9 +1900,11 @@ async function importRuntime() {
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
+else if (process.argv.includes('--quit')) app.exit();
 else {
   if (testInstall) process.on('SIGTERM', () => app.quit());
   app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--quit')) return void app.quit();
     const path = argv.map((value) => appOpenPath(value, appPages)).find(Boolean);
     if (path) pendingAppPath = path;
     showEngine();
