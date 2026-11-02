@@ -1,16 +1,40 @@
 import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
 import { modelProviders, type ModelProvider } from '../../shared/models';
+import {
+  onboardingSteps,
+  profileCompanySizes,
+  profileRoles,
+  profileScopes,
+  type OnboardingStep,
+  type ProfileCompanySize,
+  type ProfileRole,
+  type ProfileScope,
+} from '../../shared/onboarding';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 import { feedbackActivity } from './feedback-activity';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
-    step: 'welcome' | 'email' | 'brain' | 'privacy';
+    step: OnboardingStep;
     direction: 'forward' | 'back';
   };
   nod_onboarding_step_skipped: { step: 'email' };
+  nod_onboarding_profile_answered: {
+    scope: ProfileScope | 'skipped';
+    role: ProfileRole | 'other' | 'skipped';
+    company_size: ProfileCompanySize | 'skipped' | 'not_asked';
+    job_email: boolean;
+    job_calendar: boolean;
+    job_follow_ups: boolean;
+    job_errands: boolean;
+    job_research: boolean;
+    job_routines: boolean;
+    job_other: boolean;
+  };
+  nod_onboarding_community_opened: { channel: 'discord' | 'forum' };
+  nod_onboarding_updates_subscribed: undefined;
   nod_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
@@ -63,12 +87,27 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
+const booleans = [true, false];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   nod_onboarding_step_viewed: {
-    step: ['welcome', 'email', 'brain', 'privacy'],
+    step: onboardingSteps,
     direction: ['forward', 'back'],
   },
   nod_onboarding_step_skipped: { step: ['email'] },
+  nod_onboarding_profile_answered: {
+    scope: [...profileScopes.map((option) => option.id), 'skipped'],
+    role: [...profileRoles.map((option) => option.id), 'other', 'skipped'],
+    company_size: [...profileCompanySizes.map((option) => option.id), 'skipped', 'not_asked'],
+    job_email: booleans,
+    job_calendar: booleans,
+    job_follow_ups: booleans,
+    job_errands: booleans,
+    job_research: booleans,
+    job_routines: booleans,
+    job_other: booleans,
+  },
+  nod_onboarding_community_opened: { channel: ['discord', 'forum'] },
+  nod_onboarding_updates_subscribed: {},
   nod_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },

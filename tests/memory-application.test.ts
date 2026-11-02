@@ -21,6 +21,9 @@ import { createMemoryRecall } from '../src/server/memory-recall.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import Fastify from 'fastify';
+import { createOnboardingProfile } from '../src/server/onboarding-profile.ts';
+import { createN8nUpdates } from '../src/providers/n8n/updates.ts';
 
 type Step = {
   tool: string;
@@ -1297,3 +1300,127 @@ test(
     assert.equal(changed.sources[0].text, null);
   },
 );
+
+test('onboarding answers become one replaceable stated note and the email reaches only the updates service', async () => {
+  const memory = createMemoryService({
+    pool: {
+      query: async (sql: string) => ({
+        rows: sql.startsWith('SELECT to_char(now()') ? [{ now: new Date().toISOString() }] : [],
+      }),
+    } as unknown as pg.Pool,
+    ownerId: 'profile-owner',
+    store: memoryObjectStore(),
+  });
+  const sent: Array<{ url: string; headers: Headers; body: string }> = [];
+  let status = 202;
+  const updates = createN8nUpdates({
+    url: 'https://updates.example.test/webhook',
+    token: 'synthetic-updates-token-0123456789abcdef',
+    request: async (url, init) => {
+      sent.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: String(init?.body),
+      });
+      return new Response(null, { status });
+    },
+  });
+  const app = Fastify();
+  createOnboardingProfile({ memory, updates }).registerRoutes(app);
+  const unconfigured = Fastify();
+  createOnboardingProfile({ memory }).registerRoutes(unconfigured);
+  const notes = async () =>
+    (await memory.load()).entries.filter((entry) => entry.slug === 'onboarding');
+
+  const first = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: {
+      scope: 'work',
+      role: 'agency',
+      companySize: '2_10',
+      jobs: ['email', 'follow_ups'],
+      jobsText: 'Chase unpaid invoices',
+    },
+  });
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(
+    (await notes()).map(({ area, origin, text }) => ({ area, origin, text })),
+    [
+      {
+        area: 'about',
+        origin: 'stated',
+        text: 'Where they want Nod’s help: Mostly work. What they do: Agency. Company size: 2–10 people. What they want off their plate first: Stay on top of email; Make sure nothing slips; Chase unpaid invoices.',
+      },
+    ],
+  );
+
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: {
+      scope: 'personal',
+      roleText: 'Retired teacher',
+      jobs: [],
+      jobsText: 'Pay with 4242 4242 4242 4242',
+    },
+  });
+  const current = await notes();
+  assert.equal(current.length, 1);
+  assert.equal(
+    current[0]!.text,
+    'Where they want Nod’s help: Mostly personal life. What they do: Retired teacher.',
+  );
+  assert.notEqual(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/onboarding/profile',
+        payload: { role: 'astronaut', jobs: [] },
+      })
+    ).statusCode,
+    200,
+  );
+
+  assert.equal(
+    (
+      await unconfigured.inject({
+        method: 'POST',
+        url: '/api/onboarding/updates',
+        payload: { email: 'owner@example.test' },
+      })
+    ).statusCode,
+    404,
+  );
+  const subscribed = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/updates',
+    payload: { email: 'owner@example.test' },
+  });
+  assert.equal(subscribed.statusCode, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.url, 'https://updates.example.test/webhook');
+  assert.equal(
+    sent[0]!.headers.get('x-nod-updates-token'),
+    'synthetic-updates-token-0123456789abcdef',
+  );
+  assert.deepEqual(JSON.parse(sent[0]!.body), { version: 1, email: 'owner@example.test' });
+  status = 500;
+  const failed = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/updates',
+    payload: { email: 'owner@example.test' },
+  });
+  assert.equal(failed.statusCode, 502);
+  assert.notEqual(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/onboarding/updates',
+        payload: { email: 'not an address' },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.throws(() => createN8nUpdates({ url: 'http://updates.example.test/webhook', token: 't' }));
+});

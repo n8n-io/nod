@@ -6,9 +6,11 @@ import { Button } from '../../components/ui';
 
 const stepNames: Record<OnboardingStep, string> = {
   welcome: 'Welcome to Nod',
+  about: 'About you',
   email: 'Connect your email',
   brain: 'Connect an AI provider',
   privacy: 'Help improve Nod',
+  join: 'Stay up to date',
 };
 
 export function OnboardingFrame({

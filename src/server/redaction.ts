@@ -22,7 +22,7 @@ export function environmentSecrets(environment: Record<string, string | undefine
     .filter(
       ([key]) =>
         modelKeys.has(key) ||
-        /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
+        /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN|UPDATES_TOKEN)$/.test(
           key,
         ),
     )

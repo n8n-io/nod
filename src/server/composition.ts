@@ -52,6 +52,7 @@ import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
 import { createN8nFeedback } from '../providers/n8n/feedback.ts';
 import { createN8nTraces } from '../providers/n8n/traces.ts';
+import { createN8nUpdates } from '../providers/n8n/updates.ts';
 import { createOtlpTelemetry } from '../providers/otlp/telemetry.ts';
 import type { UsageTelemetry } from '../ports/provider-usage.ts';
 import { agentModels } from '../shared/model-defaults.ts';
@@ -133,6 +134,7 @@ import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
+import type { UpdatesSubscription } from '../ports/updates.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
 import { connectedGmail } from '../shared/onboarding.ts';
@@ -154,6 +156,7 @@ import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
 import { createPersonalService } from './personal.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
+import { createOnboardingProfile } from './onboarding-profile.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createMemoryRecall } from './memory-recall.ts';
@@ -209,6 +212,7 @@ export interface ApplicationAdapters {
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
   traces?: ModelTraceGate;
+  updates?: UpdatesSubscription;
   telemetry?: UsageTelemetry;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
@@ -569,6 +573,7 @@ export function createDefaultAdapters(
       recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
     traces,
+    updates: createN8nUpdates({ url: env.NOD_UPDATES_URL, token: env.NOD_UPDATES_TOKEN }),
     get model() {
       return models.current;
     },
@@ -826,6 +831,7 @@ async function initializeApplication(
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const onboardingProfile = createOnboardingProfile({ memory, updates: adapters.updates });
   const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   const communication = createCommunication({
@@ -2027,6 +2033,7 @@ async function initializeApplication(
     onboardingMissing: async () => (adapters.model.configured ? null : 'brain'),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
+    updates: onboardingProfile.available,
   }).register(app);
   ledger.registerRoutes(app);
   registerSpeechSettings(app, {
@@ -2044,6 +2051,7 @@ async function initializeApplication(
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
+  onboardingProfile.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;

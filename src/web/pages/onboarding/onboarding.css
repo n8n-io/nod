@@ -19,13 +19,13 @@
 .ob strong {
   font-weight: 500;
 }
-.ob a,
+.ob a:not(.button),
 .ob-link {
   color: var(--link);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.ob a:hover,
+.ob a:not(.button):hover,
 .ob-link:hover:not(:disabled) {
   color: var(--link-hover);
 }

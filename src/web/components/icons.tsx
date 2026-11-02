@@ -76,6 +76,7 @@ export const ArrowLeft = n8n('arrow-left');
 export const ArrowRight = n8n('arrow-right');
 export const ArrowUp = n8n('arrow-up');
 export const ArrowUpRight = n8n('arrow-up-right');
+export const At = n8n('at');
 export const Bell = n8n('bell');
 export const Blocks = n8n('blocks');
 export const Bold = n8n('text-b');

@@ -1,7 +1,7 @@
 const prefix = 'nod.onboarding.';
 const stepCookie = 'nod_onboarding_step';
 
-function readStored<T>(key: string): T | undefined {
+export function readStored<T>(key: string): T | undefined {
   try {
     const value = window.sessionStorage.getItem(prefix + key);
     return value === null ? undefined : (JSON.parse(value) as T);
@@ -10,7 +10,7 @@ function readStored<T>(key: string): T | undefined {
   }
 }
 
-function writeStored(key: string, value: unknown) {
+export function writeStored(key: string, value: unknown) {
   try {
     window.sessionStorage.setItem(prefix + key, JSON.stringify(value));
   } catch {}

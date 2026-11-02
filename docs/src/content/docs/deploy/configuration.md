@@ -178,6 +178,8 @@ To switch to polling, remove the webhook with Telegram's [deleteWebhook method](
 | `NOD_FEEDBACK_TOKEN`              | Server-only authentication sent as `x-nod-feedback-token` to the configured feedback collector.                                      | Empty                                                                                                                                       |
 | `NOD_TRACES_URL`                  | The HTTPS address that receives conversation traces from owners who opt in. An empty value turns traces off for everyone.            | The Nod team at n8n                                                                                                                         |
 | `NOD_TRACES_TOKEN`                | The token sent as `x-nod-traces-token` with each trace. Without it, Nod sends no traces and hides the switch.                        | Empty; official desktop builds include one                                                                                                  |
+| `NOD_UPDATES_URL`                 | The HTTPS address that receives the email addresses owners enter to get occasional updates during onboarding.                        | Empty                                                                                                                                       |
+| `NOD_UPDATES_TOKEN`               | The token sent as `x-nod-updates-token` with each sign-up. Without it or `NOD_UPDATES_URL`, onboarding hides the email option.       | Empty                                                                                                                                       |
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
 

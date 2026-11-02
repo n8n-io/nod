@@ -24,6 +24,7 @@ export function createAccountSession(options: {
   onboardingMissing?(): Promise<'brain' | 'email' | null>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
+  updates?: boolean;
   prepare?(signal: AbortSignal): Promise<void>;
 }) {
   const origin = new URL(options.origin).origin;
@@ -76,6 +77,7 @@ export function createAccountSession(options: {
       capabilities: {
         developer: Boolean(options.developerIds?.has(owner)),
         traces: options.traces === true,
+        updates: options.updates === true,
       },
       ...(options.analytics ? { analytics: options.analytics.configuration(owner) } : {}),
     };
