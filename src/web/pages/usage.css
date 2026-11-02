@@ -83,6 +83,9 @@
 .vault-use-text .usage-models > span {
   color: var(--foreground);
 }
+.usage-row-cost.is-label {
+  color: var(--muted-foreground);
+}
 .vault-use-text span.is-error {
   color: var(--error);
 }

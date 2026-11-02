@@ -37,6 +37,8 @@ const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UT
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
 const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
+const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
+const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
 const cost = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -381,7 +383,8 @@ export function createLedger({
              WHERE t.owner_id=$1 AND t.session_id=$2 AND t.source IN ('user','task')
                AND (t.created_at,t.id)<=(c.created_at,c.id)
            ORDER BY t.created_at DESC,t.id DESC LIMIT 1
-         ) SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
+         ) SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent,
+           COALESCE(sum((details->>'estimateUsd')::float8) FILTER (WHERE cost_usd IS NULL),0)::float8 AS plan
          FROM model_usage m LEFT JOIN turns t ON t.id=m.turn_id AND t.owner_id=m.owner_id
          WHERE m.owner_id=$1 AND COALESCE(m.session_id,t.session_id)=$2
            AND (m.created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
@@ -389,7 +392,10 @@ export function createLedger({
         [ownerId, sessionId, turnId],
       ),
     ]);
-    return taskUsd === null ? undefined : { budgetUsd: taskUsd, spentUsd: spent.rows[0].spent };
+    const { spent: spentUsd, plan: planUsd } = spent.rows[0];
+    return taskUsd === null
+      ? undefined
+      : { budgetUsd: taskUsd, spentUsd, ...(planUsd > 0 ? { planUsd } : {}) };
   }
 
   async function attributeMediaUsage(client: PoolClient, ids: string[], turnId: string) {
@@ -423,14 +429,15 @@ export function createLedger({
            WHERE m.owner_id=$1 AND th.owner_id=$1 AND th.archived_at IS NULL
              AND m.thread_id=u.thread_id AND ((m.turn_id=u.id AND m.role='assistant') OR m.id=u.message_id)
            ORDER BY (m.turn_id=u.id AND m.role='assistant') DESC NULLS LAST,m.created_at DESC,m.id DESC LIMIT 1) AS message_id,
-         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.models,
+         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.models,c.plan,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
            FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
              AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
            WHERE a.turn_id=u.id AND a.owner_id=$1) AS actions
        FROM turns u
-       LEFT JOIN LATERAL (SELECT sum(cost_usd)::float8 AS cost,
+       LEFT JOIN LATERAL (SELECT count(*) AS used,sum(cost_usd)::float8 AS cost,
+           bool_or(${planUsage}) AS plan,bool_or(${unpricedUsage}) AS unpriced,
            jsonb_agg(DISTINCT jsonb_build_object(
              'provider',NULLIF(details->>'provider',''),
              'model',NULLIF(details->>'model',''),
@@ -438,7 +445,7 @@ export function createLedger({
          FROM model_usage WHERE turn_id=u.id AND owner_id=$1) c ON true
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
          AND ($4::uuid IS NULL OR u.session_id=$4)
-         AND (c.models IS NOT NULL OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id AND a.owner_id=$1))
+         AND (c.used>0 OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id AND a.owner_id=$1))
        ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
       [ownerId, before?.at ?? null, before?.id ?? null, session ?? null],
     );
@@ -449,7 +456,14 @@ export function createLedger({
       ...describe(row),
       channel: String(row.channel).split(':')[0]!,
       error: row.status === 'failed' ? row.error : null,
-      costUsd: row.cost,
+      costUsd: row.cost > 0 ? row.cost : null,
+      ...(row.cost > 0
+        ? {}
+        : row.plan
+          ? { pricing: 'plan' }
+          : row.unpriced
+            ? { pricing: 'unpriced' }
+            : {}),
       models: (row.models ?? []).sort(
         (a: TrustEntry['models'][number], b: TrustEntry['models'][number]) =>
           `${a.provider ?? ''}:${a.model ?? ''}:${a.billing}`.localeCompare(
@@ -481,7 +495,11 @@ export function createLedger({
              AND created_at>now()-interval '7 days')::int AS actions,
            (SELECT COALESCE(sum(cost_usd),0) FROM model_usage WHERE owner_id=$1
              AND created_at>now()-interval '7 days')::float8 AS week,
-           EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND cost_usd IS NULL AND NOT (details ? 'estimateUsd')
+           (SELECT COALESCE(sum((details->>'estimateUsd')::float8),0) FROM model_usage WHERE owner_id=$1
+             AND ${planUsage} AND created_at>now()-interval '7 days')::float8 AS week_plan,
+           (SELECT COALESCE(sum((details->>'estimateUsd')::float8),0) FROM model_usage WHERE owner_id=$1
+             AND ${planUsage} AND created_at>=${monthStart})::float8 AS month_plan,
+           EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND ${unpricedUsage}
              AND created_at>=${monthStart}) AS unpriced,
            EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND cost_usd IS NULL AND details ? 'estimateUsd'
              AND created_at>=${monthStart}) AS plan_usage,
@@ -504,13 +522,19 @@ export function createLedger({
     for (const { day, cost } of daily.rows) if (day <= days.length) days[day - 1] = cost ?? 0;
     const spent = days.reduce((sum, value) => sum + value, 0);
     return {
-      week: { things: row.things, actions: row.actions, spentUsd: row.week },
+      week: {
+        things: row.things,
+        actions: row.actions,
+        spentUsd: row.week,
+        planUsd: row.week_plan,
+      },
       month: {
         start: row.start.toISOString(),
         days: row.days,
         elapsedDays: elapsed,
         spentUsd: spent,
         forecastUsd: (spent / Math.max(elapsed, 1)) * row.days,
+        planUsd: row.month_plan,
         daily: days,
         unpriced: row.unpriced,
         planUsage: row.plan_usage,

@@ -175,6 +175,13 @@ function Month({ view }: { view: TrustView }) {
           format,
         )
       : undefined;
+  const notes = [
+    month.planUsd > 0 &&
+      `Your ChatGPT plan covered about ${money(month.planUsd)}${month.spentUsd > 0 ? ' more' : ''} at API prices.`,
+    month.unpriced && 'Some usage has no price in Nod, such as a local or free model.',
+  ].filter((note): note is string => Boolean(note));
+  const chart = month.spentUsd > 0 || !notes.length;
+  const Note = chart ? 'small' : 'span';
   return (
     <div className="usage-month" data-analytics-private>
       {month.spentUsd > 0 && (
@@ -183,8 +190,10 @@ function Month({ view }: { view: TrustView }) {
           {crossing && `, reaching your limit around ${crossing}`}
         </span>
       )}
-      <Chart month={month} limit={limit?.monthlyUsd} />
-      {month.unpriced && <small>Some API usage has no price, so it isn’t counted here.</small>}
+      {chart && <Chart month={month} limit={limit?.monthlyUsd} />}
+      {notes.map((note) => (
+        <Note key={note}>{note}</Note>
+      ))}
     </div>
   );
 }
@@ -247,7 +256,10 @@ function MonthlyLimit({
           Remove
         </Button>
       )}
-      <small>At the limit, new requests pause until {resets}.</small>
+      <small>
+        At the limit, new requests pause until {resets}.
+        {(view.month.planUsd > 0 || view.month.unpriced) && ' Only paid usage counts.'}
+      </small>
       {error && <Notice>{error}</Notice>}
     </form>
   );
@@ -269,6 +281,7 @@ function UsageSummary({
     timeZone: format.timeZone,
   });
   const resets = date(Date.parse(month.start) + month.days * day + day / 2, format);
+  const planNote = month.planUsd > 0 ? ' beyond your ChatGPT plan' : '';
   const limitForm = (close: () => void) => (
     <MonthlyLimit
       view={view}
@@ -297,7 +310,10 @@ function UsageSummary({
     <div className="usage-overview">
       <p className="statement-summary usage-sentence">
         Your usage is{' '}
-        <StatementValue text={money(month.spentUsd)} label={`API spending in ${name}`}>
+        <StatementValue
+          text={limit || month.spentUsd > 0 ? money(month.spentUsd) : 'nothing'}
+          label={`API spending in ${name}`}
+        >
           {() => <Month view={view} />}
         </StatementValue>
         {limit ? (
@@ -306,13 +322,12 @@ function UsageSummary({
             of{' '}
             <StatementValue text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
-            </StatementValue>{' '}
-            in {name}
+            </StatementValue>
+            {planNote} in {name}
           </>
         ) : (
           <>
-            {' '}
-            in {name}, with{' '}
+            {planNote} in {name}, with{' '}
             <StatementValue text="no monthly limit" label="Monthly limit">
               {limitForm}
             </StatementValue>
@@ -383,11 +398,17 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
           </Tooltip>
         ))}
       </span>
-      {showCosts && entry.costUsd !== null && (
+      {showCosts && entry.costUsd !== null ? (
         <span className="usage-row-cost">
           {money(entry.costUsd)}
           {models.some((model) => model.billing === 'plan') && <small>API</small>}
         </span>
+      ) : (
+        entry.pricing && (
+          <span className="usage-row-cost is-label">
+            {entry.pricing === 'plan' ? 'ChatGPT plan' : 'No price'}
+          </span>
+        )
       )}
     </>
   );

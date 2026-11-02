@@ -28,6 +28,18 @@ Chat messages don't include cost or action receipts. Review spending and app act
 
 With an API model selected, select this month's total to see a chart and a forecast, such as "On track for $12.40". Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
+## How each model is priced
+
+How Nod counts usage depends on how you pay for the model.
+
+| You use                                                                                                            | Pricing                                      | Monthly limit | Task check-ins       |
+| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ------------- | -------------------- |
+| A paid model through an API key or a cloud account, such as OpenAI, Anthropic, OpenRouter or Amazon Bedrock        | Estimated API cost                           | Counts        | Counts               |
+| A ChatGPT plan                                                                                                     | API-price estimate of what your plan covered | Doesn't count | Counts at API prices |
+| A model with no price, such as an [OpenAI-compatible server](/connect/local-models/), a free model or a token plan | **No price**                                 | Doesn't count | Doesn't count        |
+
+Costs are Nod's estimates from each model's API price. Your provider's bill is the final word. Any request whose API price Nod doesn't know shows **No price**, on a ChatGPT plan too, as does a voice reply or transcription without a known price.
+
 ## Set a monthly limit
 
 1. Select an API model and open **Usage**.
@@ -54,9 +66,9 @@ When the month's spending reaches your limit:
 
 The pause lifts at the start of next month, or as soon as you raise or remove the limit.
 
-:::caution[Some usage has no price]
-Usage on a ChatGPT plan doesn't count toward the monthly limit. Its rows identify the plan instead of a cost. Switching to a plan doesn't remove an existing monthly limit or its recorded API spending; if that limit is already reached, new requests stay paused. Select an API model to review the limit. Nod doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0. It doesn't count toward the limit or task check-ins. API costs are Nod's estimates. Your provider's bill is the final word.
-:::
+Only paid usage with a known price counts toward the limit. See [How each model is priced](#how-each-model-is-priced).
+
+Switching to a ChatGPT plan doesn't remove an existing monthly limit or its recorded API spending. If that limit is already reached, new requests stay paused. Select an API model to review the limit.
 
 ## Task check-ins
 
@@ -75,7 +87,7 @@ An action that your words cover needs one authorization review. If it needs appr
 
 To reduce repeated questions, set [rules for what Nod can do directly](/trust/approvals/#your-rules). Nod can change from an app tool to the same service's website when the account and requested outcome stay the same. It also reuses saved procedures and writing style. Routine drafts do not require fresh style samples, and optional offers do not require extra schedule or history reads.
 
-Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra.
+Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra. The check-in says how much of the amount is plan usage.
 
 ### Change when tasks check in
 

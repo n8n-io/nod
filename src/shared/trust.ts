@@ -24,6 +24,7 @@ export interface TrustEntry {
   error: string | null;
   costUsd: number | null;
   models: TrustModel[];
+  pricing?: 'plan' | 'unpriced';
   actions: TrustAction[];
 }
 
@@ -33,13 +34,14 @@ export interface TrustPage {
 }
 
 export interface TrustView extends TrustPage {
-  week: { things: number; actions: number; spentUsd: number };
+  week: { things: number; actions: number; spentUsd: number; planUsd: number };
   month: {
     start: string;
     days: number;
     elapsedDays: number;
     spentUsd: number;
     forecastUsd: number;
+    planUsd: number;
     daily: number[];
     unpriced: boolean;
     planUsage: boolean;
