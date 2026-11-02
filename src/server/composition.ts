@@ -1518,8 +1518,8 @@ async function initializeApplication(
       present: communication.present,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
-      observeTurn: (turnId, operation) =>
-        analytics.withRun(ownerId, operation, turnId).finally(() => {
+      observeTurn: (_turnId, operation) =>
+        analytics.withRun(ownerId, operation).finally(() => {
           void admission
             .run(() => proactivity.due())
             ?.catch((error) => logFailure('proactivity_wake', error));
@@ -1949,7 +1949,6 @@ async function initializeApplication(
   const app = await createApp({
     failureLog: diagnostics.failure,
     analytics: captureAnalytics,
-    linkReplay: analytics.linkReplay,
     admission,
     artifacts,
     submitMessage: userMessages.submit,

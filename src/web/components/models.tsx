@@ -488,7 +488,7 @@ export function ModelSettings({
     <div className="model-settings">
       {!!available && (
         <div className="model-current">
-          <div className="model-current-label" data-analytics-public>
+          <div className="model-current-label">
             <strong>Your model</strong>
             <span>
               {selectedModel?.audio
@@ -501,7 +501,7 @@ export function ModelSettings({
           <ModelPicker manageConnections={false} surface="settings" />
         </div>
       )}
-      <p className="model-intro" data-analytics-public>
+      <p className="model-intro">
         Connect as many services as you want. All their models appear in one list.
       </p>
       <div className="model-provider-search">
@@ -551,7 +551,7 @@ export function ModelSettings({
               key={provider}
               aria-label={modelProviderNames[provider]}
             >
-              <div className="model-service-heading" data-analytics-public>
+              <div className="model-service-heading">
                 <div className="model-service-identity">
                   <ModelProviderLogo provider={provider} size={20} />
                   <div>

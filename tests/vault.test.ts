@@ -3452,7 +3452,7 @@ test('analytics routes collapse private paths to known pages', async () => {
     assert.equal(analyticsRoute(path), route, path);
   assert.equal(
     sanitizedAnalyticsUrl('/payments/synthetic-private-id?code=1'),
-    'https://nod.invalid/payments',
+    'https://app.nod.example/payments',
   );
 });
 
@@ -4039,7 +4039,6 @@ const client={
  reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){},
 };
 const {setAnalyticsClient,configureAnalytics,analyticsForCurrentSession}=await import('./src/web/lib/analytics.ts');
-const {recordingOptions}=await import('./src/web/lib/analytics-privacy.ts');
 const {setRequestAccount}=await import('./src/web/lib/api.ts');
 const {createElement,act}=await import('react');
 const {createRoot}=await import('react-dom/client');
@@ -4062,7 +4061,6 @@ let root=createRoot(document.getElementById('root'));
 const render=element=>act(async()=>root.render(element));
 const count=name=>events.filter(event=>event.event===name).length;
 await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
-check('UI1-chart-blocked',document.querySelector('.message-presentation').matches(recordingOptions.blockSelector));
 check('UI2-not-mounted',count('nod_presentation_viewed')===0);
 await act(async()=>visible('.message-presentation'));
 await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
@@ -4074,7 +4072,6 @@ await act(async()=>visible('.message-presentation'));
 check('UI2-hidden-tab',count('nod_presentation_viewed')===1);
 Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
 await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
-check('UI1-diagram-blocked',document.querySelector('.message-presentation').matches(recordingOptions.blockSelector));
 check('UI2-holdout',events.filter(event=>event.event==='nod_presentation_viewed').map(event=>event.properties.kind).join(',')==='chart,diagram');
 const file={id:'00000000-0000-4000-8000-000000000001',url:'/api/artifacts/00000000-0000-4000-8000-000000000001',name:privateValue+'.txt',size:12,mimeType:'text/plain'};
 window.fetch=globalThis.fetch=async()=>new Response('Private file', {headers:{'content-type':'text/plain'}});

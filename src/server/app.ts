@@ -69,7 +69,6 @@ function messageView(row: Message & { assistantReaction?: MessageReaction | null
 export interface AppDependencies {
   failureLog?: FailureLogSink;
   analytics?: CaptureAnalytics;
-  linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
   artifacts?: ArtifactService;
   speech?: SpeechService;
@@ -348,8 +347,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
         clientMessageId,
       },
     );
-    const replaySession = z.uuid().safeParse(request.headers['x-nod-replay-session']).data;
-    if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
     return submitted;
   });
   app.post('/api/thread/stop', () => {

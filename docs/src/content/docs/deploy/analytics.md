@@ -1,11 +1,11 @@
 ---
-title: Analytics and recordings
+title: Analytics
 description: What usage data Nod collects, how to turn it off, and what its measurements can explain.
 sidebar:
   order: 4
 ---
 
-Nod shares bounded product events and masked session recordings so the team can understand usage, reliability, and cost.
+Nod shares bounded product events so the team can understand usage, reliability, and cost. These analytics never record your screen or session.
 
 Usage sharing is on for new owners. Data goes to the n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
@@ -13,7 +13,7 @@ Messages, generated content, connected-app results, credentials, and free-form i
 
 ## Turn usage sharing on or off
 
-Change **Share usage data** in **Settings → General**. Existing owners keep their saved choice. Onboarding's privacy step explains sharing; the native Welcome window sends no events or recordings.
+Change **Share usage data** in **Settings → General**. Existing owners keep their saved choice. Onboarding's privacy step explains sharing; the native Welcome window sends no events.
 
 The deployment must also allow collection. `NOD_ANALYTICS_ENABLED=false` always disables it.
 
@@ -22,17 +22,17 @@ flowchart LR
   deploy{{Deployment<br/>allows it?}} -- yes --> owner{{Share usage data<br/>on?}}
   deploy -- no --> off[Nothing sent]:::stop
   owner -- no --> off
-  owner -- yes --> on[Events and<br/>masked recordings]:::go
+  owner -- yes --> on[Product events]:::go
 ```
 
-| Setting                     | Effect                                                                                         |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `NOD_ANALYTICS_ENABLED`     | `false` disables events and recordings. `true` enables availability, including in development. |
-| `NOD_ANALYTICS_ENVIRONMENT` | Labels source-install events `production` or `development`; it doesn't enable collection.      |
+| Setting                     | Effect                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `NOD_ANALYTICS_ENABLED`     | `false` disables analytics events. `true` enables availability, including in development. |
+| `NOD_ANALYTICS_ENVIRONMENT` | Labels source-install events `production` or `development`; it doesn't enable collection. |
 
 Restart Nod after changing either variable. To disable the separate feedback collector too, set `NOD_FEEDBACK_ENABLED=false`. Model providers, connected services, and software updates have separate network access.
 
-Opt-out drops unsent events and recordings. Turning sharing back on doesn't revive events from the earlier sharing period. It can't recall events already transmitted.
+Opt-out drops unsent events. Turning sharing back on doesn't revive events from the earlier sharing period. It can't recall events already transmitted.
 
 ### Stop sharing or delete past data
 
@@ -71,9 +71,7 @@ UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Serve
 
 Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
-Replay metadata includes masked snapshot data, source and byte size; fixed recording status, trigger status, start/flush reason, and script/configuration/error booleans; and nonnegative integer buffer-length, buffer-size, and flushed-size counters. These diagnostics contain no error messages, console output, or network payloads.
-
-Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. Web turns can also carry the sending tab's PostHog `$session_id`. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
+Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating category. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
 Owner-authored messages in Tasks are owner-requested background work. Work category and owner request are separate dimensions; automatic task activity isn't owner-requested.
 
@@ -85,7 +83,7 @@ Server events must pass a strict schema. UI events keep only allowed properties 
 
 | Event                                                     | What it records                                                                                              |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `$pageview`, `$snapshot`                                  | Normalized app route or masked replay data. URLs become `https://nod.invalid` routes.                        |
+| `$pageview`                                               | Normalized app route. URLs use the placeholder `https://app.nod.example` host.                               |
 | `nod_onboarding_step_viewed`                              | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
 | `nod_onboarding_step_skipped`                             | Skipped `email` step.                                                                                        |
 | `nod_onboarding_completed`                                | First saved completion and selected model provider, when available.                                          |
@@ -196,14 +194,13 @@ Mean, median, and p90 use samples with at least one priced request and can repre
 
 NPS, reasons for leaving, role, company size, AI experience, and preferred AI tools are not collected. Usage events cannot establish satisfaction, useful task completion, trust, or why someone never returns. These remain questions for separate research.
 
-## What recordings show
+## Collection safeguards
 
-Recordings show navigation, layout, controls, scrolling, and clicks with private content removed.
+Nod does not collect session recordings, screen captures, DOM snapshots, or replay metadata for analytics. The recorder is disabled and snapshot events are rejected.
 
-- All input values and text are masked except static product labels marked public.
-- Chat, answer choices, artifacts, attachments, tasks, Usage details, account names, credentials, Vault values, and the remote browser view are blocked.
-- Images, media, iframes, and canvases are blocked. URLs become fixed `https://nod.invalid` app routes.
-- Console output, network payloads, autocapture, automatic exceptions, and feature-flag events are disabled. Remote survey popups are disabled.
+Page URLs use `https://app.nod.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
+
+Autocapture, console and network capture, automatic exceptions, feature-flag events, and remote survey popups are disabled.
 
 Capture failures don't interrupt Nod. PostHog configuration and model keys never enter the workspace.
 

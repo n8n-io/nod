@@ -13,6 +13,8 @@ const output = resolve(
   process.env.NOD_ANALYTICS_FIXTURE_OUTPUT ?? join(tmpdir(), `nod-analytics-${randomUUID()}.json`),
 );
 const events: unknown[] = [];
+let recordingRequests = 0;
+let remoteConfigurationRequests = 0;
 const privateText = 'SYNTHETIC_PRIVATE_CANARY_89271';
 function decode(value: unknown): unknown {
   if (typeof value === 'string' && value.charCodeAt(0) === 31 && value.charCodeAt(1) === 139)
@@ -143,6 +145,7 @@ const server = createServer(async (request, response) => {
     url.pathname === '/flags/' ||
     url.pathname === '/decide/'
   ) {
+    remoteConfigurationRequests++;
     json({
       supportedCompression: ['gzip'],
       featureFlags: {},
@@ -153,6 +156,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (['/i/v0/e/', '/e/', '/s/', '/batch/'].includes(url.pathname)) {
+    if (url.pathname === '/s/') recordingRequests++;
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     let body = Buffer.concat(chunks);
@@ -180,6 +184,12 @@ const server = createServer(async (request, response) => {
     json({
       enabled: usageData,
       count: events.length,
+      recordingEvents: events.filter(
+        (event) =>
+          event && typeof event === 'object' && 'event' in event && event.event === '$snapshot',
+      ).length,
+      recordingRequests,
+      remoteConfigurationRequests,
       privateDataLeaked: serialized.includes(privateText),
       generatedContentLeaked: hasGeneratedNode(decoded),
       ...(url.searchParams.get('compact') === '1' ? {} : { events: decoded }),

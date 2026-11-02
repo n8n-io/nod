@@ -43,7 +43,6 @@ export function AccountMenuItems({
             ? `${/Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control'}+,`
             : undefined
         }
-        data-analytics-public
         onClick={(event) => openSettings('General', event.currentTarget)}
       >
         <Settings size={16} aria-hidden="true" />

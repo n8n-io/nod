@@ -111,7 +111,7 @@ export function DesktopOptions({
         ] as const
       ).map(([key, label, Icon]) => (
         <div className="account-preference-row" key={key}>
-          <span data-analytics-public>
+          <span>
             <Icon size={16} aria-hidden="true" />
             {label}
           </span>

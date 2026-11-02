@@ -7,7 +7,7 @@ sidebar:
 
 Change the event schema, collectors, privacy checks, and dashboards together.
 
-[Analytics and recordings](/deploy/analytics/) is the collection contract with users. Update it in the same change as the implementation.
+[Analytics](/deploy/analytics/) is the collection contract with users. Update it in the same change as the implementation.
 
 ## Collection rules
 
@@ -47,13 +47,15 @@ Events fired while sharing is off are lost. Don't replay them when sharing turns
 
 Committed output delivery, visible presentation, artifact view, and artifact action are different events. `download_requested` means a browser request; `download` follows a successful native save. `open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted. Answer-choice collectors report mode and bounded option/selection counts; they still require integration with that feature's actual renderer and successful submission.
 
-## Keep recordings private
+## Keep capture bounded
 
-Recordings mask text and inputs by default. Block any surface that shows owner, model, app, or website content using `data-analytics-private` or the `blocked` selectors in `analytics-privacy.ts`.
+Session recordings are disabled. Don't load a recorder, capture DOM snapshots, or forward replay identifiers. The UI capture boundary rejects snapshot events and replay properties.
 
-Use `data-analytics-public` only for static product labels. Answer text, artifacts, account labels, and errors remain private.
+Use normalized app routes for navigation. Keep the `https://nod.invalid` placeholder host; real hosts, private IDs, query strings, and fragments must not enter analytics.
 
-Opt-out must discard queued/retry events and recordings. Asynchronous callbacks from an earlier account or sharing period must not capture into the new one.
+`data-analytics-private` still prevents user-triggered feedback screenshots on sensitive screens. Keep those markers when changing a private surface.
+
+Opt-out must discard queued and retry events. Asynchronous callbacks from an earlier account or sharing period must not capture into the new one.
 
 ## Change or remove a contract
 
@@ -113,7 +115,7 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 
 1. Run focused regression tests, then `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`.
 2. Run `pnpm exec tsx scripts/analytics-fixture.ts`. It selects an available port and prints its URL. Use synthetic data, exercise the changed UI, and inspect `/__fixture__/summary`.
-3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
+3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. `recordingEvents`, `recordingRequests`, and `remoteConfigurationRequests` must all be zero. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
 4. Check opt-out, account changes, stale callbacks, retries, hidden views, and private content. Tests must intercept transport rather than send synthetic production events.
 5. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
 
@@ -122,6 +124,6 @@ Fixture results prove controlled transport behavior, not live delivery or produc
 ## Related resources
 
 - [Contribute to Nod](/contribute/)
-- [Analytics and recordings](/deploy/analytics/)
+- [Analytics](/deploy/analytics/)
 - [Your data and privacy](/trust/privacy/)
 - [Checks and tests](/contribute/checks-and-tests/)

@@ -24,7 +24,6 @@ export interface AnalyticsDelivery {
   appVersion?: string;
   consentRevision?: string;
   runId?: string;
-  replaySessionId?: string;
 }
 export type CaptureAnalytics = {
   (event: AnalyticsEvent, delivery?: AnalyticsDelivery): void;
@@ -143,7 +142,6 @@ export async function createAnalytics(options: {
   const runs = new AsyncLocalStorage<{
     owner: string;
     id: string;
-    turnId?: string;
     consent: ReturnType<typeof consent>;
     model?: TurnModel;
     work?: { work_type: 'immediate' | 'scheduled' | 'background'; owner_requested: boolean };
@@ -153,7 +151,6 @@ export async function createAnalytics(options: {
     activity: z.infer<typeof systemActivity>;
     consent: ReturnType<typeof consent>;
   }>();
-  const replaySessions = new Map<string, string>();
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -203,11 +200,6 @@ export async function createAnalytics(options: {
     if (run && delivery.runId !== undefined && delivery.runId !== run.id) return;
     if (delivery.consentRevision !== undefined && delivery.consentRevision !== current.revision)
       return;
-    const replaySession = z
-      .uuid()
-      .safeParse(
-        delivery.replaySessionId ?? (run?.turnId ? replaySessions.get(run.turnId) : undefined),
-      ).data;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
     if (run) {
@@ -252,7 +244,6 @@ export async function createAnalytics(options: {
                 : parsed.data.event === 'nod_model_used'
                   ? { work_type: 'unclassified', owner_requested: false }
                   : {})),
-            ...(replaySession ? { $session_id: replaySession } : {}),
             ...('properties' in parsed.data ? parsed.data.properties : {}),
           },
         },
@@ -276,8 +267,8 @@ export async function createAnalytics(options: {
   return {
     configuration,
     consent,
-    withRun<T>(owner: string, operation: () => T, turnId?: string): T {
-      return runs.run({ owner, id: randomUUID(), turnId, consent: consent(owner) }, operation);
+    withRun<T>(owner: string, operation: () => T): T {
+      return runs.run({ owner, id: randomUUID(), consent: consent(owner) }, operation);
     },
     withSystemWork<T>(
       owner: string,
@@ -287,14 +278,6 @@ export async function createAnalytics(options: {
       const parsed = systemActivity.safeParse(activity);
       if (runs.getStore() || systems.getStore() || !parsed.success) return operation();
       return systems.run({ owner, activity: parsed.data, consent: consent(owner) }, operation);
-    },
-    linkReplay(turnId: string, sessionId: string) {
-      if (!z.uuid().safeParse(sessionId).success) return;
-      if (replaySessions.size >= 1000) replaySessions.delete(replaySessions.keys().next().value!);
-      replaySessions.set(turnId, sessionId.toLowerCase());
-    },
-    replaySession(turnId: string) {
-      return replaySessions.get(turnId);
     },
     currentRun(owner: string) {
       const run = runs.getStore();

@@ -28,7 +28,7 @@ export function ComposioMark({ src = '/logos/composio.svg' }: { src?: string }) 
 export function EmailPreview({ logos }: { logos: Record<string, string> }) {
   const { revealed, typing } = useReveal(connectionSequence);
   return (
-    <section className="ob-step ob-email" data-analytics-public aria-busy="true">
+    <section className="ob-step ob-email" aria-busy="true">
       <Messages
         revealed={revealed}
         typing={typing}

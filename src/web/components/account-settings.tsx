@@ -124,11 +124,9 @@ function LanguageAndRegion({
   }
   return (
     <section className="account-region" aria-labelledby={heading}>
-      <h2 id={heading} data-analytics-public>
-        Date and time
-      </h2>
+      <h2 id={heading}>Date and time</h2>
       <div className="account-preference-row account-picker-row">
-        <span id={regionLabel} data-analytics-public>
+        <span id={regionLabel}>
           <MapPin size={16} aria-hidden="true" />
           Region
         </span>
@@ -144,7 +142,7 @@ function LanguageAndRegion({
         />
       </div>
       <div className="account-preference-row account-clock-row">
-        <span id={clockLabel} data-analytics-public>
+        <span id={clockLabel}>
           <Clock3 size={16} aria-hidden="true" />
           Clock
         </span>
@@ -167,7 +165,7 @@ function LanguageAndRegion({
         </div>
       </div>
       <div className="account-preference-row account-picker-row account-time-zone">
-        <span id={timeZoneLabel} data-analytics-public>
+        <span id={timeZoneLabel}>
           <Globe size={16} aria-hidden="true" />
           Time zone
         </span>
@@ -462,13 +460,7 @@ export function AccountSettings({
     >
       <header className="page-heading secondary-heading">
         <div className="page-title-row">
-          <h1
-            className="page-title"
-            id={`${id}-heading`}
-            ref={heading}
-            tabIndex={-1}
-            data-analytics-public
-          >
+          <h1 className="page-title" id={`${id}-heading`} ref={heading} tabIndex={-1}>
             Settings
           </h1>
         </div>
@@ -507,12 +499,7 @@ export function AccountSettings({
         </div>
       </header>
       <div className="account-settings-layout">
-        <nav
-          className="account-settings-tabs"
-          role="tablist"
-          aria-label="Settings"
-          data-analytics-public
-        >
+        <nav className="account-settings-tabs" role="tablist" aria-label="Settings">
           {tabs.map((value, index) => (
             <button
               key={value}
@@ -568,15 +555,8 @@ export function AccountSettings({
                   className="account-region account-appearance"
                   aria-labelledby={`${id}-appearance`}
                 >
-                  <h2 id={`${id}-appearance`} data-analytics-public>
-                    Appearance
-                  </h2>
-                  <div
-                    className="account-theme-previews"
-                    role="group"
-                    aria-label="Theme"
-                    data-analytics-public
-                  >
+                  <h2 id={`${id}-appearance`}>Appearance</h2>
+                  <div className="account-theme-previews" role="group" aria-label="Theme">
                     {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
                       const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
                       const label = value[0].toUpperCase() + value.slice(1);
@@ -629,11 +609,9 @@ export function AccountSettings({
                 {open && <VoiceSettings onBusyChange={setVoiceBusy} />}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>
-                  <h2 id={`${id}-privacy`} data-analytics-public>
-                    Privacy
-                  </h2>
+                  <h2 id={`${id}-privacy`}>Privacy</h2>
                   <div className="account-preference-row">
-                    <span data-analytics-public>
+                    <span>
                       <ChartColumn size={16} aria-hidden="true" />
                       Share usage data
                     </span>
@@ -650,8 +628,9 @@ export function AccountSettings({
                       }}
                     />
                   </div>
-                  <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                    Help us make Nod better by sharing how you use it. Never your messages.{' '}
+                  <p id={`${id}-usage-data`} className="field-hint">
+                    Help us make Nod better by sharing how you use it. Never your messages or screen
+                    recordings.{' '}
                     <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                       What’s shared
                     </a>
@@ -659,7 +638,7 @@ export function AccountSettings({
                   {account.traces !== undefined && (
                     <>
                       <div className="account-preference-row">
-                        <span data-analytics-public>
+                        <span>
                           <MessageSquareText size={16} aria-hidden="true" />
                           Share conversation traces
                         </span>
@@ -676,7 +655,7 @@ export function AccountSettings({
                           }}
                         />
                       </div>
-                      <p id={`${id}-traces`} className="field-hint" data-analytics-public>
+                      <p id={`${id}-traces`} className="field-hint">
                         Share anonymized conversations and activity with the Nod team at n8n to
                         improve Nod. Kept for 14 days, never used to train AI models.
                       </p>

@@ -40,11 +40,7 @@ import {
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
-import {
-  analyticsForCurrentSession,
-  analyticsReplaySession,
-  captureAnalytics,
-} from '../lib/analytics';
+import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import {
   collapseScreenshotMessages,
   mergeMessages,
@@ -74,7 +70,7 @@ function scrollBehavior(): ScrollBehavior {
 }
 function Welcome() {
   return (
-    <div className="welcome" data-analytics-public>
+    <div className="welcome">
       <BrandMark />
       <h2>What’s on your mind?</h2>
     </div>
@@ -761,7 +757,6 @@ export function Chat({
           restoreRecording: !privateVerification,
         };
       }
-      const replaySession = analyticsReplaySession();
       const messageBody =
         submittedBody ??
         JSON.stringify({
@@ -788,10 +783,7 @@ export function Chat({
       const response = await apiResponse(recording ? '/api/messages/audio' : '/api/messages', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: {
-          ...(!recording ? { 'Content-Type': 'application/json' } : {}),
-          ...(replaySession ? { 'x-nod-replay-session': replaySession } : {}),
-        },
+        headers: recording ? undefined : { 'Content-Type': 'application/json' },
         body,
       });
       const result = (await response.json()) as Partial<SubmitMessageResponse> & {

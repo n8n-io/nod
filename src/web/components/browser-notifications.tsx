@@ -142,9 +142,9 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   if (desktopSettingsAvailable()) return null;
   return (
     <section className="account-region" aria-label="Notifications">
-      <h2 data-analytics-public>Notifications</h2>
+      <h2>Notifications</h2>
       <div className="account-preference-row">
-        <span data-analytics-public>
+        <span>
           <Bell size={16} aria-hidden="true" />
           Browser notifications
         </span>

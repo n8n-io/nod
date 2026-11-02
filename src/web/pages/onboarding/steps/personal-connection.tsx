@@ -214,11 +214,7 @@ export function PersonalConnection({
   }
 
   return (
-    <section
-      className={`ob-step ob-${kind}`}
-      data-analytics-public
-      onClick={done ? undefined : skip}
-    >
+    <section className={`ob-step ob-${kind}`} onClick={done ? undefined : skip}>
       <Messages
         revealed={revealed}
         typing={typing}
