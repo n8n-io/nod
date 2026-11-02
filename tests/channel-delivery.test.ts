@@ -1,4 +1,5 @@
 import type { Presentation } from '../src/shared/presentation.ts';
+import { choiceAnswerText, type AnswerChoices } from '../src/shared/answer-choices.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { rm, symlink, writeFile } from 'node:fs/promises';
@@ -222,8 +223,8 @@ test(
 
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
-    CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),session_id uuid GENERATED ALWAYS AS (thread_id) STORED,source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,answer_choices jsonb,reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1041,6 +1042,67 @@ async function outboxFixture(t: TestContext, max?: number, provider = 'telegram'
     });
   return { pool, threadId, posts, receive, turnOf, reply, create, transport };
 }
+
+test(
+  'channel answer choices preserve the question and option meaning without changing stored text',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const channels = await create();
+    try {
+      receive('111', 'choice-question', 'choice-chat');
+      await channels.drain();
+      const { turn_id: turnId } = await turnOf('choice-question');
+      const id = randomUUID();
+      const question = 'Which mailbox should I use?';
+      const choices: AnswerChoices = {
+        multiple: false,
+        options: [
+          { id: randomUUID(), label: 'Work', description: 'Shared project mailbox' },
+          { id: randomUUID(), label: 'Personal', description: 'Personal' },
+        ],
+      };
+      await reply(turnId, question, id, 0);
+      await pool.query('UPDATE messages SET answer_choices=$2 WHERE id=$1', [
+        id,
+        JSON.stringify(choices),
+      ]);
+      await pool.query("UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1", [
+        turnId,
+      ]);
+      await channels.drain();
+      await until(() => posts.length === 1);
+      assert.equal(
+        posts[0]!.text,
+        `${question}\n\n1. ${choiceAnswerText([choices.options[0]!])}\n2. Personal`,
+      );
+      assert.equal(
+        (await pool.query('SELECT text FROM messages WHERE id=$1', [id])).rows[0].text,
+        question,
+      );
+      assert.ok(!posts[0]!.text.includes(choices.options[0]!.id));
+      const cancelled = randomUUID();
+      await reply(turnId, question, cancelled, 1);
+      await pool.query('UPDATE messages SET answer_choices=$2 WHERE id=$1', [
+        cancelled,
+        JSON.stringify(choices),
+      ]);
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turnId]);
+      await channels.drain();
+      assert.equal(posts.length, 1);
+      assert.deepEqual(
+        (
+          await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+            cancelled,
+          ])
+        ).rows,
+        [{ state: 'blocked', reason: 'question_closed' }],
+      );
+    } finally {
+      await channels.close();
+    }
+  },
+);
 
 test(
   'presence follows live work in the conversation that asked, after its queued replies, and repeats only on a change or its cadence',
@@ -2216,7 +2278,8 @@ test(
       .localArtifacts;
     const files = await import('../src/shared/files.ts');
     const { ownerId, dataRoot } = await import('../src/server/config.ts');
-    const { activeThread } = await import('../src/server/thread.ts');
+    const { activeThread, insertAssistantMessage, withTurnLock } =
+      await import('../src/server/thread.ts');
     await initializeDatabase();
     const sent: Array<{
       method: string;
@@ -2737,18 +2800,21 @@ test(
           },
         ],
       };
-      const visualReply = await addReply(
-        turnId,
-        [],
-        'Review the synthetic connecting itinerary.',
-        flight,
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turnId]);
+      const visualReply = await withTurnLock(turnId, (client) =>
+        insertAssistantMessage(client, { threadId, turnId }, '', [], undefined, undefined, flight),
       );
       const beforeVisual = texts.length;
-      await channels.drain();
+      presentationFails = true;
+      try {
+        await channels.drain();
+      } finally {
+        presentationFails = false;
+      }
       assert.equal((await state(visualReply)).state, 'sent');
       const deliveredVisual = texts.slice(beforeVisual).join('\n\n');
       for (const detail of [
-        'Review the synthetic',
+        'Prices include one traveler.',
         'LIS',
         'LHR',
         '09:00',
@@ -2788,10 +2854,8 @@ test(
         'https://example.com/fares',
       ])
         assert.ok(deliveredVisual.includes(detail), detail);
-      const alternatives = deliveredVisual.split(/\n\n(?=Option \d+ ·)/).slice(1);
+      const alternatives = deliveredVisual.split(/\n\n(?=Flexible fare ·)/).slice(1);
       assert.equal(alternatives.length, 2);
-      assert.match(alternatives[0]!, /^Option 1 · Flexible fare/);
-      assert.match(alternatives[1]!, /^Option 2 · Flexible fare/);
       const distinctFacts = [
         [
           'ND123',
@@ -2824,7 +2888,7 @@ test(
       assert.doesNotMatch(deliveredVisual, /artifactId|"version"|"options"|api\/artifacts/);
       assert.equal(
         (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
-        'Review the synthetic connecting itinerary.',
+        '',
       );
       const map: Presentation = {
         version: 1,
@@ -2942,15 +3006,22 @@ test(
           },
         ],
       };
-      const chartReply = await addReply(
-        turnId,
-        [],
-        'January is negative; February is zero.',
-        chart,
+      const chartReply = await withTurnLock(turnId, (client) =>
+        insertAssistantMessage(client, { threadId, turnId }, '', [], undefined, undefined, chart),
       );
-      await channels.drain();
+      presentationFails = true;
+      try {
+        await channels.drain();
+      } finally {
+        presentationFails = false;
+      }
       assert.equal((await state(chartReply)).state, 'sent');
       assert.match(texts.at(-1)!, /January: -12.5 EUR; February: 0 EUR/);
+      const storedChart = (
+        await pool.query('SELECT text,presentation FROM messages WHERE id=$1', [chartReply])
+      ).rows[0];
+      assert.equal(storedChart.text, '');
+      assert.deepEqual(storedChart.presentation, chart);
       const invalidVisual = await addReply(turnId, [], 'Plain fallback survives.', {
         ...flight,
         version: 2,
@@ -3011,7 +3082,6 @@ test(
     const { createActivity } = await import('../src/server/activity.ts');
     const { pool, threadId, receive, turnOf, reply, create } = await outboxFixture(t);
     await pool.query(`ALTER TABLE turns ADD COLUMN started_at timestamptz;
-      ALTER TABLE turns ADD COLUMN session_id uuid GENERATED ALWAYS AS (thread_id) STORED;
       CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,message_id uuid,created_at timestamptz);
       CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text,site text,created_at timestamptz DEFAULT clock_timestamp());`);
     const channels = await create();

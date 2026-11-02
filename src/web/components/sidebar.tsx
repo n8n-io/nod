@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { type Ref, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { LayoutGrid, Moon, Settings, Sun } from './icons';
 import { BrandMark } from './brand';
+import { Tooltip } from './tooltip';
 import { desktopSettingsAvailable } from '../lib/desktop';
-import { AccountMenuItems, type AccountControls } from './account-menu';
+import type { AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
 import {
   isEditingTarget,
@@ -18,6 +19,7 @@ export function Sidebar({
   onToggle,
   onNavigate,
   account,
+  actionsRef,
 }: {
   path: string;
   unreadCount?: number;
@@ -25,6 +27,7 @@ export function Sidebar({
   onToggle(): void;
   onNavigate(path: string): void;
   account?: AccountControls;
+  actionsRef?: Ref<HTMLDivElement>;
 }) {
   const [hints, setHints] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -96,6 +99,15 @@ export function Sidebar({
       timer = undefined;
       setHints(false);
     };
+    const hintsBlocked = () =>
+      document.hidden ||
+      window.innerWidth <= 640 ||
+      isEditingTarget(document.activeElement) ||
+      Boolean(
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], dialog[open], [role="menu"], [role="listbox"]',
+        ),
+      );
     const down = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
@@ -119,7 +131,7 @@ export function Sidebar({
       ) {
         if (!event.repeat && !timer)
           timer = setTimeout(() => {
-            if (!isEditingTarget(document.activeElement)) setHints(true);
+            if (!hintsBlocked()) setHints(true);
           }, 650);
         return;
       }
@@ -148,12 +160,15 @@ export function Sidebar({
       if (!(mac ? event.metaKey : event.ctrlKey)) clear();
     };
     const focus = () => {
-      if (isEditingTarget(document.activeElement)) clear();
+      if (hintsBlocked()) clear();
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', clear);
+    window.addEventListener('pointerdown', clear, true);
+    window.addEventListener('resize', clear);
     document.addEventListener('focusin', focus);
+    document.addEventListener('scroll', clear, true);
     document.addEventListener('visibilitychange', clear);
     return () => {
       clearTimeout(timer);
@@ -161,12 +176,15 @@ export function Sidebar({
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', clear);
+      window.removeEventListener('pointerdown', clear, true);
+      window.removeEventListener('resize', clear);
       document.removeEventListener('focusin', focus);
+      document.removeEventListener('scroll', clear, true);
       document.removeEventListener('visibilitychange', clear);
     };
   }, [mac, desktop]);
   return (
-    <aside className={`sidebar ${hints ? 'show-shortcuts' : ''}`} aria-label="Sidebar">
+    <aside className="sidebar" aria-label="Sidebar">
       <div className="sidebar-header">
         <a
           href="/"
@@ -208,39 +226,37 @@ export function Sidebar({
             const label = desktop ? shortcutLabel(item.key, mac) : undefined;
             return (
               <li key={item.path}>
-                <a
-                  href={item.path}
-                  aria-label={item.path === '/' ? chatLabel : item.label}
-                  aria-current={path === item.path ? 'page' : undefined}
-                  aria-keyshortcuts={
-                    desktop ? `${mac ? 'Meta' : 'Control'}+${item.key}` : undefined
-                  }
-                  title={label ? `${item.label} (${label})` : item.label}
-                  className={`nav-link ${path === item.path ? 'nav-link-active' : ''} ${item.path === '/' && unreadBadge ? 'has-chat-unread' : ''}`}
-                  onClick={(event) => {
-                    if (
-                      event.metaKey ||
-                      event.ctrlKey ||
-                      event.shiftKey ||
-                      event.altKey ||
-                      event.button !== 0
-                    )
-                      return;
-                    event.preventDefault();
-                    onNavigate(item.path);
-                  }}
-                >
-                  <Icon size={20} solid={path === item.path} aria-hidden="true" />
-                  <span className="nav-label" data-analytics-public>
-                    {item.label}
-                  </span>{' '}
-                  {item.path === '/' && unreadBadge}
-                  {desktop && (
-                    <kbd className="nav-shortcut" aria-hidden="true">
-                      {shortcutLabel(item.key, mac)}
-                    </kbd>
-                  )}
-                </a>
+                <Tooltip content={item.label} shortcut={label} side="right" forceOpen={hints}>
+                  <a
+                    href={item.path}
+                    aria-label={item.path === '/' ? chatLabel : item.label}
+                    aria-current={path === item.path ? 'page' : undefined}
+                    aria-keyshortcuts={
+                      desktop ? `${mac ? 'Meta' : 'Control'}+${item.key}` : undefined
+                    }
+                    className={`nav-link ${path === item.path ? 'nav-link-active' : ''}`}
+                    onClick={(event) => {
+                      if (
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey ||
+                        event.button !== 0
+                      )
+                        return;
+                      event.preventDefault();
+                      onNavigate(item.path);
+                    }}
+                  >
+                    <span className="nav-icon">
+                      <Icon size={20} solid={path === item.path} aria-hidden="true" />
+                      {item.path === '/' && unreadBadge}
+                    </span>
+                    <span className="nav-label" data-analytics-public>
+                      {item.label}
+                    </span>
+                  </a>
+                </Tooltip>
               </li>
             );
           })}
@@ -266,9 +282,12 @@ export function Sidebar({
             onNavigate('/');
           }}
         >
-          <BrandMark />
-          {unreadBadge}
+          <span className="nav-icon">
+            <BrandMark />
+            {unreadBadge}
+          </span>
         </a>
+        <div className="mobile-toolbar-actions" ref={actionsRef} />
         <button
           type="button"
           ref={mobileTrigger}
@@ -314,67 +333,69 @@ export function Sidebar({
                       onNavigate(item.path);
                     }}
                   >
-                    <Icon size={20} solid={path === item.path} aria-hidden="true" />
-                    <span data-analytics-public>{item.label}</span>{' '}
+                    <span className="nav-icon">
+                      <Icon size={20} solid={path === item.path} aria-hidden="true" />
+                    </span>
+                    <span data-analytics-public>{item.label}</span>
                     {item.path === '/' && unreadBadge}
                   </a>
                 );
               })}
             </nav>
-            <div className="mobile-sheet-actions">
-              {account ? (
-                <AccountMenuItems
-                  account={{
-                    ...account,
-                    onSettings: (tab) =>
-                      account.onSettings(tab, mobileTrigger.current ?? undefined),
+            {account && (
+              <div className="mobile-sheet-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeMobileMenu();
+                    queueMicrotask(() =>
+                      account.onSettings('General', mobileTrigger.current ?? undefined),
+                    );
                   }}
-                  close={closeMobileMenu}
-                  shortcuts={false}
-                  menu={false}
-                />
-              ) : (
-                <button type="button" onClick={toggleTheme}>
-                  <ThemeIcon size={16} aria-hidden="true" /> {themeLabel}
+                >
+                  <Settings size={20} aria-hidden="true" />
+                  <span data-analytics-public>Settings</span>
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </dialog>
       </div>
       <div className="sidebar-bottom">
         {!account && (
-          <button
-            type="button"
-            className="nav-link theme-toggle"
-            aria-label={themeLabel}
-            title={themeLabel}
-            onClick={toggleTheme}
-          >
-            <ThemeIcon size={20} aria-hidden="true" />
-            <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
-          </button>
+          <Tooltip content={themeLabel} side="right">
+            <button
+              type="button"
+              className="nav-link theme-toggle"
+              aria-label={themeLabel}
+              onClick={toggleTheme}
+            >
+              <ThemeIcon size={20} aria-hidden="true" />
+              <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+            </button>
+          </Tooltip>
         )}
         {account && (
-          <button
-            type="button"
-            className={`nav-link ${path.startsWith('/settings') ? 'nav-link-active' : ''}`}
-            aria-label="Settings"
-            aria-current={path.startsWith('/settings') ? 'page' : undefined}
-            aria-keyshortcuts={desktop ? `${mac ? 'Meta' : 'Control'}+,` : undefined}
-            title={desktop ? `Settings (${shortcutLabel(',', mac)})` : 'Settings'}
-            onClick={(event) => account.onSettings('General', event.currentTarget)}
+          <Tooltip
+            content="Settings"
+            shortcut={desktop ? shortcutLabel(',', mac) : undefined}
+            side="right"
+            forceOpen={hints}
           >
-            <Settings size={20} solid={path.startsWith('/settings')} aria-hidden="true" />
-            <span className="nav-label" data-analytics-public>
-              Settings
-            </span>
-            {desktop && (
-              <kbd className="nav-shortcut" aria-hidden="true">
-                {shortcutLabel(',', mac)}
-              </kbd>
-            )}
-          </button>
+            <button
+              type="button"
+              className={`nav-link ${path.startsWith('/settings') ? 'nav-link-active' : ''}`}
+              aria-label="Settings"
+              aria-current={path.startsWith('/settings') ? 'page' : undefined}
+              aria-keyshortcuts={desktop ? `${mac ? 'Meta' : 'Control'}+,` : undefined}
+              onClick={(event) => account.onSettings('General', event.currentTarget)}
+            >
+              <Settings size={20} solid={path.startsWith('/settings')} aria-hidden="true" />
+              <span className="nav-label" data-analytics-public>
+                Settings
+              </span>
+            </button>
+          </Tooltip>
         )}
       </div>
     </aside>

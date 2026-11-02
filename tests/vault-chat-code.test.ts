@@ -204,7 +204,7 @@ test(
     }
     async function reset() {
       await db.pool.query(
-        'DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM credential_requests; DELETE FROM vault_payments; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
+        'DELETE FROM audio_messages; DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM credential_requests; DELETE FROM vault_payments; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
       );
       ordinary.length = 0;
       entered.length = 0;
@@ -215,6 +215,151 @@ test(
       failurePresentations.length = 0;
     }
     try {
+      await t.test(
+        'custom choice answers keep private code screening while exact visible choices stay ordinary',
+        async () => {
+          const { createSpeech } = await import('../src/server/speech.ts');
+          let spokenCode = '';
+          let transcriptions = 0;
+          const isolated = await createApp({
+            verification,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+            speech: createSpeech({
+              id: 'fixture',
+              configured: true,
+              async transcribe() {
+                transcriptions++;
+                return spokenCode;
+              },
+              async synthesize() {
+                throw new Error('Unexpected synthetic speech output.');
+              },
+            }),
+          });
+          const sendAudio = (message: object) => {
+            const boundary = 'synthetic-choice-audio';
+            return isolated.inject({
+              method: 'POST',
+              url: '/api/messages/audio',
+              headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+              payload: Buffer.from(
+                `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${JSON.stringify(message)}\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.webm"\r\nContent-Type: audio/webm\r\n\r\nSynthetic private recording\r\n--${boundary}--\r\n`,
+              ),
+            });
+          };
+          try {
+            for (const kind of ['otp', 'payment']) {
+              await reset();
+              const privateQuestion = await seed();
+              const code = kind === 'otp' ? '123456' : '737';
+              if (kind === 'payment') {
+                await db.pool.query('DELETE FROM credential_requests');
+                await payments.request(privateQuestion, {
+                  amount: '43.20',
+                  currency: 'EUR',
+                  fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+                });
+              }
+              const questionId = randomUUID();
+              const questionTurn = randomUUID();
+              const choiceId = randomUUID();
+              await db.pool.query(
+                `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,waiting_reason)
+                  VALUES($1,$2,$3,$1,'event','Choose a synthetic reference','waiting','question')`,
+                [questionTurn, ownerId, privateQuestion.threadId],
+              );
+              await db.pool.query(
+                `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,answer_choices)
+                  VALUES($1,$2,'assistant','Which reference?',$3,$4,$5)`,
+                [
+                  questionId,
+                  ownerId,
+                  privateQuestion.threadId,
+                  questionTurn,
+                  JSON.stringify({ options: [{ id: choiceId, label: code }], multiple: false }),
+                ],
+              );
+              const submit = (input: object) =>
+                isolated.inject({
+                  method: 'POST',
+                  url: '/api/messages',
+                  headers,
+                  payload: {
+                    text: code,
+                    threadId: privateQuestion.threadId,
+                    replyToMessageId: questionId,
+                    clientMessageId: randomUUID(),
+                    ...input,
+                  },
+                });
+              const customId = randomUUID();
+              const custom = await submit({
+                clientMessageId: customId,
+                questionAnswer: { custom: true },
+              });
+              assert.equal(custom.statusCode, 409, custom.body);
+              assert.equal(
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                    [customId],
+                  )
+                ).rowCount,
+                0,
+              );
+              spokenCode = code;
+              const audio = {
+                threadId: privateQuestion.threadId,
+                replyToMessageId: questionId,
+                clientMessageId: randomUUID(),
+                questionAnswer: { custom: true },
+              };
+              const before = transcriptions;
+              const recorded = await sendAudio(audio);
+              assert.equal(recorded.statusCode, 409, recorded.body);
+              assert.equal(transcriptions, before + 1);
+              assert.equal((await sendAudio(audio)).statusCode, 409);
+              assert.equal(transcriptions, before + 1);
+              assert.equal(
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1 UNION ALL SELECT 1 FROM audio_messages WHERE message_id=$1 AND response IS NOT NULL',
+                    [audio.clientMessageId],
+                  )
+                ).rowCount,
+                0,
+              );
+              assert.equal((await db.pool.query('SELECT 1 FROM artifacts')).rowCount, 0);
+              assert.equal(
+                (
+                  await submit({
+                    replyToMessageId: privateQuestion.messageId,
+                    questionAnswer: { choiceIds: [choiceId] },
+                  })
+                ).statusCode,
+                409,
+              );
+              const chosenId = randomUUID();
+              const selection = {
+                clientMessageId: chosenId,
+                questionAnswer: { choiceIds: [choiceId] },
+              };
+              const chosen = await submit(selection);
+              assert.equal(chosen.statusCode, 200, chosen.body);
+              assert.deepEqual((await submit(selection)).json(), chosen.json());
+              assert.equal(
+                (await db.pool.query('SELECT text FROM messages WHERE id=$1', [chosenId])).rows[0]
+                  .text,
+                code,
+              );
+              assert.deepEqual(entered, []);
+              assert.deepEqual(injected, []);
+            }
+          } finally {
+            await isolated.close();
+          }
+        },
+      );
       await t.test(
         'failure presentation never sees the code and never retries private entry',
         async () => {

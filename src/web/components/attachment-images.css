@@ -15,6 +15,66 @@
   display: block;
 }
 
+.attachment-image-item {
+  position: relative;
+  min-width: 0;
+}
+
+.attachment-inline-video {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--muted);
+}
+
+.attachment-inline-video > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+.attachment-image-item:has(.attachment-inline-video) {
+  grid-column: 1 / -1;
+}
+
+.attachment-image-gallery.is-single:has(.attachment-inline-video) {
+  width: 360px;
+}
+
+.attachment-video-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.attachment-video-toolbar > .button {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  color: var(--muted-foreground);
+  pointer-events: auto;
+}
+
+.attachment-video-more {
+  position: absolute;
+  bottom: 48px;
+  right: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+
 .attachment-image-gallery.is-single:has(> .attachment-image-item > .is-image) {
   width: fit-content;
   max-width: min(100%, 320px);
@@ -110,7 +170,8 @@
   object-fit: contain;
 }
 
-.attachment-image-tile.is-selected {
+.attachment-image-tile.is-selected,
+.attachment-inline-video.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }

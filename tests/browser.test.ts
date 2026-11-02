@@ -2533,6 +2533,105 @@ test('rich feedback redaction bounds traversal and preserves sanitized Error dia
   assert.ok(!boundary.includes('bounded-private-secret'));
 });
 
+test('browser handoff preserves platform editing chords, text input and paste', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement',
+        'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      URL.createObjectURL = () => 'blob:synthetic-browser-frame';
+      URL.revokeObjectURL = () => {};
+      const received = [];
+      globalThis.fetch = async (path, options) => {
+        if (path.startsWith('/api/browser-handoff/stream?'))
+          return new Response(new ReadableStream({ start(controller) {
+            controller.enqueue(new Uint8Array([0, 0, 0, 1, 0]));
+            options.signal.addEventListener('abort', () => controller.error(options.signal.reason), { once: true });
+          } }));
+        assert.equal(path, '/api/browser-handoff');
+        received.push(...JSON.parse(options.body).inputs);
+        return Response.json({ ok: true });
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { BrowserHandoff } = await import('./src/web/components/browser-handoff.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(createElement(BrowserHandoff, { turnId: 'synthetic-turn' })));
+        const frame = document.querySelector('.browser-handoff-screen img');
+        assert.equal(frame.src, 'blob:synthetic-browser-frame');
+        await act(async () => frame.dispatchEvent(new Event('load')));
+        const screen = document.querySelector('.browser-handoff-screen');
+        assert.equal(screen.getAttribute('aria-disabled'), 'false');
+        const key = async (key, options = {}) => {
+          const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
+          if (options.altGraph) Object.defineProperty(event, 'getModifierState', { value: name => name === 'AltGraph' });
+          await act(async () => screen.dispatchEvent(event));
+          return event.defaultPrevented;
+        };
+        for (const platform of ['MacIntel', 'Win32']) {
+          Object.defineProperty(navigator, 'platform', { configurable: true, value: platform });
+          const primary = platform === 'MacIntel' ? { metaKey: true } : { ctrlKey: true };
+          const other = platform === 'MacIntel' ? { ctrlKey: true } : { metaKey: true };
+          received.length = 0;
+          assert.equal(await key('z', primary), true);
+          assert.equal(await key('Z', { ...primary, shiftKey: true }), true);
+          assert.equal(await key('ArrowLeft', { shiftKey: true }), true);
+          assert.equal(await key('Tab', { shiftKey: true }), true);
+          assert.equal(await key('A', { shiftKey: true }), true);
+          assert.deepEqual(received, [
+            { type: 'key', key: 'Control+z' },
+            { type: 'key', key: 'Control+Shift+z' },
+            { type: 'key', key: 'Shift+ArrowLeft' },
+            { type: 'key', key: 'Shift+Tab' },
+            { type: 'text', text: 'A' },
+          ]);
+          received.length = 0;
+          assert.equal(await key('z', other), false);
+          assert.equal(await key('z', { ctrlKey: true, metaKey: true }), false);
+          assert.equal(await key('v', primary), false);
+          assert.equal(await key('V', { ...primary, shiftKey: true }), false);
+          assert.deepEqual(received, []);
+          const pasted = new Event('paste', { bubbles: true, cancelable: true });
+          Object.defineProperty(pasted, 'clipboardData', { value: { getData: () => 'First\r\nSecond\n' } });
+          await act(async () => screen.dispatchEvent(pasted));
+          assert.equal(pasted.defaultPrevented, true);
+          assert.deepEqual(received, [{ type: 'text', text: 'First\nSecond' }]);
+          received.length = 0;
+          if (platform === 'MacIntel') {
+            assert.equal(await key('ë', { altKey: true }), true);
+            assert.deepEqual(received, [{ type: 'text', text: 'ë' }]);
+          } else {
+            assert.equal(await key('€', { ctrlKey: true, altKey: true, altGraph: true }), true);
+            assert.deepEqual(received, [{ type: 'text', text: '€' }]);
+            assert.equal(await key('e', { altKey: true }), false);
+            assert.equal(received.length, 1);
+          }
+        }
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('voice previews sample unsaved voices and cancel stale playback on selection and close', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -2554,8 +2653,13 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       Object.defineProperty(navigator, 'language', { configurable: true, value: 'pt-PT' });
+      window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 300 }]; };
       const requests = [], writes = [], players = [], revoked = [], preparations = [], busy = [], saves = [];
-      let delaySave = false;
+      let delaySave = false, failSave = false;
+      let failConnection = true, delayCatalog = false, addConnectedVoice = false;
+      const catalogs = [];
+      const connections = [], connectionWrites = [];
+      window.open = () => ({ opener: null, location: { replace() {} }, close() {} });
       URL.createObjectURL = () => 'blob:preview-' + players.length;
       URL.revokeObjectURL = url => revoked.push(url);
       globalThis.Audio = function(url) {
@@ -2569,15 +2673,35 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         return player;
       };
       let settings = { transcription: true, synthesis: true, speechReply: 'voice', speechVoice: 'local:pf_dora',
-        local: { state: 'not_downloaded' },
+        local: { state: 'ready' }, localInput: { state: 'ready' },
         defaultVoice: 'local:pf_dora', voices: [
           { id: 'local:pm_alex', name: 'Alex', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
+          { id: 'local:af_heart', name: 'Heart', description: 'American English', engine: 'Kokoro', language: 'en-US' },
           { id: 'openai:coral', name: 'Coral', description: 'Warm and friendly', engine: 'OpenAI' },
           { id: 'local:pf_dora', name: 'Dora', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
         ] };
       globalThis.fetch = (path, options) => {
         if (path === '/api/speech') return Promise.resolve(Response.json(settings));
-        if (path === '/api/models') return Promise.resolve(Response.json({ connections: [], selection: null }));
+        if (path === '/api/models') return Promise.resolve(Response.json({ connections, selection: null }));
+        if (path === '/api/speech/voices/refresh') {
+          const snapshot = structuredClone(settings);
+          if (delayCatalog) return new Promise(resolve => catalogs.push({ complete: () => resolve(Response.json(snapshot)) }));
+          return Promise.resolve(Response.json(snapshot));
+        }
+        if (path === '/api/models/keys' || path === '/api/models/oauth/complete') {
+          connectionWrites.push({ path, body: JSON.parse(options.body) });
+          if (!failConnection && addConnectedVoice) {
+            settings = { ...settings, voices: [...settings.voices, { id: 'openai:cedar', name: 'Cedar', description: 'Newly connected', engine: 'OpenAI' }] };
+            addConnectedVoice = false;
+          }
+          return Promise.resolve(failConnection ? Response.json({ error: 'Synthetic connection failure' }, { status: 400 }) : Response.json({ connections, selection: null }));
+        }
+        if (path === '/api/models/oauth') {
+          connectionWrites.push({ path, body: JSON.parse(options.body) });
+          return Promise.resolve(Response.json({ url: 'https://nod.fixture.invalid/oauth', attempt: '60000000-0000-4000-8000-000000000001' }));
+        }
+        if (path.startsWith('/api/models/oauth/status/')) return Promise.resolve(Response.json({ status: 'pending' }));
+        if (path.startsWith('/api/models/oauth/') && options.method === 'DELETE') return Promise.resolve(Response.json({ ok: true }));
         if (path === '/api/speech/prepare') return new Promise((resolve, reject) => {
           preparations.push({ options, resolve });
           options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
@@ -2585,7 +2709,10 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         if (path === '/api/preferences') {
           const change = JSON.parse(options.body);
           writes.push(change);
-          const complete = () => { settings = { ...settings, ...change }; return Response.json(settings); };
+          const complete = () => {
+            if (failSave) return Response.json({ error: 'Synthetic preference failure' }, { status: 503 });
+            settings = { ...settings, ...change }; return Response.json(settings);
+          };
           if (delaySave) return new Promise(resolve => saves.push({ options, complete: () => resolve(complete()) }));
           return Promise.resolve(complete());
         }
@@ -2595,20 +2722,26 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       const { createElement, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { VoiceSettings } = await import('./src/web/components/voice-settings.tsx');
+      const { SettingsDraftContext } = await import('./src/web/components/settings-drafts.tsx');
+      const drafts = new Map();
+      const register = draft => { drafts.set(draft.id, draft); return () => { if (drafts.get(draft.id)?.revision === draft.revision) drafts.delete(draft.id); }; };
       let root = createRoot(document.querySelector('#root'));
       let mounted = true;
       const onBusyChange = value => busy.push(value);
-      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange })));
+      const render = () => act(async () => root.render(createElement(SettingsDraftContext.Provider, { value: register }, createElement(VoiceSettings, { onBusyChange }))));
       const settle = async check => {
         for (let i = 0; i < 100 && !check(); i++)
           await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
         assert.ok(check(), 'Expected voice preview interaction to settle');
       };
-      const trigger = () => [...document.querySelectorAll('button[aria-labelledby]')].find(button =>
-        button.getAttribute('aria-labelledby').split(/\s+/).some(id => document.getElementById(id)?.textContent === 'Assistant voice'));
+      const trigger = () => document.querySelector('.voice-picker-trigger');
       const dialog = label => [...document.querySelectorAll('[role="dialog"]')].find(element =>
         element.getAttribute('aria-labelledby')?.split(/\s+/).some(id => document.getElementById(id)?.textContent === label));
-      const picker = () => document.querySelector('[role="dialog"]');
+      const picker = () => document.querySelector('[role="menu"][aria-label="Choose voice"]');
+      const close = async () => {
+        await act(async () => picker().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+        await settle(() => !picker());
+      };
       const click = (label, scope = document) => act(async () => {
         const button = scope.querySelector('[aria-label="' + label + '"]');
         assert.ok(button, 'Expected button: ' + label);
@@ -2642,7 +2775,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
           trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
         });
         await settle(() => picker());
-        assert.equal(document.activeElement, picker().querySelector('.voice-choice[aria-pressed="true"]'));
+        assert.equal(document.activeElement, picker().querySelector('input'));
         const search = picker().querySelector('input');
         await act(async () => {
           search.focus();
@@ -2654,11 +2787,23 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(document.activeElement, picker().querySelector('.voice-choice'));
         await act(async () => {
           picker().querySelector('.voice-sample').focus();
-          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
         });
-        assert.equal(document.activeElement, picker().querySelector('.voice-sample'));
+        assert.equal(document.activeElement, picker().querySelector('.voice-choice'));
         await click('Clear voice search', picker());
         assert.equal(document.activeElement, search);
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, 'Kokoro');
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        assert.equal(picker().querySelectorAll('.voice-choice').length, 1);
+        assert.ok(picker().querySelector('[aria-label^="Choose Heart"]'));
+        await click('Clear voice search', picker());
+        await act(async () => {
+          picker().querySelector('[aria-label^="Choose Coral"]').focus();
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true, cancelable: true }));
+        });
+        assert.equal(document.activeElement, picker().querySelector('[aria-label^="Choose Dora"]'));
         assert.deepEqual(writes, []);
         await click('Play ' + dora, picker());
         assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
@@ -2690,8 +2835,6 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(requests[3].options.signal.aborted, true);
         assert.ok(picker());
         assert.equal(busy.at(-1), true);
-        await click('Close', picker());
-        assert.ok(picker());
         assert.equal(saves[0].options.signal.aborted, false);
         await act(async () => saves[0].complete());
         delaySave = false;
@@ -2708,7 +2851,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await openKeyboard('ArrowUp');
         released(players[2], thirdUrl);
         await click('Play ' + alex, picker());
-        await click('Close', picker());
+        await close();
         assert.equal(requests[5].options.signal.aborted, true);
         await resolve(5);
         assert.equal(players.length, 3);
@@ -2719,7 +2862,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(requests[6].options.signal.aborted, true);
         await resolve(6);
         assert.equal(players.length, 3);
-        await click('Close', picker());
+        await close();
         await settle(() => !picker());
         await click('Play ' + dora);
         await act(async () => requests[7].resolve(Response.json({ error: 'Synthetic preview failure' }, { status: 503 })));
@@ -2727,8 +2870,8 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(requests.length, 8);
         assert.equal(settings.speechVoice, 'local:pf_dora');
         await openKeyboard('ArrowUp');
-        assert.equal(document.body.textContent.includes('Synthetic preview failure'), false);
-        await click('Close', picker());
+        assert.equal(settings.speechVoice, 'local:pf_dora');
+        await close();
         await settle(() => !picker());
         await click('Play ' + dora);
         await resolve(8);
@@ -2753,105 +2896,107 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await render();
         await settle(() => trigger());
         const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
-        await settle(() => button('Download voices'));
+        const downloadedVoices = settings.voices.filter(voice => voice.engine === 'Local');
+        settings = { ...settings, speechVoice: 'openai:coral', local: { state: 'not_downloaded' },
+          voices: settings.voices.filter(voice => voice.engine !== 'Local') };
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await settle(() => trigger().textContent.includes('Coral'));
+        const beforeDownload = writes.length;
+        await open();
         for (const outcome of ['cancel', 'failure', 'complete']) {
-          await act(async () => button('Download voices').click());
+          const label = outcome === 'complete' ? 'Retry voice download' : 'Download free voices';
+          await click(label, picker());
           const preparation = preparations.at(-1);
-          assert.equal(busy.at(-1), true, 'Local preparation must guard settings navigation');
+          assert.equal(busy.at(-1), true);
           assert.equal(preparation.options.signal.aborted, false);
+          assert.equal(JSON.parse(preparation.options.body).inputOnly, undefined);
           if (outcome === 'cancel') {
-            await act(async () => button('Cancel download').click());
+            await click('Cancel voice download', picker());
             assert.equal(preparation.options.signal.aborted, true);
+          } else if (outcome === 'failure') {
+            await act(async () => preparation.resolve(Response.json({ error: 'Synthetic download failure' }, { status: 503 })));
           } else {
-            if (outcome === 'complete') settings = { ...settings, local: { state: 'ready' } };
-            await act(async () => preparation.resolve(outcome === 'complete'
-              ? Response.json({ local: { state: 'ready' } })
-              : Response.json({ error: 'Synthetic download failure' }, { status: 503 })));
+            settings = { ...settings, local: { state: 'downloading', progress: 100 } };
+            await act(async () => window.dispatchEvent(new Event('focus')));
+            await settle(() => picker().querySelector('[data-state="preparing"]'));
+            assert.equal(picker().querySelector('[aria-label="Choose Dora, Brazilian Portuguese, Free voices"]'), null);
+            assert.equal(settings.speechVoice, 'openai:coral');
+            assert.equal(busy.at(-1), true);
+            settings = { ...settings, local: { state: 'ready' }, voices: [...settings.voices, ...downloadedVoices] };
+            await act(async () => preparation.resolve(Response.json({ local: { state: 'ready' } })));
           }
           await settle(() => busy.at(-1) === false);
           if (outcome === 'failure') assert.ok(document.body.textContent.includes('Synthetic download failure'));
-          if (outcome === 'complete') assert.equal(button('Download voices'), undefined);
+          assert.equal(settings.speechVoice, 'openai:coral');
+          assert.equal(writes.length, beforeDownload);
         }
-        const provider = () => document.querySelector('.voice-provider-trigger');
-        const chooseProvider = async name => {
-          await settle(() => !provider().disabled);
-          await act(async () => provider().click());
-          await settle(() => document.querySelector('[role="menu"]'));
-          await click(name, document.querySelector('[role="menu"]'));
-        };
-        delaySave = true;
-        await chooseProvider('OpenAI');
-        assert.equal(saves.at(-1).options.signal.aborted, false);
-        assert.equal(provider().disabled, true);
-        await act(async () => saves.at(-1).complete());
-        delaySave = false;
-        await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
-        assert.equal(document.activeElement, provider());
-        assert.deepEqual(writes.at(-1), { speechVoice: 'openai:coral' });
-        const downloadedVoices = settings.voices.filter(voice => voice.engine === 'Local');
-        settings = { ...settings, local: { state: 'not_downloaded' },
-          voices: settings.voices.filter(voice => voice.engine !== 'Local') };
-        await act(async () => window.dispatchEvent(new Event('focus')));
-        await chooseProvider('Free voices');
-        await settle(() => button('Download voices'));
-        assert.equal(settings.speechVoice, 'openai:coral');
-        await act(async () => button('Download voices').click());
-        settings = { ...settings, local: { state: 'ready' }, voices: [...settings.voices, ...downloadedVoices] };
-        await act(async () => preparations.at(-1).resolve(Response.json({ local: { state: 'ready' } })));
-        await settle(() => settings.speechVoice === 'local:pm_alex' && busy.at(-1) === false);
-        assert.deepEqual(writes.at(-1), { speechVoice: 'local:pm_alex' });
-        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Free voices');
-        await chooseProvider('OpenAI');
-        await settle(() => settings.speechVoice === 'openai:coral' && busy.at(-1) === false);
+        assert.ok(picker().querySelector('[aria-label="Choose Dora, Brazilian Portuguese, Free voices"]'));
+        await click('Choose Dora, Brazilian Portuguese, Free voices', picker());
+        await settle(() => !picker() && settings.speechVoice === 'local:pf_dora');
+        assert.deepEqual(writes.at(-1), { speechVoice: 'local:pf_dora' });
         await open();
         assert.ok(picker().querySelector('[aria-label="Choose Coral, Warm and friendly, OpenAI"]'));
-        assert.equal(picker().querySelector('[aria-label="Choose Dora, Brazilian Portuguese, Free voices"]'), null);
-        await click('Close', picker());
-        await settle(() => !picker());
+        await close();
+        delaySave = true;
+        failSave = true;
+        await act(async () => button('Always').click());
+        assert.equal(button('Always').getAttribute('aria-pressed'), 'true');
+        assert.equal(settings.speechReply, 'voice');
+        await act(async () => saves.at(-1).complete());
+        await settle(() => busy.at(-1) === false);
+        assert.equal(button('After audio').getAttribute('aria-pressed'), 'true');
+        assert.equal(settings.speechReply, 'voice');
+        assert.ok(document.body.textContent.includes('Synthetic preference failure'));
+        failSave = false;
+        delaySave = false;
         await act(async () => button('Auto').click());
         await settle(() => settings.speechReply === 'auto' && busy.at(-1) === false);
         assert.deepEqual(writes.at(-1), { speechReply: 'auto' });
-        await act(async () => root.unmount());
-        mounted = false;
-        root = createRoot(document.querySelector('#root'));
-        mounted = true;
-        await render();
-        await settle(() => button('Auto')?.getAttribute('aria-pressed') === 'true');
-        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, OpenAI');
+        await open();
+        const voiceSearch = picker().querySelector('input');
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(voiceSearch, 'Coral');
+          voiceSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        delaySave = true;
+        failSave = true;
+        const failedChoice = picker().querySelector('[aria-label="Choose Coral, Warm and friendly, OpenAI"]');
+        await act(async () => failedChoice.focus());
+        await click('Choose Coral, Warm and friendly, OpenAI', picker());
+        assert.ok(picker());
+        assert.equal(failedChoice.getAttribute('aria-disabled'), 'true');
+        await act(async () => saves.at(-1).complete());
+        await settle(() => busy.at(-1) === false);
+        assert.equal(picker().querySelector('input').value, 'Coral');
+        assert.equal(document.activeElement, failedChoice);
+        assert.ok(picker().querySelector('[role="alert"]'));
+        assert.equal(settings.speechVoice, 'local:pf_dora');
+        failSave = false;
+        delaySave = false;
+        await click('Choose Coral, Warm and friendly, OpenAI', picker());
+        await settle(() => !picker() && settings.speechVoice === 'openai:coral');
         const beforeCatalogLoss = writes.length;
         settings = { ...settings, speechVoice: 'elevenlabs-direct:saved' };
         await act(async () => window.dispatchEvent(new Event('focus')));
-        await settle(() => provider().getAttribute('aria-label') === 'Voice provider, ElevenLabs');
-        assert.equal(trigger().getAttribute('aria-disabled'), 'true');
-        assert.equal(settings.speechVoice, 'elevenlabs-direct:saved');
+        await settle(() => document.querySelector('.voice-settings > .field-hint[role="status"]'));
+        assert.equal(document.querySelector('.voice-settings-choice .voice-sample').disabled, true);
         assert.equal(writes.length, beforeCatalogLoss);
-        assert.equal(document.querySelector('.voice-sample'), null);
-        await chooseProvider('OpenRouter');
-        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, OpenRouter');
-        assert.equal(settings.speechVoice, 'elevenlabs-direct:saved');
-        assert.equal(writes.length, beforeCatalogLoss);
+        await open();
+        assert.equal(picker().querySelector('[aria-checked="true"]'), null);
+        await close();
         settings = { ...settings, voices: [...settings.voices, { id: 'elevenlabs-direct:replacement', name: 'Replacement', description: 'Warm', engine: 'ElevenLabs', source: 'elevenlabs' }] };
         await act(async () => window.dispatchEvent(new Event('focus')));
-        await chooseProvider('ElevenLabs');
+        await open();
+        await click('Choose Replacement, Warm, ElevenLabs', picker());
         await settle(() => settings.speechVoice === 'elevenlabs-direct:replacement');
         assert.deepEqual(writes.at(-1), { speechVoice: 'elevenlabs-direct:replacement' });
         await open();
-        assert.ok(picker().querySelector('[aria-label="Choose Replacement, Warm, ElevenLabs"]'));
-        await click('Close', picker());
-        await settle(() => !picker());
-        await settle(() => document.activeElement === trigger());
-        await chooseProvider('Automatic');
+        await act(async () => [...picker().querySelectorAll('.voice-choice')].find(item => item.textContent.startsWith('Automatic')).click());
         await settle(() => settings.speechVoice === null && busy.at(-1) === false);
         assert.deepEqual(writes.at(-1), { speechVoice: null });
-        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
-        assert.equal(trigger(), undefined);
-        const automatic = () => document.querySelector('.voice-automatic-choice');
-        assert.ok(automatic());
         const beforeAutomaticSample = writes.length;
         await click('Play ' + dora);
         assert.deepEqual(JSON.parse(requests.at(-1).options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
-        assert.equal(writes.length, beforeAutomaticSample);
-        assert.equal(settings.speechVoice, null);
         await resolve(requests.length - 1);
         const automaticPlayer = players.at(-1);
         const automaticUrl = automaticPlayer.src;
@@ -2860,13 +3005,62 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await act(async () => window.dispatchEvent(new Event('focus')));
         await settle(() => !automaticPlayer.playing);
         released(automaticPlayer, automaticUrl);
-        assert.equal(provider().getAttribute('aria-label'), 'Voice provider, Automatic');
-        assert.equal(trigger(), undefined);
         assert.equal(settings.speechVoice, null);
         assert.equal(writes.length, beforeAutomaticSample);
         await click('Play Coral sample, Warm and friendly');
         assert.deepEqual(JSON.parse(requests.at(-1).options.body), { voice: 'openai:coral', locale: 'pt-PT' });
         assert.equal(writes.length, beforeAutomaticSample);
+        const enter = async (input, value) => act(async () => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await open();
+        delayCatalog = true;
+        await act(async () => picker().querySelector('.voice-refresh-option').click());
+        assert.equal(catalogs.length, 1);
+        await act(async () => [...picker().querySelectorAll('.voice-provider-option')].find(item => item.textContent.includes('OpenAI')).click());
+        await settle(() => dialog('OpenAI'));
+        await act(async () => [...dialog('OpenAI').querySelectorAll('button')].find(item => ['Connect', 'Add API key'].includes(item.textContent.trim())).click());
+        const keyInput = dialog('OpenAI').querySelector('input[type="password"]');
+        await enter(keyInput, 'synthetic-retry-key');
+        assert.ok(drafts.has('voice-connection'));
+        assert.equal(drafts.get('voice-connection').busy, false);
+        assert.equal(JSON.stringify(drafts.get('voice-connection').changes).includes('synthetic-retry-key'), false);
+        await act(async () => dialog('OpenAI').querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => dialog('OpenAI').querySelector('[role="alert"]'));
+        assert.equal(keyInput.value, 'synthetic-retry-key');
+        assert.deepEqual(connectionWrites.at(-1).body, { provider: 'openai', key: 'synthetic-retry-key' });
+        failConnection = false;
+        addConnectedVoice = true;
+        await act(async () => assert.equal(await drafts.get('voice-connection').save(), true));
+        assert.ok(dialog('OpenAI'));
+        assert.equal(picker(), null);
+        await act(async () => catalogs[0].complete());
+        await settle(() => catalogs.length === 2);
+        assert.ok(dialog('OpenAI'));
+        await act(async () => catalogs[1].complete());
+        delayCatalog = false;
+        await settle(() => !dialog('OpenAI') && picker());
+        assert.ok(picker().querySelector('[aria-label^="Choose Cedar"]'));
+        assert.equal(writes.length, beforeAutomaticSample);
+        await act(async () => [...picker().querySelectorAll('.voice-provider-option')].find(item => item.textContent.includes('OpenRouter')).click());
+        await settle(() => dialog('OpenRouter'));
+        await act(async () => [...dialog('OpenRouter').querySelectorAll('button')].find(item => item.textContent.trim() === 'Sign in with OpenRouter').click());
+        await settle(() => dialog('OpenRouter').querySelector('details'));
+        assert.deepEqual(connectionWrites.at(-1).body, { provider: 'openrouter' });
+        const callbackInput = dialog('OpenRouter').querySelector('input[type="url"]');
+        failConnection = true;
+        await enter(callbackInput, 'https://nod.fixture.invalid/callback?code=synthetic-only');
+        await act(async () => callbackInput.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => dialog('OpenRouter').querySelector('[role="alert"]'));
+        assert.equal(callbackInput.value, 'https://nod.fixture.invalid/callback?code=synthetic-only');
+        failConnection = false;
+        await act(async () => callbackInput.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => !dialog('OpenRouter') && picker());
+        assert.equal(writes.length, beforeAutomaticSample);
+        assert.equal(drafts.has('voice-connection'), false);
+        await close();
+        await settle(() => document.activeElement === trigger());
       } finally {
         if (mounted) await act(async () => root.unmount());
         dom.window.close();
@@ -2874,6 +3068,210 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
     `,
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('answer-choice analytics count visible questions and accepted answers within their consent and account', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLButtonElement', 'Event', 'MouseEvent', 'MutationObserver'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      let visibility = 'visible';
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+      const observations = [];
+      globalThis.IntersectionObserver = class {
+        constructor(callback) { this.callback = callback; observations.push(this); }
+        observe(element) { this.element = element; }
+        disconnect() { this.disconnected = true; }
+        intersect(...values) { this.callback(values.map(value => ({ target: this.element, isIntersecting: value }))); }
+      };
+      globalThis.fetch = async () => { throw new Error('This fixture cannot use the network.'); };
+      const sent = [];
+      const client = {
+        init(_key, options) { this.options = options; },
+        capture(event, properties = {}) {
+          const value = this.options.before_send({ event, properties });
+          if (value) this._send_request({ data: [value] });
+          return value;
+        },
+        _send_request(request) { sent.push(...request.data); },
+        set_config(options) { this.options = { ...this.options, ...options }; },
+        reset() {}, startSessionRecording() {}, stopSessionRecording() {},
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AnswerChoices } = await import('./src/web/components/answer-choices.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      const { setAnalyticsClient, configureAnalytics, captureAnalytics } = await import('./src/web/lib/analytics.ts');
+      const configuration = { enabled: true, distinctId: 'synthetic-installation', environment: 'development' };
+      setRequestAccount('synthetic-owner-one');
+      setAnalyticsClient(client);
+      const consent = enabled => configureAnalytics({ ...configuration, enabled }, 'web');
+      consent(true);
+      const container = document.querySelector('#root');
+      const root = createRoot(container);
+      const pending = [], custom = [];
+      const mount = async (id, multiple = false, count = 2) => {
+        const choices = {
+          multiple,
+          options: Array.from({ length: count }, (_, index) => ({
+            id: 'PRIVATE_OPTION_' + index,
+            label: 'PRIVATE_LABEL_' + index,
+            description: 'PRIVATE_DESCRIPTION_' + index,
+          })),
+        };
+        await act(() => root.render(createElement(AnswerChoices, {
+          key: id, choices, question: { id: 'PRIVATE_QUESTION_' + id, text: 'PRIVATE_QUESTION_TEXT' },
+          onAnswer: (text, selection) => new Promise((resolve, reject) => pending.push({ text, selection, resolve, reject })),
+          onWriteAnswer: text => custom.push(text),
+        })));
+      };
+      const events = name => sent.filter(item => item.event === name);
+      const viewed = () => events('answer_choices_viewed');
+      const selected = () => events('answer_choices_selected');
+      const intersect = (...values) => act(() => observations.at(-1)?.intersect(...values));
+      const visible = value => act(() => {
+        visibility = value ? 'visible' : 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const click = selector => act(() => document.querySelector(selector).click());
+      const finish = outcome => act(async () => {
+        if (outcome instanceof Error) pending.at(-1).reject(outcome);
+        else pending.at(-1).resolve(outcome);
+      });
+      await mount('visible');
+      assert.equal(viewed().length, 0);
+      await visible(false);
+      await intersect(true, false);
+      await visible(true);
+      assert.equal(viewed().length, 0);
+      await intersect(false);
+      await visible(false);
+      await intersect(false, true);
+      assert.equal(viewed().length, 0);
+      await visible(true);
+      assert.equal(viewed().length, 1);
+      assert.equal(viewed()[0].properties.multiple, false);
+      assert.equal(viewed()[0].properties.option_count, 2);
+      await intersect(false);
+      await intersect(true);
+      await act(() => root.render(null));
+      assert.equal(observations.at(-1).disconnected, true);
+      await mount('visible');
+      await intersect(true);
+      assert.equal(viewed().length, 1);
+      container.hidden = true;
+      await mount('hidden');
+      await intersect(true);
+      assert.equal(viewed().length, 1);
+      container.hidden = false;
+      await intersect(true);
+      assert.equal(viewed().length, 2);
+      consent(false);
+      await intersect(true);
+      assert.equal(viewed().length, 2);
+      consent(true);
+      assert.equal(viewed().length, 3);
+      const count = pending.length;
+      await click('.answer-choice');
+      await click('.answer-choice');
+      assert.equal(pending.length, count + 1);
+      assert.equal(selected().length, 0);
+      await finish(true);
+      assert.equal(selected().length, 1);
+      assert.equal(selected()[0].properties.multiple, false);
+      assert.equal(selected()[0].properties.option_count, 2);
+      assert.equal(selected()[0].properties.selected_count, 1);
+      assert.equal(document.querySelector('.answer-choices'), null);
+      await mount('multiple', true, 6);
+      await intersect(true);
+      await click('.answer-choice:nth-child(1)');
+      await click('.answer-choice:nth-child(2)');
+      await click('.answer-choice:nth-child(2)');
+      await click('.answer-choices-write');
+      assert.equal(custom.length, 1);
+      assert.equal(selected().length, 1);
+      await click('.answer-choice:nth-child(3)');
+      await click('.answer-choices-send');
+      assert.equal(selected().length, 1);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      assert.equal(selected().at(-1).properties.multiple, true);
+      assert.equal(selected().at(-1).properties.option_count, 6);
+      assert.equal(selected().at(-1).properties.selected_count, 2);
+      for (const [index, outcome] of ['unavailable', false, new Error('Synthetic rejection')].entries()) {
+        await mount('rejected-' + index);
+        await click('.answer-choice');
+        await finish(outcome);
+        assert.equal(selected().length, 2);
+      }
+      await mount('late-consent');
+      await click('.answer-choice');
+      consent(false);
+      consent(true);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      await mount('late-account');
+      await intersect(true);
+      await click('.answer-choice');
+      const oldViews = viewed().length;
+      setRequestAccount('synthetic-owner-two');
+      await intersect(true);
+      assert.equal(viewed().length, oldViews);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      await mount('accepted-after-unmount');
+      await click('.answer-choice');
+      const observer = observations.at(-1);
+      await act(() => root.render(null));
+      observer.intersect(true);
+      assert.equal(viewed().length, oldViews);
+      await finish(true);
+      assert.equal(selected().length, 3);
+      const beforeInvalid = sent.length;
+      for (const value of [undefined, 0, 7, -1, 1.5, NaN, '2']) {
+        captureAnalytics('answer_choices_viewed', { multiple: false, option_count: value });
+        captureAnalytics('answer_choices_selected', { multiple: true, option_count: 2, selected_count: value });
+      }
+      captureAnalytics('answer_choices_viewed', { multiple: 'false', option_count: 2 });
+      captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source: 'composer' });
+      for (const input of [undefined, null, '', 'invalid', 'audio', false, 0])
+        captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source: 'composer', input });
+      assert.equal(sent.length, beforeInvalid);
+      for (const [source, input] of [['answer_choice', 'text'], ['composer', 'text'], ['composer', 'voice']]) {
+        const before = sent.length;
+        captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source, input });
+        assert.equal(sent.length, before + 1);
+        assert.equal(sent.at(-1).event, 'chat_message_sent');
+        assert.equal(sent.at(-1).properties.source, source);
+        assert.equal(sent.at(-1).properties.input, input);
+      }
+      captureAnalytics('answer_choices_selected', {
+        multiple: true, option_count: 6, selected_count: 6,
+        question_id: 'PRIVATE_QUESTION_ID', choice_ids: ['PRIVATE_OPTION_ID'], text: 'PRIVATE_TEXT',
+      });
+      assert.equal(selected().length, 4);
+      assert.equal(selected().at(-1).properties.selected_count, 6);
+      assert.ok(!JSON.stringify(sent).includes('PRIVATE_'));
+      assert.ok(sent.every(item => item.properties.analytics_schema === 'nod_v3'));
+      consent(false);
+      await act(() => root.unmount());
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
 });
 
 test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
@@ -2912,7 +3310,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       const microphoneRequests = [], recorders = [], stoppedRecordings = [];
-      let captureType = 'audio/mp4', speechFormat, delayStop = false;
+      let captureType = 'audio/mp4', speechFormat, speechStatus, delayStop = false;
+      const audioPreparations = [];
       let microphones = [];
       globalThis.NodeFilter = dom.window.NodeFilter;
       const mediaDevices = new dom.window.EventTarget();
@@ -2948,7 +3347,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       dom.window.HTMLMediaElement.prototype.load = () => {};
       const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
       HTMLElement.prototype.getBoundingClientRect = () => rect;
-      HTMLElement.prototype.getClientRects = () => [];
+      HTMLElement.prototype.getClientRects = function() {
+        return this.closest('[role="menu"]') ? [this.getBoundingClientRect()] : [];
+      };
       dom.window.Range.prototype.getBoundingClientRect = () => rect;
       dom.window.Range.prototype.getClientRects = () => [];
       const created = [],
@@ -2966,7 +3367,14 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       };
       URL.revokeObjectURL = (url) => revoked.push(url);
       fetch = (url, options) => {
-        if (url === '/api/speech') return Promise.resolve(Response.json({ transcription: true, transcriptionFormat: speechFormat }));
+        if (url === '/api/speech') return Promise.resolve(Response.json(speechStatus ?? { transcription: true, transcriptionFormat: speechFormat }));
+        if (url === '/api/speech/prepare') return new Promise((resolve, reject) => {
+          audioPreparations.push({ options, resolve, reject });
+          options.signal.addEventListener('abort', () => {
+            speechStatus = { transcription: false, local: { state: 'not_downloaded' } };
+            reject(new DOMException('Cancelled', 'AbortError'));
+          }, { once: true });
+        });
         return new Promise((resolve, reject) => {
           assert.ok(url === '/api/uploads' || url === '/api/uploads/renew');
           assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
@@ -3038,12 +3446,26 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       const click = async (label) => {
         const button = document.querySelector('[aria-label="' + label + '"]');
         assert.ok(button, label);
-        await act(async () => button.click());
+        await act(async () => {
+          button.click();
+          if (label === 'Cancel recording' || label === 'Discard recording')
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+      };
+      const microphoneSettings = async (keyboard = false) => {
+        const button = document.querySelector('[aria-label="Record an audio message"]');
+        assert.ok(button);
+        await act(async () => {
+          button.focus();
+          button.dispatchEvent(keyboard
+            ? new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true })
+            : new dom.window.MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true }));
+        });
       };
       const choose = async (files) => {
         const button = document.querySelector('[aria-label="Attach files"]');
         await act(async () => button.focus());
-        assert.equal(document.activeElement, button);
+        assert.ok(document.activeElement === button, 'Expected focus: ' + (button)?.getAttribute('aria-label'));
         const input = document.querySelector('input[type="file"]');
         let pickerOpened = false;
         input.addEventListener('click', () => { pickerOpened = true; }, { once: true });
@@ -3317,8 +3739,13 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await submit();
         assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
         assert.equal(microphoneRequests.length, 0);
-        assert.ok(document.querySelector('[aria-label="Choose microphone"]'));
+        assert.ok(document.querySelector('[aria-label="Record an audio message"]'));
+        await click('Stop all work');
+        assert.equal(workStops, 1);
+        assert.equal(document.querySelector('[aria-label="Send message"]'), null);
         await act(async () => replaceText('Keep this synthetic draft'));
+        assert.equal(document.querySelector('[aria-label="Stop all work"]'), null);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
         await click('Record an audio message');
         assert.equal(microphoneRequests.length, 1);
         await click('Cancel recording');
@@ -3330,15 +3757,16 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await click('Record an audio message');
         await act(async () => microphoneRequests[1].reject(new DOMException('Blocked', 'NotAllowedError')));
         assert.equal(currentText, 'Keep this synthetic draft');
-        assert.ok(document.querySelector('[role="alert"]'));
-        await click('Record an audio message');
+        await click('Audio needs attention');
+        await settle(() => document.querySelector('.voice-setup'));
+        assert.ok(document.querySelector('.voice-setup [role="alert"]'));
+        await act(async () => document.querySelector('.voice-setup button').click());
         const recorded = microphone();
         await act(async () => microphoneRequests[2].resolve(recorded));
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
-        assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
-        await click('Stop all work');
-        assert.equal(workStops, 1);
+        assert.ok(document.activeElement === document.querySelector('[aria-label="Send audio message"]'), 'Expected focus: ' + (document.querySelector('[aria-label="Send audio message"]'))?.getAttribute('aria-label'));
+        assert.equal(document.querySelector('[aria-label="Stop all work"]'), null);
         assert.equal(recorded.track.stopped, false);
         assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
         let recordingPickers = 0;
@@ -3505,10 +3933,12 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         root = createRoot(document.getElementById('root'));
         closed = false;
         await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
-        await settle(() => document.querySelector('[aria-label="Choose microphone"]'));
+        await settle(() => document.querySelector('[aria-label="Record an audio message"]'));
         const beforeDiscovery = microphoneRequests.length;
-        await click('Choose microphone');
+        await microphoneSettings();
         assert.equal(microphoneRequests.length, beforeDiscovery);
+        assert.equal(document.querySelectorAll('[role="menuitemradio"]').length, 0);
+        assert.equal(document.activeElement, document.querySelector('[aria-label="Allow microphone access"]'));
         await click('Allow microphone access');
         assert.equal(microphoneRequests.length, beforeDiscovery + 1);
         await click('Allow microphone access');
@@ -3519,8 +3949,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests.at(-1).resolve(lateDiscovery));
         assert.equal(lateDiscovery.track.stopped, true);
         await settle(() => !document.querySelector('[role="menu"]'));
-        await settle(() => document.activeElement === document.querySelector('[aria-label="Choose microphone"]'));
-        await click('Choose microphone');
+        await settle(() => document.activeElement === document.querySelector('[aria-label="Record an audio message"]'));
+        await microphoneSettings(true);
         await click('Allow microphone access');
         microphones = [
           { kind: 'audioinput', deviceId: 'default', label: 'Default microphone' },
@@ -3532,8 +3962,16 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(discovered.track.stopped, true);
         assert.equal(recorders.length, 7);
         await settle(() => document.querySelector('[aria-label="USB microphone"]'));
+        const namedMicrophones = microphones;
+        microphones = [{ kind: 'audioinput', deviceId: 'default', label: 'Default microphone' }];
+        await act(async () => mediaDevices.dispatchEvent(new Event('devicechange')));
+        assert.equal(document.querySelectorAll('[role="menuitemradio"]').length, 1);
+        assert.ok(document.querySelector('[aria-label="System default"]'));
+        assert.equal(document.querySelector('[aria-label="Allow microphone access"]'), null);
+        microphones = namedMicrophones;
+        await act(async () => mediaDevices.dispatchEvent(new Event('devicechange')));
         await act(async () => document.querySelector('[role="menu"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })));
-        assert.equal(document.activeElement, document.querySelector('[aria-label="USB microphone"]'));
+        assert.ok(document.activeElement === document.querySelector('[aria-label="USB microphone"]'), 'Expected focus: ' + (document.querySelector('[aria-label="USB microphone"]'))?.getAttribute('aria-label'));
         await click('USB microphone');
         assert.equal(localStorage.getItem('nod.microphone'), 'usb');
         const enumerations = [];
@@ -3547,20 +3985,32 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => enumerations[0](microphones.filter(device => device.deviceId !== 'usb')));
         assert.equal(localStorage.getItem('nod.microphone'), 'usb');
         mediaDevices.enumerateDevices = async () => microphones;
+        await act(async () => {
+          localStorage.setItem('nod.microphone', 'built-in');
+          window.dispatchEvent(new CustomEvent('nod:microphone-change', { detail: 'built-in' }));
+        });
         await click('Record an audio message');
-        assert.deepEqual(microphoneRequests.at(-1).constraints.audio.deviceId, { exact: 'usb' });
+        assert.deepEqual(microphoneRequests.at(-1).constraints.audio.deviceId, { exact: 'built-in' });
         const chosenMicrophone = microphone();
         await act(async () => microphoneRequests.at(-1).resolve(chosenMicrophone));
+        await act(async () => {
+          localStorage.setItem('nod.microphone', 'usb');
+          window.dispatchEvent(new window.StorageEvent('storage', { key: 'nod.microphone', newValue: 'usb' }));
+        });
+        assert.equal(chosenMicrophone.track.stopped, false);
         await click('Stop and preview recording');
         await settle(() => document.querySelector('audio'));
         const priorClip = document.querySelector('audio').src;
         await click('Record again');
+        assert.deepEqual(microphoneRequests.at(-1).constraints.audio.deviceId, { exact: 'usb' });
         await act(async () => microphoneRequests.at(-1).reject(new DOMException('Blocked', 'NotAllowedError')));
         await settle(() => document.querySelector('audio'));
         assert.equal(document.querySelector('audio').src, priorClip);
         assert.equal(revoked.includes(priorClip), false);
         assert.equal(currentText, 'Synthetic review request');
-        await click('Record again');
+        await click('Audio needs attention');
+        await settle(() => document.querySelector('.voice-setup'));
+        await act(async () => document.querySelector('.voice-setup button').click());
         await act(async () => changeActive(false));
         assert.equal(document.querySelector('audio'), null);
         assert.equal(revoked.includes(priorClip), false);
@@ -3607,7 +4057,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(fallback.track.stopped, true);
         await settle(() => document.activeElement === document.querySelector('[contenteditable]'));
         microphones.push({ kind: 'audioinput', deviceId: 'usb', label: 'USB microphone' });
-        await click('Choose microphone');
+        await microphoneSettings();
         await settle(() => document.querySelector('[aria-label="USB microphone"]'));
         await click('USB microphone');
         await click('Record an audio message');
@@ -3619,9 +4069,165 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const racedFallback = microphone();
         await act(async () => microphoneRequests.at(-1).resolve(racedFallback));
         assert.equal(racedFallback.track.stopped, true);
+        const beforeHoldSend = sends.length;
+        const pressRecord = async (keyboard = false) => {
+          await act(async () => document.querySelector('[aria-label="Record an audio message"]').dispatchEvent(keyboard
+            ? new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+            : new dom.window.MouseEvent('pointerdown', { button: 0, bubbles: true, cancelable: true })));
+        };
+        const releaseRecord = async (keyboard = false) => {
+          await act(async () => window.dispatchEvent(keyboard
+            ? new KeyboardEvent('keyup', { key: ' ', bubbles: true })
+            : new dom.window.MouseEvent('pointerup', { button: 0, bubbles: true })));
+        };
+        await pressRecord();
+        await releaseRecord();
+        const releasedBeforePermission = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(releasedBeforePermission));
+        assert.equal(releasedBeforePermission.track.stopped, true);
+        assert.equal(document.querySelector('audio'), null);
+        for (const keyboard of [false, true]) {
+          await pressRecord(keyboard);
+          const held = microphone();
+          await act(async () => microphoneRequests.at(-1).resolve(held));
+          assert.equal(held.track.stopped, false);
+          await releaseRecord(keyboard);
+          await settle(() => document.querySelector('audio'));
+          assert.equal(held.track.stopped, true);
+          assert.equal(sends.length, beforeHoldSend);
+          if (!keyboard) {
+            const count = microphoneRequests.length;
+            await act(async () => document.querySelector('.record-button').dispatchEvent(new dom.window.MouseEvent('click', { detail: 1, bubbles: true })));
+            assert.equal(microphoneRequests.length, count);
+            assert.ok(document.querySelector('audio'));
+          }
+          await click('Discard recording');
+        }
+        const recordKey = async (modifiers = {}, target = document.querySelector('[contenteditable]')) => {
+          const event = new KeyboardEvent('keydown', { key: 'd', code: 'KeyD', metaKey: true, bubbles: true, cancelable: true, ...modifiers });
+          await act(async () => target.dispatchEvent(event));
+          return event.defaultPrevented;
+        };
+        for (const platform of ['MacIntel', 'Win32']) {
+          Object.defineProperty(navigator, 'platform', { configurable: true, value: platform });
+          await act(async () => replaceText('Synthetic ' + platform + ' shortcut draft'));
+          const modifiers = platform === 'MacIntel' ? {} : { metaKey: false, ctrlKey: true };
+          const field = document.querySelector('[contenteditable]');
+          await act(async () => field.focus());
+          const before = microphoneRequests.length;
+          assert.equal(await recordKey(modifiers), true);
+          assert.equal(await recordKey(modifiers), true);
+          assert.equal(await recordKey({ ...modifiers, repeat: true }), true);
+          assert.equal(microphoneRequests.length, before + 1);
+          const shortcutCapture = microphone();
+          await act(async () => microphoneRequests.at(-1).resolve(shortcutCapture));
+          assert.equal(shortcutCapture.track.stopped, false);
+          await recordKey({ ...modifiers, repeat: true });
+          assert.equal(shortcutCapture.track.stopped, false);
+          delayStop = true;
+          await recordKey(modifiers);
+          assert.equal(shortcutCapture.track.stopped, true);
+          await recordKey(modifiers);
+          assert.equal(microphoneRequests.length, before + 1);
+          await act(async () => stoppedRecordings.at(-1)());
+          delayStop = false;
+          await settle(() => document.querySelector('audio'));
+          const preview = document.querySelector('audio').src;
+          await recordKey(modifiers);
+          assert.equal(document.querySelector('audio').src, preview);
+          assert.equal(microphoneRequests.length, before + 1);
+          assert.equal(currentText, 'Synthetic ' + platform + ' shortcut draft');
+          assert.equal(sends.length, beforeHoldSend);
+          await click('Discard recording');
+          const dialog = document.createElement('div');
+          dialog.setAttribute('role', 'dialog');
+          document.body.append(dialog);
+          assert.equal(await recordKey(modifiers), false);
+          dialog.remove();
+          const otherInput = document.createElement('input');
+          document.querySelector('.chat-page').append(otherInput);
+          await act(async () => otherInput.focus());
+          assert.equal(await recordKey(modifiers, otherInput), false);
+          otherInput.remove();
+          await act(async () => field.focus());
+          for (const excluded of [{ repeat: true }, { shiftKey: true }, { altKey: true }, { isComposing: true }, { keyCode: 229 }])
+            await recordKey({ ...modifiers, ...excluded });
+          await act(async () => changeActive(false));
+          assert.equal(await recordKey(modifiers), false);
+          await act(async () => changeActive(true));
+          assert.equal(microphoneRequests.length, before + 1);
+        }
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+        await act(async () => replaceText('Synthetic review request'));
+        const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+        const refreshAudio = () => act(async () => pageDataCache.refresh('/api/speech', true));
+        speechStatus = { transcription: false, localInput: { state: 'not_downloaded' }, local: { state: 'not_downloaded' } };
+        await refreshAudio();
+        const persistentMicrophone = document.querySelector('.record-button');
+        const beforeSetupMicrophones = microphoneRequests.length;
+        await click('Record an audio message');
+        assert.equal(microphoneRequests.length, beforeSetupMicrophones + 1);
+        assert.equal(audioPreparations.length, 0);
+        const immediateCapture = microphone();
+        await act(async () => microphoneRequests.at(-1).resolve(immediateCapture));
+        await settle(() => audioPreparations.length === 1);
+        assert.deepEqual(JSON.parse(audioPreparations[0].options.body), { inputOnly: true });
+        assert.equal(document.querySelector('.voice-setup'), null);
+        assert.ok(document.querySelector('.record-button') === persistentMicrophone);
+        await click('Stop and preview recording');
+        await settle(() => document.querySelector('audio'));
+        const initialRecording = document.querySelector('audio').src;
+        await submit();
+        await settle(() => document.querySelector('[aria-label="Cancel sending"]'));
+        const preparingCaptureCount = microphoneRequests.length;
+        await recordKey();
+        assert.equal(microphoneRequests.length, preparingCaptureCount);
+        assert.equal(sends.length, beforeHoldSend);
+        await click('Cancel sending');
+        await settle(() => document.querySelector('audio'));
+        assert.equal(audioPreparations[0].options.signal.aborted, true);
+        assert.equal(document.querySelector('audio').src, initialRecording);
+        assert.equal(currentText, 'Synthetic review request');
+        await submit();
+        await settle(() => audioPreparations.length === 2);
+        await act(async () => audioPreparations[1].resolve(Response.json({ error: 'Synthetic download interruption' }, { status: 503 })));
+        await settle(() => document.querySelector('audio'));
+        assert.equal(sends.length, beforeHoldSend);
+        assert.equal(document.querySelector('audio').src, initialRecording);
+        assert.equal(currentText, 'Synthetic review request');
+        await submit();
+        await settle(() => audioPreparations.length === 3);
+        speechStatus = { transcription: true, transcriptionFormat: 'wav', localInput: { state: 'ready' }, local: { state: 'not_downloaded' } };
+        await act(async () => audioPreparations[2].resolve(Response.json({ transcription: true, transcriptionFormat: 'wav' })));
+        await settle(() => sends.length === beforeHoldSend + 1);
+        assert.equal(sends.at(-1).recording.type, 'audio/wav');
+        assert.equal(immediateCapture.track.stopped, true);
+        await settle(() => !document.querySelector('audio'));
+        for (const localState of ['failed', 'downloading']) {
+          speechStatus = { transcription: true, local: { state: localState, progress: 60 } };
+          await refreshAudio();
+          const beforeProviderRecording = microphoneRequests.length;
+          await click('Record an audio message');
+          assert.equal(microphoneRequests.length, beforeProviderRecording + 1);
+          await click('Cancel recording');
+          const cancelledProviderRecording = microphone();
+          await act(async () => microphoneRequests.at(-1).resolve(cancelledProviderRecording));
+          assert.equal(cancelledProviderRecording.track.stopped, true);
+          assert.equal(audioPreparations.length, 3);
+        }
+        speechStatus = { transcription: false, localInput: { state: 'not_downloaded' }, local: { state: 'not_downloaded' } };
+        await refreshAudio();
+        await click('Record an audio message');
+        await act(async () => microphoneRequests.at(-1).resolve(microphone()));
+        await settle(() => audioPreparations.length === 4);
+        await act(async () => changeActive(false));
+        assert.equal(audioPreparations[3].options.signal.aborted, true);
+        await act(async () => changeActive(true));
+        await settle(() => document.querySelector('audio'));
+        await click('Discard recording');
+        speechStatus = undefined;
         await act(async () => root.unmount());
         const { Chat } = await import('./src/web/pages/chat.tsx');
-        const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
         pageDataCache.clear();
         HTMLElement.prototype.scrollTo = () => {};
         HTMLElement.prototype.scrollIntoView = () => {};
@@ -3643,6 +4249,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           audioRequests.push({ body, file, bytes: await file.arrayBuffer() });
           if (outcome === 'unknown') throw new TypeError('Synthetic lost response');
           if (outcome === 'retryable') return Response.json({ error: 'Synthetic unavailable transcription', retryable: true }, { status: 503 });
+          if (outcome === 'question_unavailable') return Response.json({ error: 'Synthetic unavailable question', code: outcome }, { status: 409 });
           return Response.json({
             messageId: JSON.parse(body).clientMessageId, turnId: 'synthetic-turn',
             messageText: '', audioCaption: '',
@@ -3654,9 +4261,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           verificationRequests: [], configuration: { llmReady: true },
           messages: [{ id: 'synthetic-assistant', role: 'assistant', text: 'Synthetic conversation', attachments: [], turnId: null, createdAt: '2026-10-26T12:00:00Z' }],
         };
+        let chatRefreshes = 0;
         const renderChat = () => act(async () => root.render(createElement(Chat, {
-          ownerId: 'synthetic-owner', state: chatState, streams: {}, refresh: async () => {},
-          resetConversation: async () => chatState.threadId,
+          ownerId: 'synthetic-owner', state: chatState, streams: {}, refresh: async () => { chatRefreshes++; },
         })));
         root = createRoot(document.getElementById('root'));
         speechFormat = undefined;
@@ -3706,6 +4313,97 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await settle(() => audioRequests.length === 5 && !document.querySelector('.composer audio'));
         assert.equal(document.querySelectorAll('.message-user audio').length, publicPlayers);
         assert.ok(revoked.includes(created.at(-1).url));
+        const audioFetch = fetch;
+        const choiceRequests = [];
+        let choiceOutcome = 'success';
+        fetch = async (url, options = {}) => {
+          if (url === '/api/uploads/renew') return Response.json([artifact]);
+          if (url !== '/api/messages') return audioFetch(url, options);
+          const input = JSON.parse(options.body);
+          choiceRequests.push(input);
+          if (choiceOutcome !== 'success') return Response.json({
+            error: 'Synthetic ' + choiceOutcome,
+            ...(choiceOutcome === 'question_unavailable' ? { code: choiceOutcome } : {}),
+          }, { status: 409 });
+          return Response.json({ messageId: input.clientMessageId, turnId: 'synthetic-choice-turn' });
+        };
+        const question = {
+          id: '00000000-0000-4000-8000-000000000333',
+          role: 'assistant', text: 'Which synthetic mailbox?', attachments: [],
+          turnId: 'synthetic-question-turn', createdAt: '2026-10-26T12:00:00Z',
+          answerChoices: { multiple: false, options: [
+            { id: '00000000-0000-4000-8000-000000000334', label: 'Work', description: 'Synthetic shared mailbox' },
+            { id: '00000000-0000-4000-8000-000000000335', label: 'Personal' },
+          ] },
+        };
+        const chatDraftKey = 'nod.chat-draft.synthetic-owner.synthetic-thread';
+        const mountQuestion = async (pending, draft) => {
+          await act(async () => root.unmount());
+          pageDataCache.clear();
+          localStorage.setItem(chatDraftKey, JSON.stringify({ version: 1, missing: [], attachments: [], reply: null, ...draft }));
+          chatState = { ...chatState, messages: [{ ...question, answerChoicesPending: pending }], pendingAnswerChoiceMessageIds: pending ? [question.id] : [] };
+          root = createRoot(document.getElementById('root'));
+          await renderChat();
+          await settle(() => draft.text.split('\n').every(line => document.querySelector('[contenteditable]')?.textContent.includes(line)));
+          await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
+        };
+        const quote = { id: question.id, role: question.role, text: question.text };
+        await mountQuestion(false, { text: 'Synthetic historical follow-up' });
+        await click('Reply to message');
+        await submit();
+        await settle(() => choiceRequests.length === 1);
+        assert.equal(choiceRequests[0].replyToMessageId, question.id);
+        assert.equal(choiceRequests[0].questionAnswer, undefined);
+        const qualifiedAnswer = 'Work: Synthetic shared mailbox\nAlso include the archive, but only for drafts.';
+        await mountQuestion(true, { text: qualifiedAnswer, reply: { ...quote, answerQuestion: true }, attachments: [artifact] });
+        choiceOutcome = 'question_unavailable';
+        const beforeChoiceRefresh = chatRefreshes;
+        await submit();
+        await settle(() => choiceRequests.length === 2 && qualifiedAnswer.split('\n').every(line => document.querySelector('[contenteditable]')?.textContent.includes(line)));
+        await settle(() => !document.querySelector('.answer-choices'));
+        assert.deepEqual(choiceRequests[1].questionAnswer, { custom: true });
+        assert.ok(chatRefreshes > beforeChoiceRefresh);
+        assert.equal(document.querySelector('[role="alert"]'), null);
+        const retainedAnswer = JSON.parse(localStorage.getItem(chatDraftKey));
+        assert.equal(retainedAnswer.text, choiceRequests[1].text);
+        assert.equal(retainedAnswer.reply.id, question.id);
+        assert.equal(retainedAnswer.reply.answerQuestion, undefined);
+        assert.deepEqual(retainedAnswer.attachments.map(file => file.id), [artifact.id]);
+        assert.equal(choiceRequests.length, 2);
+        choiceOutcome = 'success';
+        await submit();
+        await settle(() => choiceRequests.length === 3);
+        assert.equal(choiceRequests[2].questionAnswer, undefined);
+        assert.equal(choiceRequests[2].replyToMessageId, question.id);
+        assert.equal(choiceRequests[2].text, choiceRequests[1].text);
+        assert.deepEqual(choiceRequests[2].attachmentIds, [artifact.id]);
+        assert.notEqual(choiceRequests[2].clientMessageId, choiceRequests[1].clientMessageId);
+        await mountQuestion(true, { text: 'Unrelated draft stays here', attachments: [artifact] });
+        choiceOutcome = 'question_unavailable';
+        await act(async () => document.querySelector('.answer-choice').click());
+        await settle(() => choiceRequests.length === 4 && !document.querySelector('.answer-choices'));
+        assert.equal(document.querySelector('[role="alert"]'), null);
+        assert.equal(document.querySelector('[contenteditable]').textContent, 'Unrelated draft stays here');
+        assert.deepEqual(JSON.parse(localStorage.getItem(chatDraftKey)).attachments.map(file => file.id), [artifact.id]);
+        assert.equal(choiceRequests.length, 4);
+        await mountQuestion(false, { text: 'Synthetic conflict remains visible', reply: quote });
+        choiceOutcome = 'message-id-conflict';
+        await submit();
+        await settle(() => choiceRequests.length === 5 && document.querySelector('[role="alert"]'));
+        assert.match(document.querySelector('[role="alert"]').textContent, /Synthetic message-id-conflict/);
+        await mountQuestion(true, { text: 'Synthetic audio qualifier', reply: { ...quote, answerQuestion: true } });
+        outcome = 'question_unavailable';
+        const beforeQuestionAudio = audioRequests.length;
+        await click('Record an audio message');
+        await act(async () => microphoneRequests.at(-1).resolve(microphone()));
+        await submit();
+        await settle(() => audioRequests.length === beforeQuestionAudio + 1 && document.querySelector('.composer audio'));
+        assert.equal(document.querySelector('[role="alert"]'), null);
+        assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic audio qualifier');
+        assert.equal(JSON.parse(localStorage.getItem(chatDraftKey)).reply.id, question.id);
+        assert.equal(JSON.parse(localStorage.getItem(chatDraftKey)).reply.answerQuestion, undefined);
+        assert.equal(document.querySelector('.answer-choices'), null);
+        assert.equal(audioRequests.length, beforeQuestionAudio + 1);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();
@@ -4798,3 +5496,547 @@ test(
     }
   },
 );
+
+test('chat waits for an authored activity description while keeping active work stoppable', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      let messageRequest, releaseMessage, stops = 0;
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        if (path === '/api/thread/stop') {
+          stops++;
+          return Response.json({});
+        }
+        assert.equal(path, '/api/messages');
+        messageRequest = JSON.parse(options.body);
+        return new Promise(resolve => { releaseMessage = resolve; });
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      const root = createRoot(document.getElementById('root'));
+      let state = {
+        threadId: 'synthetic-thread', turns: [], activity: [], tasks: [],
+        verificationRequests: [], configuration: { llmReady: true },
+        messages: [{ id: 'synthetic-message', role: 'assistant', text: 'Synthetic conversation',
+          attachments: [], turnId: null, createdAt: '2026-10-26T12:00:00Z' }],
+      };
+      const render = (props = {}) => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {}, ...props,
+      })));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected activity transition to settle');
+      };
+      const activity = {
+        turnId: 'synthetic-turn', taskId: null, title: null, step: null, site: null,
+        since: '2026-10-26T12:00:00Z',
+      };
+      try {
+        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' } });
+        await settle(() => messageRequest && document.querySelector('.message-user'));
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        await act(async () => releaseMessage(Response.json({
+          messageId: messageRequest.clientMessageId, turnId: activity.turnId,
+        })));
+        state = { ...state, activity: [activity] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        const stop = document.querySelector('[aria-label="Stop all work"]');
+        assert.ok(stop && !stop.disabled);
+        await act(async () => stop.click());
+        assert.equal(stops, 1);
+        for (const detail of [{ site: 'example.test' }, { title: 'Synthetic task', taskId: 'synthetic-task' }, { step: '   ' }]) {
+          state = { ...state, activity: [{ ...activity, ...detail }] };
+          await render();
+          assert.equal(Boolean(document.querySelector('.thinking')), false);
+          assert.ok(document.querySelector('[aria-label="Stop all work"]'));
+        }
+        state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',
+          title: 'Synthetic task', step: 'Comparing **flight prices**' }] };
+        await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });
+        assert.equal(document.querySelectorAll('.thinking .working-text').length, 1);
+        assert.match(document.querySelector('.thinking').textContent, /Comparing flight prices/);
+        assert.ok(!document.querySelector('.thinking').textContent.includes('**'));
+        state = { ...state, activity: [{ ...activity, step: 'Checking the return journey' }] };
+        await render();
+        assert.equal(document.querySelector('.thinking').textContent, 'Checking the return journey');
+        state = { ...state, activity: [] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
+test('Settings saves only reviewed draft revisions and retains failed edits', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid/settings', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement',
+        'HTMLButtonElement', 'Event', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 640 }]; };
+      window.HTMLElement.prototype.scrollTo = function() {};
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AccountSettings } = await import('./src/web/components/account-settings.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      let preferences = { quietHoursEnabled: true, quietStart: '22:00', quietEnd: '08:00',
+        locale: 'en-GB', timeZone: 'Europe/Lisbon', hourCycle: 'h23', speechReply: 'auto', speechVoice: null };
+      let memory = { saving: true, sensitive: false, notes: [{ path: 'preferences/synthetic-note',
+        area: 'preferences', text: 'Synthetic original note', status: 'stated', updated: '2026-10-30',
+        edited: null, expires: null, learnedFrom: null, sources: [] }], skills: [], archive: [] };
+      const writes = [];
+      let holdPreferences = false, releasePreferences, failMemory = false, failPreferences = false;
+      globalThis.fetch = async (path, options = {}) => {
+        const method = options.method ?? 'GET';
+        const body = options.body ? JSON.parse(options.body) : null;
+        if (method !== 'GET') writes.push({ path, body });
+        if (path === '/api/preferences') {
+          if (method === 'PATCH') {
+            if (failPreferences) {
+              failPreferences = false;
+              return Response.json({ error: 'Synthetic preference failure' }, { status: 500 });
+            }
+            if (holdPreferences) {
+              holdPreferences = false;
+              await new Promise(resolve => { releasePreferences = resolve; });
+            }
+            preferences = { ...preferences, ...body };
+          }
+          return Response.json(preferences);
+        }
+        if (path === '/api/models') return Response.json({ connections: [], selection: null });
+        if (path === '/api/speech') return Response.json({ transcription: false, synthesis: false,
+          voices: [], speechVoice: null, speechReply: 'auto' });
+        if (path === '/api/memory') return Response.json(memory);
+        if (path === '/api/memory/notes/preferences/synthetic-note' && method === 'PATCH') {
+          if (failMemory) {
+            failMemory = false;
+            return Response.json({ error: 'Synthetic note failure' }, { status: 500 });
+          }
+          memory = { ...memory, notes: memory.notes.map(note => ({ ...note, ...body })) };
+          return Response.json(memory);
+        }
+        throw new Error('Unexpected request: ' + path);
+      };
+      const root = createRoot(document.querySelector('#root'));
+      const account = { user: { id: 'synthetic-owner', email: null, name: 'Synthetic owner', avatarUrl: null },
+        theme: 'system', usageData: false, saving: false, onSettings() {}, async onTheme() {},
+        async onUsageData() {}, async onTraces() {} };
+      const settle = () => act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+      const button = (text, scope = document) => [...scope.querySelectorAll('button')]
+        .find(item => item.textContent.trim() === text);
+      const click = async element => {
+        assert.ok(element);
+        await act(async () => element.click());
+        await settle();
+      };
+      const input = async (element, value) => {
+        assert.ok(element);
+        await act(async () => {
+          const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await settle();
+      };
+      const startDrafts = async text => {
+        const nextHour = preferences.quietStart.startsWith('21') ? '20' : '21';
+        await input(document.querySelector('[aria-label="From hours"]'), nextHour);
+        await click(document.querySelector('[aria-label="Note options"]'));
+        await click(button('Edit note'));
+        await input(document.querySelector('.memory-detail textarea'), text);
+        return nextHour + ':00';
+      };
+      const save = () => click(button('Save changes', document.querySelector('.settings-save-bar')));
+      const discard = () => click(button('Discard', document.querySelector('.settings-save-bar')));
+      try {
+        await act(async () => root.render(createElement(AccountSettings, {
+          account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
+        })));
+        await settle();
+        const firstQuietTime = await startDrafts('Synthetic first edit');
+        failMemory = true;
+        await save();
+        assert.equal(preferences.quietStart, firstQuietTime);
+        assert.equal(memory.notes[0].text, 'Synthetic original note');
+        assert.equal(document.querySelector('.memory-detail textarea').value, 'Synthetic first edit');
+        assert.ok(document.querySelector('.settings-save-bar button:not(:disabled)'));
+        await discard();
+        await startDrafts('Synthetic reviewed revision');
+        holdPreferences = true;
+        await save();
+        const edited = document.querySelector('.memory-detail textarea');
+        assert.equal(edited.disabled, false);
+        await input(edited, 'Synthetic later revision');
+        await act(async () => releasePreferences());
+        await settle();
+        assert.equal(memory.notes[0].text, 'Synthetic original note');
+        assert.equal(edited.value, 'Synthetic later revision');
+        assert.ok(document.querySelector('.settings-save-bar'));
+        assert.equal(writes.filter(write => write.path.startsWith('/api/memory/notes/')).length, 1);
+        await discard();
+        await startDrafts('Synthetic pending revision');
+        holdPreferences = true;
+        await save();
+        await input(document.querySelector('.memory-detail textarea'), memory.notes[0].text);
+        await act(async () => releasePreferences());
+        await settle();
+        assert.equal(writes.filter(write => write.path.startsWith('/api/memory/notes/')).length, 1);
+        assert.equal(document.querySelector('.settings-save-bar'), null);
+        const source = { id: 'synthetic-source-message', text: 'Synthetic source text', at: '2026-10-30',
+          channel: 'web', canOpenInCurrentChat: true };
+        memory = { ...memory, notes: [...memory.notes,
+          { ...memory.notes[0], path: 'preferences/first-source', status: 'observed', text: 'Source first note', sources: [source] },
+          { ...memory.notes[0], path: 'preferences/second-source', status: 'observed', text: 'Source second note', sources: [source] },
+        ] };
+        await act(async () => pageDataCache.update('/api/memory', () => memory));
+        let open = true, activeAccount = account;
+        const opened = [];
+        const renderSettings = () => root.render(createElement(AccountSettings, {
+          account: activeAccount, open, initialTab: 'Memory', openRequest: 0, onOpenChange() {},
+          onOpenSource(messageId) { opened.push(messageId); open = false; renderSettings(); },
+        }));
+        await act(async () => renderSettings());
+        await settle();
+        await click([...document.querySelectorAll('.memory-stage')].find(item => item.textContent.startsWith('Learned')));
+        await input(document.querySelector('.memory-search input'), 'Source');
+        await click([...document.querySelectorAll('.memory-row')].at(-1));
+        await click(document.querySelector('.memory-provenance summary'));
+        assert.equal(document.querySelector('.memory-provenance').open, true);
+        await input(document.querySelector('[aria-label="From hours"]'), '19');
+        await click(button('View message'));
+        assert.deepEqual(opened, []);
+        await click(button('Keep editing', document.querySelector('[role="dialog"]')));
+        assert.equal(open, true);
+        assert.equal(document.querySelector('.memory-search input').value, 'Source');
+        await click(button('View message'));
+        failPreferences = true;
+        await click(button('Save and continue', document.querySelector('[role="dialog"]')));
+        assert.deepEqual(opened, []);
+        assert.equal(open, true);
+        assert.equal(document.querySelector('[aria-label="From hours"]').value, '19');
+        await click(button('Discard', document.querySelector('[role="dialog"]')));
+        assert.deepEqual(opened, ['synthetic-source-message']);
+        assert.equal(document.querySelector('.memory-panel'), null);
+        open = true;
+        await act(async () => renderSettings());
+        await settle();
+        assert.equal(document.querySelector('.memory-search input').value, 'Source');
+        assert.ok(document.querySelector('.memory-stage[aria-pressed="true"]').textContent.startsWith('Learned'));
+        assert.ok(document.querySelector('.memory-row[aria-current="true"]').textContent.includes('Source second note'));
+        assert.equal(document.querySelector('.memory-provenance').open, true);
+        assert.equal(document.querySelector('[aria-label="From hours"]').value, preferences.quietStart.slice(0, 2));
+        await click(button('View message'));
+        assert.equal(open, false);
+        activeAccount = { ...account, user: { ...account.user, id: 'another-owner' } };
+        await act(async () => renderSettings());
+        open = true;
+        await act(async () => renderSettings());
+        await settle();
+        assert.equal(document.querySelector('.memory-search input').value, '');
+        assert.ok(document.querySelector('.memory-stage[aria-pressed="true"]').textContent.startsWith('All'));
+        assert.equal(document.querySelector('.memory-provenance').open, false);
+        assert.ok(!JSON.stringify(localStorage).includes('Source'));
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('SearchPicker selects empty-string options with keyboard navigation and filtering', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid/settings',
+        pretendToBeVisual: true,
+      });
+      for (const name of ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Node', 'Element', 'Event', 'CustomEvent', 'KeyboardEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment']) {
+        globalThis[name] = dom.window[name];
+      }
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
+      globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+      globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+      globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { SearchPicker } = await import('./src/web/components/search-picker.tsx');
+      const selected = [];
+      const root = createRoot(document.getElementById('root'));
+      const tick = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      const trigger = () => document.querySelector('button[aria-haspopup="dialog"]');
+      const open = async (keyboard = false) => {
+        await act(async () => {
+          if (keyboard) {
+            trigger().focus();
+            trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+          } else trigger().click();
+        });
+        await tick();
+        const input = document.querySelector('[role="combobox"]');
+        assert.equal(document.activeElement, input);
+        return input;
+      };
+      const key = (input, value) => act(async () => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
+      });
+      const input = (element, value) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const activeOption = (input) => document.getElementById(input.getAttribute('aria-activedescendant'));
+      try {
+        await act(async () => root.render(createElement(SearchPicker, {
+          value: 'mic-1',
+          onChange: (value) => selected.push(value),
+          options: [{ value: '', label: 'System default' }, { value: 'mic-1', label: 'Studio microphone' }],
+          labels: { choose: 'Choose microphone', search: 'Search microphones', placeholder: 'Search', clear: 'Clear', list: 'Microphones', empty: 'No microphones' },
+        })));
+        let search = await open(true);
+        await key(search, 'Home');
+        assert.equal(activeOption(search)?.textContent, 'System default');
+        await key(search, 'Enter');
+        await tick();
+        assert.deepEqual(selected, ['']);
+        assert.equal(document.querySelector('[role="combobox"]'), null);
+        assert.equal(document.activeElement, trigger());
+        search = await open();
+        await key(search, 'ArrowUp');
+        assert.equal(activeOption(search)?.textContent, 'System default');
+        await key(search, 'End');
+        assert.equal(activeOption(search)?.textContent, 'Studio microphone');
+        await key(search, 'Enter');
+        await tick();
+        assert.deepEqual(selected, ['', 'mic-1']);
+        search = await open();
+        await input(search, 'System');
+        assert.equal(activeOption(search)?.textContent, 'System default');
+        await key(search, 'Enter');
+        await tick();
+        assert.deepEqual(selected, ['', 'mic-1', '']);
+        search = await open();
+        await input(search, 'unavailable device');
+        assert.equal(search.getAttribute('aria-activedescendant'), null);
+        await key(search, 'ArrowDown');
+        await key(search, 'Enter');
+        assert.deepEqual(selected, ['', 'mic-1', '']);
+        assert.equal(document.activeElement, search);
+        await key(search, 'Escape');
+        await tick();
+        assert.equal(document.querySelector('[role="combobox"]'), null);
+        assert.equal(document.activeElement, trigger());
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('shared controls retain reachable tabs, visible-label typeahead and disabled explanations', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        innerWidth: 1024, innerHeight: 768,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement',
+        'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const matches = window.Element.prototype.matches;
+      window.Element.prototype.matches = function(selector) {
+        return selector === ':focus-visible' ? this === document.activeElement : matches.call(this, selector);
+      };
+      let left = 100;
+      window.HTMLElement.prototype.getClientRects = function() { return [this.getBoundingClientRect()]; };
+      window.HTMLElement.prototype.getBoundingClientRect = function() {
+        const x = this.id === 'moving-anchor' ? left : 0;
+        return { x, y: 100, top: 100, bottom: 124, left: x, right: x + 80, width: 80, height: 24 };
+      };
+      globalThis.fetch = async path => { throw new Error('Unexpected request: ' + path); };
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Tabs } = await import('./src/web/components/tabs.tsx');
+      const { ActionMenuSurface, ActionMenuItem } = await import('./src/web/components/action-menu.tsx');
+      const { Tooltip } = await import('./src/web/components/tooltip.tsx');
+      const { Button } = await import('./src/web/components/ui.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      const render = content => act(async () => root.render(content));
+      const key = (node, key) => act(async () => node.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
+      const tick = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 45)); });
+      try {
+        const values = [];
+        const items = [{ value: 'a', label: 'A', disabled: true }, { value: 'b', label: 'B' }, { value: 'c', label: 'C' }];
+        await render(h(Tabs, { id: 'tabs', panelId: 'panel', label: 'Controls', items, value: 'a', onValueChange: value => { values.push(value); return false; } }));
+        const tabs = document.querySelectorAll('[role="tab"]');
+        assert.equal(tabs[0].disabled, true);
+        assert.equal(tabs[1].tabIndex, 0);
+        assert.equal(tabs[2].tabIndex, -1);
+        await act(async () => tabs[1].focus());
+        await key(tabs[1], 'End');
+        assert.deepEqual(values, ['c']);
+        assert.equal(document.activeElement, tabs[1]);
+        await render(h(Tabs, { id: 'tabs', panelId: 'panel', label: 'Controls', items: items.map(item => ({ ...item, disabled: true })), value: 'a', onValueChange() {} }));
+        assert.equal(document.querySelector('[role="tab"][tabindex="0"]'), null);
+        await render(h(ActionMenuSurface, { 'aria-label': 'Choose voice' },
+          h(ActionMenuItem, { 'aria-label': 'Choose Alpha' }, 'Alpha'),
+          h(ActionMenuItem, { 'aria-label': 'Choose Beta' }, 'Beta'),
+          h(ActionMenuItem, { textValue: 'Zulu', 'aria-label': 'Choose Alternate' }, 'Alternate'),
+          h(ActionMenuItem, { disabled: true }, 'Bravo')));
+        const menu = document.querySelector('[role="menu"]');
+        const choices = menu.querySelectorAll('[role="menuitem"]');
+        await act(async () => choices[0].focus());
+        await key(choices[0], 'b');
+        assert.equal(document.activeElement, choices[1]);
+        await key(choices[1], 'Home');
+        assert.equal(document.activeElement, choices[0]);
+        await key(choices[0], 'End');
+        assert.equal(document.activeElement, choices[2]);
+        await render(h(Tooltip, { content: 'Moving control', forceOpen: true }, h('button', { id: 'moving-anchor' }, 'Move')));
+        const tooltip = document.querySelector('[role="tooltip"]');
+        const first = Number.parseFloat(tooltip.style.left);
+        left += 120;
+        window.dispatchEvent(new Event('resize'));
+        await tick();
+        assert.equal(Number.parseFloat(tooltip.style.left), first + 120);
+        let clicked = 0;
+        await render(h(Button, { disabled: true, title: 'A spending limit pauses control', onClick() { clicked++; } }, 'Return to Nod'));
+        const button = document.querySelector('button');
+        assert.equal(button.disabled, true);
+        const target = document.querySelector('[data-tooltip-trigger]');
+        assert.equal(target.tabIndex, 0);
+        await act(async () => target.focus());
+        await tick();
+        const explanation = document.querySelector('[role="tooltip"]');
+        assert.ok(explanation);
+        assert.equal(target.getAttribute('aria-describedby'), explanation.id);
+        await act(async () => button.click());
+        assert.equal(clicked, 0);
+        await key(target, 'Escape');
+        assert.equal(document.querySelector('[role="tooltip"]'), null);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('navigation guards restore raw app history entries before leaving unsaved settings', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('', { url: 'https://nod.fixture.invalid/apps' });
+      Object.assign(globalThis, { window: dom.window, PopStateEvent: dom.window.PopStateEvent });
+      const { guardNavigation, navigate, subscribeNavigation } = await import('./src/web/lib/navigation.ts');
+      const originalPush = window.history.pushState, originalReplace = window.history.replaceState;
+      const unsubscribe = subscribeNavigation(() => {});
+      let proceed;
+      const until = async predicate => {
+        const deadline = Date.now() + 1000;
+        while (!predicate()) {
+          assert.ok(Date.now() < deadline, 'History traversal did not reach the expected entry');
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      };
+      let clearGuard = () => {};
+      try {
+        window.history.pushState(null, '', '/apps?connect=synthetic');
+        window.history.replaceState({ connection: 'synthetic' }, '', '/apps');
+        navigate('/settings');
+        clearGuard = guardNavigation((path, continueNavigation) => {
+          proceed = continueNavigation;
+          return false;
+        });
+        window.history.back();
+        await until(() => proceed && window.location.pathname === '/settings');
+        assert.equal(window.history.state.nodNavigationIndex, 2);
+        proceed();
+        await until(() => window.location.pathname === '/apps');
+        assert.equal(window.history.state.connection, 'synthetic');
+        clearGuard();
+        window.history.forward();
+        await until(() => window.location.pathname === '/settings');
+        const second = subscribeNavigation(() => {});
+        unsubscribe();
+        second();
+        assert.equal(window.history.pushState, originalPush);
+        assert.equal(window.history.replaceState, originalReplace);
+      } finally {
+        clearGuard();
+        unsubscribe();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});

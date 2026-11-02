@@ -245,12 +245,7 @@ export default function PdfPreview({
   }
   if (!safe) return <div role="status">Preview unavailable</div>;
   return (
-    <div
-      className="attachment-pdf-preview"
-      onKeyDown={(event) => {
-        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) event.stopPropagation();
-      }}
-    >
+    <div className="attachment-pdf-preview">
       {failed ? (
         <div className="artifact-empty" role="status">
           <FileText size={32} aria-hidden="true" />
@@ -275,8 +270,8 @@ export default function PdfPreview({
                   key={index + 1}
                   document={document}
                   number={index + 1}
-                  width={size.width}
-                  height={fit === 'page' ? size.height : undefined}
+                  width={Math.max(1, size.width - 24)}
+                  height={fit === 'page' ? Math.max(1, size.height - 88) : undefined}
                   zoom={zoom}
                   scrollRoot={scroll}
                   onError={fail}

@@ -7,7 +7,9 @@ import {
   type TSchema,
 } from '@sinclair/typebox';
 import { z } from 'zod';
-import { presentationSchema, type Presentation } from '../shared/presentation.ts';
+import { randomUUID } from 'node:crypto';
+import { answerChoiceInputSchema, answerChoicesSchema } from '../shared/answer-choices.ts';
+import { presentationInputSchema, type Presentation } from '../shared/presentation.ts';
 import { Value } from '@sinclair/typebox/value';
 import {
   appConfirmation,
@@ -170,9 +172,9 @@ const taskNextCheck = Type.String({
 
 TypeRegistry.Set(
   'NodPresentation',
-  (_schema, value) => presentationSchema.safeParse(value).success,
+  (_schema, value) => presentationInputSchema.safeParse(value).success,
 );
-const { $schema, ...presentationJsonSchema } = z.toJSONSchema(presentationSchema, {
+const { $schema, ...presentationJsonSchema } = z.toJSONSchema(presentationInputSchema, {
   target: 'draft-7',
   io: 'input',
 });
@@ -184,8 +186,9 @@ const presentation = Type.Unsafe<Presentation>({
 export const toolDefinitions = {
   set_status: defineTool(
     'set_status',
-    "Set the live activity line, not a chat message. Use one short goal in the owner's language. Update only when useful; do not claim a result.",
+    "Replace the live activity line without a chat message. Name current work briefly in the owner's language; never claim completion.",
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 140 }) }),
+    true,
   ),
   skills: defineTool(
     'skills',
@@ -223,11 +226,12 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result or necessary decision now. Background final text is private. Do not repeat delivered text. Read visual-replies for the presentation schema when comparisons, locations, layouts or trends benefit from a native view, or to offer Connect buttons for apps. Text gives the conclusion, caveats and sources without repeating every value. Completion requires confirmed, inspectable output.',
+    'Deliver a checked result or necessary decision now. Use intent "final" only when this delivery completes the owner\'s request; successful delivery ends the turn. Omit intent or use "update" for partial results or remaining work. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
     Type.Object({
-      text: Type.String({ minLength: 1 }),
+      text: Type.String(),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
+      intent: Type.Optional(literals(['update', 'final'])),
     }),
     true,
   ),
@@ -323,8 +327,23 @@ export const toolDefinitions = {
   ),
   ask_user: defineTool(
     'ask_user',
-    'Ask one necessary question and pause until the user answers.',
-    Type.Object({ question: Type.String() }),
+    'Ask one necessary question and pause. For a finite decision, supply known choices instead of a prose list, normally two to four. Add descriptions only to distinguish options. The owner can write another answer. Never use choices for action approvals or secrets.',
+    Type.Object({
+      question: Type.String(),
+      choices: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              label: Type.String({ minLength: 1, maxLength: 120 }),
+              description: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1, maxItems: 6 },
+        ),
+      ),
+      multiple: Type.Optional(Type.Boolean()),
+    }),
     true,
   ),
   react_to_message: defineTool(
@@ -883,12 +902,21 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       return context.manage(`skill_${action}`, { action, ...args });
     }),
     bind(toolDefinitions.send_message, async (p) => {
-      if (!p.text.trim()) throw new Error('A complete text answer is required.');
       const visual =
-        p.presentation === undefined ? undefined : presentationSchema.parse(p.presentation);
-      return (
-        (await turn.reply(p.text, undefined, p.replyToMessageId, visual)) ?? 'Message delivered.'
-      );
+        p.presentation === undefined ? undefined : presentationInputSchema.parse(p.presentation);
+      if (!p.text.trim() && !visual) throw new Error('A text answer or visual is required.');
+      const delivery = await turn.reply(p.text, undefined, p.replyToMessageId, visual);
+      const outcome = {
+        none: 'The text answer is already visible to the owner.',
+        original: 'The visual and accompanying text are already visible to the owner.',
+        corrected: 'The corrected visual and accompanying text are already visible to the owner.',
+        omitted:
+          'The corrected plain-text answer is already visible to the owner; the requested visual was not included.',
+      }[delivery.presentation];
+      return {
+        ...delivery,
+        message: `${outcome} If this completes the request, finish with no additional text. Continue only for substantive new results, caveats or remaining work; do not announce or recap delivery.`,
+      };
     }),
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
@@ -896,7 +924,16 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
-      await pause('question', text);
+      const choices = p.choices
+        ? answerChoicesSchema.parse({
+            options: p.choices.map((choice) => ({
+              ...answerChoiceInputSchema.parse(choice),
+              id: randomUUID(),
+            })),
+            multiple: p.multiple ?? false,
+          })
+        : undefined;
+      await pause('question', text, choices);
       return 'Waiting for the user to reply.';
     }),
     bind(toolDefinitions.react_to_message, async (p) => {

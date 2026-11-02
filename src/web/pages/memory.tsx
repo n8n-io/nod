@@ -1,5 +1,21 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Check, ChevronLeft, Copy, Download, Import, Plus, Undo2, X } from '../components/icons';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import {
+  CalendarClock,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  Copy,
+  Download,
+  Ellipsis,
+  FileArchive,
+  Import,
+  MessageCircle,
+  PenLine,
+  Plus,
+  Trash2,
+  Undo2,
+  X,
+} from '../components/icons';
 import {
   areaLabels,
   memoryAreas,
@@ -32,6 +48,9 @@ import {
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { exportMemory } from '../lib/memory-export';
+import { Tooltip } from '../components/tooltip';
+import { ActionMenu, ActionMenuItem } from '../components/action-menu';
+import { useSettingsDraft } from '../components/settings-drafts';
 import {
   dayKey,
   formatCalendarDate,
@@ -40,9 +59,17 @@ import {
   useDateFormat,
 } from '../lib/date-format';
 import { cn } from '../lib/utils';
+import { isPrimaryModifier } from '../lib/navigation';
 
 type Stage = MemoryStatus | 'archive' | 'skills';
 type Selection = { note: string } | { archived: string } | { skill: string } | null;
+
+export type MemoryNavigationState = {
+  stage: Stage | null;
+  query: string;
+  selection: Selection;
+  detailsOpen: boolean;
+};
 
 const stages: Array<{ id: Stage; label: string; hint: string }> = [
   {
@@ -75,6 +102,7 @@ const reasons: Record<MemoryArchived['reason'], string> = {
   stale: 'Not mentioned again',
   obsolete: 'No longer true',
   contradicted: 'Contradicted',
+  manual: 'Archived by you',
 };
 const channels: Record<string, string> = {
   web: 'Nod web',
@@ -95,7 +123,7 @@ function useCompact() {
     observer.observe(panel);
     return () => observer.disconnect();
   }, [panel]);
-  return [compact, setPanel] as const;
+  return [compact, setPanel, panel] as const;
 }
 
 function MemoryMark({ stage }: { stage: Stage }) {
@@ -113,16 +141,19 @@ function Stages({
   counts,
   selected,
   onSelect,
+  disabled,
 }: {
   counts: Record<Stage, number>;
   selected: Stage | null;
   onSelect(stage: Stage | null): void;
+  disabled?: boolean;
 }) {
   return (
     <div className="memory-stages" role="group" aria-label="Filter by status">
       <button
         type="button"
         className="memory-stage"
+        disabled={disabled}
         aria-pressed={!selected}
         onClick={() => onSelect(null)}
       >
@@ -132,32 +163,51 @@ function Stages({
         </span>
       </button>
       {stages.map((stage) => (
-        <button
-          key={stage.id}
-          type="button"
-          className="memory-stage"
-          aria-pressed={selected === stage.id}
-          title={stage.hint}
-          onClick={() => onSelect(selected === stage.id ? null : stage.id)}
-        >
-          <MemoryMark stage={stage.id} />
-          {stage.label}
-          <span className="memory-stage-count">{counts[stage.id]}</span>
-        </button>
+        <Tooltip key={stage.id} content={stage.hint}>
+          <button
+            type="button"
+            className="memory-stage"
+            disabled={disabled}
+            aria-pressed={selected === stage.id}
+            onClick={() => onSelect(selected === stage.id ? null : stage.id)}
+          >
+            <MemoryMark stage={stage.id} />
+            {stage.label}
+            <span className="memory-stage-count">{counts[stage.id]}</span>
+          </button>
+        </Tooltip>
       ))}
     </div>
   );
 }
 
-function Sources({ sources }: { sources: MemorySource[] }) {
+function Sources({
+  sources,
+  onOpenSource,
+}: {
+  sources: MemorySource[];
+  onOpenSource(messageId: string): void;
+}) {
   const format = useDateFormat();
   return sources
     .toSorted((a, b) => (b.at ?? '').localeCompare(a.at ?? ''))
     .map((source) => (
       <figure key={source.id} className="memory-source">
-        <blockquote>
-          {source.text ? `“${source.text}”` : 'This message is no longer in your chat history.'}
-        </blockquote>
+        {source.canOpenInCurrentChat ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="memory-source-link"
+            onClick={() => onOpenSource(source.id)}
+          >
+            <MessageCircle size={14} aria-hidden="true" />
+            View message
+          </Button>
+        ) : (
+          <blockquote>
+            {source.quote || source.text || 'This message is no longer in your chat history.'}
+          </blockquote>
+        )}
         {source.at && (
           <figcaption>
             {channels[source.channel ?? 'web'] ?? source.channel} ·{' '}
@@ -168,9 +218,74 @@ function Sources({ sources }: { sources: MemorySource[] }) {
     ));
 }
 
-function Back({ onBack }: { onBack?: () => void }) {
+function MemoryDetails({
+  updated,
+  sources = [],
+  history = [],
+  origin,
+  task,
+  onOpenSource,
+  initiallyOpen = false,
+}: {
+  updated: string;
+  sources?: MemorySource[];
+  history?: MemoryArchived[];
+  origin?: string;
+  task?: string | null;
+  onOpenSource(messageId: string): void;
+  initiallyOpen?: boolean;
+}) {
+  const format = useDateFormat();
+  const [open, setOpen] = useState(initiallyOpen);
+  return (
+    <details
+      className="memory-provenance"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        Details
+        <ChevronDown size={14} aria-hidden="true" />
+      </summary>
+      <dl>
+        <div>
+          <dt>Updated</dt>
+          <dd>
+            <time dateTime={updated}>{formatDayLabel(updated, format)}</time>
+          </dd>
+        </div>
+        <div>
+          <dt>{task !== undefined ? 'Original task' : 'Source'}</dt>
+          <dd>
+            {task !== undefined ? (
+              task || 'Source unavailable.'
+            ) : sources.length ? (
+              <Sources sources={sources} onOpenSource={onOpenSource} />
+            ) : (
+              origin || 'Source unavailable.'
+            )}
+          </dd>
+        </div>
+        {history.length > 0 && (
+          <div>
+            <dt>Earlier versions</dt>
+            <dd className="memory-history">
+              {history.map((item) => (
+                <p key={archivedKey(item)}>
+                  {reasons[item.reason]} “{item.text}” · {formatDayLabel(item.archived, format)}
+                </p>
+              ))}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </details>
+  );
+}
+
+function Back({ onBack, disabled }: { onBack?: () => void; disabled?: boolean }) {
   return onBack ? (
-    <Button variant="ghost" size="sm" className="memory-back" onClick={onBack}>
+    <Button variant="ghost" size="sm" className="memory-back" disabled={disabled} onClick={onBack}>
       <ChevronLeft size={16} aria-hidden="true" />
       Memory
     </Button>
@@ -181,205 +296,305 @@ function NoteDetail({
   note,
   history,
   onChange,
+  onArchive,
   onForget,
   onBack,
   onDirtyChange,
+  onOpenSource,
+  detailsOpen,
 }: {
   note: MemoryNote;
   history: MemoryArchived[];
   onChange(body: { text?: string; expires?: string | null; confirm?: true }): Promise<void>;
+  onArchive(): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
   onDirtyChange?(dirty: boolean): void;
+  onOpenSource(messageId: string): void;
+  detailsOpen?: boolean;
 }) {
   const format = useDateFormat();
-  const [mode, setMode] = useState<'view' | 'edit' | 'expires' | 'forget'>('view');
+  const [mode, setMode] = useState<'view' | 'edit' | 'forget'>('view');
   const [text, setText] = useState(note.text);
   const [expires, setExpires] = useState(note.expires ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const busyRef = useRef(false);
   const form = useRef<HTMLFormElement>(null);
-  const dirty =
-    (mode === 'edit' && text.trim() !== note.text) ||
-    (mode === 'expires' && (expires || null) !== note.expires);
+  const editFocus = useRef<'textarea' | 'input'>('textarea');
+  const latest = useRef({ text, expires, note });
+  latest.current = { text, expires, note };
+  const changes =
+    mode === 'edit'
+      ? [
+          ...(text.trim() !== note.text
+            ? [{ label: 'Note text', before: note.text, after: text.trim() }]
+            : []),
+          ...((expires || null) !== note.expires
+            ? [
+                {
+                  label: 'Note end date',
+                  before: note.expires || 'No end date',
+                  after: expires || 'No end date',
+                },
+              ]
+            : []),
+        ]
+      : [];
+  const dirty = changes.length > 0;
   useEffect(() => {
-    if (error && !busy) form.current?.querySelector<HTMLElement>('textarea,input')?.focus();
-  }, [error, busy]);
-  useEffect(() => {
-    onDirtyChange?.(dirty);
+    onDirtyChange?.(dirty || busy);
     return () => onDirtyChange?.(false);
-  }, [dirty, onDirtyChange]);
+  }, [dirty, busy, onDirtyChange]);
+  useEffect(() => {
+    if (mode === 'edit') form.current?.querySelector<HTMLElement>(editFocus.current)?.focus();
+  }, [mode]);
+  function discard() {
+    if (busyRef.current) return;
+    setText(latest.current.note.text);
+    setExpires(latest.current.note.expires ?? '');
+    setError('');
+    setMode('view');
+  }
+  function edit(focus: 'textarea' | 'input' = 'textarea') {
+    editFocus.current = focus;
+    setText(note.text);
+    setExpires(note.expires ?? '');
+    setError('');
+    setMode('edit');
+  }
   async function run(action: () => Promise<void>) {
+    if (busyRef.current) return false;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
       await action();
-      setMode('view');
+      return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      return false;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
-  function save(event: FormEvent) {
-    event.preventDefault();
-    if (busy || (mode === 'edit' && !text.trim())) return;
-    const body = mode === 'edit' ? { text: text.trim() } : { expires: expires || null };
-    const unchanged = 'text' in body ? body.text === note.text : body.expires === note.expires;
-    if (unchanged) setMode('view');
-    else void run(() => onChange(body));
+  async function saveDraft() {
+    if (busyRef.current) return false;
+    if (!dirty) {
+      discard();
+      return true;
+    }
+    if (!text.trim()) {
+      setError('Write a note before saving.');
+      form.current?.querySelector('textarea')?.focus();
+      return false;
+    }
+    if (!form.current?.reportValidity()) return false;
+    const submitted = { text: text.trim(), expires: expires || null };
+    const body = {
+      ...(submitted.text !== note.text ? { text: submitted.text } : {}),
+      ...(submitted.expires !== note.expires ? { expires: submitted.expires } : {}),
+    };
+    const saved = await run(() => onChange(body));
+    if (
+      saved &&
+      latest.current.text.trim() === submitted.text &&
+      (latest.current.expires || null) === submitted.expires
+    )
+      setMode('view');
+    return saved;
   }
-  const cancel = (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      disabled={busy}
-      onClick={() => {
-        setText(note.text);
-        setExpires(note.expires ?? '');
-        setError('');
-        setMode('view');
-      }}
-    >
-      Cancel
-    </Button>
-  );
+  useSettingsDraft(`memory-note:${note.path}`, { changes, busy, save: saveDraft, discard });
   return (
     <article className="memory-detail">
-      <Back onBack={onBack} />
-      <p className="memory-status">
-        <MemoryMark stage={note.status} />
-        {stageLabel[note.status]}
-      </p>
+      <Back onBack={onBack} disabled={dirty || busy} />
+      <div className="memory-detail-header">
+        <p className="memory-status">
+          <MemoryMark stage={note.status} />
+          {stageLabel[note.status]}
+        </p>
+        {mode === 'view' && (
+          <ActionMenu
+            label="Note options"
+            disabled={busy}
+            contentClassName="memory-note-menu"
+            trigger={
+              <Button variant="ghost" size="icon" title="Note options">
+                <Ellipsis size={18} aria-hidden="true" />
+              </Button>
+            }
+          >
+            {(close) => (
+              <>
+                <ActionMenuItem
+                  onClick={() => {
+                    close();
+                    edit();
+                  }}
+                >
+                  <PenLine size={16} aria-hidden="true" />
+                  Edit note
+                </ActionMenuItem>
+                <ActionMenuItem
+                  onClick={() => {
+                    close();
+                    edit('input');
+                  }}
+                >
+                  <CalendarClock size={16} aria-hidden="true" />
+                  {note.expires ? 'Change end date' : 'Set end date'}
+                </ActionMenuItem>
+                {note.status !== 'stated' && (
+                  <ActionMenuItem
+                    onClick={() => {
+                      close();
+                      void run(() => onChange({ confirm: true }));
+                    }}
+                  >
+                    <Check size={16} aria-hidden="true" />
+                    Confirm note
+                  </ActionMenuItem>
+                )}
+                <div className="memory-menu-separator" role="separator" />
+                <ActionMenuItem
+                  onClick={() => {
+                    close();
+                    void run(onArchive);
+                  }}
+                >
+                  <FileArchive size={16} aria-hidden="true" />
+                  Archive note
+                </ActionMenuItem>
+                <ActionMenuItem
+                  destructive
+                  onClick={() => {
+                    close();
+                    setMode('forget');
+                  }}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                  Forget note…
+                </ActionMenuItem>
+              </>
+            )}
+          </ActionMenu>
+        )}
+      </div>
       {mode === 'edit' ? (
         <form
           ref={form}
           className="memory-form"
-          onSubmit={save}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveDraft();
+          }}
           onKeyDown={(event) => {
+            if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229)
+              return;
             if (event.key === 'Escape' && !busy) {
               event.preventDefault();
               event.stopPropagation();
-              if (!dirty) setMode('view');
+              if (!dirty) discard();
             }
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            if (
+              event.key === 'Enter' &&
+              isPrimaryModifier(event) &&
+              !event.altKey &&
+              !event.shiftKey &&
+              !event.repeat
+            ) {
               event.preventDefault();
-              if (!busy && text.trim() && !event.nativeEvent.isComposing)
-                event.currentTarget.requestSubmit();
+              if (!busy) event.currentTarget.requestSubmit();
             }
           }}
         >
-          <textarea
-            className="input"
-            disabled={busy}
-            value={text}
-            maxLength={noteChars}
-            rows={3}
-            aria-label="Note"
-            autoFocus
-            onChange={(event) => setText(event.target.value)}
-          />
+          <Field label="Note">
+            <textarea
+              className="input"
+              value={text}
+              maxLength={noteChars}
+              rows={4}
+              required
+              onChange={(event) => setText(event.target.value)}
+            />
+          </Field>
+          <Field label="Keep until">
+            <input
+              className="input"
+              type="date"
+              value={expires}
+              min={expires === (note.expires ?? '') ? undefined : dayKey(Date.now(), format)}
+              onChange={(event) => setExpires(event.target.value)}
+            />
+          </Field>
           <div className="memory-actions">
-            <Button type="submit" size="sm" disabled={busy || !text.trim()}>
+            <Button type="submit" size="sm" disabled={busy || !text.trim() || !dirty}>
               Save
             </Button>
-            {cancel}
+            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={discard}>
+              Cancel
+            </Button>
           </div>
         </form>
       ) : (
         <h4 className="memory-text">{note.text}</h4>
       )}
-      {mode === 'expires' ? (
-        <form
-          ref={form}
-          className="memory-form"
-          onSubmit={save}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && !busy) {
-              event.preventDefault();
-              event.stopPropagation();
-              if (!dirty) setMode('view');
-            }
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              if (!busy && !event.nativeEvent.isComposing) event.currentTarget.requestSubmit();
-            }
-          }}
+      {mode !== 'edit' && note.expires && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="memory-end-date"
+          disabled={busy || mode !== 'view'}
+          onClick={() => edit('input')}
         >
-          <input
-            className="input"
-            type="date"
-            disabled={busy}
-            value={expires}
-            min={dayKey(Date.now(), format)}
-            aria-label="Keep until"
-            autoFocus
-            onChange={(event) => setExpires(event.target.value)}
-          />
-          <div className="memory-actions">
-            <Button type="submit" size="sm" disabled={busy}>
-              Save
-            </Button>
-            {cancel}
-          </div>
-        </form>
-      ) : (
-        note.expires && (
-          <p className="memory-meta">Until {formatCalendarDate(note.expires, format)}</p>
-        )
+          <CalendarClock size={15} aria-hidden="true" />
+          Keep until {formatCalendarDate(note.expires, format)}
+        </Button>
       )}
-      {note.edited && (
-        <p className="memory-meta">
-          {note.sources.length ? 'Updated by you' : 'Written by you'} ·{' '}
-          {formatDayLabel(note.edited, format)}
-        </p>
-      )}
-      {note.learnedFrom === 'email' && (
-        <p className="memory-meta">
-          Learned from your sent email · {formatDayLabel(note.updated, format)}
-        </p>
-      )}
-      <Sources sources={note.sources} />
-      {history.map((item) => (
-        <p key={archivedKey(item)} className="memory-meta">
-          {reasons[item.reason]} “{item.text}” · {formatDayLabel(item.archived, format)}
-        </p>
-      ))}
       {error && <Notice>{error}</Notice>}
       {mode === 'forget' ? (
         <div className="memory-confirm">
           <p>Forget this note and its earlier versions?</p>
           <div className="memory-actions">
-            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(onForget)}>
-              Forget
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run(onForget)}
+            >
+              Forget note
             </Button>
-            {cancel}
+            <Button variant="ghost" size="sm" disabled={busy} onClick={discard}>
+              Keep note
+            </Button>
           </div>
         </div>
       ) : (
         mode === 'view' && (
           <div className="memory-actions">
-            {note.status !== 'stated' && (
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => run(() => onChange({ confirm: true }))}
-              >
-                Confirm
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => setMode('edit')}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => edit()}>
+              <PenLine size={15} aria-hidden="true" />
               Edit
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setMode('expires')}>
-              End date
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setMode('forget')}>
-              Forget
             </Button>
           </div>
         )
+      )}
+      {mode === 'view' && (
+        <MemoryDetails
+          initiallyOpen={detailsOpen}
+          updated={note.updated}
+          sources={note.sources}
+          history={history}
+          origin={
+            note.learnedFrom === 'email'
+              ? 'Learned from your sent email.'
+              : note.edited
+                ? 'Written by you.'
+                : undefined
+          }
+          onOpenSource={onOpenSource}
+        />
       )}
     </article>
   );
@@ -390,43 +605,111 @@ function ArchivedDetail({
   onRestore,
   onForget,
   onBack,
+  onOpenSource,
+  detailsOpen,
 }: {
   item: MemoryArchived;
   onRestore(): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
+  onOpenSource(messageId: string): void;
+  detailsOpen?: boolean;
 }) {
-  const format = useDateFormat();
   const [busy, setBusy] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
   const [error, setError] = useState('');
+  const busyRef = useRef(false);
   async function run(action: () => Promise<void>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
       await action();
     } catch (cause) {
       setError(errorMessage(cause));
+    } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
   return (
     <article className="memory-detail">
-      <Back onBack={onBack} />
-      <p className="memory-status">
-        <MemoryMark stage="archive" />
-        {reasons[item.reason]} · {formatDayLabel(item.archived, format)}
-      </p>
-      <h4 className="memory-text is-archived">{item.text}</h4>
-      <Sources sources={item.sources} />
-      {error && <Notice>{error}</Notice>}
-      <div className="memory-actions">
-        <Button size="sm" disabled={busy} onClick={() => run(onRestore)}>
-          Bring back
-        </Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(onForget)}>
-          Forget
-        </Button>
+      <Back onBack={onBack} disabled={busy} />
+      <div className="memory-detail-header">
+        <p className="memory-status">
+          <MemoryMark stage="archive" />
+          Let go
+        </p>
+        <ActionMenu
+          label="Archived note options"
+          disabled={busy || forgetting}
+          contentClassName="memory-note-menu"
+          trigger={
+            <Button variant="ghost" size="icon" title="Archived note options">
+              <Ellipsis size={18} aria-hidden="true" />
+            </Button>
+          }
+        >
+          {(close) => (
+            <>
+              <ActionMenuItem
+                onClick={() => {
+                  close();
+                  void run(onRestore);
+                }}
+              >
+                <Undo2 size={16} aria-hidden="true" />
+                Restore note
+              </ActionMenuItem>
+              <ActionMenuItem
+                destructive
+                onClick={() => {
+                  close();
+                  setForgetting(true);
+                }}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+                Forget note…
+              </ActionMenuItem>
+            </>
+          )}
+        </ActionMenu>
       </div>
+      <h4 className="memory-text is-archived">{item.text}</h4>
+      <p className="memory-meta">{reasons[item.reason]}</p>
+      {error && <Notice>{error}</Notice>}
+      {forgetting ? (
+        <div className="memory-confirm">
+          <p>Forget this archived note?</p>
+          <div className="memory-actions">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run(onForget)}
+            >
+              Forget note
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setForgetting(false)}>
+              Keep note
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="memory-actions">
+          <Button size="sm" disabled={busy} onClick={() => void run(onRestore)}>
+            <Undo2 size={15} aria-hidden="true" />
+            Bring back
+          </Button>
+        </div>
+      )}
+      <MemoryDetails
+        updated={item.archived}
+        sources={item.sources}
+        onOpenSource={onOpenSource}
+        initiallyOpen={detailsOpen}
+      />
     </article>
   );
 }
@@ -437,78 +720,148 @@ function SkillDetail({
   onForget,
   onBack,
   onDirtyChange,
+  onOpenSource,
 }: {
   skill: LearnedSkill;
   onChange(body: { description: string; body: string }): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
   onDirtyChange?(dirty: boolean): void;
+  onOpenSource(messageId: string): void;
 }) {
-  const format = useDateFormat();
   const [mode, setMode] = useState<'view' | 'edit' | 'forget'>('view');
   const [description, setDescription] = useState(skill.description);
   const [body, setBody] = useState(skill.body);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const dirty =
-    mode === 'edit' && (description.trim() !== skill.description || body.trim() !== skill.body);
+  const busyRef = useRef(false);
+  const latest = useRef({ description, body, skill });
+  latest.current = { description, body, skill };
+  const changes =
+    mode === 'edit'
+      ? [
+          ...(description.trim() !== skill.description
+            ? [{ label: 'Skill description', before: skill.description, after: description.trim() }]
+            : []),
+          ...(body.trim() !== skill.body
+            ? [{ label: 'Skill steps', before: skill.body, after: body.trim() }]
+            : []),
+        ]
+      : [];
+  const dirty = changes.length > 0;
   useEffect(() => {
-    onDirtyChange?.(dirty);
+    onDirtyChange?.(dirty || busy);
     return () => onDirtyChange?.(false);
-  }, [dirty, onDirtyChange]);
+  }, [dirty, busy, onDirtyChange]);
+  function discard() {
+    if (busyRef.current) return;
+    setDescription(latest.current.skill.description);
+    setBody(latest.current.skill.body);
+    setError('');
+    setMode('view');
+  }
   async function run(action: () => Promise<void>) {
+    if (busyRef.current) return false;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
       await action();
-      setMode('view');
+      return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      return false;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
-  function save(event: FormEvent) {
-    event.preventDefault();
-    const next = { description: description.trim(), body: body.trim() };
-    if (next.description === skill.description && next.body === skill.body) setMode('view');
-    else void run(() => onChange(next));
+  async function saveDraft() {
+    if (busyRef.current) return false;
+    if (!description.trim() || !body.trim()) {
+      setError('Add a description and steps before saving.');
+      return false;
+    }
+    if (!dirty) {
+      discard();
+      return true;
+    }
+    const submitted = { description: description.trim(), body: body.trim() };
+    const saved = await run(() => onChange(submitted));
+    if (
+      saved &&
+      latest.current.description.trim() === submitted.description &&
+      latest.current.body.trim() === submitted.body
+    )
+      setMode('view');
+    return saved;
   }
-  const cancel = (
-    <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
-      Cancel
-    </Button>
-  );
+  useSettingsDraft(`memory-skill:${skill.name}`, { changes, busy, save: saveDraft, discard });
   return (
     <article className="memory-detail">
-      <Back onBack={onBack} />
+      <Back onBack={onBack} disabled={dirty || busy} />
       <p className="memory-status">
         <MemoryMark stage="skills" />
         Skill
       </p>
       {mode === 'edit' ? (
-        <form className="memory-form" onSubmit={save}>
-          <input
-            className="input"
-            value={description}
-            maxLength={skillDescriptionChars}
-            aria-label="When to use it"
-            autoFocus
-            onChange={(event) => setDescription(event.target.value)}
-          />
-          <textarea
-            className="input memory-skill-body"
-            value={body}
-            maxLength={skillChars}
-            rows={14}
-            aria-label="Steps"
-            onChange={(event) => setBody(event.target.value)}
-          />
+        <form
+          className="memory-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveDraft();
+          }}
+          onKeyDown={(event) => {
+            if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229)
+              return;
+            if (event.key === 'Escape' && !busy) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!dirty) discard();
+            }
+            if (
+              event.key === 'Enter' &&
+              isPrimaryModifier(event) &&
+              !event.altKey &&
+              !event.shiftKey &&
+              !event.repeat
+            ) {
+              event.preventDefault();
+              if (!busy) event.currentTarget.requestSubmit();
+            }
+          }}
+        >
+          <Field label="When to use it">
+            <input
+              className="input"
+              value={description}
+              maxLength={skillDescriptionChars}
+              required
+              autoFocus
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </Field>
+          <Field label="Steps">
+            <textarea
+              className="input memory-skill-body"
+              value={body}
+              maxLength={skillChars}
+              rows={12}
+              required
+              onChange={(event) => setBody(event.target.value)}
+            />
+          </Field>
           <div className="memory-actions">
-            <Button type="submit" size="sm" disabled={busy || !description.trim() || !body.trim()}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={busy || !description.trim() || !body.trim() || !dirty}
+            >
               Save
             </Button>
-            {cancel}
+            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={discard}>
+              Cancel
+            </Button>
           </div>
         </form>
       ) : (
@@ -518,25 +871,22 @@ function SkillDetail({
           <pre className="memory-skill-body">{skill.body}</pre>
         </>
       )}
-      {skill.task && (
-        <figure className="memory-source">
-          <blockquote>“{skill.task}”</blockquote>
-          <figcaption>Learned · {formatDayLabel(skill.learned, format)}</figcaption>
-        </figure>
-      )}
-      <p className="memory-meta">
-        {skill.edited ? 'Edited by you' : 'Updated by Nod'} ·{' '}
-        {formatDayLabel(skill.edited ?? skill.updated, format)}
-      </p>
       {error && <Notice>{error}</Notice>}
       {mode === 'forget' ? (
         <div className="memory-confirm">
           <p>Forget this skill?</p>
           <div className="memory-actions">
-            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(onForget)}>
-              Forget
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run(onForget)}
+            >
+              Forget skill
             </Button>
-            {cancel}
+            <Button variant="ghost" size="sm" disabled={busy} onClick={discard}>
+              Keep skill
+            </Button>
           </div>
         </div>
       ) : (
@@ -545,19 +895,24 @@ function SkillDetail({
             <Button
               variant="outline"
               size="sm"
+              disabled={busy}
               onClick={() => {
                 setDescription(skill.description);
                 setBody(skill.body);
                 setMode('edit');
               }}
             >
-              Edit
+              <PenLine size={15} aria-hidden="true" />
+              Edit skill
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setMode('forget')}>
-              Forget
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setMode('forget')}>
+              Forget skill
             </Button>
           </div>
         )
+      )}
+      {mode === 'view' && (
+        <MemoryDetails updated={skill.updated} task={skill.task} onOpenSource={onOpenSource} />
       )}
     </article>
   );
@@ -845,16 +1200,21 @@ function ImportNotes({
 export function Memory({
   onDone,
   onDirtyChange,
+  onOpenSource,
+  initialView,
 }: {
   onDone(): void;
   onDirtyChange?(dirty: boolean): void;
+  onOpenSource?(messageId: string, view: MemoryNavigationState): void;
+  initialView?: MemoryNavigationState;
 }) {
   const { data: view, error: loadError, loading, update } = usePageData<MemoryView>('/api/memory');
   const format = useDateFormat();
-  const [compact, panelRef] = useCompact();
-  const [stage, setStage] = useState<Stage | null>(null);
-  const [query, setQuery] = useState('');
-  const [chosen, setChosen] = useState<Selection | undefined>(undefined);
+  const [compact, panelRef, panel] = useCompact();
+  const [restoredView] = useState(initialView);
+  const [stage, setStage] = useState<Stage | null>(initialView?.stage ?? null);
+  const [query, setQuery] = useState(initialView?.query ?? '');
+  const [chosen, setChosen] = useState<Selection | undefined>(initialView?.selection);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const importButton = useRef<HTMLButtonElement>(null);
@@ -862,22 +1222,55 @@ export function Memory({
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(0);
+  const requests = useRef(new Set<AbortController>());
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      for (const request of requests.current) request.abort();
+      requests.current.clear();
+    };
+  }, []);
+  useSettingsDraft('memory-operations', {
+    changes: [],
+    busy: saving > 0 || exporting,
+    save: async () => false,
+    discard: () => {},
+  });
+  const locked = dirty || saving > 0;
+  function openSource(messageId: string) {
+    if (onOpenSource)
+      onOpenSource(messageId, {
+        stage,
+        query,
+        selection: selectionRef.current ?? null,
+        detailsOpen: panel?.querySelector<HTMLDetailsElement>('.memory-provenance')?.open ?? false,
+      });
+    else window.dispatchEvent(new CustomEvent('nod:focus-message', { detail: { messageId } }));
+  }
   useEffect(() => {
     onDirtyChange?.(dirty || saving > 0 || exporting);
     return () => onDirtyChange?.(false);
   }, [dirty, saving, exporting, onDirtyChange]);
 
   async function send(path: string, method: string, body?: object) {
+    const request = new AbortController();
+    requests.current.add(request);
     setSaving((count) => count + 1);
     try {
       const next = await api<MemoryUpdate>(path, {
         method,
+        signal: request.signal,
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
+      if (!mounted.current || request.signal.aborted)
+        throw new DOMException('Request cancelled.', 'AbortError');
       update(() => next);
       return next;
     } finally {
-      setSaving((count) => count - 1);
+      requests.current.delete(request);
+      if (mounted.current) setSaving((count) => count - 1);
     }
   }
   async function setting(body: { saving?: boolean; sensitive?: boolean }) {
@@ -887,6 +1280,15 @@ export function Memory({
   function filter(next: Stage | null) {
     setStage(next);
     setChosen(undefined);
+  }
+  function focusList() {
+    requestAnimationFrame(() => {
+      if (!mounted.current) return;
+      const target =
+        panel?.querySelector<HTMLElement>('.memory-row[aria-current="true"]') ??
+        panel?.querySelector<HTMLElement>('.memory-search input,.memory-detail .button');
+      target?.focus({ preventScroll: true });
+    });
   }
 
   const counts = {
@@ -927,7 +1329,11 @@ export function Memory({
           : 'skill' in item && item.skill === value.skill,
     );
   const selection =
-    chosen === undefined || (chosen && !listed(chosen)) ? (compact ? null : visible[0]) : chosen;
+    chosen === undefined || (!locked && chosen && !listed(chosen))
+      ? compact
+        ? null
+        : visible[0]
+      : chosen;
   const note =
     selection && 'note' in selection
       ? view?.notes.find((n) => n.path === selection.note)
@@ -942,12 +1348,19 @@ export function Memory({
       : undefined;
   const pageMode = compact && Boolean(note || archived || skill);
   const back = compact ? () => setChosen(null) : undefined;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const detailDirty = useCallback((next: boolean) => {
+    if (next && selectionRef.current) setChosen(selectionRef.current);
+    setDirty(next);
+  }, []);
 
   const row = (item: MemoryNote) => (
     <button
       key={item.path}
       type="button"
       className="memory-row"
+      disabled={locked}
       aria-current={!compact && note?.path === item.path ? 'true' : undefined}
       onClick={() => setChosen({ note: item.path })}
     >
@@ -971,6 +1384,7 @@ export function Memory({
             key={item.name}
             type="button"
             className="memory-row"
+            disabled={locked}
             aria-current={!compact && skill === item ? 'true' : undefined}
             onClick={() => setChosen({ skill: item.name })}
           >
@@ -991,6 +1405,7 @@ export function Memory({
             key={archivedKey(item)}
             type="button"
             className="memory-row"
+            disabled={locked}
             aria-current={!compact && archived === item ? 'true' : undefined}
             onClick={() => setChosen({ archived: archivedKey(item) })}
           >
@@ -1030,9 +1445,16 @@ export function Memory({
 
   const detail = note ? (
     <NoteDetail
-      key={`${note.path}:${note.updated}`}
+      key={note.path}
       note={note}
-      onDirtyChange={setDirty}
+      onOpenSource={openSource}
+      detailsOpen={Boolean(
+        restoredView?.detailsOpen &&
+        restoredView.selection &&
+        'note' in restoredView.selection &&
+        restoredView.selection.note === note.path,
+      )}
+      onDirtyChange={detailDirty}
       history={(view?.archive ?? []).filter(
         (item) => item.path === note.path || item.by === note.path,
       )}
@@ -1040,15 +1462,28 @@ export function Memory({
       onChange={async (body) => {
         await send(`/api/memory/notes/${note.path}`, 'PATCH', body);
       }}
+      onArchive={async () => {
+        await send(`/api/memory/notes/${note.path}/archive`, 'POST');
+        setChosen(undefined);
+        focusList();
+      }}
       onForget={async () => {
         await send(`/api/memory/notes/${note.path}`, 'DELETE');
         setChosen(undefined);
+        focusList();
       }}
     />
   ) : archived ? (
     <ArchivedDetail
       key={archivedKey(archived)}
       item={archived}
+      onOpenSource={openSource}
+      detailsOpen={Boolean(
+        restoredView?.detailsOpen &&
+        restoredView.selection &&
+        'archived' in restoredView.selection &&
+        restoredView.selection.archived === archivedKey(archived),
+      )}
       onBack={back}
       onRestore={async () => {
         const next = await send('/api/memory/archive/restore', 'POST', {
@@ -1057,6 +1492,7 @@ export function Memory({
         });
         setStage(null);
         setChosen(next.path ? { note: next.path } : undefined);
+        focusList();
       }}
       onForget={async () => {
         await send('/api/memory/archive/forget', 'POST', {
@@ -1064,13 +1500,15 @@ export function Memory({
           archived: archived.archived,
         });
         setChosen(undefined);
+        focusList();
       }}
     />
   ) : skill ? (
     <SkillDetail
-      key={`${skill.name}:${skill.updated}`}
+      key={skill.name}
       skill={skill}
-      onDirtyChange={setDirty}
+      onOpenSource={openSource}
+      onDirtyChange={detailDirty}
       onBack={back}
       onChange={async (body) => {
         await send(`/api/memory/skills/${skill.name}`, 'PATCH', body);
@@ -1078,12 +1516,37 @@ export function Memory({
       onForget={async () => {
         await send(`/api/memory/skills/${skill.name}`, 'DELETE');
         setChosen(undefined);
+        focusList();
       }}
     />
   ) : null;
 
   return (
     <div className="memory-panel" ref={panelRef} data-analytics-private>
+      {view && (
+        <div className="memory-settings">
+          <label className="memory-setting">
+            <Switch
+              checked={view.saving}
+              disabled={saving > 0}
+              onCheckedChange={(saving) => void setting({ saving })}
+            />
+            Save new notes
+          </label>
+          <label className="memory-setting">
+            <Switch
+              checked={view.sensitive}
+              disabled={saving > 0}
+              onCheckedChange={(sensitive) => void setting({ sensitive })}
+            />
+            <span className="memory-setting-copy">
+              <span>Include sensitive details</span>
+              <span className="memory-setting-hint">Such as health, religion and politics</span>
+            </span>
+          </label>
+        </div>
+      )}
+      {settingError && <Notice>{settingError}</Notice>}
       {loadError && !view && <Notice>Could not load your memory.</Notice>}
       {!view ? (
         loading && <Loading label="Loading memory…" />
@@ -1098,6 +1561,7 @@ export function Memory({
               value={query}
               placeholder="Search"
               aria-label="Search memory"
+              disabled={locked}
               onChange={(event) => setQuery(event.target.value)}
             />
             <Button
@@ -1106,6 +1570,7 @@ export function Memory({
               size="sm"
               aria-label="Import"
               title="Import"
+              disabled={locked}
               onClick={() => setImporting(true)}
             >
               <Import size={16} aria-hidden="true" />
@@ -1116,7 +1581,7 @@ export function Memory({
               size="sm"
               aria-label="Export"
               title="Export"
-              disabled={exporting}
+              disabled={locked || exporting}
               onClick={() => {
                 setExporting(true);
                 setSettingError('');
@@ -1128,37 +1593,17 @@ export function Memory({
               <Download size={16} aria-hidden="true" />
               <span className="memory-bar-label">Export</span>
             </Button>
-            <Button size="sm" onClick={() => setAdding(true)}>
+            <Button size="sm" disabled={locked} onClick={() => setAdding(true)}>
               <Plus size={16} aria-hidden="true" />
               Add note
             </Button>
           </div>
-          <Stages counts={counts} selected={stage} onSelect={filter} />
+          <Stages counts={counts} selected={stage} onSelect={filter} disabled={locked} />
           {stage && <p className="memory-hint">{stages.find((item) => item.id === stage)?.hint}</p>}
           <div className={cn('memory-layout', detail && !compact && 'has-detail')}>
             <div className="memory-list">{list}</div>
             {!compact && detail && <div className="memory-detail-column">{detail}</div>}
           </div>
-          <footer className="memory-settings">
-            <label className="memory-setting">
-              <Switch
-                checked={view.saving}
-                onCheckedChange={(saving) => void setting({ saving })}
-              />
-              Save new notes
-            </label>
-            <label className="memory-setting">
-              <Switch
-                checked={view.sensitive}
-                onCheckedChange={(sensitive) => void setting({ sensitive })}
-              />
-              <span className="memory-setting-copy">
-                <span>Include sensitive details</span>
-                <span className="memory-setting-hint">Such as health, religion and politics</span>
-              </span>
-            </label>
-          </footer>
-          {settingError && <Notice>{settingError}</Notice>}
         </>
       )}
       {adding && (

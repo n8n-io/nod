@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import {
   Brain,
   Check,
@@ -8,11 +8,10 @@ import {
   FileImage,
   KeyRound,
   Plus,
-  RefreshCw,
   Server,
   SlidersHorizontal,
   UserRound,
-  X,
+  Trash2,
 } from './icons';
 import type { ModelConnection, ModelProvider, ModelWorkspace } from '../../shared/models';
 import { modelKeyError } from '../../shared/model-keys';
@@ -35,6 +34,9 @@ import {
   type KeySettings,
 } from '../hooks/use-models';
 import { usePageData } from '../hooks/use-page-data';
+import { SearchPicker } from './search-picker';
+import { Tooltip } from './tooltip';
+import { useSettingsDraft } from './settings-drafts';
 import {
   Button,
   Dialog,
@@ -206,31 +208,14 @@ function connectionName(connection: ModelConnection, short = false) {
 }
 
 function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) {
-  const initials =
-    connection.method !== 'api_key' && connection.label.includes('@')
-      ? connection.label
-          .split('@')[0]
-          .split(/[.\s_-]+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part) => Array.from(part)[0])
-          .join('')
-          .toLocaleUpperCase()
-      : '';
   return (
-    <span className={`model-connection-avatar${initials ? '' : ' neutral'}`} aria-hidden="true">
-      {initials ||
-        (connection.provider === 'compatible' ? (
-          <Server size={16} />
-        ) : connection.method === 'api_key' ? (
-          <KeyRound size={16} />
-        ) : (
-          <UserRound size={24} />
-        ))}
-      {connection.provider !== 'compatible' && (
-        <span className="model-connection-provider">
-          <ModelProviderLogo provider={connection.provider} size={13} />
-        </span>
+    <span className="model-connection-avatar" aria-hidden="true">
+      {connection.provider === 'compatible' ? (
+        <Server size={18} />
+      ) : connection.method === 'api_key' ? (
+        <KeyRound size={18} />
+      ) : (
+        <UserRound size={18} />
       )}
     </span>
   );
@@ -415,44 +400,36 @@ function AzureKeyFields({
   );
 }
 
-export function ModelSettings({
-  onDirtyChange,
-}: {
-  onDirtyChange?(dirty: boolean): void;
-} = {}) {
+type ModelPanel =
+  | { type: 'providers' }
+  | { type: 'manage'; provider: ModelProvider }
+  | { type: 'connect'; provider: ModelProvider; connectionId?: string };
+
+export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean): void } = {}) {
   const models = useModels();
   const keyErrorId = useId();
-  const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
+  const [panel, setPanel] = useState<ModelPanel | null>(null);
   const [key, setKey] = useState('');
   const [url, setUrl] = useState('');
   const [settings, setSettings] = useState<KeySettings>(noKeySettings);
   const [providerSearch, setProviderSearch] = useState('');
-  const [showProviders, setShowProviders] = useState(false);
-  const flow = useModelSignIn(models);
-  const { signIn, pending: signingIn, connect } = flow;
+  const [keyForm, setKeyForm] = useState(false);
+  const [discard, setDiscard] = useState(false);
   const [callback, setCallback] = useState('');
-  const dirty =
-    models.busy ||
-    signingIn ||
-    !!signIn ||
-    Boolean(
-      key.trim() ||
-      (url.trim() && url.trim() !== localServerAddress) ||
-      Object.values(settings).some((value) => value.trim()),
-    );
-  const available = models.data?.connections.filter(
-    (connection) => connection.status === 'connected' && connection.models.length > 0,
-  ).length;
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-    return () => onDirtyChange?.(false);
-  }, [dirty, onDirtyChange]);
-  if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
-  const data = models.data;
-  const selectedModel = data.connections
-    .find((connection) => connection.id === data.selection?.connectionId)
-    ?.models.find((model) => model.id === data.selection?.modelId);
-  const busy = models.busy || signingIn || !!signIn;
+  const trigger = useRef<HTMLButtonElement>(null);
+  const manageAdd = useRef<HTMLButtonElement>(null);
+  const flow = useModelSignIn(models, () => {
+    resetForm(false);
+    setPanel(null);
+  });
+  const keyProvider = panel?.type === 'connect' ? panel.provider : null;
+  const busy = models.busy || flow.pending || !!flow.signIn;
+  const formDirty = Boolean(
+    key.trim() ||
+    (url.trim() && url.trim() !== localServerAddress) ||
+    Object.values(settings).some((value) => value.trim()),
+  );
+  const dirty = busy || formDirty;
   const keyFormatError = keyProvider && key ? modelKeyError(keyProvider, key) : undefined;
   const keySubmissionError = ['/api/models/keys', '/api/models/endpoints'].includes(
     models.errorPath ?? '',
@@ -460,165 +437,413 @@ export function ModelSettings({
     ? models.error
     : '';
   const keyError = keySubmissionError || keyFormatError;
-  const searching = showProviders || !!providerSearch.trim();
+  const canSaveKey = Boolean(
+    keyProvider &&
+    !keyFormatError &&
+    (!models.workspaces.length || settings.workspaceId.trim()) &&
+    (keyProvider === 'compatible'
+      ? url.trim()
+      : key.trim() && keySettingsReady(keyProvider, settings)),
+  );
+  function resetForm(clearError = true) {
+    setKey('');
+    setUrl('');
+    setSettings(noKeySettings);
+    setCallback('');
+    models.setWorkspaces([]);
+    if (clearError) models.setError('');
+  }
+  function closePanel() {
+    if (busy) return;
+    resetForm();
+    setPanel(null);
+    setDiscard(false);
+  }
+  async function saveKey() {
+    if (!keyProvider || busy) return false;
+    if (!canSaveKey) {
+      models.setError(keyFormatError || 'Complete the connection details before saving.');
+      return false;
+    }
+    const saved = await models.change(
+      keyProvider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
+      'POST',
+      keyProvider === 'compatible'
+        ? { url: url.trim(), key }
+        : keyConnection(keyProvider, key, settings),
+    );
+    if (saved) {
+      resetForm();
+      setPanel(null);
+    }
+    return saved;
+  }
+  useSettingsDraft('models-connection', {
+    changes:
+      formDirty && keyProvider
+        ? [
+            {
+              label: `${modelProviderNames[keyProvider]} connection`,
+              before: 'Not saved',
+              after: 'Connection details entered',
+            },
+          ]
+        : [],
+    busy,
+    save: saveKey,
+    discard: closePanel,
+  });
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (!panel) return;
+    const frame = requestAnimationFrame(() => {
+      const dialog = document.getElementById(`${keyErrorId}-dialog`);
+      const target =
+        dialog?.querySelector<HTMLElement>('input:not([disabled])') ??
+        dialog?.querySelector<HTMLElement>('h2');
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [panel?.type, panel && 'provider' in panel ? panel.provider : null, keyForm, !!flow.signIn]);
+  if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
+  const data = models.data;
+  const connections = data.connections.filter(
+    (connection) => !modelProviderInfo[connection.provider].speechOnly,
+  );
+  const providers = modelProviders.filter((provider) =>
+    connections.some((connection) => connection.provider === provider),
+  );
+  const selectedConnection = connections.find(
+    (connection) => connection.id === data.selection?.connectionId,
+  );
+  const selectedModel = selectedConnection?.models.find(
+    (model) => model.id === data.selection?.modelId,
+  );
+  const available = connections.some(
+    (connection) => connection.status === 'connected' && connection.models.length > 0,
+  );
   const listedProviders = modelProviders.filter((provider) =>
-    `${modelProviderNames[provider]} ${provider === 'compatible' ? 'Ollama LM Studio vLLM local server' : provider}`
+    `${modelProviderNames[provider]} ${providerDescription(provider)} ${provider}`
       .toLowerCase()
       .includes(providerSearch.trim().toLowerCase()),
   );
-  const shownProviders = modelProviders
-    .filter(
-      (provider) =>
-        modelProviderInfo[provider].common ||
-        provider === keyProvider ||
-        data.connections.some((connection) => connection.provider === provider),
-    )
-    .toSorted((a, b) => Number(b === keyProvider) - Number(a === keyProvider));
-  function addKey(provider: ModelProvider) {
-    models.setError('');
-    models.setWorkspaces([]);
-    setKey('');
-    setUrl(localServerAddress);
-    setSettings(noKeySettings);
-    setKeyProvider(provider);
-    setProviderSearch('');
-    setShowProviders(false);
+  function startConnection(provider: ModelProvider, connectionId?: string) {
+    resetForm();
+    setUrl(provider === 'compatible' ? localServerAddress : '');
+    setKeyForm(provider !== 'openai' && provider !== 'openrouter');
+    setPanel({ type: 'connect', provider, connectionId });
   }
+  const panelProvider = panel && 'provider' in panel ? panel.provider : null;
   return (
     <div className="model-settings">
-      {!!available && (
-        <div className="model-current">
-          <div className="model-current-label" data-analytics-public>
-            <strong>Your model</strong>
-            <span>
-              {selectedModel?.audio
-                ? selectedModel.textModelName
-                  ? `Text support: ${selectedModel.textModelName}`
-                  : 'Text model unavailable'
-                : 'Nod uses it for every reply'}
-            </span>
+      {available && (
+        <section className="model-current-section" aria-label="Your model">
+          <h3>Your model</h3>
+          <div className="model-current">
+            {selectedConnection && (
+              <ModelProviderLogo provider={selectedConnection.provider} size={24} />
+            )}
+            <div className="model-current-label" data-analytics-private>
+              <strong>{selectedModel?.name ?? 'Choose a model'}</strong>
+              <span>
+                {selectedConnection
+                  ? `${modelProviderNames[selectedConnection.provider]} · ${connectionName(selectedConnection, true)}`
+                  : 'Choose from your connections'}
+              </span>
+              {selectedModel?.audio && (
+                <span>
+                  {selectedModel.textModelName
+                    ? `Text support: ${selectedModel.textModelName}`
+                    : 'Text model unavailable'}
+                </span>
+              )}
+            </div>
+            <ModelPicker manageConnections={false} surface="settings" label="Change" />
           </div>
-          <ModelPicker manageConnections={false} surface="settings" />
+        </section>
+      )}
+      <div className="model-section-heading">
+        <h3>{connections.length ? 'Connections' : 'Connect a model'}</h3>
+        {!!connections.length && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={(event) => {
+              trigger.current = event.currentTarget;
+              setProviderSearch('');
+              setPanel({ type: 'providers' });
+              models.setError('');
+            }}
+          >
+            <Plus size={16} />
+            Add
+          </Button>
+        )}
+      </div>
+      <div className="model-services">
+        {providers.map((provider) => {
+          const accounts = connections.filter((connection) => connection.provider === provider);
+          const attention = accounts.some((connection) => connection.status !== 'connected');
+          return (
+            <div className="model-service" key={provider}>
+              <ModelProviderLogo provider={provider} size={24} />
+              <div className="model-service-identity">
+                <strong>{modelProviderNames[provider]}</strong>
+                <span data-analytics-private>
+                  {accounts.length === 1
+                    ? connectionName(accounts[0]!, true)
+                    : `${accounts.length} connections`}
+                  {attention ? ' · Needs attention' : ''}
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Manage ${modelProviderNames[provider]}`}
+                onClick={(event) => {
+                  trigger.current = event.currentTarget;
+                  models.setError('');
+                  setPanel({ type: 'manage', provider });
+                }}
+              >
+                Manage
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+      {!connections.length && (
+        <div className="model-empty-state">
+          <p>Use your plan, an API key or your own model server.</p>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={(event) => {
+              trigger.current = event.currentTarget;
+              setProviderSearch('');
+              setPanel({ type: 'providers' });
+            }}
+          >
+            <Plus size={16} />
+            Add connection
+          </Button>
         </div>
       )}
-      <p className="model-intro" data-analytics-public>
-        Connect as many services as you want. All their models appear in one list.
-      </p>
-      <div className="model-provider-search">
-        <SearchField
-          placeholder="Search providers"
-          aria-label="Search providers"
-          value={providerSearch}
-          onChange={(event) => setProviderSearch(event.target.value)}
-          onClear={() => setProviderSearch('')}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setShowProviders(!searching);
-            setProviderSearch('');
+      {!panel && models.error && <Notice>{models.error}</Notice>}
+      <Dialog
+        open={!!panel}
+        onOpenChange={(open) => {
+          if (open || busy) return;
+          if (formDirty) setDiscard(true);
+          else closePanel();
+        }}
+      >
+        <DialogContent
+          id={`${keyErrorId}-dialog`}
+          className={`model-connection-dialog${panel?.type === 'providers' ? ' model-provider-dialog' : ''}`}
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (trigger.current?.isConnected) trigger.current.focus({ preventScroll: true });
           }}
         >
-          {searching ? 'Back to connections' : 'All providers'}
-        </Button>
-      </div>
-      {searching ? (
-        <div className="model-provider-options" aria-label="Model providers">
-          {listedProviders.map((provider) => (
-            <button
-              type="button"
-              className="model-provider-option"
-              key={provider}
-              disabled={busy}
-              onClick={() => addKey(provider)}
-            >
-              <ModelProviderLogo provider={provider} size={20} />
-              <span>{modelProviderNames[provider]}</span>
-              <Plus size={16} />
-            </button>
-          ))}
-          {!listedProviders.length && (
-            <p className="model-empty">No providers match this search.</p>
+          <DialogTitle tabIndex={-1} className="model-dialog-title">
+            {panelProvider && <ModelProviderLogo provider={panelProvider} size={24} />}
+            {panel?.type === 'providers'
+              ? 'Add connection'
+              : panel?.type === 'connect'
+                ? `Connect ${modelProviderNames[panel.provider]}`
+                : panelProvider
+                  ? modelProviderNames[panelProvider]
+                  : 'Connections'}
+          </DialogTitle>
+          {panel?.type === 'providers' && (
+            <>
+              <SearchField
+                placeholder="Search providers"
+                aria-label="Search providers"
+                value={providerSearch}
+                onChange={(event) => setProviderSearch(event.target.value)}
+                onClear={() => setProviderSearch('')}
+              />
+              <div className="model-provider-options" aria-label="Model providers">
+                {listedProviders.map((provider) => (
+                  <button
+                    type="button"
+                    className="model-provider-option"
+                    key={provider}
+                    onClick={() => startConnection(provider)}
+                  >
+                    <ModelProviderLogo provider={provider} size={22} />
+                    <span>
+                      <strong>{modelProviderNames[provider]}</strong>
+                      <span>{providerDescription(provider)}</span>
+                    </span>
+                    <Plus size={16} />
+                  </button>
+                ))}
+                {!listedProviders.length && (
+                  <p className="model-empty" role="status">
+                    No matching providers.
+                  </p>
+                )}
+              </div>
+            </>
           )}
-        </div>
-      ) : (
-        <div className="model-services">
-          {shownProviders.map((provider) => (
-            <section
-              className="model-service"
-              key={provider}
-              aria-label={modelProviderNames[provider]}
-            >
-              <div className="model-service-heading" data-analytics-public>
-                <div className="model-service-identity">
-                  <ModelProviderLogo provider={provider} size={20} />
-                  <div>
-                    <h4>{modelProviderNames[provider]}</h4>
-                    <p>{providerDescription(provider)}</p>
-                  </div>
-                </div>
-                <div className="model-service-actions">
-                  {(provider === 'openrouter' || provider === 'openai') && (
-                    <Button
-                      type="button"
-                      className="model-connect-button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => void connect(provider as 'openai' | 'openrouter')}
-                    >
-                      <ModelProviderLogo provider={provider} />
-                      {provider === 'openai' ? 'Sign in with ChatGPT' : 'Sign in'}
-                    </Button>
-                  )}
+          {panel?.type === 'manage' && (
+            <>
+              <div className="model-accounts">
+                {connections
+                  .filter((connection) => connection.provider === panel.provider)
+                  .map((connection) => (
+                    <div className="model-connection" key={connection.id}>
+                      <div className="model-connection-label" data-analytics-private>
+                        <ModelConnectionAvatar connection={connection} />
+                        <div className="model-connection-identity">
+                          <strong>{connectionName(connection, true)}</strong>
+                          <span className={`model-connection-meta ${connection.status}`}>
+                            {connection.managed
+                              ? 'Server settings'
+                              : connection.method === 'subscription'
+                                ? 'ChatGPT plan'
+                                : connection.method === 'oauth'
+                                  ? 'Connected with sign-in'
+                                  : connection.provider === 'compatible'
+                                    ? 'Model server'
+                                    : 'API key'}
+                            {connection.status === 'reconnect'
+                              ? ' · Needs attention'
+                              : connection.status === 'loading'
+                                ? ' · Models not loaded'
+                                : ''}
+                          </span>
+                          {data.selection?.connectionId === connection.id && (
+                            <span className="model-connection-selected">Current model</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="model-service-actions">
+                        {connection.status === 'reconnect' && !connection.managed && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() =>
+                              startConnection(
+                                connection.provider,
+                                connection.method !== 'api_key' ? connection.id : undefined,
+                              )
+                            }
+                          >
+                            {connection.method !== 'api_key'
+                              ? 'Reconnect'
+                              : connection.provider === 'compatible'
+                                ? 'Add server'
+                                : 'Add key'}
+                          </Button>
+                        )}
+                        {(connection.status === 'loading' ||
+                          (connection.managed && connection.status === 'reconnect')) && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() =>
+                              void models.change(
+                                `/api/models/connections/${connection.id}/refresh`,
+                                'POST',
+                              )
+                            }
+                          >
+                            {connection.status === 'loading' ? 'Load models' : 'Try again'}
+                          </Button>
+                        )}
+                        {!connection.managed && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Remove connection"
+                            aria-label={`Remove ${connectionName(connection)}`}
+                            disabled={busy}
+                            onClick={() =>
+                              void models
+                                .change(`/api/models/connections/${connection.id}`, 'DELETE')
+                                .then((saved) => {
+                                  if (saved) manageAdd.current?.focus();
+                                })
+                            }
+                          >
+                            <Trash2 size={16} />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+              <div className="model-dialog-actions">
+                <Button
+                  ref={manageAdd}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => startConnection(panel.provider)}
+                >
+                  <Plus size={16} />
+                  Add connection
+                </Button>
+              </div>
+            </>
+          )}
+          {panel?.type === 'connect' && !flow.signIn && (
+            <>
+              {!keyForm && (panel.provider === 'openai' || panel.provider === 'openrouter') ? (
+                <div className="model-connect-methods">
+                  <p>{providerDescription(panel.provider)}</p>
+                  <Button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void flow.connect(
+                        panel.provider as 'openai' | 'openrouter',
+                        panel.connectionId,
+                      )
+                    }
+                  >
+                    {panel.connectionId
+                      ? 'Reconnect'
+                      : panel.provider === 'openai'
+                        ? 'Sign in with ChatGPT'
+                        : 'Sign in with OpenRouter'}
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
                     disabled={busy}
-                    onClick={() => {
-                      if (keyProvider === provider) {
-                        models.setError('');
-                        models.setWorkspaces([]);
-                        setKey('');
-                        setUrl('');
-                        setSettings(noKeySettings);
-                        setKeyProvider(null);
-                      } else addKey(provider);
-                    }}
+                    onClick={() => setKeyForm(true)}
                   >
-                    {provider === 'compatible' ? <Plus size={16} /> : <KeyRound size={16} />}
-                    {provider === 'compatible' ? 'Add server' : 'Add API key'}
+                    <KeyRound size={16} />
+                    Use an API key
                   </Button>
                 </div>
-              </div>
-              {keyProvider === provider && (
+              ) : (
                 <form
                   className="model-key-form"
+                  data-analytics-private
                   onSubmit={(event) => {
                     event.preventDefault();
-                    if (keyFormatError) return;
-                    void models
-                      .change(
-                        provider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
-                        'POST',
-                        provider === 'compatible'
-                          ? { url: url.trim(), key }
-                          : keyConnection(provider, key, settings),
-                      )
-                      .then((saved) => {
-                        if (saved) {
-                          setKey('');
-                          setUrl('');
-                          setSettings(noKeySettings);
-                          setKeyProvider(null);
-                        }
-                      });
+                    void saveKey();
                   }}
                 >
-                  {provider === 'compatible' && (
+                  {panel.provider === 'compatible' && (
                     <Field label="Server address">
                       <Input
                         inputMode="url"
@@ -635,7 +860,7 @@ export function ModelSettings({
                     </Field>
                   )}
                   <CloudKeyFields
-                    provider={provider}
+                    provider={panel.provider}
                     value={settings}
                     workspaces={models.workspaces}
                     showWorkspace={Boolean(keySubmissionError)}
@@ -645,30 +870,15 @@ export function ModelSettings({
                     }}
                     disabled={busy}
                   />
-                  <Field
-                    label={
-                      provider === 'compatible'
-                        ? 'API key (optional)'
-                        : `${modelProviderNames[provider]} API key`
-                    }
-                  >
+                  <Field label={panel.provider === 'compatible' ? 'API key (optional)' : 'API key'}>
                     <Input
                       type="password"
                       value={key}
-                      required={provider !== 'compatible'}
-                      minLength={provider === 'compatible' ? undefined : 8}
+                      required={panel.provider !== 'compatible'}
+                      minLength={panel.provider === 'compatible' ? undefined : 8}
                       maxLength={32000}
                       autoComplete="off"
                       spellCheck={false}
-                      autoFocus={
-                        ![
-                          'compatible',
-                          'amazon-bedrock',
-                          'azure',
-                          'cloudflare-workers-ai',
-                          'cloudflare-ai-gateway',
-                        ].includes(provider)
-                      }
                       disabled={busy}
                       aria-invalid={!!keyError}
                       aria-describedby={keyError ? keyErrorId : undefined}
@@ -685,186 +895,97 @@ export function ModelSettings({
                       <Notice>{keyError}</Notice>
                     </div>
                   )}
-                  {provider !== 'compatible' && <ModelKeyHelp provider={provider} />}
-                  {provider === 'compatible' && (
+                  {panel.provider !== 'compatible' && <ModelKeyHelp provider={panel.provider} />}
+                  {panel.provider === 'compatible' && (
                     <p className="model-key-note">
-                      Nod also uses this model to decide when to ask you before acting. Smaller
-                      models decide less reliably.
+                      Nod also uses this model to check actions. Smaller models decide less
+                      reliably.
                     </p>
                   )}
-                  <div>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={
-                        busy ||
-                        !!keyFormatError ||
-                        (models.workspaces.length > 0 && !settings.workspaceId.trim()) ||
-                        !(provider === 'compatible'
-                          ? url.trim()
-                          : key.trim() && keySettingsReady(provider, settings))
-                      }
-                    >
-                      {busy
-                        ? 'Saving…'
-                        : modelProviderInfo[provider].catalog === 'bundled'
-                          ? 'Save key'
-                          : 'Save connection'}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        models.setError('');
-                        models.setWorkspaces([]);
-                        setKey('');
-                        setUrl('');
-                        setSettings(noKeySettings);
-                        setKeyProvider(null);
-                      }}
-                    >
+                  <div className="model-dialog-actions">
+                    <Button type="button" variant="ghost" disabled={busy} onClick={closePanel}>
                       Cancel
+                    </Button>
+                    <Button type="submit" disabled={busy || !canSaveKey}>
+                      {models.busy
+                        ? 'Saving…'
+                        : modelProviderInfo[panel.provider].catalog === 'bundled'
+                          ? 'Save key'
+                          : 'Connect'}
                     </Button>
                   </div>
                 </form>
               )}
-              {data.connections
-                .filter((connection) => connection.provider === provider)
-                .map((connection) => (
-                  <div className="model-connection" key={connection.id}>
-                    <div className="model-connection-label">
-                      <ModelConnectionAvatar connection={connection} />
-                      <div className="model-connection-identity">
-                        <strong>{connectionName(connection, true)}</strong>
-                        <span className={`model-connection-meta ${connection.status}`}>
-                          {connection.status === 'reconnect'
-                            ? connection.managed
-                              ? 'Can’t load its models · Refresh to retry'
-                              : connection.method !== 'api_key'
-                                ? 'Reconnect to continue'
-                                : connection.provider === 'compatible'
-                                  ? 'Remove it and add the server again'
-                                  : 'Remove it and add the key again'
-                            : connection.status === 'loading'
-                              ? 'Load models to continue'
-                              : modelProviderInfo[provider].catalog === 'bundled'
-                                ? 'Key saved · Access checked on first use'
-                                : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}
-                          {connection.managed && ' · Server settings'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="model-connection-controls">
-                      {data.selection?.connectionId === connection.id && (
-                        <span className="model-connection-selected">
-                          <Check size={16} aria-hidden="true" />
-                          Selected
-                        </span>
-                      )}
-                      <div className="model-service-actions">
-                        {connection.method !== 'api_key' && (
-                          <Button
-                            type="button"
-                            variant={connection.status === 'reconnect' ? 'outline' : 'ghost'}
-                            size="sm"
-                            disabled={busy}
-                            onClick={() =>
-                              void connect(provider as 'openai' | 'openrouter', connection.id)
-                            }
-                          >
-                            Reconnect
-                          </Button>
-                        )}
-                        {(connection.managed || connection.status !== 'reconnect') && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size={connection.status === 'loading' ? 'sm' : 'icon'}
-                            aria-label={`Refresh ${connectionName(connection)} models`}
-                            disabled={busy}
-                            onClick={() =>
-                              void models.change(
-                                `/api/models/connections/${connection.id}/refresh`,
-                                'POST',
-                              )
-                            }
-                          >
-                            <RefreshCw size={16} />
-                            {connection.status === 'loading' && 'Load models'}
-                          </Button>
-                        )}
-                        {!connection.managed && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Remove ${connectionName(connection)}`}
-                            disabled={busy}
-                            onClick={() =>
-                              void models.change(
-                                `/api/models/connections/${connection.id}`,
-                                'DELETE',
-                              )
-                            }
-                          >
-                            <X size={16} />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-            </section>
-          ))}
-        </div>
-      )}
-      {signIn && (
-        <div className="model-sign-in">
-          <p>
-            Complete sign-in in the browser, then return to Nod. If the browser ends on a page that
-            does not load, copy its full address and paste it below.
+            </>
+          )}
+          {flow.signIn && (
+            <div className="model-sign-in" data-analytics-private>
+              <p>Finish sign-in in your browser.</p>
+              <div className="model-service-actions">
+                <Button type="button" variant="secondary" size="sm" onClick={flow.reopen}>
+                  Open sign-in
+                  <ExternalLink size={16} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={flow.pending || models.busy}
+                  onClick={() =>
+                    void flow.cancel().then((done) => {
+                      if (done) setCallback('');
+                    })
+                  }
+                >
+                  Cancel sign-in
+                </Button>
+              </div>
+              <details className="model-details">
+                <summary>Browser didn’t return to Nod?</summary>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void flow.complete(callback);
+                  }}
+                >
+                  <Field label="Callback URL">
+                    <Input
+                      value={callback}
+                      autoComplete="off"
+                      disabled={models.busy}
+                      onChange={(event) => setCallback(event.target.value)}
+                      required
+                      type="url"
+                    />
+                  </Field>
+                  <Button type="submit" size="sm" disabled={models.busy || !callback.trim()}>
+                    Complete sign-in
+                  </Button>
+                </form>
+              </details>
+            </div>
+          )}
+          {models.error && !(panel?.type === 'connect' && keyForm && !flow.signIn && keyError) && (
+            <Notice>{models.error}</Notice>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={discard} onOpenChange={setDiscard}>
+        <DialogContent aria-describedby={`${keyErrorId}-discard`} className="model-discard-dialog">
+          <DialogTitle>Discard connection details?</DialogTitle>
+          <p id={`${keyErrorId}-discard`} className="model-intro">
+            These details haven’t been saved.
           </p>
-          <Button type="button" variant="outline" size="sm" onClick={flow.reopen}>
-            Open sign-in <ExternalLink size={16} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={signingIn}
-            onClick={() => void flow.cancel().then((done) => done && setCallback(''))}
-          >
-            Cancel sign-in
-          </Button>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              const url = callback;
-              setCallback('');
-              void flow.complete(url);
-            }}
-          >
-            <Field label="Callback URL">
-              <Input
-                value={callback}
-                autoComplete="off"
-                disabled={models.busy}
-                onChange={(event) => setCallback(event.target.value)}
-                required
-                type="url"
-              />
-            </Field>
-            <Button type="submit" size="sm" disabled={models.busy}>
-              Complete sign-in
+          <div className="model-dialog-actions">
+            <Button type="button" variant="secondary" onClick={() => setDiscard(false)}>
+              Keep editing
             </Button>
-          </form>
-        </div>
-      )}
-      {(!keySubmissionError || !keyProvider || searching) && models.error && (
-        <Notice>{models.error}</Notice>
-      )}
+            <Button type="button" onClick={closePanel}>
+              Discard
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -872,97 +993,199 @@ export function ModelSettings({
 export function ModelPicker({
   manageConnections = true,
   surface = 'settings',
+  label,
 }: {
   manageConnections?: boolean;
   surface?: 'settings' | 'onboarding';
+  label?: string;
 }) {
   const models = useModels();
   const [open, setOpen] = useState(false);
   const [manage, setManage] = useState(false);
   const [search, setSearch] = useState('');
+  const [provider, setProvider] = useState('all');
+  const [active, setActive] = useState('');
+  const [height, setHeight] = useState(300);
   const trigger = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
+  const results = useRef<HTMLDivElement>(null);
+  const optionNodes = useRef(new Map<string, HTMLButtonElement>());
+  const id = useId();
   const selected = models.data?.selection;
   const connection = models.data?.connections.find((item) => item.id === selected?.connectionId);
   const model = connection?.models.find((item) => item.id === selected?.modelId);
-  const canChoose = models.data?.connections.some(
-    (source) => source.status === 'connected' && source.models.length > 0,
-  );
+  const sourceDescription = connection
+    ? [...new Set([modelProviderNames[connection.provider], connectionName(connection)])].join(
+        ' · ',
+      )
+    : '';
   const connections = (models.data?.connections ?? []).filter(
     (source) => source.status === 'connected',
   );
-  const showPrices = connections.some((source) => source.provider === 'openrouter');
-  const available = connections.flatMap((source) => {
-    const recommended = recommendedModel(source)?.id;
-    return source.models.map((item) => ({
+  const available = connections.flatMap((source) =>
+    source.models.map((item) => ({
       source,
       item,
-      recommended: item.id === recommended,
-    }));
-  });
-  const sharedImages = available.length > 1 && available.every(({ item }) => item.images);
-  const sharedThinking =
-    available.length > 1 &&
-    available.every(({ item }) => item.efforts.some((effort) => effort !== 'off'));
+      recommended: item.id === recommendedModel(source)?.id,
+      key: `${source.id}:${item.id}`,
+    })),
+  );
+  const current = useRef(available);
+  current.current = available;
+  const canChoose = available.length > 0;
+  const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const choices = available
-    .filter(({ source, item }) =>
-      `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
+    .filter(
+      ({ source, item }) =>
+        (provider === 'all' || source.provider === provider) &&
+        words.every((word) =>
+          `${item.name} ${item.id} ${source.label} ${source.keyEnding ?? ''} ${modelProviderNames[source.provider]} ${modelSource(source)}`
+            .toLowerCase()
+            .includes(word),
+        ),
     )
     .sort(
       (a, b) =>
-        Number(b.recommended) - Number(a.recommended) ||
-        a.item.name.localeCompare(b.item.name) ||
-        modelSource(a.source).localeCompare(modelSource(b.source)),
+        Number(b.recommended) - Number(a.recommended) || a.item.name.localeCompare(b.item.name),
     );
-  async function choose(source: ModelConnection, id: string, recommended: boolean) {
+  const groups = connections
+    .map((source) => ({
+      source,
+      choices: choices.filter((choice) => choice.source.id === source.id),
+    }))
+    .filter((group) => group.choices.length);
+  const enabled = groups
+    .flatMap((group) => group.choices)
+    .filter(({ item }) => !item.audio || item.textModelName);
+  const enabledKeys = enabled.map(({ key }) => key);
+  const filterKey = enabledKeys.join('|');
+  const selectedKey = selected ? `${selected.connectionId}:${selected.modelId}` : '';
+  useEffect(() => {
+    if (!open) return;
+    setActive((value) =>
+      enabledKeys.includes(value)
+        ? value
+        : enabledKeys.includes(selectedKey)
+          ? selectedKey
+          : (enabledKeys[0] ?? ''),
+    );
+  }, [filterKey, selectedKey, open]);
+  useEffect(() => {
+    if (results.current) results.current.scrollTop = 0;
+  }, [search, provider, open]);
+  function focusOption(key: string) {
+    const node = optionNodes.current.get(key);
+    if (!node || node.disabled) return;
+    setActive(key);
+    node.focus({ preventScroll: true });
+    const viewport = results.current;
+    if (!viewport) return;
+    const bounds = viewport.getBoundingClientRect();
+    const item = node.getBoundingClientRect();
+    if (item.top < bounds.top) viewport.scrollTop -= bounds.top - item.top;
+    else if (item.bottom > bounds.bottom) viewport.scrollTop += item.bottom - bounds.bottom;
+  }
+  async function choose(key: string) {
     if (models.busy) return;
+    const choice = current.current.find((value) => value.key === key);
+    if (!choice || (choice.item.audio && !choice.item.textModelName)) return;
     const capture = analyticsForCurrentSession();
-    if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id))) {
+    if (
+      await models.change(
+        '/api/models/selection',
+        'PUT',
+        modelSelection(choice.source, choice.item.id),
+      )
+    ) {
       capture('nod_model_selected', {
-        provider: source.provider in modelProviderNames ? source.provider : 'other',
+        provider: choice.source.provider in modelProviderNames ? choice.source.provider : 'other',
         entry: surface,
-        recommended,
+        recommended: choice.recommended,
       });
       setOpen(false);
-    } else capture('nod_ui_error', { area: 'models', action: 'save' });
+    } else {
+      capture('nod_ui_error', { area: 'models', action: 'save' });
+      requestAnimationFrame(() => focusOption(key));
+    }
+  }
+  function navigate(event: KeyboardEvent<HTMLElement>) {
+    if (
+      event.defaultPrevented ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229 ||
+      models.busy ||
+      !enabledKeys.length
+    )
+      return;
+    const input = event.target === searchInput.current;
+    if (!input && !(event.target as HTMLElement).closest('.model-option')) return;
+    if (input && ['Home', 'End'].includes(event.key)) return;
+    if (event.key === 'Enter' && input) {
+      event.preventDefault();
+      void choose(enabledKeys.includes(active) ? active : enabledKeys[0]!);
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = enabledKeys.indexOf(active);
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? enabledKeys.length - 1
+          : input
+            ? event.key === 'ArrowUp'
+              ? enabledKeys.length - 1
+              : Math.max(0, index)
+            : Math.min(
+                enabledKeys.length - 1,
+                Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)),
+              );
+    focusOption(enabledKeys[next]!);
   }
   return (
     <div className="model-picker">
       <Button
         ref={trigger}
         type="button"
-        variant="ghost"
+        variant={label ? 'secondary' : 'ghost'}
         size="sm"
         className="model-picker-trigger"
+        disabled={models.loading}
         onClick={() => {
           setSearch('');
+          setProvider('all');
+          models.setError('');
+          setHeight(
+            Math.min(420, Math.max(156, available.length * 38 + connections.length * 38 + 12)),
+          );
+          setActive(selectedKey);
           canChoose ? setOpen(true) : setManage(true);
         }}
         aria-label={
           model
-            ? `${canChoose ? 'Choose model' : 'Manage model connections'}: ${model.name}, ${connectionName(connection!)}`
+            ? `Choose model: ${model.name}, ${sourceDescription}`
             : canChoose
               ? 'Choose a model'
               : 'Connect a model'
         }
         title={
           model
-            ? `${model.name} · ${connectionName(connection!)}${model.audio ? ` · ${model.textModelName ? `Text support: ${model.textModelName}` : 'Text model unavailable'}` : ''}`
+            ? `${model.name} · ${sourceDescription}${model.audio ? ` · ${model.textModelName ? `Text support: ${model.textModelName}` : 'Text model unavailable'}` : ''}`
             : undefined
         }
-        disabled={models.loading}
       >
-        {model ? (
+        {label ?? (
           <>
-            <span className="model-picker-name">{model.name}</span>
-            <ChevronDown size={12} />
-          </>
-        ) : (
-          <>
-            <Plus size={16} />
-            {canChoose ? 'Choose a model' : 'Connect a model'}
+            <span className="model-picker-name">
+              {model?.name ?? (canChoose ? 'Choose a model' : 'Connect a model')}
+            </span>
+            {model ? <ChevronDown size={12} /> : <Plus size={16} />}
           </>
         )}
       </Button>
@@ -971,127 +1194,206 @@ export function ModelPicker({
           Reconnect in Settings &gt; Models
         </a>
       )}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(value) => {
+          if (!models.busy) setOpen(value);
+        }}
+      >
         <DialogContent
           className="model-picker-dialog"
-          aria-describedby="model-picker-description"
+          aria-describedby={undefined}
+          onKeyDown={navigate}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            searchInput.current?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             if (!manage) trigger.current?.focus();
           }}
         >
           <DialogTitle>Choose a model</DialogTitle>
-          <p id="model-picker-description" className="model-intro">
-            Choose the model for your next message.
-            {showPrices && ' OpenRouter token prices are in USD. Rates can vary.'}
-          </p>
-          <SearchField
-            inputRef={searchInput}
-            placeholder="Search models or providers"
-            aria-label="Search models"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onClear={() => {
-              setSearch('');
-              searchInput.current?.focus();
-            }}
-          />
-          <div className="model-options">
-            {choices.map(({ source, item, recommended }) => {
-              const active = selected?.connectionId === source.id && selected.modelId === item.id;
-              const providerName =
-                source.method === 'subscription' ? 'ChatGPT' : modelProviderNames[source.provider];
-              const customLabel = ![providerName, modelSource(source)].some(
-                (name) => name.toLowerCase() === source.label.trim().toLowerCase(),
-              );
-              const sharedLabel = connections.some(
-                (other) =>
-                  other.id !== source.id &&
-                  modelSource(other) === modelSource(source) &&
-                  other.label === source.label,
-              );
-              return (
-                <button
-                  type="button"
-                  key={`${source.id}:${item.id}`}
-                  className="model-option"
-                  aria-pressed={active}
-                  disabled={models.busy || (item.audio && !item.textModelName)}
-                  onClick={() => void choose(source, item.id, recommended)}
+          <p className="field-hint">Applies to your next message.</p>
+          <div className="model-picker-toolbar">
+            <SearchField
+              inputRef={searchInput}
+              placeholder="Search models or accounts"
+              aria-label="Search models or accounts"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onClear={() => {
+                setSearch('');
+                searchInput.current?.focus();
+              }}
+            />
+            <SearchPicker
+              className="model-provider-filter"
+              value={provider}
+              onChange={setProvider}
+              disabled={models.busy}
+              options={[
+                { value: 'all', label: 'All providers' },
+                ...Array.from(new Set(connections.map((source) => source.provider))).map(
+                  (value) => ({ value, label: modelProviderNames[value] }),
+                ),
+              ]}
+              labels={{
+                choose: 'Filter model providers',
+                search: 'Search model providers',
+                placeholder: 'Search providers',
+                clear: 'Clear provider search',
+                list: 'Model providers',
+                empty: 'No matching providers',
+              }}
+            />
+          </div>
+          <div
+            ref={results}
+            className="model-options"
+            role={choices.length ? 'listbox' : 'region'}
+            aria-label="Available models"
+            aria-busy={models.busy}
+            style={{ '--model-results-height': `${height}px` } as CSSProperties}
+          >
+            {groups.map(({ source, choices: group }) => (
+              <div
+                key={source.id}
+                className="model-option-group"
+                role="group"
+                aria-labelledby={`${id}-${source.id}`}
+              >
+                <div
+                  id={`${id}-${source.id}`}
+                  className="model-option-group-heading"
+                  data-analytics-private
                 >
-                  <ModelProviderLogo provider={source.provider} size={24} />
-                  <span className="model-option-copy">
-                    <span className="model-option-heading">
-                      <strong>{item.name}</strong>
-                      {recommended && <span className="model-option-recommended">Recommended</span>}
-                      {source.provider === 'openrouter' && (
-                        <span className="model-option-price">
-                          {item.pricing === 'variable'
-                            ? 'Price varies'
-                            : !item.pricing
-                              ? 'Price unavailable'
-                              : item.pricing.input === 0 && item.pricing.output === 0
-                                ? 'Free tokens'
-                                : `${modelPrice.format(item.pricing.input)} input · ${modelPrice.format(item.pricing.output)} output / 1M tokens`}
+                  <ModelProviderLogo provider={source.provider} />
+                  <strong>{modelProviderNames[source.provider]}</strong>
+                  <span>{connectionName(source, true)}</span>
+                </div>
+                {group.map(({ item, key, recommended }) => {
+                  const price =
+                    source.provider === 'openrouter'
+                      ? item.pricing === 'variable'
+                        ? 'Price varies'
+                        : !item.pricing
+                          ? 'Price unavailable'
+                          : item.pricing.input === 0 && item.pricing.output === 0
+                            ? 'Free tokens'
+                            : `${modelPrice.format(item.pricing.input)} in · ${modelPrice.format(item.pricing.output)} out / 1M`
+                      : null;
+                  return (
+                    <button
+                      ref={(node) => {
+                        if (node) optionNodes.current.set(key, node);
+                        else optionNodes.current.delete(key);
+                      }}
+                      key={key}
+                      type="button"
+                      role="option"
+                      aria-selected={selectedKey === key}
+                      className="model-option"
+                      tabIndex={active === key ? 0 : -1}
+                      disabled={models.busy || (item.audio && !item.textModelName)}
+                      onFocus={() => focusOption(key)}
+                      onClick={() => void choose(key)}
+                    >
+                      <span className="model-option-copy">
+                        <span className="model-option-heading">
+                          <strong>{item.name}</strong>
+                          {recommended && (
+                            <span className="model-option-recommended">Recommended</span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                    <span className="model-option-details">
-                      <span>
-                        {providerName}
-                        {customLabel ? ` · ${source.label}` : ''}
-                        {sharedLabel && source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
-                      </span>
-                      {item.images && !sharedImages && (
-                        <span className="model-option-capability">
-                          <FileImage size={14} />
-                          Reads images
-                        </span>
-                      )}
-                      {item.audio && (
-                        <>
-                          <span className="model-option-capability">
-                            <FileAudio size={14} />
-                            Audio input
-                          </span>
-                          <span>
+                        {item.audio && (
+                          <span className="model-option-detail">
                             {item.textModelName
                               ? `Text support: ${item.textModelName}`
                               : 'Text model unavailable'}
                           </span>
-                        </>
-                      )}
-                      {!sharedThinking && item.efforts.some((effort) => effort !== 'off') && (
-                        <span className="model-option-capability">
-                          <Brain size={14} />
-                          Extra thinking
+                        )}
+                      </span>
+                      <span className="model-option-capabilities">
+                        {item.images && (
+                          <Tooltip content="Reads images">
+                            <span role="img" aria-label="Reads images">
+                              <FileImage size={14} />
+                            </span>
+                          </Tooltip>
+                        )}
+                        {item.audio && (
+                          <Tooltip content="Audio input">
+                            <span role="img" aria-label="Audio input">
+                              <FileAudio size={14} />
+                            </span>
+                          </Tooltip>
+                        )}
+                        {item.efforts.some((effort) => effort !== 'off') && (
+                          <Tooltip content="Extra thinking">
+                            <span role="img" aria-label="Extra thinking">
+                              <Brain size={14} />
+                            </span>
+                          </Tooltip>
+                        )}
+                      </span>
+                      {price && (
+                        <span
+                          className="model-option-price"
+                          aria-label={`${price} tokens in US dollars`}
+                        >
+                          {price}
                         </span>
                       )}
-                    </span>
-                  </span>
-                  <span className="model-option-status" aria-hidden="true" />
-                </button>
-              );
-            })}
+                      <span className="model-option-status" aria-hidden="true">
+                        {selectedKey === key && <Check size={15} />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
             {!choices.length && (
-              <p className="model-empty">No available models match this search.</p>
+              <div className="model-picker-empty" role="status">
+                <span>No matching models.</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSearch('');
+                    setProvider('all');
+                    searchInput.current?.focus();
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="model-picker-footer">
+            <span role="status">
+              {choices.length} {choices.length === 1 ? 'model' : 'models'}
+              {connections.some((source) => source.provider === 'openrouter')
+                ? ' · OpenRouter prices in USD; rates can vary.'
+                : ''}
+            </span>
+            {manageConnections && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setOpen(false);
+                  setManage(true);
+                }}
+              >
+                <SlidersHorizontal size={15} />
+                Manage connections
+              </Button>
             )}
           </div>
           {models.error && <Notice>{models.error}</Notice>}
-          {manageConnections && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="model-manage"
-              onClick={() => {
-                setOpen(false);
-                setManage(true);
-              }}
-            >
-              <SlidersHorizontal size={16} />
-              Manage connections
-            </Button>
-          )}
         </DialogContent>
       </Dialog>
       <Dialog open={manage} onOpenChange={setManage}>

@@ -1,5 +1,14 @@
-.sidebar .chat-unread-badge,
-:root[data-desktop] .app-shell .nav-link > .chat-unread-badge {
+.sidebar .nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.sidebar .chat-unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -13,41 +22,4 @@
   font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  flex: none;
-}
-@media (min-width: 641px) {
-  :root[data-desktop] .app-shell:not(.sidebar-collapsed) .nav-link > .chat-unread-badge {
-    position: static;
-    margin-left: auto;
-  }
-}
-.sidebar .nav-link > .chat-unread-badge {
-  position: absolute;
-  top: 2px;
-  right: 0;
-}
-.sidebar .has-chat-unread .nav-shortcut {
-  display: none;
-}
-.mobile-chat-link,
-.mobile-section {
-  position: relative;
-}
-.mobile-chat-link > .chat-unread-badge,
-.mobile-section > .chat-unread-badge {
-  position: absolute;
-  top: 1px;
-  right: 0;
-}
-@media (min-width: 801px) {
-  .app-shell:not(.sidebar-collapsed) .nav-link > .chat-unread-badge {
-    position: static;
-    margin-left: auto;
-  }
-}
-@media (min-width: 1151px) {
-  .app-shell:not(.sidebar-collapsed) .nav-link > .chat-unread-badge {
-    position: static;
-    margin-left: auto;
-  }
 }

@@ -12,12 +12,14 @@ import { refresh } from './events.ts';
 import { SpeechSetupError } from './speech.ts';
 import type { SubmitMessageResponse } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
+import { questionAnswerSchema } from '../shared/answer-choices.ts';
 
 export const messageInput = z
   .object({
     text: z.string().trim().max(100_000).default(''),
     attachmentIds: z.array(z.uuid()).default([]),
     replyToMessageId: z.uuid().optional(),
+    questionAnswer: questionAnswerSchema.optional(),
     replyQuote: z.string().trim().min(1).max(4000).optional(),
     seenMessageId: z.uuid().optional(),
     clientMessageId: z.uuid().optional(),
@@ -105,6 +107,13 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       if (!recording) throw invalid('Choose an audio recording.');
       const input = messageInput
         .extend({ clientMessageId: z.uuid(), threadId: z.uuid() })
+        .refine(
+          (value) =>
+            !value.questionAnswer ||
+            ('custom' in value.questionAnswer &&
+              Boolean(value.replyToMessageId) &&
+              !value.verificationRequestId),
+        )
         .parse(rawMessage);
       active.set(controller, input.threadId);
       signal.throwIfAborted();

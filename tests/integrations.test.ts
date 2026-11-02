@@ -5828,6 +5828,159 @@ test(
 );
 
 test(
+  'manual MCP setup validates destinations and keeps proposals scoped to their owner',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_manual_mcp_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    const foreign = Fastify();
+    t.after(async () => {
+      await app.close();
+      await foreign.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const ownerId = 'fixture-mcp-owner';
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const grantVault = await createAppGrantVault(pool, { ownerId, keyStore });
+    const transport = createDiscoveredTransport(async () => {
+      throw new Error('Proposal creation must not call the remote server.');
+    });
+    const authorizations: Array<{ endpoint: string; clientId?: string }> = [];
+    const oauth: Parameters<typeof createDiscoveredConnections>[1]['oauth'] = {
+      async begin(endpoint, redirectUri, _state, _scope, clientId) {
+        authorizations.push({ endpoint, clientId });
+        return {
+          url: 'https://authorization.example.test/consent',
+          saved: { redirectUri, clientInformation: { client_id: clientId! } },
+        };
+      },
+      async finish() {
+        throw new Error('The fixture must not finish OAuth.');
+      },
+      async refresh() {
+        throw new Error('The fixture must not refresh OAuth.');
+      },
+    };
+    const options = {
+      ownerId,
+      baseUrl: 'http://localhost:4310',
+      grantVault,
+      transport,
+      oauth,
+    };
+    (await createDiscoveredConnections(pool, options)).registerRoutes(app);
+    const create = (payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: '/api/apps/mcp', payload });
+    const input = { name: 'Fixture MCP', endpoint: 'https://93.184.216.34/mcp', auth: 'oauth' };
+    for (const endpoint of [
+      'https://127.0.0.1/mcp',
+      'https://192.168.1.1/mcp',
+      'http://93.184.216.34/mcp',
+      'https://93.184.216.34/mcp?token=synthetic',
+      'https://93.184.216.34/mcp#secret',
+      'https://user:synthetic@93.184.216.34/mcp',
+    ]) {
+      const response = await create({ ...input, endpoint });
+      assert.equal(response.statusCode, 400, response.body);
+    }
+    for (const auth of ['bearer', 'x-api-key']) {
+      const rejected = await create({ ...input, auth, clientIdRequired: true });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+    }
+    assert.equal((await create({ ...input, clientIdRequired: 'true' })).statusCode, 400);
+    assert.equal((await create({ ...input, ownerId: 'foreign-owner' })).statusCode, 400);
+    assert.equal((await pool.query('SELECT id FROM discovered_connection_proposals')).rowCount, 0);
+    const response = await create(input);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    const { id } = response.json();
+    const saved = (
+      await pool.query(
+        'SELECT owner_id,paths,turn_id,callback_return_to FROM discovered_connection_proposals WHERE id=$1',
+        [id],
+      )
+    ).rows[0];
+    assert.equal(saved.owner_id, ownerId);
+    assert.equal(saved.turn_id, null);
+    assert.equal(saved.callback_return_to, 'apps');
+    assert.deepEqual(saved.paths, [{ id, kind: 'mcp', endpoint: input.endpoint, auth: 'oauth' }]);
+    assert.equal((await app.inject({ url: `/api/apps/discovery/${id}` })).statusCode, 200);
+    (
+      await createDiscoveredConnections(pool, { ...options, ownerId: 'foreign-owner' })
+    ).registerRoutes(foreign);
+    assert.equal((await foreign.inject({ url: `/api/apps/discovery/${id}` })).statusCode, 404);
+    assert.equal(
+      (
+        await foreign.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${id}/complete`,
+          payload: { token: 'synthetic-token', accountName: 'Foreign account' },
+        })
+      ).statusCode,
+      404,
+    );
+    const registered = await create({
+      ...input,
+      endpoint: 'HTTPS://93.184.216.34/registered',
+      clientIdRequired: true,
+    });
+    assert.equal(registered.statusCode, 200, registered.body);
+    const registeredId = registered.json().id;
+    const setup = await app.inject({ url: `/api/apps/discovery/${registeredId}` });
+    assert.equal(setup.statusCode, 200, setup.body);
+    assert.deepEqual(setup.json().paths, [
+      {
+        kind: 'mcp',
+        endpoint: 'https://93.184.216.34/registered',
+        auth: 'oauth',
+        clientIdRequired: true,
+      },
+    ]);
+    assert.equal(setup.json().callbackUrl, 'http://127.0.0.1:4310/api/apps/callback');
+    const authorize = (server: typeof app, payload: Record<string, unknown>) =>
+      server.inject({
+        method: 'POST',
+        url: `/api/apps/discovery/${registeredId}/authorize`,
+        payload,
+      });
+    assert.equal((await authorize(app, {})).statusCode, 400);
+    assert.equal((await authorize(foreign, { clientId: 'synthetic-client' })).statusCode, 404);
+    assert.equal(authorizations.length, 0);
+    const started = await authorize(app, { clientId: 'synthetic-client' });
+    assert.equal(started.statusCode, 200, started.body);
+    assert.deepEqual(authorizations, [
+      { endpoint: 'https://93.184.216.34/registered', clientId: 'synthetic-client' },
+    ]);
+    assert.equal(started.json().url, 'https://authorization.example.test/consent');
+    for (const auth of ['oauth', 'bearer', 'x-api-key']) {
+      const ordinary = await create({
+        ...input,
+        endpoint: `HTTPS://93.184.216.34/${auth}`,
+        auth,
+        clientIdRequired: false,
+      });
+      assert.equal(ordinary.statusCode, 200, ordinary.body);
+      const view = await app.inject({ url: `/api/apps/discovery/${ordinary.json().id}` });
+      assert.equal(view.statusCode, 200, view.body);
+      assert.deepEqual(view.json().paths, [
+        { kind: 'mcp', endpoint: `https://93.184.216.34/${auth}`, auth },
+      ]);
+      assert.equal(Object.hasOwn(view.json(), 'callbackUrl'), false);
+    }
+    assert.equal((await pool.query('SELECT id FROM discovered_connections')).rowCount, 0);
+  },
+);
+
+test(
   'discovered setup preserves owned paths, scoped discovery and account replacement',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
@@ -6011,6 +6164,32 @@ test(
         wake: async () => {},
       });
       integrations.registerRoutes(app);
+      await pool.query('UPDATE discovered_connections SET reconnect_required=true WHERE id=$1', [
+        connectionId,
+      ]);
+      const additional = await app.inject({
+        method: 'POST',
+        url: '/api/apps/fixture-app/connect',
+        payload: { connectionId, newAccount: true },
+      });
+      assert.equal(additional.statusCode, 200, additional.body);
+      const additionalId = new URL(additional.json().url, 'http://localhost:4310').searchParams.get(
+        'connect',
+      );
+      const additionalProposal = (
+        await pool.query('SELECT connection_id FROM discovered_connection_proposals WHERE id=$1', [
+          additionalId,
+        ])
+      ).rows[0];
+      assert.equal(additionalProposal.connection_id, null);
+      assert.equal(
+        (await pool.query('SELECT id FROM discovered_connections WHERE id=$1', [connectionId]))
+          .rowCount,
+        1,
+      );
+      await pool.query('UPDATE discovered_connections SET reconnect_required=false WHERE id=$1', [
+        connectionId,
+      ]);
       const setupPage = await app.inject({ url: `/api/apps/discovery/${id}` });
       assert.deepEqual(setupPage.json().paths[0].source, cliSource);
       const foreignProposal = randomUUID();
@@ -7270,11 +7449,12 @@ test(
       conversation = randomUUID();
     try {
       await pool.query(`
+        CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid);
         CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
+        CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
@@ -7292,6 +7472,10 @@ test(
         [conversation, scheduled, foreign],
       );
       await pool.query('UPDATE turns SET thread_id=id,session_id=id WHERE id=$1', [foreign]);
+      await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'owner'),($2,'other')", [
+        conversation,
+        foreign,
+      ]);
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
       await pool.query(
         "INSERT INTO app_actions(owner_id,turn_id,action,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE',now()-interval '90 minutes')",
@@ -7413,6 +7597,7 @@ test(
       );
       const chatEntry = (entries: TrustEntry[]) =>
         entries.find((entry) => entry.title === 'Tell Sam we take the quote')!;
+      assert.ok(view.entries.every((entry: TrustEntry) => entry.messageId === null));
       assert.deepEqual(chatEntry(view.entries).actions, [
         { label: 'Gmail: fetch emails' },
         { label: 'Gmail: send email', because: { kind: 'approved' } },
@@ -7420,9 +7605,54 @@ test(
       const said = randomUUID();
       const foreignSaid = randomUUID();
       await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,turn_id) VALUES($1,'owner','user','Tell Sam we take the quote',$3),($2,'other','user','Foreign words',$4)",
-        [said, foreignSaid, chat, foreign],
+        "INSERT INTO messages(id,owner_id,role,text,turn_id,thread_id) VALUES($1,'owner','user','Tell Sam we take the quote',$3,$5),($2,'other','user','Foreign words',$4,$4)",
+        [said, foreignSaid, chat, foreign, conversation],
       );
+      await pool.query('UPDATE turns SET message_id=$2 WHERE id=$1', [chat, said]);
+      const linkedMessage = async () =>
+        (await app.inject('/api/trust'))
+          .json()
+          .entries.find((entry: TrustEntry) => entry.id === chat).messageId;
+      assert.equal(await linkedMessage(), said);
+      const firstResult = randomUUID();
+      const latestResult = randomUUID();
+      const foreignResult = randomUUID();
+      const archivedResult = randomUUID();
+      const archivedThread = randomUUID();
+      await pool.query("INSERT INTO threads VALUES($1,'owner',now())", [archivedThread]);
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,turn_id,thread_id,created_at) VALUES
+          ($1,'owner','assistant','Synthetic first result',$5,$6,now()-interval '2 minutes'),
+          ($2,'owner','assistant','Synthetic latest result',$5,$6,now()-interval '1 minute'),
+          ($3,'other','assistant','Foreign result',$5,$6,now()),
+          ($4,'owner','assistant','Archived result',$5,$7,now())`,
+        [
+          firstResult,
+          latestResult,
+          foreignResult,
+          archivedResult,
+          chat,
+          conversation,
+          archivedThread,
+        ],
+      );
+      assert.equal(await linkedMessage(), latestResult);
+      await pool.query('DELETE FROM messages WHERE id=$1', [latestResult]);
+      assert.equal(await linkedMessage(), firstResult);
+      await pool.query('DELETE FROM messages WHERE id=$1', [firstResult]);
+      assert.equal(await linkedMessage(), said);
+      for (const unavailable of [foreignSaid, archivedResult, randomUUID()]) {
+        await pool.query('UPDATE turns SET message_id=$2 WHERE id=$1', [chat, unavailable]);
+        assert.equal(await linkedMessage(), null);
+      }
+      await pool.query('UPDATE turns SET message_id=$2 WHERE id=$1', [chat, said]);
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [conversation]);
+      assert.equal(await linkedMessage(), null);
+      await pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [conversation]);
+      assert.equal(await linkedMessage(), said);
+      await pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+        [foreignResult, archivedResult],
+      ]);
       await ledger.action(chat, 'SLACK_SEND_MESSAGE', {
         kind: 'message',
         messageId: said,
@@ -7875,6 +8105,101 @@ test(
         ],
       );
       await late.dispose();
+      const attributionLedger = createLedger({ pool, ownerId: 'usage-owner' });
+      const empty = await attributionLedger.read();
+      assert.equal(empty.month.planUsage, false);
+      assert.equal(empty.month.unpriced, false);
+      const [subscriptionTurn, mixedTurn, unpricedTurn, freeTurn, legacyTurn] = Array.from(
+        { length: 5 },
+        () => randomUUID(),
+      );
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,session_id) VALUES
+          ($1,'usage-owner','task','Synthetic plan task',$1),
+          ($2,'usage-owner','task','Synthetic mixed task',$2),
+          ($3,'usage-owner','task','Synthetic unpriced task',$3),
+          ($4,'usage-owner','task','Synthetic local task',$4),
+          ($5,'usage-owner','task','Synthetic legacy task',$5)`,
+        [subscriptionTurn, mixedTurn, unpricedTurn, freeTurn, legacyTurn],
+      );
+      for (const costUsd of [0.2, 0]) {
+        await pool.query(
+          `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details) VALUES
+            ('usage-charged-estimate','usage-owner',$1,$2,'{"provider":"openai","model":"fixture-priced","estimateUsd":0.6,"status":"succeeded"}')`,
+          [freeTurn, costUsd],
+        );
+        const charged = await attributionLedger.read();
+        assert.equal(charged.month.planUsage, false);
+        assert.equal(charged.month.unpriced, costUsd === 0);
+        assert.equal(charged.month.spentUsd, costUsd);
+        assert.deepEqual(charged.entries[0]!.models, [
+          { provider: 'openai', model: 'fixture-priced', billing: 'api' },
+        ]);
+        await pool.query("DELETE FROM model_usage WHERE id='usage-charged-estimate'");
+      }
+      await pool.query(
+        `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details) VALUES
+          ('usage-plan-a','usage-owner',$1,NULL,'{"provider":"openai-codex","model":"fixture-plan","estimateUsd":null,"status":"succeeded"}'),
+          ('usage-plan-b','usage-owner',$1,NULL,'{"provider":"openai-codex","model":"fixture-plan","estimateUsd":0.6,"status":"succeeded"}')`,
+        [subscriptionTurn],
+      );
+      const planOnly = await attributionLedger.read();
+      assert.equal(planOnly.month.planUsage, true);
+      assert.equal(planOnly.month.unpriced, true);
+      assert.equal(planOnly.month.planUsd, 0.6);
+      assert.equal(planOnly.month.spentUsd, 0);
+      assert.deepEqual(
+        planOnly.entries.map((entry) => [entry.id, entry.costUsd, entry.models]),
+        [
+          [
+            subscriptionTurn,
+            null,
+            [{ provider: 'openai-codex', model: 'fixture-plan', billing: 'plan' }],
+          ],
+        ],
+      );
+      await pool.query(
+        `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details) VALUES
+          ('usage-mixed-api','usage-owner',$1,0.2,'{"provider":"openai","model":"fixture-shared"}'),
+          ('usage-mixed-plan','usage-owner',$1,NULL,'{"provider":"openai","model":"fixture-shared","estimateUsd":0.4}'),
+          ('usage-unpriced','usage-owner',$2,NULL,'{"provider":"compatible","model":"fixture-unknown-price","status":"succeeded"}'),
+          ('usage-free','usage-owner',$3,0,'{"provider":"compatible","model":"fixture-local","status":"succeeded"}'),
+          ('usage-legacy','usage-owner',$4,0.1,'{}'),
+          ('usage-foreign','other',$1,9,'{"provider":"foreign","model":"foreign-model"}')`,
+        [mixedTurn, unpricedTurn, freeTurn, legacyTurn],
+      );
+      await pool.query(
+        `INSERT INTO app_actions(owner_id,turn_id,action,basis)
+          VALUES('other',$1,'FOREIGN_ACTION','{"kind":"read"}')`,
+        [mixedTurn],
+      );
+      const attributed = await attributionLedger.read();
+      assert.equal(attributed.month.planUsage, true);
+      assert.equal(attributed.month.unpriced, true);
+      assert.equal(Math.round(attributed.month.spentUsd * 100), 30);
+      assert.equal(attributed.entries.length, 5);
+      const mixed = attributed.entries.find((entry) => entry.id === mixedTurn)!;
+      assert.equal(mixed.costUsd, 0.2);
+      assert.deepEqual(mixed.actions, []);
+      assert.deepEqual(mixed.models, [
+        { provider: 'openai', model: 'fixture-shared', billing: 'api' },
+        { provider: 'openai', model: 'fixture-shared', billing: 'plan' },
+      ]);
+      assert.deepEqual(attributed.entries.find((entry) => entry.id === unpricedTurn)!.models, [
+        { provider: 'compatible', model: 'fixture-unknown-price', billing: 'api' },
+      ]);
+      assert.equal(attributed.entries.find((entry) => entry.id === freeTurn)!.costUsd, null);
+      assert.equal(attributed.entries.find((entry) => entry.id === freeTurn)!.pricing, 'unpriced');
+      assert.deepEqual(attributed.entries.find((entry) => entry.id === legacyTurn)!.models, [
+        { provider: null, model: null, billing: 'api' },
+      ]);
+      assert.deepEqual(await attributionLedger.checkIn(subscriptionTurn!, subscriptionTurn!), {
+        budgetUsd: 5,
+        spentUsd: 0.6,
+        planUsd: 0.6,
+      });
+      await attributionLedger.setLimits({ monthlyUsd: 1 });
+      assert.equal(await attributionLedger.limitReached(), false);
     } finally {
       await app.close();
       await pool.end();

@@ -92,6 +92,41 @@ export async function reconcileUnreadChat(
   return Math.min(unread.size, 100);
 }
 
+export async function loadUnreadChatBoundary(
+  messages: Message[],
+  hasEarlier: boolean,
+  cursor: ChatReadCursor,
+  load: (before: MessageMarker, signal: AbortSignal) => Promise<MessageHistoryPage>,
+  signal: AbortSignal,
+) {
+  let page = { messages, hasMore: hasEarlier };
+  const collected = new Map(messages.map((message) => [message.id, message]));
+  while (hasUnreadHistory(page.messages, page.hasMore, cursor)) {
+    signal.throwIfAborted();
+    const before = page.messages[0];
+    const next = await load(before, signal);
+    signal.throwIfAborted();
+    const first = next.messages[0];
+    if (
+      next.hasMore &&
+      (!first ||
+        first.createdAt > before.createdAt ||
+        (first.createdAt === before.createdAt && first.id >= before.id))
+    )
+      throw new Error('Message history did not advance.');
+    for (const message of next.messages) collected.set(message.id, message);
+    page = next;
+  }
+  const ordered = [...collected.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  return {
+    messages: ordered,
+    hasMore: page.hasMore,
+    messageId: unreadChatMessageIds(ordered, cursor).values().next().value ?? null,
+  };
+}
+
 function chatReadStorageKey(ownerId: string, threadId: string) {
   return `nod.chat-read.${JSON.stringify([ownerId, threadId])}`;
 }

@@ -1,0 +1,19 @@
+Sign-in provider logo attribution
+
+Google
+Source: https://github.com/lobehub/lobe-icons
+Commit: 7d7d0379f18b114a4009dc5cb85a7c375284f31b
+Source file: packages/static-svg/icons/google-color.svg
+License: MIT, Copyright (c) 2023 LobeHub.
+See ../models/LICENSE-LOBEHUB.txt.
+
+Apple and Facebook
+Source: https://github.com/simple-icons/simple-icons
+Commit: 90646e4bf7f3b89df6c37e65baf3e7bc759a517c
+Source files: icons/apple.svg and icons/facebook.svg
+License: CC0 1.0 Universal.
+https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/LICENSE.md
+
+SVG geometry is unchanged. Presentation metadata and titles are removed;
+display dimensions are normalized to 24 pixels.
+Provider names and trademarks remain with their respective owners.

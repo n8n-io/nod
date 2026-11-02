@@ -1,38 +1,62 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Tooltip } from './tooltip';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import type { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import {
-  Check,
-  ChevronDown,
-  LoaderCircle,
-  Mic,
-  Pause,
-  Play,
-  RotateCcw,
-  Square,
-  Trash2,
-  X,
-} from './icons';
+import { Check, LoaderCircle, Mic, Pause, Play, Trash2, X } from './icons';
 import { Button } from './ui';
+import {
+  ActionMenuItem,
+  actionMenuTabTarget,
+  focusActionMenuItem,
+  useActionMenuNavigation,
+  useActionMenuViewport,
+} from './action-menu';
 
 export function MicrophonePicker({
   recorder,
   disabled,
+  triggerDisabled,
+  hint,
+  shortcut,
+  children,
+  setup,
+  setupOpen = false,
+  onSetupOpenChange,
 }: {
   recorder: ReturnType<typeof useVoiceRecorder>;
   disabled: boolean;
+  triggerDisabled: boolean;
+  hint: string;
+  shortcut?: string;
+  children: ReactNode;
+  setup?: ReactNode;
+  setupOpen?: boolean;
+  onSetupOpenChange?(open: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
+  const navigateMenu = useActionMenuNavigation(open && !setupOpen);
+  const anchor = useRef<HTMLSpanElement>(null);
   const panel = useRef<HTMLDivElement>(null);
+  const observePanel = useActionMenuViewport(panel);
+  const restoreAnchorFocus = useRef(true);
+  const tabTarget = useRef<HTMLElement | null>(null);
+  const awaitSelected = useRef(false);
+  const currentlyDisabled = useRef(disabled);
+  currentlyDisabled.current = disabled;
   const selected = recorder.microphones.find((device) => device.deviceId === recorder.microphoneId);
-  const choices = [
-    { id: '', label: 'System default' },
-    ...recorder.microphones.map((device, index) => ({
-      id: device.deviceId,
-      label: device.label || `Microphone ${index + 1}`,
-    })),
-  ];
+  const microphoneAccess = recorder.microphoneAccess;
+  const choices = microphoneAccess
+    ? [
+        { id: '', label: 'System default' },
+        ...recorder.microphones.map((device, index) => ({
+          id: device.deviceId,
+          label: device.label || `Microphone ${index + 1}`,
+        })),
+      ]
+    : [];
   function changeOpen(value: boolean) {
+    awaitSelected.current = value;
+    if (value) tabTarget.current = null;
     setOpen(value);
     if (value) void recorder.refreshMicrophones();
     else recorder.cancelMicrophoneDiscovery();
@@ -40,96 +64,175 @@ export function MicrophonePicker({
   useEffect(() => {
     if (disabled) changeOpen(false);
   }, [disabled]);
+  useEffect(() => {
+    if (setupOpen) changeOpen(false);
+  }, [setupOpen]);
+  useEffect(() => {
+    if (!triggerDisabled && document.activeElement === anchor.current)
+      anchor.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [triggerDisabled]);
+  useEffect(() => {
+    if (
+      !open ||
+      setupOpen ||
+      !awaitSelected.current ||
+      !microphoneAccess ||
+      (recorder.microphoneId && !selected)
+    )
+      return;
+    if (
+      !panel.current ||
+      (!panel.current.contains(document.activeElement) && document.activeElement !== document.body)
+    )
+      return;
+    awaitSelected.current = false;
+    focusActionMenuItem(panel.current.querySelector<HTMLElement>('[aria-checked="true"]'));
+  }, [open, setupOpen, recorder.microphoneId, selected?.deviceId, microphoneAccess]);
   useEffect(() => () => recorder.cancelMicrophoneDiscovery(), []);
   return (
-    <Popover.Root open={open} onOpenChange={changeOpen}>
-      <Popover.Trigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="microphone-picker-trigger"
-          data-analytics-private
-          aria-label="Choose microphone"
-          title={selected?.label || 'Choose microphone'}
-          disabled={disabled}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    <Popover.Root
+      open={open || setupOpen}
+      onOpenChange={(value) => {
+        if (setupOpen) onSetupOpenChange?.(value);
+        else changeOpen(value);
+      }}
+    >
+      <Tooltip content={hint} shortcut={shortcut}>
+        <Popover.Anchor asChild>
+          <span
+            ref={anchor}
+            className="composer-microphone tooltip-disabled-trigger"
+            tabIndex={triggerDisabled ? 0 : undefined}
+            aria-label={triggerDisabled ? hint : undefined}
+            onContextMenu={(event) => {
+              if (disabled) return;
               event.preventDefault();
+              onSetupOpenChange?.(false);
               changeOpen(true);
-            }
-          }}
-        >
-          <ChevronDown size={12} aria-hidden="true" />
-        </Button>
-      </Popover.Trigger>
+            }}
+            onKeyDown={(event) => {
+              if (
+                !disabled &&
+                (event.key === 'ContextMenu' ||
+                  (event.shiftKey && event.key === 'F10') ||
+                  (event.altKey && event.key === 'ArrowDown'))
+              ) {
+                event.preventDefault();
+                onSetupOpenChange?.(false);
+                changeOpen(true);
+              }
+            }}
+          >
+            {children}
+          </span>
+        </Popover.Anchor>
+      </Tooltip>
       <Popover.Portal>
         <Popover.Content
-          ref={panel}
-          className="microphone-picker menu"
+          ref={observePanel}
+          className={setupOpen ? 'microphone-setup' : 'microphone-picker menu action-menu-surface'}
           data-analytics-private
-          role="menu"
-          aria-label="Microphone"
+          role={setupOpen ? 'dialog' : 'menu'}
+          aria-label={setupOpen ? 'Audio messages' : 'Microphone'}
           align="end"
           side="top"
           sideOffset={8}
           collisionPadding={12}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = tabTarget.current;
+            tabTarget.current = null;
+            if (!restoreAnchorFocus.current) return;
+            if (target?.isConnected) target.focus({ preventScroll: true });
+            else if (!currentlyDisabled.current) anchor.current?.querySelector('button')?.focus();
+          }}
+          onInteractOutside={() => {
+            restoreAnchorFocus.current = false;
+            tabTarget.current = null;
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
-            panel.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
-          }}
-          onKeyDown={(event) => {
-            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault();
-            const items = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+            restoreAnchorFocus.current = true;
+            tabTarget.current = null;
+            focusActionMenuItem(
+              panel.current?.querySelector<HTMLButtonElement>(
+                setupOpen
+                  ? 'button'
+                  : '[aria-checked="true"], [aria-label="Allow microphone access"]',
+              ),
             );
-            const index = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? items.length - 1
-                  : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
-            items[next]?.focus();
+            if (setupOpen || (microphoneAccess && (!recorder.microphoneId || selected)))
+              awaitSelected.current = false;
+          }}
+          onKeyDownCapture={(event) => {
+            if (setupOpen) return;
+            awaitSelected.current = false;
+            if (
+              event.key !== 'Tab' ||
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.nativeEvent.isComposing
+            )
+              return;
+            event.preventDefault();
+            event.stopPropagation();
+            tabTarget.current = actionMenuTabTarget(
+              anchor.current?.querySelector('button'),
+              event.shiftKey,
+              panel.current,
+            );
+            changeOpen(false);
+          }}
+          onKeyDown={navigateMenu}
+          onPointerDownCapture={() => {
+            awaitSelected.current = false;
+          }}
+          onWheelCapture={() => {
+            awaitSelected.current = false;
           }}
         >
-          <p className="microphone-picker-heading">Microphone</p>
-          {choices.map((choice) => (
-            <button
-              key={choice.id}
-              type="button"
-              className="menu-item"
-              role="menuitemradio"
-              aria-label={choice.label}
-              aria-checked={choice.id === (selected?.deviceId ?? '')}
-              onClick={() => {
-                recorder.selectMicrophone(choice.id);
-                changeOpen(false);
-              }}
-            >
-              <span>{choice.label}</span>
-              {choice.id === (selected?.deviceId ?? '') && <Check size={14} aria-hidden="true" />}
-            </button>
-          ))}
-          {!recorder.microphones.some((device) => device.label) && (
-            <button
-              type="button"
-              role="menuitem"
-              className="menu-item"
-              aria-label="Allow microphone access"
-              aria-disabled={recorder.discovering}
-              onClick={() => void recorder.discoverMicrophones()}
-            >
-              {recorder.discovering ? (
-                <LoaderCircle size={14} className="spin" />
-              ) : (
-                <Mic size={14} />
+          {setupOpen ? (
+            setup
+          ) : (
+            <>
+              <p className="microphone-picker-heading">Microphone</p>
+              {choices.map((choice) => (
+                <ActionMenuItem
+                  key={choice.id}
+                  aria-label={choice.label}
+                  checked={choice.id === (selected?.deviceId ?? '')}
+                  onClick={() => {
+                    recorder.selectMicrophone(choice.id);
+                    changeOpen(false);
+                  }}
+                >
+                  <span>{choice.label}</span>
+                  {choice.id === (selected?.deviceId ?? '') && (
+                    <Check size={14} aria-hidden="true" />
+                  )}
+                </ActionMenuItem>
+              ))}
+              {!microphoneAccess && (
+                <ActionMenuItem
+                  aria-label="Allow microphone access"
+                  aria-disabled={recorder.discovering}
+                  onClick={() => {
+                    awaitSelected.current = true;
+                    void recorder.discoverMicrophones();
+                  }}
+                >
+                  {recorder.discovering ? (
+                    <LoaderCircle size={14} className="spin" />
+                  ) : (
+                    <Mic size={14} />
+                  )}
+                  {recorder.discovering ? 'Waiting for permission…' : 'Allow microphone access'}
+                </ActionMenuItem>
               )}
-              {recorder.discovering ? 'Waiting for permission…' : 'Allow microphone access'}
-            </button>
+              {recorder.microphoneFailure && <p role="alert">{recorder.microphoneFailure}</p>}
+            </>
           )}
-          {recorder.microphoneFailure && <p role="alert">{recorder.microphoneFailure}</p>}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
@@ -261,13 +364,16 @@ function RecordingPreview({
           <Play size={20} solid />
         )}
       </button>
-      <span
-        className="recording-preview-time"
-        aria-label={`${recordingTime(current * 1000)} of ${recordingTime(Math.ceil(duration) * 1000)}`}
-        title={`${recordingTime(current * 1000)} / ${recordingTime(Math.ceil(duration) * 1000)}`}
+      <Tooltip
+        content={`${recordingTime(current * 1000)} / ${recordingTime(Math.ceil(duration) * 1000)}`}
       >
-        {recordingTime((current > 0 || playing ? current : Math.ceil(duration)) * 1000)}
-      </span>
+        <span
+          className="recording-preview-time"
+          aria-label={`${recordingTime(current * 1000)} of ${recordingTime(Math.ceil(duration) * 1000)}`}
+        >
+          {recordingTime((current > 0 || playing ? current : Math.ceil(duration)) * 1000)}
+        </span>
+      </Tooltip>
       <div className="recording-preview-position">
         <RecordingWaveform levels={levels} progress={progress} />
         <input
@@ -294,10 +400,16 @@ function RecordingPreview({
 export function VoiceRecorder({
   recorder,
   sending,
+  preparing = false,
+  progress,
+  onCancel,
   onDiscard,
 }: {
   recorder: ReturnType<typeof useVoiceRecorder>;
   sending: boolean;
+  preparing?: boolean;
+  progress?: number;
+  onCancel?(): void;
   onDiscard(): void;
 }) {
   const discardButton = useRef<HTMLButtonElement>(null);
@@ -354,9 +466,11 @@ export function VoiceRecorder({
             <span>
               {phase === 'requesting'
                 ? 'Waiting for microphone…'
-                : sending
-                  ? 'Sending…'
-                  : 'Preparing audio…'}
+                : preparing
+                  ? `Preparing audio messages${progress === undefined ? '…' : ` · ${progress}%`}`
+                  : sending
+                    ? 'Sending…'
+                    : 'Preparing audio…'}
             </span>
           </div>
         )}
@@ -366,38 +480,25 @@ export function VoiceRecorder({
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-            title={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-            onClick={onDiscard}
-            disabled={sending}
+            aria-label={
+              preparing
+                ? 'Cancel sending'
+                : phase === 'requesting'
+                  ? 'Cancel recording'
+                  : 'Discard recording'
+            }
+            title={
+              preparing
+                ? 'Cancel sending'
+                : phase === 'requesting'
+                  ? 'Cancel recording'
+                  : 'Discard recording'
+            }
+            onClick={preparing ? onCancel : onDiscard}
+            disabled={sending && !preparing}
           >
-            <Trash2 size={16} />
+            {preparing ? <X size={16} /> : <Trash2 size={16} />}
           </Button>
-          {preview ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="voice-recorder-preview"
-              aria-label="Record again"
-              title="Record again"
-              onClick={() => void recorder.start()}
-            >
-              <RotateCcw size={18} />
-            </Button>
-          ) : phase === 'recording' ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="voice-recorder-preview"
-              aria-label="Stop and preview recording"
-              title="Stop and preview recording"
-              onClick={recorder.stop}
-            >
-              <Square size={16} />
-            </Button>
-          ) : null}
         </div>
       </div>
       {preview && recorder.notice && <p>{recorder.notice}</p>}
@@ -405,61 +506,13 @@ export function VoiceRecorder({
   );
 }
 
-export function VoiceSetup({
-  ready,
-  preparing,
-  progress,
-  failed,
-  onPrepare,
-  onCancel,
-  onRecord,
-}: {
-  ready: boolean;
-  preparing: boolean;
-  progress?: number;
-  failed: boolean;
-  onPrepare(): void;
-  onCancel(): void;
-  onRecord(): void;
-}) {
-  const percent =
-    progress === undefined ? undefined : Math.max(0, Math.min(100, Math.round(progress)));
+export function VoiceSetup({ error, onRetry }: { error: string; onRetry(): void }) {
   return (
-    <section className="voice-recorder voice-setup" aria-label="Enable audio messages">
-      <div className="voice-recorder-header">
-        <div className="voice-recorder-status" role="status">
-          {preparing && !ready ? <LoaderCircle size={16} className="spin" /> : <Mic size={16} />}
-          <span>
-            {ready ? 'Audio is ready' : preparing ? 'Preparing audio…' : 'Enable audio messages'}
-          </span>
-        </div>
-        {(!preparing || ready) && (
-          <Button type="button" size="sm" onClick={ready ? onRecord : onPrepare}>
-            {ready ? 'Record audio' : failed ? 'Try again' : 'Set up audio'}
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label="Close audio setup"
-          onClick={onCancel}
-        >
-          <X size={16} />
-        </Button>
-      </div>
-      {preparing && !ready ? (
-        <div className="voice-setup-progress">
-          <progress aria-label="Downloading speech models" max={100} value={percent} />
-          {percent !== undefined && <span>{percent}%</span>}
-        </div>
-      ) : !ready ? (
-        <p>
-          {failed
-            ? 'Audio setup did not finish. Check your connection and try again.'
-            : 'Download speech models to enable audio messages.'}
-        </p>
-      ) : null}
-    </section>
+    <div className="voice-setup">
+      <p role="alert">{error}</p>
+      <Button type="button" size="sm" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
   );
 }

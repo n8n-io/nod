@@ -147,7 +147,7 @@
 }
 
 .artifact-drawer-title h2,
-.artifact-drawer-title span {
+.artifact-drawer-title > span {
   overflow: hidden;
   margin: 0;
   font-size: var(--text-control);
@@ -160,7 +160,7 @@
   font-weight: 500;
 }
 
-.artifact-drawer-title span {
+.artifact-drawer-title > span {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
@@ -639,35 +639,10 @@
 }
 
 .artifact-sheet-tabs {
-  display: flex;
   flex: none;
-  gap: 4px;
   padding: 8px 12px;
   overflow-x: auto;
   border-top: 1px solid var(--border);
-}
-
-.artifact-sheet-tabs button {
-  height: 28px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted-foreground);
-  font: inherit;
-  font-size: var(--text-control);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.artifact-sheet-tabs button:hover {
-  color: var(--foreground);
-}
-
-.artifact-sheet-tabs button[aria-selected='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
 }
 
 .artifact-archive {

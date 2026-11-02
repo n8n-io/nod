@@ -45,7 +45,6 @@ type DesktopFeedbackContext = {
 type DesktopWindow = Window & {
   nodDesktop?: {
     remote?: boolean;
-    openConnectionSettings?(): Promise<void>;
     ready?(): Promise<void>;
     getSettings(): Promise<DesktopSettings>;
     status?(): Promise<DesktopStatus>;
@@ -76,10 +75,6 @@ export function desktopRendererReady() {
 
 export function desktopRuntimeAvailable() {
   return desktopSettingsAvailable() && !(window as DesktopWindow).nodDesktop?.remote;
-}
-
-export function openServerConnectionSettings() {
-  return (window as DesktopWindow).nodDesktop?.openConnectionSettings?.();
 }
 
 export function desktopSettingsAvailable() {

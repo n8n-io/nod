@@ -3,7 +3,6 @@ import { Check, ExternalLink, LoaderCircle } from './icons';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState } from '../hooks/use-channel-settings';
-import { telegramIdentity } from '../lib/secondary-pages';
 import { Button, Field, Input, Notice } from './ui';
 
 function TelegramLink({
@@ -41,7 +40,6 @@ export function TelegramSetup({
   busy,
   error,
   unavailable = false,
-  allowWebhook = false,
   onField,
   onVerify,
   onConfirm,
@@ -56,7 +54,6 @@ export function TelegramSetup({
   busy: boolean;
   error: string;
   unavailable?: boolean;
-  allowWebhook?: boolean;
   onField(name: string, value: string): void;
   onVerify(event: React.FormEvent): void;
   onConfirm(): void;
@@ -70,7 +67,7 @@ export function TelegramSetup({
   const state = telegramState(setup);
   const disabled = busy || unavailable;
   const candidate = manual ? undefined : state.candidate;
-  const current = state.paired ? 5 : candidate ? 4 : state.saved ? 3 : hasToken ? 2 : 1;
+  const current = candidate ? 4 : state.saved ? 3 : hasToken ? 2 : 1;
   const liveUrl = state.waiting ? pairingUrl : null;
   let pairingCommand = '';
   if (liveUrl && setup?.accountHandle) {
@@ -90,7 +87,7 @@ export function TelegramSetup({
         pairingCommand = `/start ${code}`;
     } catch {}
   }
-  const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
+  const steps = ['Create a bot', 'Add token', 'Link your account', 'Confirm account'];
   const setupError =
     error ||
     (unavailable && !state.paired && !setup?.managed
@@ -116,22 +113,7 @@ export function TelegramSetup({
           Telegram is managed by the server environment. Change its settings there and restart Nod.
         </p>
       )}
-      {state.paired ? (
-        <div className="telegram-setup-connected" role="status">
-          <Check size={20} aria-hidden="true" />
-          <div>
-            <strong data-analytics-private>
-              {setup?.accountHandle ?? 'Your bot'} is connected
-            </strong>
-            <p data-analytics-private>
-              Only{' '}
-              {telegramIdentity(setup!.allowedUserId!, setup?.pairedUser, setup?.pairedUsername)}{' '}
-              can message Nod.
-            </p>
-            <p>Keep Nod running to receive messages.</p>
-          </div>
-        </div>
-      ) : setup?.managed ? null : (
+      {state.paired || setup?.managed ? null : (
         <ol className="telegram-setup-steps">
           {steps.map((title, index) => {
             const step = index + 1;
@@ -154,12 +136,10 @@ export function TelegramSetup({
                         url="https://t.me/BotFather"
                         title="Scan to open BotFather in Telegram"
                       >
-                        Scan to open <strong>@BotFather</strong> on your phone, or open Telegram on
-                        this computer.
+                        Open <strong>@BotFather</strong> or scan the code.
                       </TelegramLink>
                       <p>
-                        Send <code>/newbot</code>. Choose a name, then a username ending in{' '}
-                        <code>bot</code>, such as <code>my_nod_bot</code>.
+                        Send <code>/newbot</code> and follow the instructions to create your bot.
                       </p>
                       <Button
                         size="sm"
@@ -175,11 +155,8 @@ export function TelegramSetup({
                   )}
                   {active && step === 2 && (
                     <form className="telegram-setup-content" onSubmit={verify}>
-                      <p>BotFather sends you a token. Copy its full reply or just the token.</p>
-                      <Field
-                        label="BotFather message or token"
-                        hint="Encrypted when saved. Never sent in chat."
-                      >
+                      <p>Paste the token or full reply from BotFather.</p>
+                      <Field label="Bot token">
                         <Input
                           type="password"
                           autoComplete="off"
@@ -211,23 +188,6 @@ export function TelegramSetup({
                           }}
                         />
                       </Field>
-                      {allowWebhook && (
-                        <details className="telegram-setup-advanced">
-                          <summary>Advanced: use a webhook</summary>
-                          <Field
-                            label="Public HTTPS callback"
-                            hint="Leave blank to receive messages locally."
-                          >
-                            <Input
-                              type="url"
-                              pattern="https://.*"
-                              placeholder="https://your-domain.example/api/webhooks/telegram"
-                              value={fields.webhookUrl ?? ''}
-                              onChange={(event) => onField('webhookUrl', event.target.value)}
-                            />
-                          </Field>
-                        </details>
-                      )}
                       {tokenError && <p role="alert">{tokenError}</p>}
                       <div className="telegram-setup-actions">
                         <Button type="submit" size="sm" disabled={disabled}>
@@ -320,8 +280,7 @@ export function TelegramSetup({
                                 url={liveUrl}
                                 title="Scan to open your bot and pair Telegram"
                               >
-                                Scan this new code or open Telegram below. Press{' '}
-                                <strong>Start</strong> in your bot’s chat.
+                                Open your bot or scan the code, then press <strong>Start</strong>.
                               </TelegramLink>
                               {pairingCommand && (
                                 <div data-analytics-private>
@@ -342,10 +301,7 @@ export function TelegramSetup({
                                       ? 'Copied'
                                       : 'Copy pairing command'}
                                   </Button>
-                                  <p>
-                                    If Start does not connect, paste this command in your bot’s
-                                    chat.
-                                  </p>
+
                                   {copyResult?.url === liveUrl && !copyResult.ok && (
                                     <Input
                                       aria-label="Pairing command"
@@ -357,9 +313,9 @@ export function TelegramSetup({
                               )}
                               <p className="telegram-setup-waiting" role="status">
                                 <LoaderCircle size={14} aria-hidden="true" />
-                                Waiting for you to press Start…
+                                Waiting for Start…
                               </p>
-                              <p>This code expires after 15 minutes.</p>
+                              <p>Link expires in 15 minutes.</p>
                             </>
                           ) : (
                             <>
@@ -392,10 +348,11 @@ export function TelegramSetup({
                   )}
                   {active && step === 4 && candidate && (
                     <div className="telegram-setup-content">
-                      <p>Is this you? Check the name and username against your Telegram profile.</p>
-                      <p className="telegram-setup-identity" role="status" data-analytics-private>
-                        {telegramIdentity(candidate.id, candidate.name, candidate.username)}
-                      </p>
+                      <p>Is this your Telegram account?</p>
+                      <div className="telegram-setup-identity" role="status" data-analytics-private>
+                        <strong>{candidate.name || 'Your Telegram account'}</strong>
+                        {candidate.username && <span>@{candidate.username.replace(/^@/, '')}</span>}
+                      </div>
                       <p>Only this account will be able to message Nod.</p>
                       <div className="telegram-setup-actions">
                         <Button
@@ -404,7 +361,7 @@ export function TelegramSetup({
                           disabled={disabled}
                           onClick={onConfirm}
                         >
-                          {busy ? 'Confirming…' : 'Confirm'}
+                          {busy ? 'Connecting…' : 'Connect account'}
                         </Button>
                         <Button variant="ghost" size="sm" disabled={disabled} onClick={onNewLink}>
                           Not me

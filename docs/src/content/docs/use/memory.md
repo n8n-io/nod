@@ -23,7 +23,7 @@ You can see everything Nod remembers, where it learned it, and change or forget 
 
 Notes come only from your own messages and what you write or paste in **Settings → Memory**. Nod never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it yourself, into a short message or **Settings → Memory**.
 
-- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Nod saves it as a short note, such as **Diet: vegetarian**. It can be something you said a little earlier: "remember that address" saves the address from your last few messages. Each note links to the message it came from, and Nod is told to keep your names and numbers exactly as you wrote them. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
+- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Nod saves it as a short note, such as **Diet: vegetarian**. It can be something you said a little earlier: "remember that address" saves the address from your last few messages. Each note keeps a reference to its source message, and Nod is told to keep your names and numbers exactly as you wrote them. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Nod looks through your recent messages for what you said about your life: people, places, plans, things you bought, events with their dates and what you like. It skips messages with attachments and messages over 4,000 characters.
 
 Nod saves silently. It doesn't post a notice in chat.
@@ -54,7 +54,7 @@ stateDiagram-v2
   gone --> Confirmed: you bring it back
 ```
 
-Replaced and expired notes move to **Let go** instead of being deleted. A plan or an older guess without fact details also moves there if Nod learned it automatically from only one message and it was not repeated for 60 days. Completed events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
+Replaced and expired notes move to **Let go** instead of being deleted. You can also select **Archive note** in a note’s options menu to stop using it while keeping it available to restore. A plan or an older guess without fact details also moves there if Nod learned it automatically from only one message and it was not repeated for 60 days. Completed events and other notes with fact details stay until corrected or expired. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Nod to clear its memory.
 
 ## Sensitive topics
 
@@ -79,14 +79,19 @@ Imported notes are like notes you add yourself: they help Nod understand you and
 
 ## Review and change memory
 
-Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed**, **Let go** or **Skills**, or search. Notes from chat show the messages they came from, and skills show the task they came from.
+Open **Settings → Memory**. The saving and sensitive-details switches sit above your notes. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed**, **Let go** or **Skills**, or search.
+
+Open **Details** on a note or skill to see its updated date and source. **View message** opens a note’s source in the current chat. **Back to Memory** restores the selected note, filters, search and open Details. A source from a reset conversation remains an excerpt instead of a link. Missing messages are marked unavailable. Skills show their original task as text.
+
+Note and skill edits appear in the Settings save review. Save or discard them before selecting another memory item. Saving preserves any further edits you make while the request finishes.
 
 | To                           | Do this                                               |
 | ---------------------------- | ----------------------------------------------------- |
 | Fix a note                   | Select **Edit**                                       |
-| Tell Nod a guess is right    | Select **Confirm**                                    |
-| Keep a note only for a while | Select **End date**                                   |
-| Remove a note for good       | Select **Forget**                                     |
+| Tell Nod a guess is right    | Open note options, then **Confirm note**              |
+| Keep a note only for a while | Open note options, then **Set end date**              |
+| Stop using a note for now    | Open note options, then **Archive note**              |
+| Remove a note for good       | Open note options, then **Forget note**               |
 | Fix or remove a skill        | Open it under **Skills**, then **Edit** or **Forget** |
 | Restore an older note        | Open it under **Let go**, then **Bring back**         |
 | Add something yourself       | Select **Add note**                                   |

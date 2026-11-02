@@ -13,7 +13,7 @@ The desktop app can run Nod locally or connect to your own server. Local mode st
 
 ## Connect to your server
 
-Choose **Server connection** in the Nod app menu or tray, or **Connect to a server** on first launch. Enter the HTTPS server address and its `NOD_AUTH_TOKEN`.
+Choose **Connect to a server** on first launch. After setup, choose **Replay onboarding…** in the Nod menu, then **Connect to a server** (or **Change server** when already connected). Enter the HTTPS server address and its `NOD_AUTH_TOKEN`. Connection setup is available from onboarding and startup recovery, rather than Settings.
 
 Nod checks the connection before saving it. The operating system's secure storage protects the token. The app restarts into the remote assistant without starting its local runtime. Loopback HTTP addresses work for an SSH tunnel.
 
@@ -21,7 +21,9 @@ Your conversations, files, memories, model connections, and connected accounts s
 
 App sign-in opens in your system browser. The completion page names the connected app; close it and return to Nod. The connected account stays on the server.
 
-The client keeps its server address and encrypted access token, device preferences, and browser caches on your computer. Closing the desktop app does not stop the server. Your local assistant remains separate; choose **Server connection → Use this computer** to return to it.
+The client keeps its server address and encrypted access token, device preferences, and browser caches on your computer. Closing the desktop app does not stop the server. Your local assistant remains separate; choose **Replay onboarding… → Change server → Use this computer** to return to it. **Change server** also lets you reconnect with a new address or token. If the server cannot be reached or its saved token cannot be opened, use **Server connection** on the startup recovery screen.
+
+Opening or leaving setup does not reset either assistant. **Back to Nod** returns to the current assistant; **Continue setup** replays its onboarding with existing connections and data intact.
 
 See [Host your own server](/deploy/self-host/) for setup. The remaining sections describe local mode.
 

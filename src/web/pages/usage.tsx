@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from '../components/icons';
-import type { TrustEntry, TrustPage, TrustSource, TrustView } from '../../shared/trust';
-import type { AccountPreferences } from '../../shared/account';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  CalendarClock,
+  LoaderCircle,
+  MessageCircle,
+  ScanSearch,
+  Undo2,
+  Zap,
+} from '../components/icons';
+import type { TrustEntry, TrustModel, TrustPage, TrustSource, TrustView } from '../../shared/trust';
+import { modelProviderNames, modelSource, type ModelsResponse } from '../../shared/models';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -11,7 +18,6 @@ import type {
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { navigate } from '../lib/navigation';
-import { savePreferences } from '../lib/preferences';
 import {
   dayKey,
   formatDayLabel,
@@ -22,6 +28,7 @@ import {
 } from '../lib/date-format';
 import { PageTitle } from '../components/page-title';
 import { StatementValue } from '../components/statement-value';
+import { Tooltip } from '../components/tooltip';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
 import { becauseText } from '../lib/trust-because';
@@ -29,7 +36,6 @@ import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
 const day = 86_400_000;
-const taskChoices = [2, 5, 20, null] as const;
 const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   chat: { icon: MessageCircle, label: '' },
   task: { icon: MessageCircle, label: 'Task' },
@@ -47,11 +53,7 @@ function date(ms: number, format: DateFormat) {
   });
 }
 
-function times(count: number) {
-  return count === 1 ? 'once' : count === 2 ? 'twice' : `${formatNumber(count)} times`;
-}
-
-function saveLimits(body: { monthlyUsd?: number | null; taskUsd?: number | null }) {
+function saveLimits(body: { monthlyUsd: number | null }) {
   return api('/api/trust/limit', { method: 'PUT', body: JSON.stringify(body) });
 }
 
@@ -263,137 +265,23 @@ function MonthlyLimit({
   );
 }
 
-function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function save(taskUsd: number | null) {
-    setBusy(true);
-    setError('');
-    try {
-      await saveLimits({ taskUsd });
-      onSaved();
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="usage-task-limit">
-      <div className="vault-seg" role="group" aria-label="Check in when a task passes">
-        {taskChoices.map((value) => (
-          <button
-            key={String(value)}
-            type="button"
-            aria-pressed={view.taskUsd === value}
-            disabled={busy}
-            onClick={() => void save(value)}
-          >
-            {value === null ? 'No limit' : money(value)}
-          </button>
-        ))}
-      </div>
-      <small>
-        Nod asks before a task spends more.
-        {view.month.planUsd > 0 && ' ChatGPT plan usage counts at API prices.'}
-        {view.month.unpriced && ' Usage without a price doesn’t count.'}
-      </small>
-      {error && <Notice>{error}</Notice>}
-    </div>
-  );
-}
-
-function RuleEditor({
-  field,
-  value,
-  label,
-  placeholder,
-  hint,
-  remove,
-  onSaved,
-}: {
-  field: 'notificationRule' | 'rules';
-  value: string;
-  label: string;
-  placeholder: string;
-  hint: string;
-  remove: string;
-  onSaved(): void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function save(text: string) {
-    setBusy(true);
-    setError('');
-    try {
-      await savePreferences({ [field]: text });
-      onSaved();
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setBusy(false);
-    }
-  }
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    void save(draft.trim());
-  }
-  return (
-    <form className="usage-rule-form" onSubmit={submit}>
-      <textarea
-        className="input"
-        rows={4}
-        maxLength={4000}
-        value={draft}
-        autoFocus
-        aria-label={label}
-        placeholder={placeholder}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      <div className="usage-rule-actions">
-        <Button size="sm" type="submit" disabled={busy || draft.trim() === value}>
-          Save
-        </Button>
-        {value && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => void save('')}
-          >
-            {remove}
-          </Button>
-        )}
-      </div>
-      <small>{hint}</small>
-      {error && <Notice>{error}</Notice>}
-    </form>
-  );
-}
-
-function Sentence({
+function UsageSummary({
   view,
-  vault,
-  rule,
-  rules,
-  paused,
+  plan,
   onSaved,
 }: {
   view: TrustView;
-  vault: VaultActivity;
-  rule: string;
-  rules: string;
-  paused: boolean;
+  plan?: string;
   onSaved(): void;
 }) {
   const format = useDateFormat();
-  const { month, limit, taskUsd, week } = view;
+  const { month, limit } = view;
   const name = new Date(month.start).toLocaleDateString(format.locale, {
     month: 'long',
     timeZone: format.timeZone,
   });
   const resets = date(Date.parse(month.start) + month.days * day + day / 2, format);
-  const plan = month.planUsd > 0 ? ' beyond your ChatGPT plan' : '';
+  const planNote = month.planUsd > 0 ? ' beyond your ChatGPT plan' : '';
   const limitForm = (close: () => void) => (
     <MonthlyLimit
       view={view}
@@ -404,41 +292,27 @@ function Sentence({
       }}
     />
   );
-  const used = [
-    vault.week.signIns > 0 && (
-      <>
-        your logins <b>{times(vault.week.signIns)}</b>
-      </>
-    ),
-    vault.week.payments > 0 && (
-      <>
-        your cards <b>{times(vault.week.payments)}</b>
-      </>
-    ),
-  ].filter(Boolean);
-  const done = [
-    week.things > 0 && (
-      <>
-        did{' '}
-        <b>
-          {formatNumber(week.things)} {week.things === 1 ? 'thing' : 'things'}
-        </b>
-      </>
-    ),
-    used.length > 0 && (
-      <>
-        used {used[0]}
-        {used[1] && <> and {used[1]}</>}
-      </>
-    ),
-  ].filter(Boolean);
+  if (plan)
+    return (
+      <div className="usage-overview">
+        <p className="statement-summary usage-sentence">
+          Your usage comes from your <strong>{plan}</strong>.
+        </p>
+        {limit?.reached && (
+          <Notice kind="info">
+            An existing API spending limit is pausing new requests. You can review it with an API
+            model selected.
+          </Notice>
+        )}
+      </div>
+    );
   return (
-    <>
+    <div className="usage-overview">
       <p className="statement-summary usage-sentence">
-        Nod spent{' '}
+        Your usage is{' '}
         <StatementValue
           text={limit || month.spentUsd > 0 ? money(month.spentUsd) : 'nothing'}
-          label={`Spending in ${name}`}
+          label={`API spending in ${name}`}
         >
           {() => <Month view={view} />}
         </StatementValue>
@@ -449,108 +323,42 @@ function Sentence({
             <StatementValue text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
             </StatementValue>
-            {plan} in {name}
+            {planNote} in {name}
           </>
         ) : (
           <>
-            {plan} in {name}, with{' '}
+            {planNote} in {name}, with{' '}
             <StatementValue text="no monthly limit" label="Monthly limit">
               {limitForm}
             </StatementValue>
           </>
         )}
-        . {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
-        <StatementValue
-          text={taskUsd === null ? 'never check in' : money(taskUsd)}
-          label="Task check-in"
-        >
-          {(close) => (
-            <TaskLimit
-              view={view}
-              onSaved={() => {
-                close();
-                onSaved();
-              }}
-            />
-          )}
-        </StatementValue>
-        .
-        <br />
-        {done.length ? (
-          <>
-            This week Nod{' '}
-            {done.map((part, index) => (
-              <span key={index}>
-                {index ? (used.length > 1 ? ', ' : ' and ') : ''}
-                {part}
-              </span>
-            ))}
-            .
-          </>
-        ) : (
-          'Nothing yet this week.'
-        )}
-        <br />
-        On its own, Nod{' '}
-        <StatementValue
-          text={
-            paused
-              ? rule
-                ? 'follows your instruction, with preparation paused.'
-                : 'is paused.'
-              : rule
-                ? 'follows your instruction.'
-                : 'prepares private work automatically.'
-          }
-          label="Standing instruction"
-        >
-          {(close) => (
-            <RuleEditor
-              field="notificationRule"
-              value={rule}
-              label="Standing instruction"
-              placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
-              hint="Nod reads and drafts on its own, and does only what this says."
-              remove="Stop"
-              onSaved={() => {
-                close();
-                onSaved();
-              }}
-            />
-          )}
-        </StatementValue>
-        <br />
-        {rules ? 'Everywhere, Nod keeps ' : 'You haven’t set any '}
-        <StatementValue text={rules ? 'your rules' : 'rules'} label="Rules">
-          {(close) => (
-            <RuleEditor
-              field="rules"
-              value={rules}
-              label="Rules"
-              placeholder="Always ask before sending email outside my company."
-              hint="Say what Nod may do without asking, or must ask you about first."
-              remove="Clear"
-              onSaved={() => {
-                close();
-                onSaved();
-              }}
-            />
-          )}
-        </StatementValue>
         .
       </p>
+      {month.planUsage && (
+        <p className="usage-plan-note">Plan usage this month is separate from API spending.</p>
+      )}
       {limit?.reached && (
         <Notice kind="info">
           Limit reached. New chat and background requests pause until {resets}. Running turns can
           finish. Raise your limit to resume.
         </Notice>
       )}
-    </>
+    </div>
   );
 }
 
-function TrustRow({ entry }: { entry: TrustEntry }) {
+function billingSource(model: TrustModel) {
+  if (model.billing === 'plan') return 'ChatGPT plan';
+  const provider = model.provider
+    ? modelProviderNames[model.provider as keyof typeof modelProviderNames]
+    : undefined;
+  return provider ? `${provider} API` : 'API usage';
+}
+
+function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
   const format = useDateFormat();
+  const models = entry.models ?? [];
   const { icon: Icon, label } = sources[entry.source];
   const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
   const explained = entry.actions.filter((action) => action.because);
@@ -563,8 +371,8 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
       ),
     ),
   ];
-  return (
-    <div className="vault-use">
+  const content = (
+    <>
       <span className="vault-glyph" aria-hidden="true">
         <Icon size={14} />
       </span>
@@ -574,14 +382,27 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
+        {models.length > 0 && (
+          <span className="usage-models" aria-label="Models used">
+            {models.map((model) => (
+              <span key={`${model.provider}:${model.model}:${model.billing}`}>
+                {model.model ?? 'Model not recorded'}
+                <span className="usage-model-source"> · {billingSource(model)}</span>
+              </span>
+            ))}
+          </span>
+        )}
         {reasons.map((reason) => (
-          <small key={reason} className="usage-because" title={reason}>
-            {reason}
-          </small>
+          <Tooltip key={reason} content={reason}>
+            <small className="usage-because">{reason}</small>
+          </Tooltip>
         ))}
       </span>
-      {entry.costUsd !== null ? (
-        <span className="usage-row-cost">{money(entry.costUsd)}</span>
+      {showCosts && entry.costUsd !== null ? (
+        <span className="usage-row-cost">
+          {money(entry.costUsd)}
+          {models.some((model) => model.billing === 'plan') && <small>API</small>}
+        </span>
       ) : (
         entry.pricing && (
           <span className="usage-row-cost is-label">
@@ -589,14 +410,53 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           </span>
         )
       )}
-    </div>
+    </>
+  );
+  return entry.messageId ? (
+    <Tooltip content="Show in chat">
+      <button
+        type="button"
+        className="vault-use"
+        aria-label={`Open ${entry.title} in chat`}
+        onClick={() =>
+          window.dispatchEvent(
+            new CustomEvent('nod:focus-message', { detail: { messageId: entry.messageId } }),
+          )
+        }
+      >
+        {content}
+      </button>
+    </Tooltip>
+  ) : (
+    <div className="vault-use">{content}</div>
   );
 }
 
 type Stream<T> = { entries: T[]; next: { at: string; id: string } | null };
 
 function frontier<T extends { at: string }>(stream: Stream<T>) {
-  return stream.next ? Date.parse(stream.entries.at(-1)!.at) : -Infinity;
+  return stream.next ? Date.parse(stream.next.at) : -Infinity;
+}
+
+function refreshStream<T extends { id: string }>(current: Stream<T>, fresh: Stream<T>): Stream<T> {
+  const boundary = fresh.next && current.entries.findIndex((entry) => entry.id === fresh.next!.id);
+  if (boundary === null || boundary === -1) return fresh;
+  const ids = new Set(fresh.entries.map((entry) => entry.id));
+  return {
+    entries: [
+      ...fresh.entries,
+      ...current.entries.slice(boundary + 1).filter((entry) => !ids.has(entry.id)),
+    ],
+    next: current.next,
+  };
+}
+
+function appendStream<T extends { id: string }>(current: Stream<T>, older: Stream<T>): Stream<T> {
+  const ids = new Set(current.entries.map((entry) => entry.id));
+  return {
+    entries: [...current.entries, ...older.entries.filter((entry) => !ids.has(entry.id))],
+    next: older.next,
+  };
 }
 
 function Statement({
@@ -604,11 +464,15 @@ function Statement({
   vault,
   opener,
   session,
+  showCosts,
+  hidden,
 }: {
   view: TrustPage;
   vault: VaultActivity;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
   session?: string;
+  showCosts: boolean;
+  hidden: boolean;
 }) {
   const format = useDateFormat();
   const [trust, setTrust] = useState<Stream<TrustEntry>>(view);
@@ -619,14 +483,23 @@ function Statement({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
+  const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     request.current?.abort();
-    setTrust(view);
-    setUses({ entries: vault.entries, next: vault.next ?? null });
+    request.current = null;
+    setTrust((current) => refreshStream(current, view));
+    setUses((current) =>
+      refreshStream(current, { entries: vault.entries, next: vault.next ?? null }),
+    );
     setLoading(false);
-    setError('');
-    return () => request.current?.abort();
   }, [view, vault]);
+  useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    if (!hidden) return;
+    request.current?.abort();
+    request.current = null;
+    setLoading(false);
+  }, [hidden]);
   const cutoff = Math.max(frontier(trust), frontier(uses));
   const rows: Array<{ at: string; key: string; trust?: TrustEntry; use?: VaultActivityEntry }> = [
     ...trust.entries.map((entry) => ({ at: entry.at, key: `t${entry.id}`, trust: entry })),
@@ -634,7 +507,8 @@ function Statement({
   ]
     .filter((row) => Date.parse(row.at) >= cutoff)
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  async function load() {
+  const load = useCallback(async () => {
+    if (hidden || request.current || cutoff === -Infinity) return;
     const controller = new AbortController();
     request.current = controller;
     setLoading(true);
@@ -655,24 +529,34 @@ function Statement({
           : undefined,
       ]);
       if (controller.signal.aborted) return;
-      if (olderTrust)
-        setTrust((current) => ({
-          entries: [...current.entries, ...olderTrust.entries],
-          next: olderTrust.next,
-        }));
+      if (olderTrust) setTrust((current) => appendStream(current, olderTrust));
       if (olderUses)
-        setUses((current) => ({
-          entries: [...current.entries, ...olderUses.entries],
-          next: olderUses.next ?? null,
-        }));
+        setUses((current) =>
+          appendStream(current, { entries: olderUses.entries, next: olderUses.next ?? null }),
+        );
     } catch (cause) {
       if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {
-      if (!controller.signal.aborted) setLoading(false);
+      if (request.current === controller) {
+        request.current = null;
+        setLoading(false);
+      }
     }
-  }
+  }, [trust, uses, cutoff, session, hidden]);
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target || hidden || error || cutoff === -Infinity) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void load();
+      },
+      { root: target.closest('.main-workspace'), rootMargin: '0px 0px 240px' },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [cutoff, error, hidden, load]);
   if (!rows.length && cutoff === -Infinity)
-    return <p className="statement-empty">What Nod does and spends will show up here.</p>;
+    return <p className="statement-empty">Your activity and the models used will show up here.</p>;
   const days = new Map<string, typeof rows>();
   for (const row of rows) {
     const label = formatDayLabel(row.at, format);
@@ -689,19 +573,30 @@ function Statement({
                 {row.use ? (
                   <VaultUse entry={row.use} open={opener(row.use)} />
                 ) : (
-                  <TrustRow entry={row.trust!} />
+                  <TrustRow entry={row.trust!} showCosts={showCosts} />
                 )}
               </li>
             ))}
           </ul>
         </div>
       ))}
-      {error && <Notice>{error}</Notice>}
-      {cutoff > -Infinity && (
-        <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
-          Show earlier
-        </Button>
-      )}
+      {error && cutoff > -Infinity ? (
+        <Notice>
+          {error}{' '}
+          <button type="button" onClick={() => void load()}>
+            Try again
+          </button>
+        </Notice>
+      ) : cutoff > -Infinity ? (
+        <div ref={sentinel} className="usage-load-more" role="status" aria-live="polite">
+          {loading && (
+            <>
+              <LoaderCircle size={16} className="spin" aria-hidden="true" />
+              <span>Loading activity…</span>
+            </>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -711,11 +606,15 @@ function SessionStatement({
   vault,
   opener,
   onClear,
+  showCosts,
+  hidden,
 }: {
   session: string;
   vault: VaultActivity;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
   onClear(): void;
+  showCosts: boolean;
+  hidden: boolean;
 }) {
   const page = usePageData<TrustPage>(`/api/trust/entries?session=${session}`);
   const none = useMemo(() => ({ ...vault, entries: [], next: undefined }), [vault]);
@@ -729,7 +628,14 @@ function SessionStatement({
           Show all
         </button>
       </p>
-      <Statement view={page.data} vault={none} opener={opener} session={session} />
+      <Statement
+        view={page.data}
+        vault={none}
+        opener={opener}
+        session={session}
+        showCosts={showCosts}
+        hidden={hidden}
+      />
     </>
   );
 }
@@ -747,11 +653,15 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
     if (!hidden) setSession(sessionFilter());
   }, [hidden]);
   const trust = usePageData<TrustView>('/api/trust');
+  const models = usePageData<ModelsResponse>('/api/models');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
-  const preferences = usePageData<AccountPreferences>('/api/preferences');
   const entries = usePageData<VaultListEntry[]>('/api/vault');
   const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
   const items = vaultItems(entries.data ?? [], sessions.data ?? []);
+  const selected = models.data?.connections.find(
+    (connection) => connection.id === models.data?.selection?.connectionId,
+  );
+  const plan = selected?.method === 'subscription' ? modelSource(selected) : undefined;
   function opener(entry: VaultActivityEntry) {
     const item =
       items.find((value) => value.id === entry.itemId) ??
@@ -764,7 +674,7 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
         }
       : undefined;
   }
-  const ready = Boolean(trust.data && vault.data && preferences.data && entries.data);
+  const ready = Boolean(trust.data && vault.data && entries.data);
   useEffect(() => {
     const id = (window.history.state as { usage?: string } | null)?.usage;
     if (hidden || !ready || !id) return;
@@ -773,7 +683,7 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
       .find((row) => row.dataset.vaultActivity === id)
       ?.focus();
   }, [ready, hidden]);
-  const error = trust.error || vault.error || preferences.error;
+  const error = trust.error || vault.error || models.error;
   const itemsError = entries.error || sessions.error;
   return (
     <div className="content-page secondary-page" hidden={hidden}>
@@ -781,17 +691,13 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
         <PageTitle path="/usage" />
       </header>
       {itemsError && <Notice>{itemsError}</Notice>}
-      {trust.data && vault.data && preferences.data ? (
+      {trust.data && vault.data && models.data ? (
         <div className="usage">
-          <Sentence
+          <UsageSummary
             view={trust.data}
-            vault={vault.data}
-            rule={preferences.data.notificationRule}
-            rules={preferences.data.rules}
-            paused={preferences.data.proactivePaused}
+            plan={plan}
             onSaved={() => {
               void trust.refresh();
-              void preferences.refresh();
             }}
           />
           {session ? (
@@ -799,13 +705,21 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
               session={session}
               vault={vault.data}
               opener={opener}
+              showCosts={!plan}
+              hidden={hidden}
               onClear={() => {
                 window.history.replaceState(null, '', '/usage');
                 setSession(undefined);
               }}
             />
           ) : (
-            <Statement view={trust.data} vault={vault.data} opener={opener} />
+            <Statement
+              view={trust.data}
+              vault={vault.data}
+              opener={opener}
+              showCosts={!plan}
+              hidden={hidden}
+            />
           )}
         </div>
       ) : error ? (

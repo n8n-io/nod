@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
 import { Copy, Download, List, Plus } from './icons';
 import type { Artifact } from '../../shared/contracts';
 import type { ImagePreview } from './attachment-images';
@@ -8,6 +8,7 @@ import { copyImage, selectedText } from '../lib/clipboard';
 import { desktopFileAction, desktopFilesAvailable, nativeFileMenu } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
 import { Button } from './ui';
+import { actionMenuTabTarget } from './action-menu';
 
 export function reuseFile(item: ImagePreview) {
   const artifact = artifactFromPreview(item);
@@ -38,59 +39,38 @@ export function prepareFile(item: ImagePreview) {
 export function FileActions({ item }: { item: ImagePreview }) {
   const artifact = artifactFromPreview(item);
   const actions = useRef<HTMLSpanElement>(null);
+  const noticePanel = useRef<HTMLDivElement>(null);
+  const noticeTabTarget = useRef<HTMLElement | null>(null);
+  const focusNotice = useRef(false);
+  const focusOrigin = useRef<HTMLElement | null>(null);
+  const returnFocus = useRef(true);
   const activeId = useRef(item.id);
   activeId.current = item.id;
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const tooltipElement = useRef<HTMLSpanElement>(null);
-  const [tooltip, setTooltip] = useState<{
-    label: string;
-    x: number;
-    y: number;
-    below: number;
-  } | null>(null);
-  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  function hideTooltip() {
-    clearTimeout(tooltipTimer.current);
-    setTooltip(null);
-  }
-  function showTooltip(target: EventTarget, delay: number) {
-    hideTooltip();
-    const control =
-      target instanceof Element ? target.closest<HTMLElement>('[data-tooltip]') : null;
-    if (!control) return;
-    tooltipTimer.current = setTimeout(() => {
-      const box = control.getBoundingClientRect();
-      setTooltip({
-        label: control.dataset.tooltip!,
-        x: box.left + box.width / 2,
-        y: box.top - 8,
-        below: box.bottom + 8,
-      });
-    }, delay);
-  }
-  useLayoutEffect(() => {
-    const element = tooltipElement.current;
-    if (!tooltip || !element) return;
-    const { width, height } = element.getBoundingClientRect();
-    element.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, tooltip.x - width / 2))}px`;
-    const above = tooltip.y - height;
-    element.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, above >= 8 ? above : tooltip.below))}px`;
-  }, [tooltip]);
-  useEffect(() => {
-    const hide = () => hideTooltip();
-    window.addEventListener('resize', hide);
-    document.addEventListener('scroll', hide, true);
-    return () => {
-      clearTimeout(tooltipTimer.current);
-      window.removeEventListener('resize', hide);
-      document.removeEventListener('scroll', hide, true);
-    };
-  }, []);
   useEffect(() => {
     setNotice('');
     setBusy(false);
+    focusNotice.current = false;
+    focusOrigin.current = null;
   }, [item.id]);
+  useEffect(() => {
+    if (!busy || !focusNotice.current) return;
+    const cancel = () => {
+      focusNotice.current = false;
+    };
+    const moved = (event: FocusEvent) => {
+      if (event.target !== focusOrigin.current) cancel();
+    };
+    document.addEventListener('focusin', moved, true);
+    document.addEventListener('pointerdown', cancel, true);
+    document.addEventListener('keydown', cancel, true);
+    return () => {
+      document.removeEventListener('focusin', moved, true);
+      document.removeEventListener('pointerdown', cancel, true);
+      document.removeEventListener('keydown', cancel, true);
+    };
+  }, [busy]);
   const image = /^image\/(png|jpeg|webp|gif|avif|bmp)$/.test(item.mimeType ?? '');
   useEffect(() => {
     const target =
@@ -112,11 +92,13 @@ export function FileActions({ item }: { item: ImagePreview }) {
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  async function run(action: string) {
+  async function run(action: string, origin?: HTMLElement) {
     if (action === 'reuse') {
       reuseFile(item);
       return;
     }
+    focusOrigin.current = origin ?? null;
+    focusNotice.current = action === 'save' && origin === document.activeElement;
     const id = item.id;
     if (activeId.current === id) setBusy(true);
     try {
@@ -142,76 +124,136 @@ export function FileActions({ item }: { item: ImagePreview }) {
     }
   }
   return (
-    <span
-      className="file-actions"
-      ref={actions}
-      onPointerOver={(event) => {
-        if (event.pointerType === 'mouse') showTooltip(event.target, 550);
-      }}
-      onPointerOut={hideTooltip}
-      onFocus={(event) => showTooltip(event.target, 0)}
-      onBlur={hideTooltip}
-      onClick={hideTooltip}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') hideTooltip();
+    <Popover.Root
+      open={Boolean(notice)}
+      onOpenChange={(open) => {
+        if (!open) setNotice('');
       }}
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={`Use ${item.name} in message`}
-        data-tooltip="Add to message"
-        onClick={() => reuseFile(item)}
-      >
-        <Plus size={15} />
-      </Button>
-      {image && (
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={busy}
-          aria-label={`Copy image ${item.name}`}
-          data-tooltip="Copy image"
-          onClick={() => void run('copy')}
-        >
-          <Copy size={15} />
-        </Button>
-      )}
-      {desktopFilesAvailable() ? (
-        <>
+      <Popover.Anchor asChild>
+        <span className="file-actions" ref={actions}>
           <Button
             variant="ghost"
             size="icon"
-            disabled={busy}
-            aria-label={`Save ${item.name}`}
-            data-tooltip="Save to Downloads"
-            onClick={() => void run('save')}
+            aria-label={`Use ${item.name} in message`}
+            title="Add to message"
+            onClick={() => reuseFile(item)}
           >
-            <Download size={15} />
+            <Plus size={15} />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={busy}
-            aria-label={`File actions for ${item.name}`}
-            data-tooltip="More file actions"
-            onClick={() => void menu()}
-          >
-            <List size={15} />
-          </Button>
-        </>
-      ) : (
-        <a
-          href={artifact.url}
-          download={item.name}
-          aria-label={`Download ${item.name}`}
-          data-tooltip="Download file"
+          {image && (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={busy}
+              aria-label={`Copy image ${item.name}`}
+              title="Copy image"
+              onClick={() => void run('copy')}
+            >
+              <Copy size={15} />
+            </Button>
+          )}
+          {desktopFilesAvailable() ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                aria-label={`Save ${item.name}`}
+                title="Save to Downloads"
+                onClick={(event) =>
+                  void run('save', event.detail === 0 ? event.currentTarget : undefined)
+                }
+              >
+                <Download size={15} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                aria-label={`File actions for ${item.name}`}
+                title="More file actions"
+                onClick={() => void menu()}
+              >
+                <List size={15} />
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="icon" title="Download file" asChild>
+              <a href={artifact.url} download={item.name} aria-label={`Download ${item.name}`}>
+                <Download size={15} />
+              </a>
+            </Button>
+          )}
+        </span>
+      </Popover.Anchor>
+      <Popover.Portal>
+        <Popover.Content
+          ref={noticePanel}
+          role="status"
+          className="file-action-notice"
+          data-analytics-private
+          side="bottom"
+          align="end"
+          sideOffset={4}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            noticeTabTarget.current = null;
+            returnFocus.current = true;
+            const origin = focusOrigin.current;
+            if (
+              focusNotice.current &&
+              (document.activeElement === origin ||
+                (document.activeElement === document.body && origin && !origin.isConnected))
+            )
+              (
+                noticePanel.current?.querySelector<HTMLElement>('button') ?? noticePanel.current
+              )?.focus({ preventScroll: true });
+            focusNotice.current = false;
+            focusOrigin.current = null;
+          }}
+          onInteractOutside={() => {
+            returnFocus.current = false;
+            noticeTabTarget.current = null;
+          }}
+          onKeyDownCapture={(event) => {
+            if (
+              event.key !== 'Tab' ||
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.nativeEvent.isComposing
+            )
+              return;
+            const items = Array.from(
+              noticePanel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a') ?? [],
+            );
+            if (document.activeElement !== (event.shiftKey ? items[0] : items.at(-1))) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const controls = Array.from(
+              actions.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a') ?? [],
+            );
+            noticeTabTarget.current = actionMenuTabTarget(
+              event.shiftKey ? controls[0] : controls.at(-1),
+              event.shiftKey,
+              noticePanel.current,
+            );
+            setNotice('');
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = noticeTabTarget.current;
+            noticeTabTarget.current = null;
+            if (!returnFocus.current) return;
+            if (target?.isConnected) target.focus({ preventScroll: true });
+            else if (document.activeElement === document.body)
+              actions.current
+                ?.querySelector<HTMLElement>('button:not(:disabled),a')
+                ?.focus({ preventScroll: true });
+          }}
         >
-          <Download size={15} />
-        </a>
-      )}
-      {notice && (
-        <span role="status" className="file-action-notice">
           {notice}
           {notice === 'Saved to Downloads' && (
             <>
@@ -223,21 +265,9 @@ export function FileActions({ item }: { item: ImagePreview }) {
               </Button>
             </>
           )}
-        </span>
-      )}
-      {tooltip &&
-        createPortal(
-          <span
-            ref={tooltipElement}
-            role="tooltip"
-            className="file-action-tooltip"
-            style={{ left: tooltip.x, top: tooltip.y }}
-          >
-            {tooltip.label}
-          </span>,
-          document.body,
-        )}
-    </span>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
