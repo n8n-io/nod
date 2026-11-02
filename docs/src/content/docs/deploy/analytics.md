@@ -73,7 +73,7 @@ Browser SDK metadata can include the browser and OS names/versions, device type,
 
 Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating execution mode. The separate `task_type` describes the request's purpose. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
-Owner-authored messages in Tasks are owner-requested background work. Work category and owner request are separate dimensions; automatic task activity isn't owner-requested.
+Owner-authored messages in Tasks are owner-requested background work. Agent-created child tasks can also retain the original owner request, so `owner_requested=true` doesn't establish a new owner message. Work category and owner request are separate dimensions; autonomous event and schedule starts aren't owner-requested.
 
 Autonomous work outside a turn uses `work_type=background`, `owner_requested=false`, and `system_activity` (`memory_learning`, `onboarding`, or `writing_style`). It has no run ID. Model requests without an established context use `work_type=unclassified` so their usage remains visible; this doesn't mean they were owner-requested or free.
 
@@ -191,7 +191,7 @@ The result is reused for resumed segments and later segments in the same task se
 
 The last three statuses use `task_type=unknown`. Read both properties: a model's uncertainty, an unavailable classifier, and a failed request are different observations. An absent classification event is a separate missing observation, not `unknown`.
 
-Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Start and completion events carry `task_taxonomy_version=1` when this measurement is supported. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
+Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Distinct installation reach shows breadth, but installations can appear in several categories. Classification eligibility depends on the selected provider/model and work type, so the mix may not represent all work. Coverage includes all observed completed segments with usable run IDs. The taxonomy marker distinguishes supported measurement from `not instrumented` observations, which remain in the denominator. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
 
 ### Outputs and answer choices
 
@@ -227,7 +227,9 @@ The denominator includes all selected observed onboarding completions, including
 
 The primary return table starts at an installation's first observed successful owner-requested execution segment in `v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
 
-A return is a later owner-requested execution start from chat or Tasks (`source=user` or `task`). All resume starts are excluded. Queue delays can move starts across window boundaries, and messages merged into a running turn don't create separate starts.
+The return proxy is a later execution start with `owner_requested=true` and `source=user` or `task`. It can be an agent-created child of an existing owner request, so it doesn't establish a fresh message or human visit. All resume starts are excluded, including genuine confirmation messages. Queue delays and later child starts can cross window boundaries without new owner input; messages merged into a running turn don't create separate starts. Active-use and first-attempt return charts use the same execution-start proxy.
+
+Measuring fresh owner return across channels would require a deduplicated server event for each accepted owner input. The existing `chat_message_sent` event covers web and desktop only and is insufficient for that measure.
 
 | Window | Elapsed time after first success | Included in the denominator after |
 | ------ | -------------------------------- | --------------------------------- |
@@ -236,11 +238,11 @@ A return is a later owner-requested execution start from chat or Tasks (`source=
 | W2     | 14 days to less than 21 days     | 21 days                           |
 | W4     | 28 days to less than 35 days     | 35 days                           |
 
-Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish whole-task retention. The separate first-attempt return charts are diagnostic and aren't compared with that reference.
+Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish human return or whole-task retention. The separate first-attempt return charts start at the first matching execution start, including existing installations and failed attempts; they are diagnostic and aren't compared with that reference.
 
 The segment-cost table groups `model_used` records by installation and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
 
-Mean, median, and p90 use samples with at least one priced request and can represent partial costs. Coverage columns identify fully priced samples, unpriced requests, and samples with no prices; an entirely unpriced group has no cost value. Date ranges can truncate segments. Segments without model records and maintenance or unclassified work without a run ID are absent from this table, not free; total model-spend and pricing-coverage charts retain unscoped usage. Neither table exposes private task or turn IDs.
+Mean, median, and p90 use samples with at least one priced request and can represent partial costs. Coverage columns identify samples whose observed requests are all priced, unpriced requests, and samples with no prices; an entirely unpriced group has no cost value. Subtotals include only observed requests in the selected date range. A segment spanning its boundaries can have incomplete costs even when every observed request has a price. Segments without model records and maintenance or unclassified work without a run ID are absent from this table, not free; total model-spend and pricing-coverage charts retain unscoped usage. Neither table exposes private task or turn IDs.
 
 ## Measurement gaps
 
@@ -248,7 +250,7 @@ NPS, reasons for leaving, role, company size, AI experience, and preferred AI to
 
 ## Collection safeguards
 
-Nod does not collect session recordings, screen captures, DOM snapshots, or replay metadata for analytics. The recorder is disabled and snapshot events are rejected.
+Nod does not collect session recordings, screen captures, DOM snapshots, or recording metadata for analytics. The recorder is disabled and snapshot events are rejected. The pseudonymous browser session/window IDs listed above are ordinary SDK metadata and don't indicate a recording.
 
 Page URLs use `https://app.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
 
