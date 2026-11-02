@@ -9,6 +9,7 @@ import { errorMessage } from '../lib/api';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { sessionStore } from '../lib/session';
 import { Button, Notice, Switch } from './ui';
+import { analyticsForCurrentSession } from '../lib/analytics';
 
 function useNotificationChoice(ownerId: string) {
   const [, refresh] = useState(0);
@@ -55,6 +56,8 @@ function useNotificationChoice(ownerId: string) {
   }, [scope]);
   async function change(enabled: boolean) {
     if (scope.pending || !isCurrent()) return;
+    const previous = browserNotificationStatus(ownerId).choice;
+    const capture = analyticsForCurrentSession();
     scope.pending = true;
     setBusy(true);
     setError('');
@@ -62,6 +65,9 @@ function useNotificationChoice(ownerId: string) {
     const isAllowed = () => isCurrent() && scope.consentGeneration === consentGeneration;
     try {
       const notification = await setBrowserNotifications(ownerId, enabled, isAllowed);
+      const saved = browserNotificationStatus(ownerId).choice;
+      if (isCurrent() && saved !== previous && saved === (enabled ? 'enabled' : 'disabled'))
+        capture('local_setting_changed', { setting: 'browser_notifications', value: saved });
       if (notification) {
         if (!isAllowed()) notification.close();
         else {
@@ -82,8 +88,15 @@ function useNotificationChoice(ownerId: string) {
   }
   function dismiss() {
     if (!isCurrent()) return;
+    const previous = browserNotificationStatus(ownerId).choice;
+    const capture = analyticsForCurrentSession();
     try {
       dismissBrowserNotifications(ownerId);
+      if (previous !== 'dismissed' && browserNotificationStatus(ownerId).choice === 'dismissed')
+        capture('local_setting_changed', {
+          setting: 'browser_notifications',
+          value: 'dismissed',
+        });
       setError('');
     } catch (cause) {
       setError(errorMessage(cause));
@@ -129,7 +142,7 @@ export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
   return (
     <section className="account-region" aria-label="Notifications">
       <div className="account-preference-row">
-        <span data-analytics-public>Notifications</span>
+        <span>Notifications</span>
         <Switch
           checked={choice.enabled}
           disabled={choice.busy || !choice.available || choice.permission === 'denied'}

@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
+import { captureSettingChanges } from './analytics-settings.ts';
 import { activeThreadSql } from './history.ts';
 import {
   archive,
@@ -82,6 +84,7 @@ export function createMemoryService(options: {
   pool: Pick<Pool, 'query'>;
   ownerId: string;
   store: PrivateObjectStore;
+  analytics?: CaptureAnalytics;
 }) {
   async function load() {
     const object = await options.store.read(key, maxBytes);
@@ -137,9 +140,11 @@ export function createMemoryService(options: {
 
   async function control(raw: unknown) {
     const input = controlInput.parse(raw);
+    const capture = snapshotAnalytics(options.analytics);
     const mark = await watermark();
-    return edit(
+    const result = await edit(
       (tree) => {
+        const before = { enabled: tree.enabled };
         if (input.enabled !== undefined) tree.enabled = input.enabled;
         if (input.clear) {
           tree.entries = [];
@@ -148,10 +153,14 @@ export function createMemoryService(options: {
         }
         tree.reflected = mark;
         tree.retries = 0;
-        return { enabled: tree.enabled, cleared: input.clear };
+        return { before, after: { enabled: tree.enabled }, cleared: input.clear };
       },
       { allowDisabled: true },
     );
+    captureSettingChanges(capture, 'agent', result.before, result.after, {
+      enabled: 'memory_enabled',
+    });
+    return { ...result.after, cleared: result.cleared };
   }
 
   function noteText(tree: Tree, target: string) {
@@ -381,14 +390,21 @@ export function createMemoryService(options: {
 
   async function settings(raw: unknown) {
     const input = settingsInput.parse(raw);
+    const capture = snapshotAnalytics(options.analytics);
     const mark = await watermark();
-    await owned((tree) => {
+    const change = await owned((tree) => {
+      const before = { enabled: tree.enabled, sensitive: tree.sensitive };
       if (input.saving !== undefined && input.saving !== tree.enabled) {
         tree.enabled = input.saving;
         tree.reflected = mark;
         tree.retries = 0;
       }
       if (input.sensitive !== undefined) tree.sensitive = input.sensitive;
+      return { before, after: { enabled: tree.enabled, sensitive: tree.sensitive } };
+    });
+    captureSettingChanges(capture, 'owner', change.before, change.after, {
+      enabled: 'memory_enabled',
+      sensitive: 'memory_sensitive',
     });
   }
 

@@ -1,4 +1,6 @@
 import type { PoolClient } from 'pg';
+import type { CaptureAnalytics } from './analytics.ts';
+import { connectionSources } from './app-reads.ts';
 import type {
   ObservationBatch,
   ObservationProvider,
@@ -19,7 +21,7 @@ type Provider = ObservationProvider & {
 
 export function createObservationSources(
   providers: Provider[],
-  options: { secrets?: string[]; check?: MailCheck } = {},
+  options: { secrets?: string[]; check?: MailCheck; analytics?: CaptureAnalytics } = {},
 ) {
   const secrets = options.secrets ?? [];
   const redactText = createTextRedactor(secrets);
@@ -136,6 +138,30 @@ export function createObservationSources(
   }
   async function read(input: ObservationQuery & { sourceId: string }, signal: AbortSignal) {
     signal.throwIfAborted();
+    const started = performance.now();
+    const providerId = input.sourceId.slice(0, input.sourceId.indexOf(':'));
+    const source_type =
+      providerId === connectionSources
+        ? 'connected_app'
+        : input.sourceId === 'work:tasks'
+          ? 'tasks'
+          : 'other';
+    const capture = (outcome: 'succeeded' | 'failed' | 'cancelled', result?: ObservationBatch) =>
+      options.analytics?.({
+        event: 'source_read',
+        properties: {
+          source_type,
+          operation: input.query ? 'discovery' : 'records',
+          outcome,
+          duration_ms: Math.max(0, Math.round(performance.now() - started)),
+          ...(result
+            ? {
+                record_count: result.records.length,
+                unavailable_count: result.records.filter((record) => !record.available).length,
+              }
+            : {}),
+        },
+      });
     let rejectAbort: () => void = () => {};
     const aborted = new Promise<never>((_resolve, reject) => {
       rejectAbort = () => reject(signal.reason ?? new Error('The source read stopped.'));
@@ -143,7 +169,7 @@ export function createObservationSources(
       if (signal.aborted) rejectAbort();
     });
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         (async () => {
           const source = (await sources()).find(
             (source) => source.id === input.sourceId && source.readable,
@@ -178,6 +204,11 @@ export function createObservationSources(
         })(),
         aborted,
       ]);
+      capture('succeeded', result);
+      return result;
+    } catch (error) {
+      capture(signal.aborted ? 'cancelled' : 'failed');
+      throw error;
     } finally {
       signal.removeEventListener('abort', rejectAbort);
     }

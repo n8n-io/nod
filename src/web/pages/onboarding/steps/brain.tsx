@@ -721,7 +721,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   );
 
   return (
-    <section className="ob-step ob-brain" onClick={done ? undefined : skip} data-analytics-public>
+    <section className="ob-step ob-brain" onClick={done ? undefined : skip}>
       <Messages
         revealed={revealed}
         typing={typing}

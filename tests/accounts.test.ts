@@ -21,6 +21,7 @@ import { createMailCheck } from '../src/server/mail-check.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
+import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 
@@ -212,6 +213,7 @@ describe('account routes', () => {
     onTraces?: (enabled: boolean) => void,
     key?: string,
     onboardingMissing?: () => Promise<'brain' | 'email' | null>,
+    model?: Parameters<typeof createAccountSession>[0]['model'],
   ) {
     let record: AccountSettings = {
       theme: 'system',
@@ -259,6 +261,7 @@ describe('account routes', () => {
       traces: onTraces !== undefined,
       onTraces,
       onboardingMissing,
+      model,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
@@ -330,7 +333,7 @@ describe('account routes', () => {
       );
       await request({ onboardingCompleted: true });
       assert.equal(f.calls.started, 1);
-      analytics.capture('local-owner', { event: 'nod_conversation_reset' });
+      analytics.capture('local-owner', { event: 'conversation_reset' });
       assert.equal(captured.length, 0);
       const opted = await request({ usageData: true });
       assert.equal(opted.statusCode, 200);
@@ -339,20 +342,75 @@ describe('account routes', () => {
       assert.equal(opted.json().analytics.enabled, available);
       assert.equal(f.record().usageData, true);
       await request({ theme: 'dark' });
-      analytics.forOwner('local-owner')({ event: 'nod_chat_stopped' });
+      analytics.forOwner('local-owner')({ event: 'chat_stopped' });
+      assert.deepEqual(
+        captured
+          .filter(({ event }) => event === 'setting_changed')
+          .map(({ properties }) => ({
+            setting: properties.setting,
+            actor: properties.actor,
+            state: properties.state,
+          })),
+        available
+          ? [
+              { setting: 'usage_data', actor: 'owner', state: 'on' },
+              { setting: 'theme', actor: 'owner', state: 'dark' },
+            ]
+          : [],
+      );
       assert.deepEqual(
         captured.map((event) => [event.distinctId, event.event]),
         available
           ? [
-              [`local:${installationId}`, 'nod_settings_updated'],
-              [`local:${installationId}`, 'nod_chat_stopped'],
+              [`local:${installationId}`, 'setting_changed'],
+              [`local:${installationId}`, 'setting_changed'],
+              [`local:${installationId}`, 'settings_updated'],
+              [`local:${installationId}`, 'chat_stopped'],
             ]
           : [],
       );
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
-      analytics.capture('local-owner', { event: 'nod_chat_stopped' });
-      assert.equal(captured.length, available ? 2 : 0);
+      analytics.capture('local-owner', { event: 'chat_stopped' });
+      assert.equal(captured.length, available ? 4 : 0);
+    }
+  });
+
+  test('onboarding analytics report only the selected bounded provider', async (t) => {
+    for (const [provider, expected] of [
+      ['anthropic', 'anthropic'],
+      ['compatible', 'compatible'],
+      ['PRIVATE_PROVIDER_CANARY', 'other'],
+    ]) {
+      const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        environment: 'development',
+        dataRoot: '.',
+        installationId: randomUUID(),
+      });
+      t.after(() => analytics.shutdown());
+      const f = await fixture(analytics, undefined, undefined, undefined, () => ({
+        provider,
+        name: 'PRIVATE_MODEL_CANARY',
+        configured: true,
+      }));
+      t.after(() => f.app.close());
+      const complete = () =>
+        f.app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers: { origin },
+          payload: { usageData: true, onboardingCompleted: true },
+        });
+      assert.equal((await complete()).statusCode, 200);
+      assert.equal((await complete()).statusCode, 200);
+      const events = captured.filter(({ event }) => event === 'onboarding_completed');
+      assert.equal(events.length, 1);
+      assert.equal(events[0].properties.provider, expected);
+      assert.equal(Object.hasOwn(events[0].properties, 'model_provider'), false);
+      assert.equal(Object.hasOwn(events[0].properties, 'model'), false);
+      assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
     }
   });
 
@@ -530,8 +588,9 @@ describe('account routes', () => {
 });
 
 describe('analytics privacy', () => {
-  test('visited websites and secure entries send only the registrable domain of an address', async () => {
-    const { createWebsiteVisits } = await import('../src/server/analytics-connections.ts');
+  test('secure entries and custom connections omit website and purchase details', async () => {
+    const { captureConnection, withServiceAnalytics } =
+      await import('../src/server/analytics-connections.ts');
     const { captureSecureEntry } = await import('../src/server/vault-use.ts');
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -549,13 +608,6 @@ describe('analytics privacy', () => {
       'http://localhost:4310/vault',
       'https://printer.local/status',
     ];
-    analytics.withRun('owner-fixture', () => {
-      const visited = createWebsiteVisits(analytics, 'owner-fixture');
-      for (const address of addresses) {
-        visited(address, 'browser', false);
-        visited(address, 'fetch', true);
-      }
-    });
     for (const origin of addresses) {
       captureSecureEntry(capture, { kind: 'password', origin }, 'requested');
       captureSecureEntry(
@@ -564,45 +616,172 @@ describe('analytics privacy', () => {
         'submitted',
       );
       captureSecureEntry(capture, { kind: 'otp', origin }, 'requested');
+      const connection = {
+        app: 'private_customer',
+        endpoint: origin,
+        connection_method: 'mcp' as const,
+      };
+      captureConnection(capture, connection, 'connected');
+      await withServiceAnalytics(capture, connection, async () => ({ private: origin }));
     }
-    const sent = captured.map(({ event, properties }) => {
-      const { analytics_schema, deployment, environment, capture_source, run_id, ...rest } =
-        properties;
-      return { event, ...rest };
-    });
-    assert.deepEqual(
-      sent.filter(({ event }) => event === 'nod_website_visited'),
-      [{ event: 'nod_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
-    );
-    const entries = sent.filter(({ event }) => event === 'nod_secure_entry_changed');
+    const entries = captured.filter(({ event }) => event === 'secure_entry_changed');
     assert.equal(entries.length, 15);
     assert.deepEqual(
-      new Set(entries.map((entry) => JSON.stringify(entry))),
+      new Set(entries.map(({ properties: { kind, status } }) => JSON.stringify({ kind, status }))),
       new Set(
         [
-          { kind: 'sign_in', status: 'requested', domain: 'example.co.uk' },
           { kind: 'sign_in', status: 'requested' },
-          {
-            kind: 'payment',
-            status: 'submitted',
-            domain: 'example.co.uk',
-            currency: 'EUR',
-            amount: 1234.568,
-          },
-          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.568 },
+          { kind: 'payment', status: 'submitted' },
           { kind: 'code', status: 'requested' },
-        ].map((properties) => JSON.stringify({ event: 'nod_secure_entry_changed', ...properties })),
+        ].map((entry) => JSON.stringify(entry)),
+      ),
+    );
+    const connections = captured.filter(({ event }) => event === 'connection_changed');
+    assert.equal(connections.length, addresses.length);
+    assert.ok(connections.every(({ properties }) => properties.app === 'custom'));
+    const services = captured.filter(({ event }) => event === 'service_used');
+    assert.equal(services.length, addresses.length);
+    assert.ok(
+      services.every(
+        ({ properties }) =>
+          properties.outcome === 'succeeded' && Number(properties.duration_ms) >= 0,
       ),
     );
     for (const value of [
-      'checkout',
-      'shop.',
-      'private-person',
-      'person%40',
-      '192.168',
-      'localhost',
+      ...addresses,
+      'example.co.uk',
+      'private_customer',
+      '1234',
+      'EUR',
+      'domain',
+      'endpoint',
     ])
       assert.ok(!JSON.stringify(captured).includes(value), value);
+    const count = captured.length;
+    for (const event of [
+      {
+        event: 'nod_website_visited',
+        properties: { domain: 'example.com', via: 'browser', subagent: false },
+      },
+      {
+        event: 'secure_entry_changed',
+        properties: { kind: 'payment', status: 'submitted', amount: 42 },
+      },
+      {
+        event: 'connection_changed',
+        properties: {
+          app: 'custom',
+          connection_method: 'mcp',
+          status: 'connected',
+          domain: 'example.com',
+        },
+      },
+      { event: 'vault_imported', properties: { count: 1, domains: ['example.com'] } },
+    ])
+      capture(event as never);
+    assert.equal(captured.length, count);
+    analytics.setUsageData('owner-fixture', false);
+    captureSecureEntry(capture, { kind: 'password', origin: addresses[0]! }, 'requested');
+    captureConnection(
+      capture,
+      { connection_method: 'managed_app', app: 'gmail', publicApp: true },
+      'connected',
+    );
+    assert.equal(captured.length, count);
+  });
+
+  test('system work attributes model and service costs without creating owner run activity', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const owner = 'system-work-owner';
+    analytics.setUsageData(owner, true);
+    analytics.setUsageData('foreign-system-owner', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: owner,
+      analytics: analytics.forOwner(owner),
+    });
+    const curator = ledger.curator({
+      id: 'fixture',
+      configured: true,
+      async curate(_request, _signal, report) {
+        await Promise.resolve();
+        report?.({
+          id: randomUUID(),
+          provider: 'openai',
+          model: 'fixture-small',
+          costUsd: 0.02,
+          inputTokens: 10,
+          outputTokens: 2,
+          durationMs: 8,
+        });
+        return {};
+      },
+    });
+    const model = () =>
+      curator.curate({ task: 'reflect', instructions: 'Synthetic task', input: {} });
+    await Promise.all(
+      (['memory_learning', 'onboarding', 'writing_style'] as const).map((activity) =>
+        analytics.withSystemWork(owner, activity, async () => {
+          await model();
+          analytics.capture(owner, {
+            event: 'service_used',
+            properties: {
+              app: 'gmail',
+              connection_method: 'managed_app',
+              outcome: 'succeeded',
+              duration_ms: 4,
+            },
+          });
+        }),
+      ),
+    );
+    for (const activity of ['memory_learning', 'onboarding', 'writing_style']) {
+      const events = captured.filter((event) => event.properties.system_activity === activity);
+      assert.deepEqual(events.map((event) => event.event).sort(), ['model_used', 'service_used']);
+      assert.ok(
+        events.every(
+          (event) =>
+            event.properties.work_type === 'background' &&
+            event.properties.owner_requested === false &&
+            event.properties.run_id === undefined,
+        ),
+      );
+    }
+    await model();
+    assert.equal(captured.at(-1)!.properties.work_type, 'unclassified');
+    await analytics.withRun(owner, async () => {
+      analytics.capture(owner, {
+        event: 'turn_started',
+        properties: {
+          source: 'user',
+          channel: 'web',
+          background: false,
+          work_type: 'immediate',
+          owner_requested: true,
+        },
+      });
+      await analytics.withSystemWork(owner, 'memory_learning', model);
+    });
+    assert.equal(captured.at(-1)!.properties.work_type, 'immediate');
+    assert.equal(captured.at(-1)!.properties.owner_requested, true);
+    assert.equal(captured.at(-1)!.properties.system_activity, undefined);
+    assert.ok(captured.at(-1)!.properties.run_id);
+    const before = captured.length;
+    await analytics.withSystemWork(owner, 'onboarding', async () => {
+      analytics.capture('foreign-system-owner', { event: 'chat_stopped' });
+      analytics.setUsageData(owner, false);
+      analytics.setUsageData(owner, true);
+      await model();
+    });
+    assert.equal(captured.length, before);
+    assert.equal(captured.filter((event) => event.event === 'turn_started').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'turn_completed').length, 0);
   });
 
   test('agent model usage analytics carry the request duration and cached input', async (t) => {
@@ -629,6 +808,7 @@ describe('analytics privacy', () => {
       analytics: analytics.forOwner('owner-fixture'),
       telemetry,
     });
+    let subscription = false;
     const agent = ledger.agent({
       open: async (session) => ({
         resumed: false,
@@ -645,25 +825,223 @@ describe('analytics privacy', () => {
             cacheReadTokens: 2000,
             cacheWriteTokens: 0,
             totalTokens: 2025,
-            costUsd: 0.001,
-            costSource: 'sdk_estimate',
+            costUsd: subscription ? null : 0.001,
+            ...(subscription ? { estimateUsd: 0.001 } : {}),
+            costSource: subscription ? 'unavailable' : 'sdk_estimate',
             createdAt: new Date(Date.now() - 1_500).toISOString(),
           }),
       }),
       dispose() {},
     });
     const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
-    await opened.prompt('Synthetic', []);
-    const used = captured.find((event) => event.event === 'nod_model_used')!;
+    await analytics.withRun('owner-fixture', async () => {
+      analytics.capture('owner-fixture', {
+        event: 'turn_started',
+        properties: {
+          source: 'event',
+          channel: 'web',
+          background: true,
+          work_type: 'background',
+          owner_requested: false,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
+        },
+      });
+      await opened.prompt('Synthetic', []);
+      analytics.capture('owner-fixture', {
+        event: 'turn_completed',
+        properties: {
+          source: 'event',
+          channel: 'web',
+          background: true,
+          work_type: 'background',
+          owner_requested: false,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
+          outcome: 'succeeded',
+          duration_ms: 1_500,
+        },
+      });
+    });
+    const used = captured.find((event) => event.event === 'model_used')!;
+    const started = captured.find((event) => event.event === 'turn_started')!;
+    const completed = captured.find((event) => event.event === 'turn_completed')!;
+    assert.ok(started);
+    assert.ok(completed);
+    assert.equal(started.properties.provider, 'anthropic');
+    assert.equal(used.properties.provider, 'openai');
+    assert.equal(completed.properties.provider, 'openai');
+    assert.equal(completed.properties.model, 'gpt-6-luna');
+    assert.equal(completed.properties.run_id, started.properties.run_id);
+    assert.ok(captured.every(({ properties }) => !Object.hasOwn(properties, 'model_provider')));
+    assert.equal(used.properties.run_id, started.properties.run_id);
+    assert.equal(used.properties.work_type, 'background');
+    assert.equal(used.properties.owner_requested, false);
     assert.equal(used.properties.input_tokens, 2020);
     assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
+    assert.equal(used.properties.pricing, 'api');
+    subscription = true;
+    await opened.prompt('Synthetic subscription usage', []);
+    const plan = captured.filter(({ event }) => event === 'model_used').at(-1)!;
+    assert.equal(plan.properties.pricing, 'plan_estimate');
+    assert.equal(plan.properties.cost_usd, 0.001);
     analytics.setUsageData('owner-fixture', false);
     await opened.prompt('Synthetic private content', []);
     await telemetry.shutdown();
-    assert.equal(spans.length, 2);
+    assert.equal(spans.length, 3);
     assert.equal(spans[0].traceId, spans[1].traceId);
-    assert.equal(captured.filter((event) => event.event === 'nod_model_used').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'model_used').length, 2);
+  });
+
+  test('model usage analytics distinguish evidenced prices from unknown zero costs', async (t) => {
+    const cases: {
+      name: string;
+      usage: Pick<ProviderUsageEvent, 'costUsd' | 'estimateUsd' | 'pricing'>;
+      pricing: 'api' | 'plan_estimate' | 'unavailable';
+      cost?: number;
+    }[] = [
+      {
+        name: 'positive API estimate',
+        usage: { costUsd: 0.0123456, pricing: 'sdk_estimate' },
+        pricing: 'api',
+        cost: 0.012346,
+      },
+      {
+        name: 'positive API without pricing metadata',
+        usage: { costUsd: 0.02 },
+        pricing: 'api',
+        cost: 0.02,
+      },
+      {
+        name: 'positive plan estimate',
+        usage: { costUsd: null, estimateUsd: 0.03, pricing: 'sdk_estimate' },
+        pricing: 'plan_estimate',
+        cost: 0.03,
+      },
+      { name: 'missing cost', usage: {}, pricing: 'unavailable' },
+      { name: 'null cost', usage: { costUsd: null, estimateUsd: null }, pricing: 'unavailable' },
+      { name: 'negative cost', usage: { costUsd: -1, estimateUsd: -2 }, pricing: 'unavailable' },
+      {
+        name: 'infinite cost',
+        usage: { costUsd: Infinity, estimateUsd: Infinity },
+        pricing: 'unavailable',
+      },
+      { name: 'NaN cost', usage: { costUsd: NaN, estimateUsd: NaN }, pricing: 'unavailable' },
+      { name: 'unknown zero', usage: { costUsd: 0 }, pricing: 'unavailable' },
+      { name: 'SDK zero', usage: { costUsd: 0, pricing: 'sdk_estimate' }, pricing: 'unavailable' },
+      {
+        name: 'reported zero',
+        usage: { costUsd: 0, pricing: 'reported' },
+        pricing: 'api',
+        cost: 0,
+      },
+      {
+        name: 'zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'sdk_estimate' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'reported zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'reported' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'unavailable zero',
+        usage: { costUsd: 0, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'unavailable positive API cost',
+        usage: { costUsd: 0.04, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'subscription plan estimate with unavailable API price',
+        usage: { costUsd: null, estimateUsd: 0.05, pricing: 'unavailable' },
+        pricing: 'plan_estimate',
+        cost: 0.05,
+      },
+      {
+        name: 'subscription zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'tiny positive API cost',
+        usage: { costUsd: 0.0000001, pricing: 'sdk_estimate' },
+        pricing: 'api',
+        cost: 0,
+      },
+      {
+        name: 'tiny positive subscription estimate',
+        usage: { costUsd: null, estimateUsd: 0.0000001, pricing: 'unavailable' },
+        pricing: 'plan_estimate',
+        cost: 0,
+      },
+    ];
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const saved: unknown[][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    t.after(() => analytics.shutdown());
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: {
+        query: async (sql: string, values: unknown[]) => {
+          if (sql.startsWith('INSERT INTO model_usage')) saved.push(values);
+          return { rows: [] };
+        },
+      } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    let usage: ProviderUsageEvent;
+    const agent = ledger.agent({
+      open: async (session) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => session.onEvent({ type: 'provider_usage', usage }),
+      }),
+      dispose() {},
+    });
+    const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
+    t.after(() => opened.dispose());
+    for (const scenario of cases) {
+      await t.test(scenario.name, async () => {
+        usage = {
+          id: randomUUID(),
+          provider: 'openai',
+          model: 'gpt-6-luna',
+          category: 'agent',
+          operation: 'request',
+          status: 'succeeded',
+          durationMs: 1,
+          inputTokens: 20,
+          outputTokens: 5,
+          ...scenario.usage,
+        };
+        const before = captured.length;
+        await opened.prompt('Synthetic usage fixture', []);
+        assert.equal(captured.length, before + 1);
+        const event = captured.at(-1)!;
+        assert.equal(event.event, 'model_used');
+        assert.equal(event.properties.provider, 'openai');
+        assert.equal(event.properties.pricing, scenario.pricing);
+        assert.equal(event.properties.cost_usd, scenario.cost);
+        assert.equal(Object.hasOwn(event.properties, 'cost_usd'), scenario.cost !== undefined);
+        const charge = scenario.usage.costUsd;
+        assert.equal(
+          saved.at(-1)![3],
+          typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 ? charge : null,
+        );
+      });
+    }
   });
 });
 
@@ -1220,6 +1598,195 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal((await owner.resolve()).definition.choice.images, false);
   });
 
+  test('classification resolves an approved small model only on the selected owned connection', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    let smallAvailable = true;
+    const backend = createPiModelBackend({
+      fetch: async (_input, init) => {
+        const key = new Headers(init?.headers).get('authorization');
+        const models =
+          key === 'Bearer fixture-classification-main-only' || !smallAvailable
+            ? ['gpt-6.1-sol']
+            : ['gpt-6.1-sol', 'gpt-6-luna'];
+        return Response.json({ data: models.map((id) => ({ id })) });
+      },
+    });
+    const owner = await f.create('fixture-classification-owner', backend);
+    const other = await f.create('fixture-classification-other', backend);
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    await other.addKey('openai', 'fixture-classification-other-key');
+    const connectionId = await owner.addKey('openai', 'fixture-classification-small-key');
+    const selection = { connectionId, modelId: 'gpt-6.1-sol', effort: 'high' as const };
+    await owner.select(selection);
+    assert.equal(owner.hasClassificationModel(), true);
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.provider, 'openai');
+    assert.equal(access.definition.choice.id, 'gpt-6-luna');
+    assert.equal(access.effort, 'off');
+    assert.deepEqual(await access.read(), {
+      type: 'api_key',
+      key: 'fixture-classification-small-key',
+    });
+    assert.deepEqual(owner.view().selection, selection);
+    await owner.select({ ...selection, modelId: 'gpt-6-luna', effort: 'off' });
+    assert.equal((await owner.resolveClassification())?.definition.choice.id, 'gpt-6-luna');
+    const mainOnly = await owner.addKey('openai', 'fixture-classification-main-only');
+    await owner.select({ ...selection, connectionId: mainOnly });
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    await owner.select(selection);
+    smallAvailable = false;
+    await owner.refreshCatalog(connectionId);
+    assert.equal(owner.hasClassificationModel(), false);
+    assert.equal(await owner.resolveClassification(), undefined);
+    assert.deepEqual(owner.view().selection, selection);
+    assert.equal((await owner.resolve(true)).definition.choice.id, 'gpt-6.1-sol');
+  });
+
+  test('classification rejects missing, unpriced and more expensive small models', async (t) => {
+    const f = await fixture(t);
+    const original = await f.backend.catalog('openai', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-classification-catalog',
+    });
+    const variants = [
+      { name: 'missing price', cost: undefined },
+      { name: 'synthetic zero', cost: { input: 0, output: 0 } },
+      { name: 'variable price', cost: { input: -1, output: 0.5 } },
+      { name: 'invalid price', cost: { input: 'private-value', output: 0.5 } },
+      { name: 'higher input', cost: { input: 3, output: 0.5 } },
+      { name: 'higher output', cost: { input: 0.1, output: 11 } },
+    ];
+    for (const [index, variant] of variants.entries())
+      await t.test(variant.name, async () => {
+        const backend = {
+          ...f.backend,
+          catalog: async () =>
+            original.map((definition) =>
+              definition.choice.id === 'gpt-6-luna'
+                ? { ...definition, spec: { ...definition.spec, cost: variant.cost } }
+                : definition,
+            ),
+        };
+        const owner = await f.create(`fixture-classification-price-${index}`, backend);
+        await owner.addKey('openai', 'fixture-classification-price-key');
+        assert.equal(owner.hasClassificationModel(), false);
+        assert.equal(await owner.resolveClassification(), undefined);
+      });
+    for (const [index, variant] of variants.slice(0, 4).entries())
+      await t.test(`selected model ${variant.name}`, async () => {
+        const owner = await f.create(`fixture-classification-selected-price-${index}`, {
+          ...f.backend,
+          catalog: async () =>
+            original.map((definition) =>
+              definition.choice.id === 'gpt-6.1-sol'
+                ? { ...definition, spec: { ...definition.spec, cost: variant.cost } }
+                : definition,
+            ),
+        });
+        await owner.addKey('openai', 'fixture-classification-selected-price-key');
+        assert.equal(owner.hasClassificationModel(), false);
+        assert.equal(await owner.resolveClassification(), undefined);
+      });
+    await t.test('free OpenRouter selection never incurs paid classification', async () => {
+      const owner = await f.create('fixture-classification-openrouter-free', {
+        ...f.backend,
+        catalog: async () =>
+          original.map((definition) => {
+            const id =
+              definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
+            return {
+              choice: {
+                ...definition.choice,
+                id,
+                ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
+              },
+              spec: {
+                ...definition.spec,
+                provider: 'openrouter',
+                id,
+                ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
+              },
+            };
+          }),
+      });
+      const connectionId = await owner.addKey('openrouter', 'fixture-classification-free-key');
+      await owner.select({ connectionId, modelId: 'openrouter/free', effort: 'off' });
+      assert.equal(owner.hasClassificationModel(), false);
+      assert.equal(await owner.resolveClassification(), undefined);
+    });
+  });
+
+  test('classification keeps subscription access on the approved small model', async (t) => {
+    const f = await fixture(t);
+    const catalog = await f.backend.catalog('openai', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-classification-subscription-catalog',
+    });
+    const owner = await f.create('fixture-classification-subscription', {
+      ...f.backend,
+      catalog: async () => catalog,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    const selection = owner.view().selection;
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.method, 'subscription');
+    assert.equal(access.definition.choice.id, 'gpt-6-luna');
+    const credential = await access.read();
+    assert.equal(credential?.type, 'oauth');
+    assert.ok(credential?.type === 'oauth');
+    assert.deepEqual(credential, subscriptionCredential(credential.expires));
+    assert.deepEqual(owner.view().selection, selection);
+  });
+
+  test('classification uses the same Anthropic workspace and refuses unsupported connection types', async (t) => {
+    const f = await fixture(t);
+    const definitions = (await f.backend.catalog('anthropic', 'api_key')).filter((model) =>
+      ['claude-opus-5-5', 'claude-haiku-5-5'].includes(model.choice.id),
+    );
+    const owner = await f.create('fixture-classification-anthropic', {
+      ...f.backend,
+      catalog: async () => definitions,
+    });
+    const connectionId = await owner.addKey('anthropic', 'fixture-classification-anthropic-key', {
+      workspaceId: 'wrkspc_synthetic',
+    });
+    await owner.select({ connectionId, modelId: 'claude-opus-5-5', effort: 'high' });
+    const access = await owner.resolveClassification();
+    assert.ok(access);
+    assert.equal(access.provider, 'anthropic');
+    assert.equal(access.definition.choice.id, 'claude-haiku-5-5');
+    assert.deepEqual(await access.read(), {
+      type: 'api_key',
+      key: 'fixture-classification-anthropic-key',
+      workspaceId: 'wrkspc_synthetic',
+    });
+    for (const provider of ['azure', 'amazon-bedrock', 'compatible'] as const)
+      await t.test(provider, async () => {
+        const unsupported = await f.create(`fixture-classification-${provider}`, {
+          ...f.backend,
+          catalog: async () => [definitions[0]],
+        });
+        if (provider === 'compatible') await unsupported.addEndpoint('http://127.0.0.1:1234/v1');
+        else
+          await unsupported.addKey(provider, 'fixture-classification-cloud-key', {
+            region: 'eu-west-1',
+            url: 'https://synthetic.openai.azure.com',
+            model: definitions[0].choice.id,
+            deployment: 'synthetic-deployment',
+          });
+        assert.equal(await unsupported.resolveClassification(), undefined);
+      });
+  });
+
   test('audio models pair with text support from the same owned connection without changing selection', async (t) => {
     const f = await fixture(t);
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
@@ -1685,7 +2252,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       { provider: 'openai', method: 'api_key' },
       { provider: 'compatible', method: 'api_key' },
     ].map((properties) => ({
-      event: 'nod_model_connection_changed',
+      event: 'model_connection_changed',
       properties: { ...properties, status: 'failed' },
     }));
     assert.deepEqual(captured, failures);
@@ -1716,7 +2283,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(captured, [
       ...failures,
       {
-        event: 'nod_model_connection_changed',
+        event: 'model_connection_changed',
         properties: { provider: 'openai', method: 'subscription', status: 'connected' },
       },
     ]);
@@ -1731,6 +2298,94 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(calls, { signIn: 2, authorize: 0, catalog: 1 });
   });
 
+  test('removing a selected model records only committed clearing within its consent period', async (t) => {
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const { lockKey } = await import('../src/server/locks.ts');
+    const f = await fixture(t);
+    let catalogs = 0;
+    const backend = {
+      ...f.backend,
+      catalog: (...args: Parameters<typeof f.backend.catalog>) => {
+        catalogs++;
+        return f.backend.catalog(...args);
+      },
+    };
+    const ownerId = 'fixture-remove-owner';
+    const owner = await f.create(ownerId, backend);
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData(ownerId, true);
+    owner.register(Fastify(), analytics.forOwner(ownerId));
+    const selected = await owner.addKey('openai', 'fixture-removal-key');
+    assert.equal(owner.view().selection?.connectionId, selected);
+    const selection = owner.view().selection!;
+    const alternative = owner
+      .view()
+      .connections.flatMap((connection) => connection.models)
+      .find((model) => model.id === selection.modelId)!
+      .efforts.find((effort) => effort !== selection.effort)!;
+    assert.ok(alternative);
+    await owner.select({ ...selection, effort: alternative });
+    captured.length = 0;
+    const store = createDatabaseModelStore({ database: f.database, ownerId, keyStore: f.keyStore });
+    await store.initialize();
+    const unselected = randomUUID();
+    await store.change((state) => {
+      state.connections.push({ ...structuredClone(state.connections[0]), id: unselected });
+    });
+    const calls = catalogs;
+    const settings = () => captured.filter(({ event }) => event === 'setting_changed');
+    await owner.remove(unselected);
+    assert.equal(settings().length, 0);
+    assert.equal(owner.view().selection?.connectionId, selected);
+    await f.database.query(
+      "ALTER TABLE model_settings ADD CONSTRAINT retain_fixture_selection CHECK (selection IS NOT NULL AND selection <> 'null'::jsonb)",
+    );
+    const beforeFailure = captured.length;
+    await assert.rejects(owner.remove(selected));
+    assert.equal(captured.length, beforeFailure);
+    assert.equal((await store.read()).selection?.connectionId, selected);
+    assert.ok((await store.read()).connections.some(({ id }) => id === selected));
+    await f.database.query('ALTER TABLE model_settings DROP CONSTRAINT retain_fixture_selection');
+    await owner.remove(selected);
+    assert.equal((await store.read()).selection, null);
+    assert.deepEqual(
+      settings().map(({ properties }) => ({
+        setting: properties.setting,
+        actor: properties.actor,
+        state: properties.state,
+      })),
+      [
+        { setting: 'model_selection', actor: 'owner', state: 'cleared' },
+        { setting: 'model_effort', actor: 'owner', state: 'cleared' },
+      ],
+    );
+    await owner.remove(selected);
+    assert.equal(settings().length, 2);
+    assert.equal(catalogs, calls);
+    const next = await owner.addKey('openai', 'fixture-removal-next-key');
+    const beforeRevoke = captured.length;
+    const beforeCatalogs = catalogs;
+    const client = await f.database.connect();
+    await client.query('BEGIN');
+    await lockKey(client, `models:${ownerId}`);
+    const pending = owner.remove(next);
+    analytics.setUsageData(ownerId, false);
+    analytics.setUsageData(ownerId, true);
+    await client.query('COMMIT');
+    client.release();
+    await pending;
+    assert.equal((await store.read()).selection, null);
+    assert.equal(captured.length, beforeRevoke);
+    assert.equal(catalogs, beforeCatalogs);
+    assert.doesNotMatch(JSON.stringify(settings()), /fixture-|connectionId|modelId/);
+  });
+
   test('OpenAI-compatible servers connect from Models or server settings, and keep their key out of storage', async (t) => {
     const f = await fixture(t);
     const { createServer } = await import('node:http');
@@ -1738,7 +2393,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const server = createServer((request, response) => {
       const found = request.url === '/v1/models';
       response.writeHead(found ? 200 : 404, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(found ? { data: [{ id: 'fixture-local' }] } : {}));
+      response.end(
+        JSON.stringify(
+          found ? { data: [{ id: 'fixture-local' }, { id: 'fixture-alternate' }] } : {},
+        ),
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
@@ -1772,13 +2431,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       }),
       [
         {
-          event: 'nod_model_connection_changed',
+          event: 'model_connection_changed',
           provider: 'compatible',
           method: 'api_key',
           status: 'connected',
         },
         {
-          event: 'nod_model_connection_observed',
+          event: 'model_connection_observed',
           provider: 'compatible',
           method: 'api_key',
           selected: true,
@@ -1803,6 +2462,41 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       url: address,
       key: 'fixture-rotated-key',
     });
+    const settingEvents = () => captured.filter(({ event }) => event === 'setting_changed');
+    await owner.select({ connectionId: id, modelId: 'fixture-alternate', effort: 'off' });
+    assert.equal(settingEvents().length, 1);
+    assert.deepEqual(
+      Object.fromEntries(
+        ['setting', 'actor', 'state'].map((key) => [key, settingEvents()[0].properties[key]]),
+      ),
+      { setting: 'model_selection', actor: 'owner', state: 'configured' },
+    );
+    assert.equal(owner.view().selection?.modelId, 'fixture-alternate');
+    await owner.select({ connectionId: id, modelId: 'fixture-alternate', effort: 'off' });
+    await assert.rejects(
+      owner.select({ connectionId: id, modelId: 'fixture-unavailable', effort: 'off' }),
+    );
+    assert.equal(settingEvents().length, 1);
+    assert.doesNotMatch(JSON.stringify(settingEvents()), /fixture-|127\.0\.0\.1/);
+    analytics.setUsageData('fixture-owner', false);
+    await owner.select({ connectionId: id, modelId: 'fixture-local', effort: 'off' });
+    assert.equal(settingEvents().length, 1);
+    const effortOwner = await f.create('fixture-effort-owner');
+    analytics.setUsageData('fixture-effort-owner', true);
+    effortOwner.register(Fastify(), analytics.forOwner('fixture-effort-owner'));
+    await effortOwner.addKey('openai', 'fixture-effort-key');
+    const selected = effortOwner.view().selection!;
+    const alternative = effortOwner
+      .view()
+      .connections.flatMap((connection) => connection.models)
+      .find((model) => model.id === selected.modelId)!
+      .efforts.find((effort) => effort !== selected.effort)!;
+    assert.ok(alternative);
+    await effortOwner.select({ ...selected, effort: alternative }, 'agent');
+    assert.equal(settingEvents().length, 2);
+    assert.equal(settingEvents()[1].properties.setting, 'model_effort');
+    assert.equal(settingEvents()[1].properties.state, alternative);
+    assert.equal(settingEvents()[1].properties.actor, 'agent');
     const bootstrap = {
       provider: 'compatible' as const,
       credentials: {
@@ -2365,7 +3059,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const history = createFeedbackActivity('runtime');
   const privateValue = 'A private person and their confidential project';
-  history.record('nod_connection_changed', {
+  history.record('connection_changed', {
     app: 'gmail',
     connection_method: 'managed_app',
     status: 'failed',
@@ -2373,7 +3067,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     domain: privateValue,
     account: privateValue,
   });
-  history.record('nod_service_used', {
+  history.record('service_used', {
     app: privateValue,
     connection_method: 'mcp',
     outcome: 'failed',
@@ -2419,7 +3113,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   setRequestAccount('diagnostic-owner-one');
   t.after(() => setRequestAccount(null));
   capturePageview('/vault/private-person?secret=private');
-  captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+  captureAnalytics('ui_error', { area: 'chat', action: 'send' });
   assert.equal(requests, 0);
   await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
   for (let index = 0; index < 110; index++)
@@ -2490,7 +3184,7 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     await assert.rejects(cancelledRequest, { name: 'AbortError' });
     assert.equal(feedbackActivitySnapshot().length, changedOwner ? 0 : 1);
   }
-  feedbackActivity.record('nod_ui_error', { area: 'settings', action: 'load' });
+  feedbackActivity.record('ui_error', { area: 'settings', action: 'load' });
   setRequestAccount(null);
   assert.deepEqual(feedbackActivitySnapshot(), []);
   for (const path of ['/api/session', '/api/access']) {
@@ -3645,4 +4339,449 @@ test('feedback capture runs once for a fresh owned draft and skips restored or p
   });
   assert.equal(await createFeedbackCapture('web-owner').capture(), null);
   assert.equal(captures, 4);
+});
+
+describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABASE_URL }, () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const schema = `test_setting_analytics_${randomUUID().replaceAll('-', '')}`;
+    const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await root.query(`CREATE SCHEMA ${schema}`);
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 4,
+    });
+    t.after(async () => {
+      await database.end();
+      await root.query(`DROP SCHEMA ${schema} CASCADE`);
+      await root.end();
+    });
+    await database.query(`CREATE TABLE turns(id uuid PRIMARY KEY);
+      CREATE TABLE preferences(owner_id text PRIMARY KEY,notification_rule text NOT NULL DEFAULT '',rules text NOT NULL DEFAULT '',
+        time_zone text,quiet_start text NOT NULL DEFAULT '22:00',quiet_end text NOT NULL DEFAULT '08:00',
+        quiet_hours_enabled boolean NOT NULL DEFAULT true,locale text,hour_cycle text NOT NULL DEFAULT 'auto',
+        speech_voice text,speech_reply text NOT NULL DEFAULT 'auto',proactive_paused boolean NOT NULL DEFAULT false)`);
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    const owner = 'synthetic-settings-owner';
+    analytics.setUsageData(owner, true);
+    const changes = () =>
+      captured
+        .filter(({ event }) => event === 'setting_changed')
+        .map(({ properties }) => ({
+          setting: properties.setting,
+          actor: properties.actor,
+          state: properties.state,
+        }));
+    return { database, captured, analytics, owner, changes };
+  }
+
+  test('preferences and spending expose committed bounded states across actors, owners and consent periods', async (t) => {
+    const { createPreferencesStore } = await import('../src/server/preferences.ts');
+    const f = await fixture(t);
+    const preferences = createPreferencesStore(f.database, f.owner, f.analytics.forOwner(f.owner));
+    const privatePatch = {
+      notificationRule: 'Synthetic private notification rule',
+      rules: 'Synthetic private standing rule',
+      timeZone: 'Europe/Lisbon',
+      locale: 'pt-pt',
+      quietStart: '20:15',
+      quietEnd: '07:45',
+      quietHoursEnabled: false,
+      proactivePaused: true,
+      speechReply: 'always' as const,
+    };
+    const saved = await preferences.update(privatePatch, 'agent');
+    assert.equal(saved.locale, 'pt-PT');
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    assert.equal(f.changes().length, 9);
+    assert.ok(f.changes().every(({ actor }) => actor === 'agent'));
+    for (const privateValue of ['Synthetic private', 'Europe/Lisbon', '20:15', 'pt-PT'])
+      assert.ok(!JSON.stringify(f.captured).includes(privateValue));
+    await preferences.update(privatePatch);
+    await assert.rejects(preferences.update({ locale: 'not_a_locale' }));
+    assert.equal(f.changes().length, 9);
+    await f.database.query(
+      "ALTER TABLE preferences ADD CONSTRAINT refuse_synthetic_rule CHECK(rules <> 'rejected synthetic rule')",
+    );
+    await assert.rejects(preferences.update({ rules: 'rejected synthetic rule' }));
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    assert.equal(f.changes().length, 9);
+    await Promise.all([
+      preferences.update({ proactivePaused: false }),
+      preferences.update({ proactivePaused: false }),
+    ]);
+    assert.equal(f.changes().length, 10);
+    await Promise.all([
+      preferences.update({ proactivePaused: true }),
+      preferences.update({ proactivePaused: false }),
+    ]);
+    const paused = (await preferences.get()).proactivePaused;
+    assert.deepEqual(
+      f
+        .changes()
+        .slice(10)
+        .map(({ state }) => state),
+      paused ? ['on'] : ['on', 'off'],
+    );
+    const preferenceCount = f.changes().length;
+    const foreign = createPreferencesStore(
+      f.database,
+      'foreign-owner',
+      f.analytics.forOwner('foreign-owner'),
+    );
+    await foreign.update({ rules: 'Foreign private rule' });
+    assert.equal(f.changes().length, preferenceCount);
+    assert.equal((await preferences.get()).rules, privatePatch.rules);
+    const lock = await f.database.connect();
+    await lock.query('BEGIN');
+    await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `preferences:${f.owner}`,
+    ]);
+    const late = preferences.update({ rules: 'Late synthetic private rule' });
+    f.analytics.setUsageData(f.owner, false);
+    f.analytics.setUsageData(f.owner, true);
+    await lock.query('COMMIT');
+    lock.release();
+    await late;
+    assert.equal((await preferences.get()).rules, 'Late synthetic private rule');
+    assert.equal(f.changes().length, preferenceCount);
+    const ledger = createLedger({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+    });
+    await ledger.initialize();
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 }, 'agent');
+    assert.deepEqual(f.changes().slice(-2), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'configured' },
+      { setting: 'task_spending_limit', actor: 'agent', state: 'configured' },
+    ]);
+    const count = f.changes().length;
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 });
+    await assert.rejects(ledger.setLimits({ monthlyUsd: -1 }));
+    assert.equal(f.changes().length, count);
+    await ledger.setLimits({ monthlyUsd: null, taskUsd: null });
+    assert.deepEqual(
+      f
+        .changes()
+        .slice(-2)
+        .map(({ state }) => state),
+      ['off', 'off'],
+    );
+    for (const privateValue of ['37.42', '8.53'])
+      assert.ok(!JSON.stringify(f.captured).includes(privateValue));
+    await preferences.update({ timeZone: null }, 'system');
+    assert.deepEqual(f.changes().at(-1), {
+      setting: 'time_zone',
+      actor: 'system',
+      state: 'default',
+    });
+  });
+
+  test('shared transactions preserve preference authority, rollback and analytics consent', async (t) => {
+    const { createPreferencesStore } = await import('../src/server/preferences.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
+    const f = await fixture(t);
+    const preferences = createPreferencesStore(f.database, f.owner, f.analytics.forOwner(f.owner));
+    const rules = 'Synthetic reviewed standing rules';
+    await preferences.update({ rules, notificationRule: 'Synthetic original notification' });
+    f.captured.length = 0;
+    await transaction(async (client) => {
+      const saved = await preferences.update(
+        { notificationRule: 'Synthetic accepted notification' },
+        'agent',
+        rules,
+        client,
+      );
+      assert.equal(saved.notificationRule, 'Synthetic accepted notification');
+      assert.equal((await preferences.get()).notificationRule, 'Synthetic original notification');
+      assert.deepEqual(f.changes(), []);
+    }, f.database);
+    assert.equal((await preferences.get()).notificationRule, 'Synthetic accepted notification');
+    assert.deepEqual(f.changes(), [
+      { setting: 'notification_rule', actor: 'agent', state: 'configured' },
+    ]);
+    await assert.rejects(
+      transaction(async (client) => {
+        await preferences.update({ rules: 'Synthetic rolled-back rules' }, 'agent', rules, client);
+        assert.equal(f.changes().length, 1);
+        throw new Error('Synthetic outer preference rollback');
+      }, f.database),
+      /Synthetic outer preference rollback/,
+    );
+    assert.equal((await preferences.get()).rules, rules);
+    assert.equal(f.changes().length, 1);
+    await assert.rejects(
+      transaction(
+        (client) =>
+          preferences.update(
+            { notificationRule: 'Synthetic unauthorized notification' },
+            'agent',
+            'Synthetic stale reviewed rules',
+            client,
+          ),
+        f.database,
+      ),
+      { statusCode: 409, message: 'Your rules changed. Review them before asking again.' },
+    );
+    assert.equal((await preferences.get()).notificationRule, 'Synthetic accepted notification');
+    assert.equal(f.changes().length, 1);
+    for (const enabled of [true, false]) {
+      f.analytics.setUsageData(f.owner, enabled);
+      await transaction(async (client) => {
+        await preferences.update({ proactivePaused: enabled }, 'agent', rules, client);
+        f.analytics.setUsageData(f.owner, false);
+        f.analytics.setUsageData(f.owner, true);
+        assert.equal(f.changes().length, 1);
+      }, f.database);
+      assert.equal((await preferences.get()).proactivePaused, enabled);
+      assert.equal(f.changes().length, 1);
+    }
+    await transaction(
+      (client) => preferences.update({ proactivePaused: true }, 'agent', rules, client),
+      f.database,
+    );
+    assert.deepEqual(f.changes().slice(1), [
+      { setting: 'proactivity_paused', actor: 'agent', state: 'on' },
+    ]);
+    assert.ok(!JSON.stringify(f.captured).includes('Synthetic'));
+  });
+
+  test('shared transactions defer spending analytics until commit and fence consent changes', async (t) => {
+    const { transaction } = await import('../src/server/transaction.ts');
+    const f = await fixture(t);
+    const ledger = createLedger({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+    });
+    await ledger.initialize();
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 });
+    f.captured.length = 0;
+    await transaction(async (client) => {
+      const saved = await ledger.setLimits({ monthlyUsd: 50.26, taskUsd: null }, 'agent', client);
+      assert.deepEqual(saved, { limit: { monthlyUsd: 50.26, reached: false }, taskUsd: null });
+      assert.deepEqual(await ledger.limits(), {
+        limit: { monthlyUsd: 37.42, reached: false },
+        taskUsd: 8.53,
+      });
+      assert.deepEqual(f.changes(), []);
+    }, f.database);
+    assert.deepEqual(await ledger.limits(), {
+      limit: { monthlyUsd: 50.26, reached: false },
+      taskUsd: null,
+    });
+    assert.deepEqual(f.changes(), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'configured' },
+      { setting: 'task_spending_limit', actor: 'agent', state: 'off' },
+    ]);
+    await assert.rejects(
+      transaction(async (client) => {
+        await ledger.setLimits({ monthlyUsd: null, taskUsd: 5 }, 'agent', client);
+        assert.equal(f.changes().length, 2);
+        throw new Error('Synthetic outer spending rollback');
+      }, f.database),
+      /Synthetic outer spending rollback/,
+    );
+    assert.deepEqual(await ledger.limits(), {
+      limit: { monthlyUsd: 50.26, reached: false },
+      taskUsd: null,
+    });
+    assert.equal(f.changes().length, 2);
+    for (const enabled of [true, false]) {
+      const monthlyUsd = enabled ? 60.19 : 70.31;
+      f.analytics.setUsageData(f.owner, enabled);
+      await transaction(async (client) => {
+        await ledger.setLimits({ monthlyUsd }, 'agent', client);
+        f.analytics.setUsageData(f.owner, false);
+        f.analytics.setUsageData(f.owner, true);
+        assert.equal(f.changes().length, 2);
+      }, f.database);
+      assert.equal((await ledger.limits()).limit?.monthlyUsd, monthlyUsd);
+      assert.equal(f.changes().length, 2);
+    }
+    await transaction(
+      (client) => ledger.setLimits({ monthlyUsd: null }, 'agent', client),
+      f.database,
+    );
+    assert.deepEqual(f.changes().slice(2), [
+      { setting: 'monthly_spending_limit', actor: 'agent', state: 'off' },
+    ]);
+    for (const amount of ['37.42', '8.53', '50.26', '60.19', '70.31'])
+      assert.ok(!JSON.stringify(f.captured).includes(amount));
+  });
+
+  test('memory settings emit successful CAS transitions and retain the starting consent period', async (t) => {
+    const { createMemoryService } = await import('../src/server/memory.ts');
+    const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');
+    const f = await fixture(t);
+    const store = createPostgresObjectStore({ database: f.database, ownerId: f.owner });
+    await store.initialize();
+    let fail = false;
+    let hold: (() => Promise<void>) | undefined;
+    const memory = createMemoryService({
+      pool: f.database,
+      ownerId: f.owner,
+      analytics: f.analytics.forOwner(f.owner),
+      store: {
+        ...store,
+        async write(...args) {
+          if (fail) throw new Error('Synthetic private store failure');
+          await hold?.();
+          return store.write(...args);
+        },
+      },
+    });
+    await memory.settings({ saving: false, sensitive: true });
+    assert.deepEqual(f.changes(), [
+      { setting: 'memory_enabled', actor: 'owner', state: 'off' },
+      { setting: 'memory_sensitive', actor: 'owner', state: 'on' },
+    ]);
+    await memory.settings({ saving: false, sensitive: true });
+    assert.equal(f.changes().length, 2);
+    fail = true;
+    await assert.rejects(memory.settings({ saving: true }), /Synthetic private store failure/);
+    assert.equal(f.changes().length, 2);
+    fail = false;
+    await Promise.all([memory.control({ enabled: true }), memory.control({ enabled: true })]);
+    assert.deepEqual(f.changes().slice(2), [
+      { setting: 'memory_enabled', actor: 'agent', state: 'on' },
+    ]);
+    const entered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const release = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    hold = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const late = memory.settings({ sensitive: false });
+    await entered.promise;
+    f.analytics.setUsageData(f.owner, false);
+    f.analytics.setUsageData(f.owner, true);
+    release.resolve();
+    await late;
+    assert.equal(f.changes().length, 3);
+  });
+
+  test('account changes follow saved values and do not cross queued opt-out or failed writes', async (t) => {
+    const { createAccountStore } = await import('../src/server/account-store.ts');
+    const f = await fixture(t);
+    const accounts = createAccountStore(f.database);
+    await accounts.initialize();
+    await accounts.update(f.owner, { usageData: false });
+    const origin = 'http://localhost:4399';
+    const app = Fastify();
+    t.after(() => app.close());
+    let hold: (() => Promise<void>) | undefined;
+    let holdAll = false;
+    createAccountSession({
+      accounts: {
+        ...accounts,
+        async update(owner, input) {
+          if (holdAll || input.theme !== undefined) await hold?.();
+          return accounts.update(owner, input);
+        },
+      },
+      analytics: f.analytics,
+      origin,
+      traces: true,
+      localUser: { id: f.owner, name: 'Synthetic Owner', email: null, avatarUrl: null },
+    }).register(app);
+    await app.inject({ method: 'GET', url: '/api/session' });
+    const update = (payload: object) =>
+      app.inject({ method: 'PATCH', url: '/api/account', headers: { origin }, payload });
+    assert.equal((await update({ usageData: true })).statusCode, 200);
+    assert.deepEqual(f.changes(), [{ setting: 'usage_data', actor: 'owner', state: 'on' }]);
+    await update({ theme: 'dark', traces: true });
+    assert.deepEqual(f.changes().slice(1), [
+      { setting: 'theme', actor: 'owner', state: 'dark' },
+      { setting: 'conversation_traces', actor: 'owner', state: 'on' },
+    ]);
+    await update({ theme: 'dark', traces: true });
+    assert.equal(f.changes().length, 3);
+    await f.database.query(
+      "ALTER TABLE account_settings ADD CONSTRAINT refuse_synthetic_light CHECK(theme <> 'light')",
+    );
+    assert.equal((await update({ theme: 'light' })).statusCode, 500);
+    assert.equal(f.changes().length, 3);
+    const entered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const release = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    hold = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const theme = update({ theme: 'system' }).then((response) => response);
+    await entered.promise;
+    const off = update({ usageData: false }).then((response) => response);
+    for (let i = 0; i < 100 && f.analytics.consent(f.owner).enabled; i++)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    assert.equal(f.analytics.consent(f.owner).enabled, false);
+    const on = update({ usageData: true }).then((response) => response);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    release.resolve();
+    await Promise.all([theme, off, on]);
+    assert.equal((await accounts.read(f.owner)).theme, 'system');
+    assert.deepEqual(f.changes().slice(3), [
+      { setting: 'usage_data', actor: 'owner', state: 'on' },
+    ]);
+    await update({ usageData: false, traces: false });
+    assert.equal(f.changes().length, 4);
+    assert.equal(f.analytics.consent(f.owner).enabled, false);
+    holdAll = true;
+    for (const tail of [{ usageData: true }, { theme: 'light' }]) {
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      hold = async () => {
+        entered();
+        await blocked;
+      };
+      const count = f.changes().length;
+      const enable = update({ usageData: true }).then((response) => response);
+      await started;
+      const later = update(tail).then((response) => response);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      release();
+      assert.equal((await enable).statusCode, 200);
+      assert.equal((await later).statusCode, 'theme' in tail ? 500 : 200);
+      assert.deepEqual(f.changes().slice(count), [
+        { setting: 'usage_data', actor: 'owner', state: 'on' },
+      ]);
+      await update({ usageData: false });
+    }
+  });
 });

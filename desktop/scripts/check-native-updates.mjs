@@ -130,10 +130,14 @@ app.whenReady().then(async () => {
   const settingsBefore = readFileSync(fixture.settings);
   const environment = await createSettingsStore(fixture.settings, encryption).environment();
   let decrypted;
-  try { decrypted = safeStorage.decryptString(encrypted); }
-  catch (error) {
-    if (!encryption.decryptLegacyStringAsync) throw error;
+  if (fixture.kind === 'migrate' && app.getVersion() !== fixture.installed)
     decrypted = await encryption.decryptLegacyStringAsync(encrypted);
+  else {
+    try { decrypted = safeStorage.decryptString(encrypted); }
+    catch (error) {
+      if (!encryption.decryptLegacyStringAsync) throw error;
+      decrypted = await encryption.decryptLegacyStringAsync(encrypted);
+    }
   }
   const settingsAfter = readFileSync(fixture.settings);
   const remoteAfter = readFileSync(fixture.remoteSettings);
@@ -524,7 +528,7 @@ async function main() {
           install: 'UPD-NATIVE.v6',
           reject: 'UPD-SIGNATURE.v5',
           downgrade: 'UPD-DOWNGRADE.v3',
-          migrate: 'UPD-KEYCHAIN-MIGRATION.v1',
+          migrate: 'UPD-KEYCHAIN-MIGRATION.v2',
         }[fixture.kind],
         startedAt: new Date().toISOString(),
         archive: { bytes: archive.length, sha256: sha256(archive) },

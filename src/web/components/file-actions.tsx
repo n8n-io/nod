@@ -8,12 +8,24 @@ import { copyImage, selectedText } from '../lib/clipboard';
 import { desktopFileAction, desktopFilesAvailable, nativeFileMenu } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
 import { Button } from './ui';
+import { analyticsForCurrentSession } from '../lib/analytics';
+import { attachmentKind } from '../lib/attachment-kind';
 import { actionMenuTabTarget } from './action-menu';
 
-export function reuseFile(item: ImagePreview) {
+export function reuseFile(
+  item: ImagePreview,
+  location: 'message' | 'drawer' | 'commands' | 'composer',
+  capture = analyticsForCurrentSession(),
+) {
   const artifact = artifactFromPreview(item);
-  if (!ownedArtifactUrl(artifact.url)) return;
+  if (!ownedArtifactUrl(artifact.url)) return false;
   window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact }));
+  capture('artifact_action', {
+    kind: attachmentKind(artifact.mimeType, artifact.name) ?? 'file',
+    location,
+    action: 'reuse_requested',
+  });
+  return true;
 }
 
 export function fileDrag(event: React.DragEvent, item: ImagePreview) {
@@ -36,8 +48,15 @@ export function prepareFile(item: ImagePreview) {
     void desktopFileAction(artifact.id, 'prepare').catch(() => {});
 }
 
-export function FileActions({ item }: { item: ImagePreview }) {
+export function FileActions({
+  item,
+  location = 'message',
+}: {
+  item: ImagePreview;
+  location?: 'message' | 'drawer';
+}) {
   const artifact = artifactFromPreview(item);
+  const kind = attachmentKind(item.mimeType ?? '', item.name) ?? 'file';
   const actions = useRef<HTMLSpanElement>(null);
   const noticePanel = useRef<HTMLDivElement>(null);
   const noticeTabTarget = useRef<HTMLElement | null>(null);
@@ -92,9 +111,9 @@ export function FileActions({ item }: { item: ImagePreview }) {
     return () => clearTimeout(timer);
   }, [notice]);
   if (!ownedArtifactUrl(artifact.url)) return null;
-  async function run(action: string, origin?: HTMLElement) {
+  async function run(action: string, origin?: HTMLElement, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
-      reuseFile(item);
+      reuseFile(item, location, capture);
       return;
     }
     focusOrigin.current = origin ?? null;
@@ -104,9 +123,17 @@ export function FileActions({ item }: { item: ImagePreview }) {
     try {
       if (action === 'copy') {
         await copyImage(artifact.url);
+        capture('artifact_action', { kind, location, action: 'copy' });
         if (activeId.current === id) setNotice('Image copied');
       } else {
         await desktopFileAction(artifact.id, action as 'save' | 'open' | 'show' | 'prepare');
+        if (action === 'save') capture('artifact_action', { kind, location, action: 'download' });
+        else if (action === 'open' || action === 'show')
+          capture('artifact_action', {
+            kind,
+            location,
+            action: action === 'open' ? 'open' : 'reveal',
+          });
         if (activeId.current === id) setNotice(action === 'save' ? 'Saved to Downloads' : '');
       }
     } catch (cause) {
@@ -116,9 +143,10 @@ export function FileActions({ item }: { item: ImagePreview }) {
     }
   }
   async function menu() {
+    const capture = analyticsForCurrentSession();
     try {
       const action = await nativeFileMenu(artifact.id, image);
-      if (action) await run(action);
+      if (action) await run(action, undefined, capture);
     } catch (cause) {
       setNotice(errorMessage(cause));
     }
@@ -137,7 +165,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
             size="icon"
             aria-label={`Use ${item.name} in message`}
             title="Add to message"
-            onClick={() => reuseFile(item)}
+            onClick={() => reuseFile(item, location)}
           >
             <Plus size={15} />
           </Button>

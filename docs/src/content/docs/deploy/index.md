@@ -17,5 +17,5 @@ Each server has one assistant and one owner. Everyone with its access token can 
 - [Back up and update a server](/deploy/server-operations/): preserve your data, restore it, and manage updates.
 - [Configuration reference](/deploy/configuration/): environment variables, defaults, and precedence.
 - [The desktop app](/deploy/desktop-app/): local runtime, data storage, and updates.
-- [Analytics and recordings](/deploy/analytics/): what Nod collects and how to control it.
+- [Analytics](/deploy/analytics/): what Nod collects and how to control it.
 - [Troubleshooting](/deploy/troubleshooting/): diagnose setup and runtime problems.

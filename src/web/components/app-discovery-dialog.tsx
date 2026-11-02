@@ -5,6 +5,7 @@ import { ServiceLogo } from './service-logo';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
+import { appConnectionAnalytics, takeAppConnectionAnalytics } from '../lib/analytics';
 import { desktopLinksAvailable, desktopRuntimeAvailable, openConnection } from '../lib/desktop';
 import {
   Button,
@@ -84,6 +85,13 @@ export function AppDiscoveryDialog({
   const connected = useRef(onConnected);
   connected.current = onConnected;
   const complete = useRef(false);
+  const report = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => {
+    report.current ??= takeAppConnectionAnalytics(id);
+  }, [id]);
+  function beginAnalytics() {
+    report.current ??= appConnectionAnalytics('apps').complete;
+  }
   const paths = discovery?.paths ?? [];
   const oauth = paths[0]?.auth === 'oauth';
   const names = paths.find((path) => path.kind === 'cli')?.env;
@@ -91,6 +99,7 @@ export function AppDiscoveryDialog({
   const finish = () => {
     if (complete.current) return;
     complete.current = true;
+    report.current?.();
     connected.current(discovery?.name ?? pending.current?.name ?? 'App');
   };
 
@@ -142,6 +151,7 @@ export function AppDiscoveryDialog({
         if (editing.current) return;
         const current = pending.current;
         if (value.oauthStatus) {
+          if (value.oauthStatus === 'connected') report.current?.();
           setError('');
           const replaced =
             current?.url && value.authorizationUrl && current.url !== value.authorizationUrl;
@@ -190,6 +200,7 @@ export function AppDiscoveryDialog({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (action.current || !discovery) return;
+    beginAnalytics();
     const form = event.currentTarget;
     const values = new FormData(form);
     const controller = new AbortController();
@@ -225,6 +236,7 @@ export function AppDiscoveryDialog({
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (action.current || !discovery) return;
+    beginAnalytics();
     const form = event.currentTarget;
     const values = new FormData(form);
     const token = String(values.get('token') ?? '').trim();
@@ -306,6 +318,7 @@ export function AppDiscoveryDialog({
   async function authorize(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (action.current || !discovery || unavailable) return;
+    beginAnalytics();
     editing.current = false;
     const enteredClientId = event
       ? String(new FormData(event.currentTarget).get('clientId') ?? '').trim()

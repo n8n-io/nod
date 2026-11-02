@@ -1,5 +1,6 @@
 import type { Message, Preferences } from '../../shared/contracts';
 import { desktopSettingsAvailable } from './desktop';
+import { captureAnalytics } from './analytics';
 
 const changed = 'nod:browser-notifications';
 const invalidatedChoices = new Set<string>();
@@ -212,6 +213,7 @@ export async function deliverBrowserNotification(
       notification.close();
       if (!isCurrent()) return;
       window.focus();
+      captureAnalytics('notification_opened', { kind: 'reply' });
       window.dispatchEvent(
         new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
       );

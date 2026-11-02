@@ -16,7 +16,11 @@ function currentEpoch() {
   return epoch;
 }
 
-export function savePreferences(change: Partial<AccountPreferences>, signal?: AbortSignal) {
+export function savePreferences(
+  change: Partial<AccountPreferences>,
+  signal?: AbortSignal,
+  source?: 'automatic',
+) {
   const epoch = currentEpoch();
   function checkAccount() {
     signal?.throwIfAborted();
@@ -30,6 +34,7 @@ export function savePreferences(change: Partial<AccountPreferences>, signal?: Ab
       const saved = await api<AccountPreferences>('/api/preferences', {
         method: 'PATCH',
         signal,
+        ...(source ? { headers: { 'x-nod-settings-source': source } } : {}),
         body: JSON.stringify(change),
       });
       checkAccount();

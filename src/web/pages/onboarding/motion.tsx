@@ -192,7 +192,7 @@ export function Footer({
   summary?: ReactNode;
 }) {
   return (
-    <div className="ob-footer" data-analytics-public>
+    <div className="ob-footer">
       {onBack && (
         <Button variant="ghost" onClick={onBack} disabled={busy}>
           {backLabel}

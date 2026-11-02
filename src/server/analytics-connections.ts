@@ -1,12 +1,8 @@
-import { parse } from 'tldts';
 import type { Analytics, AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 
-type ConnectionProperties = Extract<
-  AnalyticsEvent,
-  { event: 'nod_connection_changed' }
->['properties'];
+type ConnectionProperties = Extract<AnalyticsEvent, { event: 'connection_changed' }>['properties'];
 type ServiceFailureReason = NonNullable<
-  Extract<AnalyticsEvent, { event: 'nod_service_used' }>['properties']['failure_reason']
+  Extract<AnalyticsEvent, { event: 'service_used' }>['properties']['failure_reason']
 >;
 export type AnalyticsConnection = {
   app?: string;
@@ -17,28 +13,6 @@ export type AnalyticsConnection = {
   consentRevision?: string;
 };
 
-const domains: Record<string, string> = {
-  gmail: 'google.com',
-  googlecalendar: 'google.com',
-  googledrive: 'google.com',
-  googlesheets: 'google.com',
-  googledocs: 'google.com',
-  slack: 'slack.com',
-  notion: 'notion.so',
-  linear: 'linear.app',
-};
-
-export function analyticsDomain(endpoint: string) {
-  try {
-    const url = new URL(endpoint);
-    if (!['https:', 'http:'].includes(url.protocol)) return undefined;
-    const parsed = parse(url.hostname, { allowPrivateDomains: false });
-    return parsed.isIcann && !parsed.isIp && parsed.domain ? parsed.domain : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function properties(connection: AnalyticsConnection) {
   const app =
     connection.connection_method === 'managed_app' &&
@@ -47,13 +21,7 @@ function properties(connection: AnalyticsConnection) {
     /^[a-z][a-z0-9_-]{0,79}$/.test(connection.app)
       ? connection.app
       : 'custom';
-  const domain =
-    connection.connection_method === 'managed_app'
-      ? domains[app]
-      : connection.connection_method !== 'cli' && connection.endpoint
-        ? analyticsDomain(connection.endpoint)
-        : undefined;
-  return { app, ...(domain ? { domain } : {}), connection_method: connection.connection_method };
+  return { app, connection_method: connection.connection_method };
 }
 
 export function captureConnection(
@@ -64,7 +32,7 @@ export function captureConnection(
 ) {
   analytics?.(
     {
-      event: 'nod_connection_changed',
+      event: 'connection_changed',
       properties: {
         ...properties(connection),
         status,
@@ -130,7 +98,7 @@ export function captureServiceFailure(
 ) {
   analytics?.(
     {
-      event: 'nod_service_used',
+      event: 'service_used',
       properties: {
         ...properties(connection),
         ...(connection.operation_phase ? { operation_phase: connection.operation_phase } : {}),
@@ -155,7 +123,7 @@ export async function withServiceAnalytics<T>(
   const capture = (outcome: 'succeeded' | 'failed' | 'cancelled', error?: unknown) =>
     analytics?.(
       {
-        event: 'nod_service_used',
+        event: 'service_used',
         properties: {
           ...properties(connection),
           outcome,
@@ -178,30 +146,13 @@ export async function withServiceAnalytics<T>(
   }
 }
 
-export function createWebsiteVisits(analytics: Analytics, ownerId: string) {
-  const visits = new WeakMap<object, Set<string>>();
-  return (url: string, via: 'browser' | 'fetch', subagent: boolean) => {
-    const run = analytics.currentRun(ownerId);
-    const domain = analyticsDomain(url);
-    if (!run || !domain) return;
-    const seen = visits.get(run) ?? new Set<string>();
-    visits.set(run, seen);
-    if (seen.has(domain)) return;
-    seen.add(domain);
-    analytics.capture(ownerId, {
-      event: 'nod_website_visited',
-      properties: { domain, via, subagent },
-    });
-  };
-}
-
 export async function captureConnectionInventory(
   analytics: Analytics,
   ownerId: string,
   read: () => Promise<AnalyticsConnection[]>,
   models: () => Extract<
     AnalyticsEvent,
-    { event: 'nod_model_connection_observed' }
+    { event: 'model_connection_observed' }
   >['properties'][] = () => [],
 ) {
   const consent = analytics.consent(ownerId);
@@ -217,7 +168,7 @@ export async function captureConnectionInventory(
     analytics.capture(
       ownerId,
       {
-        event: 'nod_connection_observed',
+        event: 'connection_observed',
         properties: value,
       },
       { consentRevision: consent.revision },
@@ -226,7 +177,7 @@ export async function captureConnectionInventory(
   for (const properties of models())
     analytics.capture(
       ownerId,
-      { event: 'nod_model_connection_observed', properties },
+      { event: 'model_connection_observed', properties },
       { consentRevision: consent.revision },
     );
 }

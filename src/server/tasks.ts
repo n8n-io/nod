@@ -15,7 +15,8 @@ import {
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
-import { transaction } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
+import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
@@ -127,6 +128,7 @@ function taskFacts(task: Task, detail: boolean) {
 export function createTasks(options: {
   pool: Pool;
   ownerId: string;
+  analytics?: CaptureAnalytics;
   refresh?: () => void;
   clearBrowser?: (id: string) => Promise<void>;
 }) {
@@ -304,7 +306,13 @@ export function createTasks(options: {
     await recordInput(client, taskId, turnId);
   }
 
-  async function stop(client: PoolClient, id: string, threadId: string) {
+  async function stop(
+    client: PoolClient,
+    id: string,
+    threadId: string,
+    capture: CaptureAnalytics | undefined,
+    actor: 'owner' | 'agent',
+  ) {
     const task = (
       await client.query(
         `SELECT t.session_id FROM tasks t JOIN turns u ON u.id=t.turn_id
@@ -313,11 +321,21 @@ export function createTasks(options: {
       )
     ).rows[0];
     if (!task) throw failure('Task not found.', 404);
-    const cancelled = await cancelTurns(client, threadId, { sessionId: task.session_id });
-    await client.query(
+    const cancelled = await cancelTurns(
+      client,
+      threadId,
+      { sessionId: task.session_id },
+      capture,
+      actor,
+    );
+    const updated = await client.query(
       "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'",
       [id, ownerId],
     );
+    if (updated.rowCount)
+      afterCommit(client, () =>
+        capture?.({ event: 'task_finished', properties: { status: 'cancelled', actor } }),
+      );
     return cancelled;
   }
 
@@ -326,6 +344,7 @@ export function createTasks(options: {
     turn: TurnRef,
     raw: unknown,
     sourceMessageId?: string | null,
+    capture?: CaptureAnalytics,
   ) {
     const request = input.parse(raw);
     if (request.action === 'list') return { tasks: await read(client) };
@@ -344,13 +363,19 @@ export function createTasks(options: {
       if (current.session_id !== turn.threadId || !sourceMessageId)
         throw failure('Only the main chat can stop tasks.');
       if (!request.id) {
-        const cancelled = await cancelTurns(client, turn.threadId, { background: true });
+        const cancelled = await cancelTurns(
+          client,
+          turn.threadId,
+          { background: true },
+          capture,
+          'agent',
+        );
         const sessions = new Set(cancelled.tasks.map((task) => task.sessionId));
         const tasks = cancelled.tasks.map((task) => task.title);
         const otherRuns = cancelled.browsers.filter((id) => !sessions.has(id)).length;
         return { stopped: { tasks, otherRuns }, cancelled };
       }
-      const cancelled = await stop(client, request.id, turn.threadId);
+      const cancelled = await stop(client, request.id, turn.threadId, capture, 'agent');
       return { task: (await read(client, { id: request.id, closed: true }))[0], cancelled };
     }
     let id: string;
@@ -465,6 +490,13 @@ export function createTasks(options: {
       if (!updated.rowCount)
         throw failure(
           'The task is closed, its step index is out of range, or it has an owner update to read.',
+        );
+      if (request.action === 'finish')
+        afterCommit(client, () =>
+          capture?.({
+            event: 'task_finished',
+            properties: { status: request.status, actor: 'agent' },
+          }),
         );
     }
     return (await read(client, { id, closed: true }))[0];
@@ -628,9 +660,10 @@ export function createTasks(options: {
       return { task, events };
     });
     app.post<{ Params: { id: string } }>('/api/tasks/:id/stop', async (request) => {
+      const capture = snapshotAnalytics(options.analytics);
       const id = z.uuid().parse(request.params.id);
       const cancelled = await transaction(
-        async (client) => stop(client, id, (await lockThread(client)).id),
+        async (client) => stop(client, id, (await lockThread(client)).id, capture, 'owner'),
         pool,
       );
       await afterStop(cancelled);
@@ -657,6 +690,7 @@ export function createTasks(options: {
     replies: Array<{ text: string; replyToMessageId?: string; presentation: ChannelPresentation }>;
     afterCommit?: () => Promise<void>;
   }> {
+    const capture = snapshotAnalytics(options.analytics);
     const thread = await lockThread(client);
     const timeZone = (
       await client.query<{ time_zone: string | null }>(
@@ -681,8 +715,8 @@ export function createTasks(options: {
     const cancelled =
       command === 'stop'
         ? target
-          ? await stop(client, target.task_id, thread.id)
-          : await cancelTurns(client, thread.id)
+          ? await stop(client, target.task_id, thread.id, capture, 'owner')
+          : await cancelTurns(client, thread.id, {}, capture)
         : undefined;
     const tasks = await read(client, target ? { id: target.task_id, closed: true } : {});
     return {
@@ -706,9 +740,14 @@ export function createTasks(options: {
   }
 
   async function execute(turn: TurnRef, raw: unknown, sourceMessageId: string | null) {
+    const capture = snapshotAnalytics(options.analytics);
     const result = await transaction(async (client) => {
       await lockThread(client);
-      return withTurnLock(turn.turnId, () => act(client, turn, raw, sourceMessageId), client);
+      return withTurnLock(
+        turn.turnId,
+        () => act(client, turn, raw, sourceMessageId, capture),
+        client,
+      );
     }, pool);
     if ('cancelled' in result && result.cancelled) {
       const { cancelled, ...shown } = result;

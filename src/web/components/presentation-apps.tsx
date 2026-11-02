@@ -8,8 +8,15 @@ import { navigate } from '../lib/navigation';
 import { ConnectRow, SignInActions, signInIssue } from './connect-row';
 import { ServiceLogo } from './service-logo';
 import { Button, Notice } from './ui';
+import type { Ref } from 'react';
 
-export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 'apps' }> }) {
+export function ConnectApps({
+  visual,
+  analyticsRef,
+}: {
+  visual: Extract<Presentation, { type: 'apps' }>;
+  analyticsRef?: Ref<HTMLElement>;
+}) {
   const apps = usePageData<Connection[]>('/api/apps');
   const catalog = usePageData<Connection[]>('/api/apps/catalog');
   const entry = (slug: string) =>
@@ -33,7 +40,12 @@ export function ConnectApps({ visual }: { visual: Extract<Presentation, { type: 
   const unavailable = catalog.status === 403 && shown.length < visual.services.length;
   if (!shown.length && !error && !unavailable) return null;
   return (
-    <section className="message-presentation presentation-apps" aria-label={visual.title}>
+    <section
+      ref={analyticsRef}
+      className="message-presentation presentation-apps"
+      aria-label={visual.title}
+      data-analytics-private
+    >
       <div className="connect-rows">
         {shown.map((slug) => {
           const connection = entry(slug);

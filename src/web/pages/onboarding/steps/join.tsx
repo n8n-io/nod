@@ -29,7 +29,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
         method: 'POST',
         body: JSON.stringify({ email: address }),
       });
-      captureAnalytics('nod_onboarding_updates_subscribed');
+      captureAnalytics('onboarding_updates_subscribed');
       setStatus('saved');
     } catch (cause) {
       setError(errorMessage(cause));
@@ -59,7 +59,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
               target="_blank"
               rel="noreferrer"
               onClick={() =>
-                captureAnalytics('nod_onboarding_community_opened', { channel: 'discord' })
+                captureAnalytics('onboarding_community_opened', { channel: 'discord' })
               }
             >
               Join Discord
@@ -75,9 +75,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
               href={communityLinks.forum}
               target="_blank"
               rel="noreferrer"
-              onClick={() =>
-                captureAnalytics('nod_onboarding_community_opened', { channel: 'forum' })
-              }
+              onClick={() => captureAnalytics('onboarding_community_opened', { channel: 'forum' })}
             >
               Open forum
             </a>

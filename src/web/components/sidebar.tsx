@@ -197,7 +197,7 @@ export function Sidebar({
           }}
         >
           <BrandMark />
-          <span data-analytics-public>Nod</span>
+          <span>Nod</span>
         </a>
       </div>
       <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">
@@ -252,9 +252,7 @@ export function Sidebar({
                       <Icon size={20} solid={path === item.path} aria-hidden="true" />
                       {item.path === '/' && unreadBadge}
                     </span>
-                    <span className="nav-label" data-analytics-public>
-                      {item.label}
-                    </span>
+                    <span className="nav-label">{item.label}</span>
                   </a>
                 </Tooltip>
               </li>
@@ -336,7 +334,7 @@ export function Sidebar({
                     <span className="nav-icon">
                       <Icon size={20} solid={path === item.path} aria-hidden="true" />
                     </span>
-                    <span data-analytics-public>{item.label}</span>
+                    <span>{item.label}</span>
                     {item.path === '/' && unreadBadge}
                   </a>
                 );
@@ -354,7 +352,7 @@ export function Sidebar({
                   }}
                 >
                   <Settings size={20} aria-hidden="true" />
-                  <span data-analytics-public>Settings</span>
+                  <span>Settings</span>
                 </button>
               </div>
             )}
@@ -391,9 +389,7 @@ export function Sidebar({
               onClick={(event) => account.onSettings('General', event.currentTarget)}
             >
               <Settings size={20} solid={path.startsWith('/settings')} aria-hidden="true" />
-              <span className="nav-label" data-analytics-public>
-                Settings
-              </span>
+              <span className="nav-label">Settings</span>
             </button>
           </Tooltip>
         )}

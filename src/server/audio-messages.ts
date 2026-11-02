@@ -260,8 +260,6 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
         },
       );
       refresh();
-      const replaySession = z.uuid().safeParse(request.headers['x-nod-replay-session']).data;
-      if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
       return { ...submitted, messageText: text, audioCaption: input.text };
     } catch (error) {
       if (!submitting && !signal.aborted && error instanceof Error && !('retryable' in error))

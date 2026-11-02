@@ -24,7 +24,11 @@ import {
   removeConnection,
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
-import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
+import {
+  analyticsForCurrentSession,
+  appConnectionAnalytics,
+  captureAnalytics,
+} from '../lib/analytics';
 import { Button, Loading, Notice, SearchField } from '../components/ui';
 
 function accountLabel(account: Connection) {
@@ -74,14 +78,19 @@ export function Apps({
   } = usePageData<Connection[]>('/api/apps/catalog');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
-  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view }), []);
+  const seen = useRef(false);
+  useEffect(() => {
+    if (seen.current) return;
+    seen.current = true;
+    captureAnalytics('tab_viewed', { page: 'apps', tab: view });
+  }, []);
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'apps', tab: next });
+    if (next !== view) captureAnalytics('tab_viewed', { page: 'apps', tab: next });
     setView(next);
   };
   useEffect(() => {
     if (loadError || (catalogError && catalogStatus !== 403))
-      captureAnalytics('nod_ui_error', { area: 'apps', action: 'load' });
+      captureAnalytics('ui_error', { area: 'apps', action: 'load' });
   }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -96,12 +105,16 @@ export function Apps({
       connection: Connection;
       entry: 'apps' | 'manage';
       addAccount: boolean;
+      report(): void;
     }
   >();
   const [manualMcp, setManualMcp] = useState(false);
   const manualMcpTrigger = useRef<HTMLButtonElement>(null);
   const manualMcpOrigin = useRef<HTMLButtonElement | null>(null);
+  const manualMcpAnalytics = useRef<ReturnType<typeof appConnectionAnalytics> | null>(null);
   function openManualMcp(trigger: HTMLButtonElement) {
+    captureAnalytics('app_connect_clicked', { entry: 'apps', result: 'opened' });
+    manualMcpAnalytics.current = appConnectionAnalytics('apps');
     manualMcpOrigin.current = trigger;
     setManualMcp(true);
   }
@@ -210,6 +223,7 @@ export function Apps({
     const settle = (outcome: NonNullable<AppSignIn['outcome']>) => {
       if (controller.signal.aborted) return;
       controller.abort();
+      if (outcome === 'connected') signIn.report();
       actionRequest.current?.abort();
       actionRequest.current = null;
       setBusy('');
@@ -327,7 +341,8 @@ export function Apps({
   ) {
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
-    capture('nod_app_connect_clicked', { entry, result: 'opened' });
+    const completion = appConnectionAnalytics(entry);
+    capture('app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
@@ -360,6 +375,7 @@ export function Apps({
       entry,
       addAccount,
       opened: false,
+      report: completion.complete,
     };
     setSignIn(context);
     try {
@@ -395,6 +411,7 @@ export function Apps({
         )
           throw new Error('The app sign-in could not be opened. Try again.');
         popup?.close();
+        completion.transfer(proposal.searchParams.get('connect')!);
         window.history.pushState(null, '', `${proposal.pathname}${proposal.search}`);
         setDiscoveryId(proposal.searchParams.get('connect'));
         setManageService(null);
@@ -431,7 +448,7 @@ export function Apps({
           ? restarting
           : { ...context, outcome: 'failed', error: errorMessage(cause) },
       );
-      capture('nod_ui_error', { area: 'apps', action: 'connect' });
+      capture('ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -460,7 +477,7 @@ export function Apps({
       void refresh();
     } catch (cause) {
       if (request.signal.aborted) return;
-      capture('nod_ui_error', { area: 'apps', action: 'disconnect' });
+      capture('ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
       throw cause;
     } finally {
@@ -830,8 +847,13 @@ export function Apps({
       />
       {manualMcp && (
         <ManualMcpDialog
-          onClose={() => setManualMcp(false)}
+          onClose={() => {
+            manualMcpAnalytics.current = null;
+            setManualMcp(false);
+          }}
           onCreated={(id) => {
+            manualMcpAnalytics.current?.transfer(id);
+            manualMcpAnalytics.current = null;
             window.history.pushState(null, '', `/apps?connect=${id}`);
             dialogService.current = '';
             setDiscoveryId(id);

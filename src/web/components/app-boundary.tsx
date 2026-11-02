@@ -17,7 +17,7 @@ class AppBoundary extends Component<
   componentDidCatch(error: Error) {
     recordFeedbackError('render', error);
     desktopRendererReady();
-    captureAnalytics('nod_ui_error', { area: 'application', action: 'render' });
+    captureAnalytics('ui_error', { area: 'application', action: 'render' });
   }
   render() {
     if (this.state.failed)

@@ -175,7 +175,7 @@ export function PersonalConnection({
     } catch (cause) {
       if (controller.signal.aborted) return;
       void refreshApps();
-      analyticsForCurrentSession()('nod_ui_error', { area: 'onboarding', action: 'disconnect' });
+      analyticsForCurrentSession()('ui_error', { area: 'onboarding', action: 'disconnect' });
       throw cause;
     } finally {
       if (request.current === controller) request.current = null;
@@ -206,11 +206,7 @@ export function PersonalConnection({
   }
 
   return (
-    <section
-      className={`ob-step ob-${kind}`}
-      data-analytics-public
-      onClick={done ? undefined : skip}
-    >
+    <section className={`ob-step ob-${kind}`} onClick={done ? undefined : skip}>
       <Messages
         revealed={revealed}
         typing={typing}

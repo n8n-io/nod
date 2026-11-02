@@ -1,224 +1,271 @@
 ---
-title: Analytics and recordings
-description: What usage data Nod collects, how to turn it off, and the rules for masked session recordings.
+title: Analytics
+description: What usage data Nod collects, how to turn it off, and what its measurements can explain.
 sidebar:
   order: 4
 ---
 
-This page explains what usage data Nod collects, how to turn it on or off, and what session recordings never show.
+Nod shares bounded product events so the team can understand usage, reliability, and cost. These analytics never capture screen recordings or session replays.
 
-Usage data is on by default for each new owner, and you can turn it off at any time. Nod sends product events and masked session recordings to the Nod team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project.
+Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Nod never sends what you write, what Nod replies, what your apps return, or what you type into a form. Events describe what kind of thing happened, using fixed lists of values, counts and durations.
+Messages, generated content, connected-app results, credentials, and free-form input are excluded from analytics events. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
-## Turn usage data on or off
+## Turn usage sharing on or off
 
-**Share usage data** is on for a new owner. Turn it off, or back on, in **Settings → General**. Onboarding doesn't ask; its privacy step says that usage data is shared and links to this page, which lists everything that is sent. Owners who already saved a choice keep it. Usage events and recordings start only in the app; the native Welcome window sends neither.
+Change **Share usage data** in **Settings → Privacy & data**. Existing owners keep their saved choice. Onboarding's privacy step explains sharing; the native Welcome window sends no events.
 
-The deployment has a switch too. Nod collects only when both are on, and `NOD_ANALYTICS_ENABLED=false` always wins.
+The deployment must also allow collection. `NOD_ANALYTICS_ENABLED=false` always disables it.
 
 ```mermaid
 flowchart LR
-  deploy{{Deployment<br/>allows it?}} -- yes --> owner{{Share usage data<br/>still on?}}
+  deploy{{Deployment<br/>allows it?}} -- yes --> owner{{Share usage data<br/>on?}}
   deploy -- no --> off[Nothing sent]:::stop
   owner -- no --> off
-  owner -- yes --> on[Events and<br/>masked recordings]:::go
+  owner -- yes --> on[Product events]:::go
 ```
 
 | Setting                     | Effect                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------- |
-| `NOD_ANALYTICS_ENABLED`     | `false` turns off events and recordings. `true` turns them on, even in development.       |
-| `NOD_ANALYTICS_ENVIRONMENT` | Sets the event label to `production` or `development` without turning anything on or off. |
+| `NOD_ANALYTICS_ENABLED`     | `false` disables analytics events. `true` enables availability, including in development. |
+| `NOD_ANALYTICS_ENVIRONMENT` | Labels source-install events `production` or `development`; it doesn't enable collection. |
 
-Restart Nod after you change either one.
+Restart Nod after changing either variable. To disable the separate feedback collector too, set `NOD_FEEDBACK_ENABLED=false`. Model providers, connected services, and software updates have separate network access.
 
-To disable both upstream analytics and feedback, set `NOD_ANALYTICS_ENABLED=false` and `NOD_FEEDBACK_ENABLED=false` in the environment used to start Nod. In the desktop app, quit it completely and launch it with those variables. This stops those two collectors, including feedback status checks. Model providers, connected services and software updates have separate network access; this is not an offline mode.
-
-## Identity
-
-Nod counts installations, not people. Two installations count as two, and a shared one counts as one.
-
-| Runtime                      | Identity                                                      | Available by default                                                          |
-| ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Source or self-hosted server | `local:<installation UUID>` in `<NOD_DATA_ROOT>/analytics-id` | With `NODE_ENV=production`, including `pnpm start` and the self-hosting stack |
-| Local desktop runtime        | `local:<installation UUID>` in the desktop profile            | In packaged apps, not in development                                          |
-
-Web and desktop clients connected to the same server use that server's installation identity. A separate local desktop assistant has its own identity.
-
-"Available" still needs the owner's **Share usage data** switch to be on. PostHog creates no person profile and doesn't look up your location from your IP address.
+Opt-out drops unsent events. Turning sharing back on doesn't revive events from the earlier sharing period. It can't recall events already transmitted.
 
 ### Stop sharing or delete past data
 
-Turn off **Share usage data** in **Settings → General** to stop sending. Turning it off doesn't delete data PostHog already has. To ask for that, use **Send feedback** in the app and ask for your analytics data to be deleted. The Nod team handles the request.
+Turning sharing off doesn't delete past PostHog data. Use **Send feedback** to request deletion from the Nod team.
 
-## Internal builds
+## Identity and environments
 
-Events say `environment=development` unless they come from a release build:
+Nod counts installations, not people. Two installations count as two; a shared installation counts as one. Clients connected to one server share its pseudonymous `local:<installation UUID>` identity.
 
-| Runtime        | `production` when                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Desktop app    | A packaged app built by the release workflow with a plain `x.y.z` version. Local and pre-release builds are `development` |
-| Source install | `NODE_ENV=production` and `NOD_APP_VERSION` isn't a pre-release such as `1.2.0-beta.1`                                    |
+| Runtime                      | Identity storage               | Collection available by default |
+| ---------------------------- | ------------------------------ | ------------------------------- |
+| Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
+| Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
-`NOD_ANALYTICS_ENVIRONMENT` overrides the label for source installs. Dashboards read only `production`.
+The owner's sharing choice still applies. Nod disables IP geolocation. Events don't create PostHog person profiles or add names and contact details.
 
-## What never leaves Nod
+Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 
-- Message text, Nod's replies, task titles, summaries and quotes.
-- Tool arguments, tool results, app data, web pages and files.
-- Names, email addresses, account names, phone numbers and IDs of your threads, turns or messages.
-- Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites Nod visits, signs in to or buys from, and links you open from a reply, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
-- Raw error text, console output, request headers and bodies.
-- Vault values, card details, codes, keys, order details and shop accounts. A payment sends only its amount, currency, status and the shop's registrable domain.
-- Model names from an OpenAI-compatible server you run yourself. They're sent as `custom`.
-- Azure OpenAI endpoints and deployment names, and Amazon Bedrock Regions. An Azure connection reports the model you chose for it.
+## What is excluded
 
-## Events
+- Messages, replies, task titles, summaries, quotes, and answer-choice text.
+- Tool arguments and results, app records, web pages, file contents, file names, and paths.
+- Names, contact details, account names, and private owner, thread, turn, and message IDs.
+- Website domains, URLs, endpoint addresses, private hostnames, and IP addresses.
+- Vault values and login inventories, payment amounts and currencies, card details, codes, keys, and order details.
+- Raw errors, console output, and network headers or bodies.
+- Owner-configured model names and endpoints. These report bounded categories such as `compatible` and `custom`.
 
-Every event carries `analytics_schema=nod_v3` and `environment`. Packaged releases add `app_version`.
+Task categories describe the inferred purpose of a request. They don't establish completed goals, usefulness, satisfaction, or frustration.
 
-- **UI events** and recordings add `surface` (`web` or `desktop`) and a normalized `route`.
-- **Server events** add `capture_source=server`.
-- **Events within a turn** carry a random `run_id`. It's separate from Nod's private turn and conversation IDs, and joins a turn's tools, model requests and services.
-- **Events within a web turn** also carry `$session_id`, the PostHog recording session of the browser tab that sent the message.
+## Event properties
 
-Every event is checked against an explicit schema before it's sent. Unknown events, unknown properties and values outside the lists below are dropped.
+Events use `analytics_schema=v4`, `environment`, and `app_version` when available. This schema starts fresh; earlier analytics aren't migrated into its dashboards.
 
-### What you do in the app
+UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`.
 
-| Event                               | When                                               | Properties                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$pageview`                         | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/prepared`, `/usage`, `/vault`, `/settings`, `/browser`, `/credentials`, `/payments` or `/not-found`                                                                                                                                                                                                                                                           |
-| `$snapshot`                         | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                                                                                                                                                                                                                                             |
-| `nod_onboarding_step_viewed`        | An onboarding step appears                         | `step`: `welcome`, `email`, `about`, `brain`, `privacy`, `join`; `direction`: `forward`, `back`                                                                                                                                                                                                                                                                                                                              |
-| `nod_onboarding_step_skipped`       | You skip an onboarding step                        | `step`: `email`                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `nod_onboarding_profile_answered`   | You finish the About you step                      | `scope`: `work`, `personal`, `both`, `skipped`; `role`: `owner`, `freelance`, `agency`, `engineering`, `product`, `gtm`, `manager`, `student`, `not_working`, `other`, `skipped`; `company_size`: `solo`, `2_10`, `11_100`, `101_1000`, `1000_plus`, `skipped`, `not_asked`; `job_email`, `job_calendar`, `job_follow_ups`, `job_errands`, `job_research`, `job_routines`, `job_other` as true or false. Never what you type |
-| `nod_onboarding_community_opened`   | You open Discord or the forum from onboarding      | `channel`: `discord`, `forum`                                                                                                                                                                                                                                                                                                                                                                                                |
-| `nod_onboarding_updates_subscribed` | Nod accepts your email for updates                 | None. Never the address                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `nod_settings_viewed`               | A settings category appears                        | `tab`: `general`, `notifications`, `models`, `voice`, `app_connections`, `memory`, `privacy`                                                                                                                                                                                                                                                                                                                                 |
-| `nod_tab_viewed`                    | A tab inside a page appears or you switch to it    | `page`: `apps`; `tab`: `all`, `connected`                                                                                                                                                                                                                                                                                                                                                                                    |
-| `chat_message_sent`                 | The server accepts a message you sent from the app | `has_attachments`, `is_reply`; `input`: `text`, `voice`; `source`: `composer`, `task_card`, `ask_nod`, `task_reply`, `answer_choice`                                                                                                                                                                                                                                                                                         |
-| `answer_choices_viewed`             | Answer choices become visible                      | `multiple`; `option_count`: `1` to `6`                                                                                                                                                                                                                                                                                                                                                                                       |
-| `answer_choices_selected`           | The server accepts selected answers                | `multiple`; `option_count` and `selected_count`: `1` to `6`                                                                                                                                                                                                                                                                                                                                                                  |
-| `nod_chat_stop_requested`           | You select stop                                    | None                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `nod_task_card_started`             | You start a first-chat task card                   | `kind`: `immediate`, `ongoing`; `position`: `0` to `5`                                                                                                                                                                                                                                                                                                                                                                       |
-| `nod_setup_link_clicked`            | You open a setup link in a reply                   | `setup`: `app`, `vault`, `browser`                                                                                                                                                                                                                                                                                                                                                                                           |
-| `nod_link_opened`                   | You open a link from a reply                       | Registrable `domain`; `source`: `text` or `tooltip`. Older clients may send `preview` or `player` with a row `position`, 1 to 20. Never the address                                                                                                                                                                                                                                                                          |
-| `nod_browser_handoff_action`        | You use a control on a browser Nod handed to you   | `action`: `done`, `back`, `reload`, `expand`, `collapse`                                                                                                                                                                                                                                                                                                                                                                     |
-| `nod_message_reaction_changed`      | You add, change or remove a reaction               | `operation`: `add`, `remove`, `change`; `reaction`: `thumbs_up`, `heart`, `joy`, `party`, `wow`, `pray`, `thumbs_down`, `other`; `method`: `quick`, `picker`, `double_click`, `menu`, `pin`; `role`                                                                                                                                                                                                                          |
-| `nod_message_action`                | You copy or reply to a message                     | `action`: `copy`, `reply`; `role`: `assistant`, `user`; `method`: `button`, `context_menu`                                                                                                                                                                                                                                                                                                                                   |
-| `nod_attachment_added`              | You add files to a message                         | `method`: `picker`, `drop`, `paste`; `kind` of the first file: `image`, `pdf`, `other`; `count`: `1`, `2-5`, `6+`                                                                                                                                                                                                                                                                                                            |
-| `nod_task_action`                   | You use a task's controls                          | `action`: `expand`, `stop`, `show_in_chat`, `show_activity`, `reply`                                                                                                                                                                                                                                                                                                                                                         |
-| `nod_app_connect_clicked`           | You start connecting an app                        | `entry`: `apps`, `chat`, `onboarding`, `manage`; `result`: `opened`, `needs_access_setup`                                                                                                                                                                                                                                                                                                                                    |
-| `nod_model_selected`                | A model choice you made is saved                   | `provider`: a supported provider ID or `other`; `entry`: `settings`, `onboarding`; `recommended`. Never the model name                                                                                                                                                                                                                                                                                                       |
-| `nod_ui_error`                      | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself                                                                                                                                                                                                                                    |
+Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
-Answer-choice views count once per question in a sharing period, when the choices are in the viewport and the app is visible. These events never include questions, option text, or their IDs. Failed or unavailable submissions, option toggles, and custom answers don't count as accepted selections.
+The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`).
 
-Usage data is on by default, so onboarding step events are sent from the welcome screen on. The native welcome is not recorded. Setup finishes after the last required step. If you turned usage sharing off, onboarding sends nothing. Email can be skipped. The About you answers are counted only as the fixed choices above, once per finished step; the words you type under **Something else** stay in your memory note.
+Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating execution mode. The separate `task_type` describes the request's purpose. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
-### What Nod does
+Owner-authored messages in Tasks are owner-requested background work. Agent-created child tasks can also retain the original owner request, so `owner_requested=true` doesn't establish a new owner message. Work category and owner request are separate dimensions; autonomous event and schedule starts aren't owner-requested.
 
-Turns and chat:
+Autonomous work outside a turn uses `work_type=background`, `owner_requested=false`, and `system_activity` (`memory_learning`, `onboarding`, or `writing_style`). It has no run ID. Model requests without an established context use `work_type=unclassified` so their usage remains visible; this doesn't mean they were owner-requested or free.
 
-| Event                      | When                                            | Properties                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| -------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nod_turn_started`         | A queued turn starts                            | `source`: `user`, `schedule`, `event`, `resume`, `task`; `channel`: `web`, `telegram`, `whatsapp`, `other`; `background`; `model_provider` and `model` of the selected model, when one is set                                                                                                                                                                                                                                                                             |
-| `nod_turn_completed`       | A turn finishes or exits                        | Turn properties plus `outcome`: `succeeded`, `waiting_credentials`, `waiting_user`, `failed`, `cancelled`, `interrupted`, `skipped`; `duration_ms`, `queue_duration_ms`; `waiting_reason`: `question`, `approval`, `credentials`; `failure_reason`: `spending_limit`, `model` (the model provider returned an error), `unknown`. Here `model_provider` and `model` name the model the turn's own agent requests used, or the selected model at turn start if it made none |
-| `nod_chat_stopped`         | The server accepts a stop                       | None                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `nod_task_stopped`         | The server stops a background task              | None                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `nod_conversation_reset`   | The server finishes a conversation reset        | None                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `nod_onboarding_completed` | The server saves the first completed onboarding | `model_provider` of the selected model, when one is set                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `nod_feedback_sent`        | The server accepts feedback you send            | `category`: `bug`, `feature`, `other`; `has_attachments`, `has_report`. Never the feedback itself                                                                                                                                                                                                                                                                                                                                                                         |
+Server events must pass a strict schema. UI events keep only allowed properties and values. Public provider and app names come from supported catalogs; custom connections report `custom`.
 
-A crash can leave a started turn without a completion event, and one turn can take several queued messages. Don't read turn counts as message counts. `skipped` is an activity check that had nothing new to read.
+Model events use one `provider` property. Onboarding completion and execution starts report the selected provider. Execution completion reports the last agent provider used, when observed. Each `model_used` event identifies the provider for that request, so model switches remain visible.
 
-Tools, confirmations and models:
+### Setup and app interaction
 
-| Event                           | When                                                                                    | Properties                                                                                                                                                                                                                                                                                                         |
-| ------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `nod_tool_used`                 | A tool call finishes, in the main session or a subagent                                 | `tool`: `apps`, `ask_user`, `browser`, `browser_session`, `create_audio`, `delegate`, `manage_apps`, `manage_personal_context`, `pay`, `react_to_message`, `send_message`, `share_file`, `sign_in`, `skills`, `task`, `workspace`, `web`, `other`; `outcome`; `duration_ms`; `subagent`                            |
-| `nod_confirmation_changed`      | Nod asks for your yes, or the question closes                                           | `status`: `asked`, `approved`, `declined`, `executed`, `expired`, `uncertain`; `action_kind`: `app`, `browser`, `sign_in`, `settings`, `memory`; `source` of the turn that asked                                                                                                                                   |
-| `nod_model_used`                | A model request finishes                                                                | `provider`: a supported provider ID, `typesafe`, or `other`; `model`; `purpose`: `agent`, `memory`, `review`, `tasks`, `analytics` (retired conversation analysis); `outcome`; `input_tokens`, `output_tokens`, `cached_input_tokens`, `cost_usd`; `pricing`: `api`, `plan_estimate`, `unavailable`; `duration_ms` |
-| `nod_model_connection_changed`  | A model connection is saved, removed, or its save or sign-in fails                      | `provider`: a supported provider ID; `method`: `api_key`, `subscription`, `oauth`; `status`: `connected`, `disconnected`, `failed`. Never the key, address or account                                                                                                                                              |
-| `nod_model_connection_observed` | Each model connection, when sharing turns on, at startup and after model changes        | `provider`, `method`, `selected`; `model` and `effort`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` on the selected connection only                                                                                                                                                                  |
-| `nod_website_visited`           | Nod's browser shows a page, or a web fetch reads one, at most once per website per turn | Registrable `domain`; `via`: `browser`, `fetch`; `subagent`. Never the address, page or search text                                                                                                                                                                                                                |
+| Event                                             | What it records                                                                                                                                         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$pageview`                                       | Normalized app route. URLs use the placeholder `https://app.example` host.                                                                              |
+| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `about`, `brain`, `privacy`, `join`) and direction. Native Welcome isn't observed.                                            |
+| `onboarding_step_skipped`                         | Skipped `email` step.                                                                                                                                   |
+| `onboarding_profile_answered`                     | Finished About you: scope, role, company size and one true/false per take-off-my-plate choice, `skipped`, `not_asked` or `other` instead of typed text. |
+| `onboarding_community_opened`                     | Discord or forum opened from Join us.                                                                                                                   |
+| `onboarding_updates_subscribed`                   | Email updates sign-up accepted, without the address.                                                                                                    |
+| `onboarding_completed`                            | First saved completion and selected model provider, when available.                                                                                     |
+| `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                                                                |
+| `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                             |
+| `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.                                                    |
+| `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source.                                            |
+| `chat_stop_requested`                             | Stop requested in the app.                                                                                                                              |
+| `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                                                                  |
+| `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                                                                   |
+| `browser_handoff_action`                          | Successful done, back, reload, expand, or collapse operation.                                                                                           |
+| `message_reaction_changed`, `message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                                                           |
+| `attachment_added`                                | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                                                            |
+| `app_connect_clicked`, `app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                                                                          |
+| `model_selected`                                  | Provider, settings/onboarding entry, and whether the recommendation was chosen.                                                                         |
+| `ui_error`                                        | Fixed area and action, without error text.                                                                                                              |
+| `feedback_sent`                                   | Bug/feature/other category and attachment/report booleans, without feedback content.                                                                    |
 
-Provider IDs come from the fixed [supported connection list](/connect/models/#set-connections-in-server-settings), plus `compatible` for owner-configured endpoints. Arbitrary provider names, endpoints, cloud account IDs, gateway IDs, and credentials are never analytics properties. A model connection's `connected` status means its configuration was saved; providers using a bundled catalog check access on first use.
+Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
-`workspace` groups the file and shell tools inside Nod's workspace, and `web` groups web search and page fetches. `model` is the provider's public model name for hosted providers, and `custom` for an OpenAI-compatible server. The same rule applies to `model` on turn and model connection events. `cost_usd` is the provider's charge, or the estimated API price for plan usage. `input_tokens` includes cached input. `cached_input_tokens` is the part read from the provider's prompt cache, when the provider reports it. `duration_ms` is the elapsed time Nod measures for handling the request and can include request setup or reporting overhead.
+Connecting email is optional. About you answers are counted only as fixed choices; words typed under **Something else** stay in the owner's memory note. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
-Settings, memory and schedules:
+### Runs, models, and connected services
 
-| Event                  | When                                                              | Properties                                                                                                                                                              |
-| ---------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nod_settings_updated` | A settings change succeeds, including a model selection from chat | `section`: `account`, `preferences`, `channels`, `models`, `trust`, `memory`; `operation`: `update`, `connect_started`, `disconnect`; `channel`: `telegram`, `whatsapp` |
-| `nod_memory_changed`   | A memory note or learned skill is saved or removed                | `kind`: `note`, `skill`; `operation`: `save`, `forget`, `archive`, `clear`; `actor`: `owner`, `agent`, `background`. Never the note                                     |
-| `nod_schedule_changed` | A schedule change commits                                         | `operation`: `create`, `update`, `delete`; `schedule_kind`: `once`, `recurring`; bounded `cadence`; `actor`: `user`, `agent`                                            |
+| Event                                                   | What it records                                                                                                                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `turn_started`                                          | Source, channel, background flag, execution mode, owner-requested flag, selected public model when available, and task taxonomy version when supported.                              |
+| `turn_completed`                                        | The same context, outcome, execution/queue milliseconds, and bounded waiting or failure reason.                                                                                      |
+| `task_classified`                                       | One fixed task purpose, classification status, and taxonomy version for an execution segment.                                                                                        |
+| `task_finished`                                         | Committed task status (`done` or `cancelled`) and actor (`owner` or `agent`).                                                                                                        |
+| `prepared_work_saved`                                   | A changed preparation or saved offer message, with `prepared` or `notified` outcome.                                                                                                 |
+| `prepared_work_updated`                                 | Changed owner-requested control: `useful`, `not_useful`, `handled`, `dismiss`, or `snooze`.                                                                                          |
+| `chat_stopped`, `task_stopped`, `conversation_reset`    | Server-accepted stop or completed reset.                                                                                                                                             |
+| `tool_used`                                             | Fixed tool category, outcome, milliseconds, and subagent flag.                                                                                                                       |
+| `model_used`                                            | Provider/public model, purpose (`agent`, `memory`, `review`, `tasks`, `task_classification`), outcome, token counts, milliseconds, and estimated `cost_usd` when priced.             |
+| `model_connection_changed`, `model_connection_observed` | Provider, API-key/subscription/OAuth method, status or selected-model state, and bounded effort.                                                                                     |
+| `connection_changed`, `connection_observed`             | Public app or `custom`, connection method, and status/bounded failure reason where applicable.                                                                                       |
+| `service_used`                                          | App, method, outcome, milliseconds, bounded failure reason, and optional preparation phase.                                                                                          |
+| `source_read`                                           | Source category (`connected_app`, `tasks`, `other`), discovery/record-read operation, outcome, milliseconds, and bounded record/unavailable counts.                                  |
+| `confirmation_changed`                                  | Asked/approved/declined/executed/expired/uncertain, fixed action kind, and turn source.                                                                                              |
+| `secure_entry_changed`                                  | Sign-in/payment/code kind and requested/superseded/approved/submitted/failed/uncertain state.                                                                                        |
+| `settings_updated`                                      | Accepted settings request by section, operation, and optional channel; can include unchanged writes. Channel operations name the request, not confirmed connection or disconnection. |
+| `setting_changed`                                       | Committed setting change by fixed setting, owner/agent/system actor, and bounded state when available. No free-form values.                                                          |
+| `schedule_changed`                                      | Create/update/delete, once/recurring kind, bounded cadence, and user/agent actor.                                                                                                    |
+| `memory_changed`                                        | Note/skill, save/forget/archive/clear, and owner/agent/background actor.                                                                                                             |
+| `vault_changed`, `vault_imported`                       | Login/card kind and operation, or number imported. No domains or inventory.                                                                                                          |
 
-Apps, connections and Vault:
+An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelled`, `interrupted`, or `skipped`. Success means execution finished; it doesn't verify the whole task. A crash can leave a start without a completion. One turn can handle several queued messages.
 
-| Event                      | When                                                                                                       | Properties                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nod_connection_changed`   | A connection is attempted, saved, fails, is removed                                                        | Validated public catalog `app` or `custom`, public `domain` when available, `connection_method`, `status`, bounded `failure_reason`                                                                                                                                                                                                                                        |
-| `nod_service_used`         | A managed app, HTTP, MCP, CLI or saved browser session operation finishes                                  | App, domain, method, outcome, `duration_ms`, bounded `failure_reason`, optional `operation_phase`; no arguments, action names or results                                                                                                                                                                                                                                   |
-| `nod_connection_observed`  | A connected app or access path is observed at startup, when sharing turns on or after changes              | Validated public app, normalized domain when available, and connection method                                                                                                                                                                                                                                                                                              |
-| `nod_vault_changed`        | A Vault item is actually created, changed or removed                                                       | `item_type`: `login`, `card`; `operation`; `source` when known; normalized public `domain` for logins. No values, labels, account names or card details                                                                                                                                                                                                                    |
-| `nod_vault_imported`       | New logins are committed by an import                                                                      | Batches of up to 100 normalized `domains`, one entry per imported login; `unavailable` when no public domain can be derived. No login values or names                                                                                                                                                                                                                      |
-| `nod_secure_entry_changed` | A sign-in, payment or verification code request opens, is entered, fails, becomes uncertain or is replaced | `kind`: `sign_in`, `payment`, `code`; `status`: `requested`, `superseded` (a newer request replaced it), `submitted`, `failed`, `uncertain` for every kind, plus `approved` when you approve a payment with the card's security code; registrable `domain` of the sign-in page or shop; exact `amount` and `currency` of a payment. Never the card, order, item or account |
+Task completion records a declared status, not verified success. `notified` means an offer message was saved, not that an external notification arrived or was read. Prepared-work feedback records the requested action, which can be performed through Nod's tools. It isn't a survey or a rating for every task. Rejected, rolled-back, and unchanged writes don't count. These events exclude task identifiers, titles, prepared content, and feedback text.
 
-## Turn timing
+`duration_ms` measures execution time. `queue_duration_ms` measures waiting to start. They exclude time awaiting an owner response between segments. Join related measurements using the installation identity and analytics `run_id`.
 
-Product analytics use events from the server and app. Nod does not read conversations with a model for analytics. It does not infer task categories, completed goals or frustration.
+`cost_usd` is a model price estimate, including API-equivalent estimates for plan usage. Check `pricing` (`api`, `plan_estimate`, `unavailable`) before interpreting totals. Unpriced usage isn't free. Browser runtime fees, independent integration charges, and who pays aren't measured.
 
-`duration_ms` measures one execution segment. `queue_duration_ms` measures its wait to start. A successful turn does not prove that the whole requested job is complete.
+An explicitly reported API cost of zero remains zero. A zero estimate without a reported charge is unpriced and has no `cost_usd`. Positive plan estimates remain priced even when the provider reports no charge. Costs are rounded to six decimal places after pricing is classified, so a tiny known cost can display as zero.
 
-The shared `run_id` links model, tool and service events from one turn. It covers delegated work. Parallel turns have separate IDs. Join on both the pseudonymous owner and `run_id`. A shared run does not prove which service caused a failure.
+Saved connections don't prove access works. Successful service calls don't prove task success. Connection observations occur at startup, when sharing turns on, and after changes; they aren't a live account inventory. Source reads measure observed calls and bounded results, without source identifiers or content.
 
-App messages can link their events to that tab's masked recording. Other channels and resumed turns have no recording link. A restart loses an in-memory recording link.
+Setting changes exclude rejected and unchanged writes. Turning usage sharing off prevents capture of that change too. Local browser notification choices are `enabled`, `disabled`, or `dismissed`. `dismissed` means saving **Not now**, not closing a delivered notification. Theme values are `light`, `dark`, or `system`. Launch-at-login and desktop notifications use `enabled` or `disabled`.
 
-On upgrade, Nod removes your local classification records. It keeps task state and the cost ledger. Historical data already sent to PostHog stays there until deleted.
+Server settings cover theme, conversation traces, usage sharing, voice and speech replies, notification rules, personal rules, timezone, locale, hour cycle, quiet hours, paused proactivity, memory controls, spending limits, and model/effort selection. Values are bounded states such as on/off, configured/default/cleared, or a fixed mode. Voice names, rule text, exact times, locale/timezone values, and spending amounts are excluded.
 
-Older events can contain inferred task labels. New turns do not emit `nod_task_started`, `nod_task_linked`, `nod_task_updated`, `nod_task_analysis` or `nod_frustration_signal`. Dashboards must show those as historical data.
+The `system` setting actor identifies app-reported automatic browser-timezone initialization. It isn't an owner choice or an authorization signal.
 
-The retired `follow_up` tool value remains valid for older saved events. New replies include optional next steps in the result message.
+### Task categories
 
-## Connections and consent
+Nod assigns one broad purpose to eligible requests after the execution segment ends. Classification runs separately and doesn't delay the reply. `task_classified` joins to the segment using installation identity and the random analytics `run_id`; it doesn't reveal the task's title or exact request.
 
-Connection and Vault login domains identify public services: `team.example.com/private?token=...` becomes `example.com`. Paths, queries, account subdomains, local hosts and IP addresses are omitted. Managed apps preserve validated public catalog slugs. Unverified or user-named services use `custom` with the normalized endpoint domain when available. CLI install links are not treated as service domains. Cards have no associated website domain.
+Taxonomy version `1` has these fixed values:
 
-`connected` means an access path was durably saved; saved CLI credentials don't prove a command works. A connection supporting both HTTP and MCP emits one event per method. `nod_service_used` success means that the instrumented provider call returned successfully, not that the user's task succeeded. Background Gmail polling, verification-mail lookup and writing-style reads are outside that metric. Failure reasons come from structured provider metadata, never raw error text.
+| `task_type`            | Intended result                                               |
+| ---------------------- | ------------------------------------------------------------- |
+| `research`             | Find, check, or compare information and options.              |
+| `communication`        | Prepare, send, or organize correspondence.                    |
+| `content_creation`     | Write, edit, or produce documents, presentations, or media.   |
+| `data_analysis`        | Calculate or analyze structured data.                         |
+| `file_management`      | Find, organize, move, or convert existing files.              |
+| `scheduling`           | Arrange meetings, calendar entries, or reminders.             |
+| `monitoring`           | Watch for changes or report changes against an earlier state. |
+| `app_setup`            | Connect or configure apps and integrations.                   |
+| `translation`          | Change content from one language to another.                  |
+| `software_development` | Build, debug, or change code and technical automation.        |
+| `transaction`          | Buy, book, pay, cancel, or submit a concrete transaction.     |
+| `advice`               | Explain, teach, plan, or advise without an outside action.    |
+| `other`                | A clear purpose outside the named categories.                 |
+| `unknown`              | No clear purpose or no single primary purpose.                |
 
-Connection observations run when sharing turns on, at startup and after connection changes. Count distinct identities that share usage data reporting each connection in the selected period. These are observations, not a live account inventory.
+A compound request receives its primary purpose, not a new label for every combination. Categories describe intended work, not the tools used or whether it succeeded.
 
-Vault imports batch domain entries so a 5,000-login import emits at most 50 events. Count entries in `domains`, not import events.
+The classifier receives at most 6,000 characters from the original owner request, saved task brief, or schedule instruction, with known secrets redacted. Nod doesn't add assistant replies, tool history, or attachments. This bounded input still reaches your model provider; only the fixed category, status, version, and existing execution context enter the classification event. Classification requests are excluded from conversation traces.
 
-Opt-out drops unsent events and recordings. Turning sharing back on cannot revive events from an earlier consent period. Browser tabs revoke capture when notified of a preference change. This can't recall an event already transmitted. Historical data in PostHog isn't deleted by the switch.
+Nod uses an approved small text model on the currently selected connection, at its lowest reasoning effort. Both models must have known positive catalog prices, and neither the classifier's input nor output rate may be higher. Free, unknown-price, and variable-price selections skip classification, as do unsupported connections or unavailable suitable models. An already selected approved small model can classify too. There is no fallback to the main model or another connection. Each call has a 10-second deadline, a 512-token output limit, and no retries. Its usage remains in model-cost totals and is identifiable by `purpose=task_classification`.
 
-Website domains, sign-in domains and purchase amounts let the Nod team see which kinds of websites Nod is used on and how much is spent through it.
+The result is reused for resumed segments and later segments in the same task session during the same sharing period. A new chat request is classified separately. Observer/event work, onboarding work, and cancelled, interrupted, or skipped segments are not classified. Turning sharing off cancels in-flight classification and prevents its result from being sent. Turning it back on doesn't revive the old result.
 
-These are pseudonymous measurements from owners who share usage data. Installation IDs and service domains are not anonymous, and owners who share may not represent the whole user base.
+| `classification_status` | Meaning                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `classified`            | The model returned an allowed category, including `unknown` when unclear. |
+| `unavailable`           | No eligible classifier was available or capacity prevented dispatch.      |
+| `failed`                | The request failed, timed out, or returned an invalid response.           |
+| `not_applicable`        | The segment is excluded or has no usable request text.                    |
 
-## What recordings show
+The last three statuses use `task_type=unknown`. Read both properties: a model's uncertainty, an unavailable classifier, and a failed request are different observations. An absent classification event is a separate missing observation, not `unknown`.
 
-Recordings show navigation, layout, controls, scrolling and clicks, with private content removed.
+Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Distinct installation reach shows breadth, but installations can appear in several categories. Classification eligibility depends on the selected provider/model and work type, so the mix may not represent all work. Coverage includes all observed completed segments with usable run IDs. The taxonomy marker distinguishes supported measurement from `not instrumented` observations, which remain in the denominator. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
 
-- **Masked:** all input values and all text, except product labels marked as public.
-- **Blocked:** chat messages and drafts, reply quotes, link tooltips, attachments and file previews, task titles, steps and results, the Usage summary and the text of each Usage row, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
-- **Replaced:** every URL becomes a fixed `https://nod.invalid` route, without query strings, fragments or external destinations.
-- **Never collected:** console output, request headers and bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles.
+### Outputs and answer choices
 
-Capture failures never interrupt Nod. Model keys and PostHog settings never enter the workspace.
+| Event                     | What it records                                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `output_created`          | Committed assistant presentation or file delivery, by kind and count.                                                 |
+| `presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation.                                              |
+| `presentation_action`     | Presentation kind, message/drawer location, and successful open/copy action.                                          |
+| `artifact_viewed`         | Artifact kind and message/drawer location.                                                                            |
+| `artifact_action`         | Kind, message/drawer/commands/composer location, and copy/download/download-request/open/reveal/reuse-request action. |
+| `answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                                                                 |
+| `answer_choices_selected` | The same context and number successfully selected (one to six).                                                       |
 
-To add, change or remove an event, see [Change analytics](/contribute/analytics/).
+Views require a visible app and content intersecting its viewport. Repeated mounting doesn't count again within the current capture period. These observations aren't unique files or a linked conversion funnel.
 
-## Prepared work
+Presentation open means expanding the native presentation into its drawer; copy follows clipboard success. A presentation keeps the same impression identity in the message and drawer, and does not count as a file artifact view. Presentation content, labels, and identifiers are excluded.
 
-Nudges are blocked from session recordings like any other chat message. Source reads and private preparation use the existing `other` tool category and do not count as completed app writes. Feedback on prepared work goes through `manage_personal_context`, so it counts as one ordinary `nod_tool_used` call; the feedback itself stays in the owner database.
+`download_requested` records a browser request. `download` records a native save that returned successfully. A request alone doesn't prove a local file exists.
+
+`open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted or sent. Reuse locations also cover the command palette (`commands`) and internal file drops (`composer`); artifact views remain limited to message and drawer locations.
+
+Answer-choice views count once per question in a sharing period, while the choices are in the viewport and the app is visible. Selections follow a server-accepted answer. Option toggles, custom composer answers, and failed, rejected, or unavailable submissions are not selections. Accepted choices also emit `chat_message_sent` with `source=answer_choice` and `input=text`. Question and option IDs, labels, selected text, and response content are excluded.
+
+### Read first-attempt outcomes
+
+The first-attempt table starts with each installation's first observed `v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
+
+No start is separated into an open seven-day window or an elapsed window. A start without a matching completion remains unknown, not failed. Missing analytics run IDs are reported separately. Results include observations up to the earlier of now and the selected end date. A matching completion can occur after the seven-day start window.
+
+The denominator includes all selected observed onboarding completions, including incomplete windows. This isn't a sample of verified new people or unassisted installations. The separate seven-day activation funnel measures eventual success and can include retries.
+
+### Read return and cost measurements
+
+The primary return table starts at an installation's first observed successful owner-requested execution segment in `v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
+
+The return proxy is a later execution start with `owner_requested=true` and `source=user` or `task`. It can be an agent-created child of an existing owner request, so it doesn't establish a fresh message or human visit. All resume starts are excluded, including genuine confirmation messages. Queue delays and later child starts can cross window boundaries without new owner input; messages merged into a running turn don't create separate starts. Active-use and first-attempt return charts use the same execution-start proxy.
+
+Measuring fresh owner return across channels would require a deduplicated server event for each accepted owner input. The existing `chat_message_sent` event covers web and desktop only and is insufficient for that measure.
+
+| Window | Elapsed time after first success | Included in the denominator after |
+| ------ | -------------------------------- | --------------------------------- |
+| D1     | 1 day to less than 2 days        | 2 days                            |
+| W1     | 7 days to less than 14 days      | 14 days                           |
+| W2     | 14 days to less than 21 days     | 21 days                           |
+| W4     | 28 days to less than 35 days     | 35 days                           |
+
+Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish human return or whole-task retention. The separate first-attempt return charts start at the first matching execution start, including existing installations and failed attempts; they are diagnostic and aren't compared with that reference.
+
+The segment-cost table groups `model_used` records by installation and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
+
+Mean, median, and p90 use samples with at least one priced request and can represent partial costs. Coverage columns identify samples whose observed requests are all priced, unpriced requests, and samples with no prices; an entirely unpriced group has no cost value. Subtotals include only observed requests in the selected date range. A segment spanning its boundaries can have incomplete costs even when every observed request has a price. Segments without model records and maintenance or unclassified work without a run ID are absent from this table, not free; total model-spend and pricing-coverage charts retain unscoped usage. Neither table exposes private task or turn IDs.
+
+## Measurement gaps
+
+NPS, reasons for leaving, role, company size, AI experience, and preferred AI tools are not collected. Usage events cannot establish satisfaction, useful task completion, trust, or why someone never returns. These remain questions for separate research.
+
+## Collection safeguards
+
+Nod does not collect session recordings, screen captures, DOM snapshots, or recording metadata for analytics. The recorder is disabled and snapshot events are rejected. The pseudonymous browser session/window IDs listed above are ordinary SDK metadata and don't indicate a recording.
+
+Page URLs use `https://app.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
+
+Autocapture, console and network capture, automatic exceptions, feature-flag events, and remote survey popups are disabled.
+
+Capture failures don't interrupt Nod. PostHog configuration and model keys never enter the workspace.
 
 ## Related resources
 
 - [Configuration reference](/deploy/configuration/)
 - [Your data and privacy](/trust/privacy/)
-- [Change analytics](/contribute/analytics/)
+- [Change analytics and read dashboards](/contribute/analytics/)
 - [Desktop app internals](/deploy/desktop-app/)

@@ -20,7 +20,7 @@ type PersonalDependencies = ScheduleDependencies & {
 
 export function createPersonalService(dependencies: PersonalDependencies) {
   const { pool, ownerId, refresh } = dependencies;
-  const preferences = createPreferencesStore(pool, ownerId);
+  const preferences = createPreferencesStore(pool, ownerId, dependencies.analytics);
   const schedules = createSchedules(dependencies);
   const memory = dependencies.memory;
   const searchHistory = createHistorySearch({ pool, ownerId });
@@ -31,7 +31,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     kind: MemoryChange['kind'] = 'note',
   ) =>
     dependencies.analytics?.({
-      event: 'nod_memory_changed',
+      event: 'memory_changed',
       properties: { kind, operation, actor },
     });
 
@@ -139,16 +139,21 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'model_select') {
       const input = modelSelectionInput.parse(await validateReview(action, args));
-      await dependencies.models!.select(input);
+      await dependencies.models!.select(input, 'agent');
       dependencies.analytics?.({
-        event: 'nod_settings_updated',
+        event: 'settings_updated',
         properties: { section: 'models', operation: 'update' },
       });
       afterCommit(options?.client ?? pool, refresh);
       return { selection: dependencies.models!.view().selection };
     }
     if (action === 'notification_preferences_update') {
-      const result = await preferences.update(args, options?.expectedRules, options?.client);
+      const result = await preferences.update(
+        args,
+        'agent',
+        options?.expectedRules,
+        options?.client,
+      );
       afterCommit(options?.client ?? pool, refresh);
       return result;
     }

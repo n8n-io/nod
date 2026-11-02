@@ -790,7 +790,6 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     page: BrowserObservation,
     choice?: string,
   ) => {
-    turn.pageVisited?.(page.url, Boolean(turn.execution.parentRunId));
     turn.visited(browserId, page.url);
     const key = pageKey(page.url);
     const same = typedPage === key || !typedPage;

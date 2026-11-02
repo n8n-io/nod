@@ -235,7 +235,7 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       companySize: asked.includes('size') ? final.companySize : undefined,
     };
     const chose = (job: ProfileJob) => final.jobs.includes(job);
-    capture('nod_onboarding_profile_answered', {
+    capture('onboarding_profile_answered', {
       scope: final.scope ?? 'skipped',
       role: final.roleText ? 'other' : (final.role ?? 'skipped'),
       company_size: asked.includes('size') ? (final.companySize ?? 'skipped') : 'not_asked',
@@ -248,7 +248,7 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       job_other: Boolean(final.jobsText),
     });
     await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) }).catch(
-      () => capture('nod_ui_error', { area: 'onboarding', action: 'save' }),
+      () => capture('ui_error', { area: 'onboarding', action: 'save' }),
     );
     setSaving(false);
     onNext();

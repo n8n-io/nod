@@ -175,7 +175,7 @@ export async function createApprovals(
   ) => {
     if (!['user', 'schedule', 'event', 'resume', 'task'].includes(source)) return;
     analytics?.({
-      event: 'nod_confirmation_changed',
+      event: 'confirmation_changed',
       properties: {
         status,
         action_kind:

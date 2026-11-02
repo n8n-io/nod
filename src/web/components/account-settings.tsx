@@ -220,8 +220,8 @@ export function AccountSettings({
     const key = `${openRequest}:${section}`;
     if (recorded.current === key) return;
     recorded.current = key;
-    captureAnalytics('nod_settings_viewed', {
-      tab: section as AnalyticsProperties<'nod_settings_viewed'>['tab'],
+    captureAnalytics('settings_viewed', {
+      tab: section as AnalyticsProperties<'settings_viewed'>['tab'],
     });
   }, [open, openRequest, section]);
   function trackScroll() {
@@ -448,7 +448,7 @@ export function AccountSettings({
                         />
                       </div>
                       <p className="field-hint">
-                        Share how you use Nod, without your messages.{' '}
+                        Share how you use Nod, without your messages or screen recordings.{' '}
                         <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                           What’s shared <ArrowUpRight size={13} aria-hidden="true" />
                         </a>
@@ -578,7 +578,7 @@ export function AccountSettings({
               ? 'Review your edits before leaving Settings.'
               : 'These changes haven’t been saved.'}
           </DialogDescription>
-          <dl className="settings-change-list" data-analytics-private>
+          <dl className="settings-change-list">
             {changes.map((change, index) => (
               <div key={`${change.label}-${index}`}>
                 <dt>{change.label}</dt>

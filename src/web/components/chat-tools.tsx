@@ -3,7 +3,8 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { Message, Task } from '../../shared/contracts';
-import { api, errorMessage } from '../lib/api';
+import { api, errorMessage, requestAccountVersion } from '../lib/api';
+import { analyticsForCurrentSession } from '../lib/analytics';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import {
   isEditingTarget,
@@ -145,7 +146,8 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           {
             id: 'reuse',
             label: 'Use selected file in message',
-            action: () => reuseFile(selectedFile),
+            action: (capture: ReturnType<typeof analyticsForCurrentSession>) =>
+              reuseFile(selectedFile, 'commands', capture),
           },
         ]
       : []),
@@ -200,7 +202,11 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
   function choose(index: number) {
     const entry = entries[index];
     if (!entry) return;
-    pendingAction.current = entry.action;
+    const account = requestAccountVersion();
+    const capture = analyticsForCurrentSession();
+    pendingAction.current = () => {
+      if (account === requestAccountVersion()) entry.action(capture);
+    };
     setOpened(false);
   }
   function changeQuery(value: string) {

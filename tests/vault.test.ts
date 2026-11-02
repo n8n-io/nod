@@ -1692,8 +1692,7 @@ test(
         createPayments(pool, {
           ownerId: 'local-development',
           analytics: (event) => {
-            if (event.event === 'nod_secure_entry_changed')
-              secureEntries.push(event.properties.status);
+            if (event.event === 'secure_entry_changed') secureEntries.push(event.properties.status);
           },
           uses: vault.uses,
           present: async (turn, input) => {
@@ -3452,7 +3451,7 @@ test('analytics routes collapse private paths to known pages', async () => {
     assert.equal(analyticsRoute(path), route, path);
   assert.equal(
     sanitizedAnalyticsUrl('/payments/synthetic-private-id?code=1'),
-    'https://nod.invalid/payments',
+    'https://app.example/payments',
   );
 });
 
@@ -4049,3 +4048,825 @@ test(
       });
   },
 );
+
+test('visible outputs keep private content out of analytics and fence delayed file actions', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 60_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const observers=new Set();
+globalThis.IntersectionObserver=class{
+ constructor(callback){this.callback=callback;this.targets=new Set();observers.add(this)}
+ observe(target){this.targets.add(target)}
+ disconnect(){this.targets.clear();observers.delete(this)}
+};
+const visible=(selector)=>{for(const observer of observers){const targets=[...observer.targets].filter(target=>target.matches(selector));if(targets.length)observer.callback(targets.map(target=>({target,isIntersecting:true})))}};
+const events=[];
+const client={
+ init(_key,options){this.options=options;options.loaded?.()},
+ capture(event,properties={}){const value=this.options.before_send({event,properties});if(value)events.push(value)},
+ reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){},
+};
+const {setAnalyticsClient,configureAnalytics,analyticsForCurrentSession}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {MessagePresentation}=await import('./src/web/components/message-presentation.tsx');
+const {ArtifactWorkspace}=await import('./src/web/components/artifact-drawer.tsx');
+const {MessageAttachments,conversationFiles}=await import('./src/web/components/attachment-card.tsx');
+const {FileActions}=await import('./src/web/components/file-actions.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+setRequestAccount('synthetic-owner-one');
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:synthetic-owner-one',environment:'development'};
+configureAnalytics(configuration,'web');
+const checks=[];
+const check=(id,condition)=>checks.push({id,status:condition?'pass':'fail'});
+const privateValue='SYNTHETIC_PRIVATE_CANARY_89271';
+const common={version:1,title:privateValue,sources:[]};
+const chart={...common,type:'chart',chart:'bar',series:[{id:'private-series',label:privateValue,points:[{label:privateValue,value:89271}]}]};
+const diagram={...common,type:'diagram',nodes:[{id:'private-node',label:privateValue}],edges:[]};
+let root=createRoot(document.getElementById('root'));
+const render=element=>act(async()=>root.render(element));
+const count=name=>events.filter(event=>event.event===name).length;
+await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
+check('UI2-not-mounted',count('presentation_viewed')===0);
+await act(async()=>visible('.message-presentation'));
+await render(createElement(MessagePresentation,{value:chart,messageId:'private-message'}));
+await act(async()=>visible('.message-presentation'));
+check('UI2-once',count('presentation_viewed')===1);
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+await render(createElement(MessagePresentation,{value:diagram,messageId:'private-other-message'}));
+await act(async()=>visible('.message-presentation'));
+check('UI2-hidden-tab',count('presentation_viewed')===1);
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+await act(async()=>document.dispatchEvent(new Event('visibilitychange')));
+check('UI2-holdout',events.filter(event=>event.event==='presentation_viewed').map(event=>event.properties.kind).join(',')==='chart,diagram');
+const file={id:'00000000-0000-4000-8000-000000000001',url:'/api/artifacts/00000000-0000-4000-8000-000000000001',name:privateValue+'.txt',size:12,mimeType:'text/plain'};
+window.fetch=globalThis.fetch=async()=>new Response('Private file', {headers:{'content-type':'text/plain'}});
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}});
+const files=()=>createElement(ArtifactWorkspace,{files:[file],className:'test-workspace'},createElement(MessageAttachments,{attachments:[file]}));
+await render(files());
+await act(async()=>visible('.attachment-card'));
+check('UI3-message-exposure',events.filter(event=>event.event==='artifact_viewed'&&event.properties.location==='message').length===1);
+await act(async()=>document.querySelector('.attachment-card-open').click());
+await act(async()=>visible('.artifact-drawer'));
+check('UI3-drawer-open',events.filter(event=>event.event==='artifact_viewed'&&event.properties.location==='drawer').length===1);
+await act(async()=>document.querySelector('button[aria-label="Copy contents"]').click());
+check('UI4-copy',events.some(event=>event.event==='artifact_action'&&event.properties.action==='copy'&&event.properties.kind==='text'));
+await act(async()=>document.querySelector('.artifact-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
+const drawer=document.querySelector('.artifact-drawer');
+check('UI3-retained-hidden',drawer?.hidden===true);
+const beforeHidden=count('artifact_viewed');
+await act(async()=>visible('.artifact-drawer'));
+check('UI3-hidden-no-exposure',count('artifact_viewed')===beforeHidden);
+let rejectSave=false;
+let release;
+window.nodDesktop={fileAction:async()=>{if(rejectSave)throw new Error('Synthetic save failed');if(release===null)await new Promise(resolve=>{release=resolve})}};
+await render(createElement(FileActions,{item:file}));
+const save=()=>document.querySelector('button[aria-label^="Save "]');
+await act(async()=>save().click());
+check('UI4-native-save',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
+rejectSave=true;
+await act(async()=>save().click());
+check('UI4-rejected-save',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
+rejectSave=false;release=null;
+await act(async()=>save().click());
+configureAnalytics(undefined);
+configureAnalytics(configuration,'web');
+await act(async()=>release());
+check('UI5-consent-fence',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
+release=null;
+await act(async()=>save().click());
+setRequestAccount('synthetic-owner-two');
+await act(async()=>release());
+check('UI5-owner-fence',events.filter(event=>event.event==='artifact_action'&&event.properties.action==='download').length===1);
+check('UI2-content-free',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(file.id)&&!JSON.stringify(events).includes('private-message'));
+setRequestAccount('synthetic-owner-one');
+configureAnalytics(configuration,'web');
+client.capture('answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
+check('UI7-choices-bounded',events.at(-1).properties.option_count===3&&events.at(-1).properties.selected_count===2&&!JSON.stringify(events.at(-1)).includes(privateValue)&&!JSON.stringify(events.at(-1)).includes(file.id));
+
+const presentationMessage={id:'private-presentation-message',attachments:[],presentation:chart};
+const presentationWorkspace=()=>createElement(ArtifactWorkspace,{files:conversationFiles([presentationMessage]),className:'test-workspace'},createElement(MessagePresentation,{value:chart,messageId:presentationMessage.id}));
+await render(presentationWorkspace());
+const beforePresentation=count('presentation_viewed');
+await act(async()=>visible('.message-presentation'));
+check('UI8-presentation-message',count('presentation_viewed')===beforePresentation+1);
+await act(async()=>document.querySelector('.presentation-expand').click());
+check('UI8-presentation-open',events.filter(event=>event.event==='presentation_action'&&event.properties.action==='open'&&event.properties.kind==='chart'&&event.properties.location==='message').length===1);
+const beforeArtifact=count('artifact_viewed');
+await act(async()=>{visible('.artifact-drawer');visible('.artifact-drawer .message-presentation')});
+check('UI8-presentation-dedupe',count('presentation_viewed')===beforePresentation+1);
+check('UI8-presentation-not-file',count('artifact_viewed')===beforeArtifact);
+const copyContents=()=>document.querySelector('button[aria-label="Copy contents"],button[aria-label="Copied"]');
+const presentationCopies=()=>events.filter(event=>event.event==='presentation_action'&&event.properties.action==='copy').length;
+await act(async()=>copyContents().click());
+check('UI8-presentation-copy',presentationCopies()===1&&events.at(-1).properties.kind==='chart'&&events.at(-1).properties.location==='drawer');
+navigator.clipboard.writeText=async()=>{throw new Error('Synthetic clipboard rejected')};
+await act(async()=>copyContents().click());
+check('UI8-presentation-copy-failure',presentationCopies()===1);
+let releaseCopy;
+navigator.clipboard.writeText=()=>new Promise(resolve=>{releaseCopy=resolve});
+await act(async()=>copyContents().click());
+configureAnalytics(undefined);configureAnalytics(configuration,'web');
+await act(async()=>releaseCopy());
+check('UI8-presentation-copy-consent',presentationCopies()===1);
+releaseCopy=undefined;
+await act(async()=>copyContents().click());
+setRequestAccount('synthetic-another-owner');
+await act(async()=>releaseCopy());
+check('UI8-presentation-copy-owner',presentationCopies()===1);
+setRequestAccount('synthetic-owner-one');configureAnalytics(configuration,'web');
+const beforeInvalid=count('presentation_action');
+client.capture('presentation_action',{kind:'chart',action:'copy'});
+client.capture('presentation_action',{kind:'private-new-kind',action:'copy',location:'drawer'});
+check('UI8-presentation-bounded',count('presentation_action')===beforeInvalid);
+check('UI8-presentation-private',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(presentationMessage.id));
+
+await act(async()=>root.unmount());
+configureAnalytics(undefined);
+dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$'))},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('app completion analytics preserve the originating entry and require an owned confirmed result', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
+for(const name of ['Node','Element','HTMLElement','Event','CustomEvent'])globalThis[name]=dom.window[name];
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+const channels=[];
+globalThis.BroadcastChannel=class{constructor(){channels.push(this)}close(){}};
+window.open=()=>({opener:null,closed:false,close(){this.closed=true},location:{href:''}});
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {useAppSignIn}=await import('./src/web/hooks/use-app-sign-in.ts');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+setRequestAccount('connection-owner');
+const captured=[];
+const client={init(_key,options){this.options=options},capture(event,properties={}){const value=this.options.before_send({event,properties});if(value)captured.push(value)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);configureAnalytics({enabled:true,distinctId:'local:connection-owner',environment:'development'},'web');
+const attempt='a'.repeat(43);
+let connected=false,checks=0,delay=false,release;
+window.fetch=globalThis.fetch=async(path,options)=>{
+ if(path==='/api/apps/gmail/connect')return Response.json({url:'https://example.test/sign-in',attempt});
+ if(path==='/api/apps/setup-cancel')return Response.json({ok:true});
+ assert.equal(path,'/api/apps/setup-status');checks++;
+ const hash=JSON.parse(options.body).hashes[0];
+ const response=()=>Response.json({completed:connected?[hash]:[],apps:[{hash,available:true}]});
+ if(delay)return new Promise(resolve=>{release=()=>resolve(response())});
+ return response();
+};
+let signIn;
+function Test(){signIn=useAppSignIn({entry:'onboarding',name:()=> 'Private account',onSettled(){}});return createElement('button',{onClick:()=>void signIn.connect({service:'gmail'})},'Connect')}
+const root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(Test)));
+const settle=async condition=>{for(let i=0;i<60&&!condition();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))});assert.ok(condition())};
+const start=()=>act(async()=>document.querySelector('button').click());
+const completions=()=>captured.filter(event=>event.event==='app_connection_completed');
+await start();await settle(()=>checks===1);assert.equal(completions().length,0);
+await act(async()=>channels[0].onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await settle(()=>checks===2);assert.equal(completions().length,0,'an unverified broadcast must not become a successful conversion');
+await start();await settle(()=>checks===3);await act(async()=>signIn.cancel());assert.equal(completions().length,0);
+connected=true;await start();await settle(()=>completions().length===1);
+assert.deepEqual(completions()[0].properties.entry,'onboarding');
+delay=true;release=undefined;await start();await settle(()=>release);
+setRequestAccount('other-owner');await act(async()=>release());assert.equal(completions().length,1);
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({result:'pass',checks:['confirmed-success','original-entry','unverified-broadcast','cancelled-attempt','owner-fence'],events:captured},null,2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('app discovery redirects and managed chat links preserve confirmed connection attribution', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/', pretendToBeVisual: true });
+Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
+for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment', 'FormData']) globalThis[name] = dom.window[name];
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+window.open = () => ({ opener: null, closed: false, close() { this.closed = true; }, document: { title: '', body: { textContent: '' } }, location: { href: '' } });
+globalThis.BroadcastChannel = class { close() {} };
+const { createElement, act, useState, StrictMode } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { useAppSignIn } = await import('./src/web/hooks/use-app-sign-in.ts');
+const { AppDiscoveryDialog } = await import('./src/web/components/app-discovery-dialog.tsx');
+const { SetupActions } = await import('./src/web/components/setup-link.tsx');
+const { setAnalyticsClient, configureAnalytics, appConnectionAnalytics } = await import('./src/web/lib/analytics.ts');
+const { setRequestAccount } = await import('./src/web/lib/api.ts');
+const captured = [];
+const client = { init(_key, options) { this.options = options; }, capture(event, properties = {}) { const value = this.options.before_send({ event, properties }); if (value) captured.push(value); }, reset() {}, set_config() {}, stopSessionRecording() {}, startSessionRecording() {} };
+setAnalyticsClient(client);
+function owner(id) { setRequestAccount(id); configureAnalytics({ enabled: true, distinctId: 'local:' + id, environment: 'development' }, 'web'); }
+owner('discovery-one');
+const id = '00000000-0000-4000-8000-000000000811';
+let reject = true, delayed = false, release, statusCalls = 0, completed = false, wrongHash = false;
+window.fetch = globalThis.fetch = async (path, options) => {
+  if (path === '/api/apps/gmail/connect') return Response.json({ url: 'http://127.0.0.1:51000/apps?connect=' + id });
+  if (path === '/api/apps/discovery/' + id) return Response.json({ name: 'Synthetic app', paths: [{ kind: 'http', endpoint: 'https://example.test', auth: 'token', testPath: '/me' }] });
+  if (path === '/api/apps/discovery/' + id + '/complete') {
+    if (delayed) return new Promise((resolve) => { release = () => resolve(Response.json({})); });
+    return reject ? Response.json({ error: 'Synthetic rejection' }, { status: 503 }) : Response.json({});
+  }
+  assert.equal(path, '/api/apps/setup-status');
+  statusCalls++;
+  const hashes = JSON.parse(options.body).hashes;
+  return Response.json({ completed: completed ? (wrongHash ? ['unmatched-hash'] : hashes) : [], apps: hashes.map((hash) => ({ hash, slug: 'gmail', name: 'Synthetic app', available: true })) });
+};
+function Redirect() {
+  const [discovery, setDiscovery] = useState();
+  const signIn = useAppSignIn({ entry: 'chat', name: () => 'Synthetic app', onSettled() {}, onSetup: (url) => setDiscovery(new URL(url, window.location.origin).searchParams.get('connect')) });
+  return discovery ? createElement(AppDiscoveryDialog, { id: discovery, onClose: () => setDiscovery(undefined), onConnected: () => setDiscovery(undefined) }) : createElement('button', { onClick: () => void signIn.connect({ service: 'gmail' }) }, 'Start connection');
+}
+const root = createRoot(document.getElementById('root'));
+const render = (value) => act(async () => root.render(createElement(StrictMode, null, value)));
+const settle = async (condition) => { for (let i = 0; i < 80 && !condition(); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); assert.ok(Boolean(condition()), 'observable condition did not occur'); };
+const button = (text) => [...document.querySelectorAll('button')].find((value) => value.textContent.trim() === text);
+const completions = () => captured.filter((event) => event.event === 'app_connection_completed');
+const submit = () => act(async () => {
+  document.querySelector('[name="accountName"]').value = 'Synthetic account';
+  document.querySelector('[name="token"]').value = 'synthetic-token';
+  document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+});
+await render(createElement(Redirect));
+await act(async () => button('Start connection').click());
+await settle(() => document.querySelector('form'));
+assert.equal(completions().length, 0);
+await submit();
+assert.equal(completions().length, 0);
+assert.ok(document.body.textContent.includes('Synthetic rejection'));
+reject = false;
+await submit();
+assert.equal(completions().length, 1);
+assert.equal(completions()[0].properties.entry, 'chat');
+await render(null);
+appConnectionAnalytics('manage').transfer('00000000-0000-4000-8000-000000000812');
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+await submit();
+assert.equal(completions().at(-1).properties.entry, 'apps');
+await render(null);
+const href = 'https://example.test/owned-setup';
+await render(createElement(SetupActions, { actions: [{ href, setup: 'app', label: 'Synthetic app' }] }));
+await settle(() => statusCalls > 0 && button('Connect'));
+const beforeManaged = completions().length;
+await act(async () => button('Connect').click());
+assert.equal(completions().length, beforeManaged);
+completed = true; wrongHash = true;
+await act(async () => window.dispatchEvent(new Event('focus')));
+assert.equal(completions().length, beforeManaged);
+wrongHash = false;
+await act(async () => window.dispatchEvent(new Event('focus')));
+await settle(() => completions().length === beforeManaged + 1);
+assert.equal(completions().at(-1).properties.entry, 'chat');
+await act(async () => window.dispatchEvent(new Event('focus')));
+assert.equal(completions().length, beforeManaged + 1);
+await render(null);
+appConnectionAnalytics('manage').transfer(id);
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+delayed = true; await submit(); await settle(() => release);
+const beforeOwner = completions().length;
+owner('discovery-two');
+await act(async () => release());
+assert.equal(completions().length, beforeOwner);
+await render(null);
+appConnectionAnalytics('manage').transfer(id);
+await render(createElement(AppDiscoveryDialog, { id, onClose() {}, onConnected() {} }));
+await settle(() => document.querySelector('form'));
+release = undefined; await submit(); await settle(() => release);
+configureAnalytics(undefined);
+await act(async () => release());
+assert.equal(completions().length, beforeOwner);
+await act(async () => root.unmount()); dom.window.close();
+console.log(JSON.stringify({ result: 'pass', checks: ['chat-discovery-origin', 'rejected-discovery', 'wrong-discovery-id', 'managed-chat-confirmed', 'wrong-completion-hash', 'completion-once', 'owner-fence', 'consent-fence'], events: captured }, null, 2));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('local settings and successful UI actions preserve consent and owner boundaries', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 60_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/',pretendToBeVisual:true});
+for(const name of ['window','document','Node','NodeFilter','DocumentFragment','Element','HTMLElement','HTMLInputElement','HTMLTextAreaElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const events=[];
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const config={enabled:true,distinctId:'local:synthetic-settings-owner',environment:'development'};
+const restore=()=>{setRequestAccount('synthetic-settings-owner');configureAnalytics(config,'web')};
+restore();
+const keepAlive=setInterval(()=>{},1000);
+try {
+const checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const count=(name)=>events.filter(item=>item.event===name).length;
+let root=createRoot(document.getElementById('root'));
+const render=element=>act(async()=>root.render(element));
+const settle=()=>act(async()=>new Promise(resolve=>setTimeout(resolve,5)));
+const waitFor=async condition=>{for(let at=0;at<60&&!condition();at++)await settle();assert.ok(condition(),'fixture settled')};
+const click=element=>act(async()=>element.click());
+const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+const remount=async element=>{await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await render(element)};
+let persisted={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false,onboardingPreferenceStep:'complete'};
+let nativeMode='ok',releaseNative;
+window.nodDesktop={getSettings:async()=>({...persisted}),onPreferences:()=>()=>{},saveSettings:async change=>{if(nativeMode==='fail')throw new Error('Synthetic native failure');if(nativeMode==='hold')await new Promise(resolve=>releaseNative=resolve);if(nativeMode!=='ignore')persisted={...persisted,...change};return {...persisted}}};
+const {useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
+let native;
+function Native(){native=useDesktopSettings();return null}
+await render(createElement(Native));await waitFor(()=>native.settings);
+for(const change of [{theme:'dark'},{launchAtLogin:true},{notifications:true}])await act(async()=>native.save(change));
+check('LS1-saved',count('local_setting_changed')===3);
+const nativeCount=count('local_setting_changed');
+await act(async()=>native.save({theme:'dark'}));
+nativeMode='fail';await act(async()=>native.save({theme:'light'}).catch(()=>{}));
+nativeMode='ignore';await act(async()=>native.save({theme:'light'}));
+check('LS2-no-op-failure-ignored',count('local_setting_changed')===nativeCount);
+nativeMode='hold';let saved;
+await act(async()=>{saved=native.save({theme:'light'})});
+setRequestAccount('synthetic-another-owner');await act(async()=>{releaseNative();await saved});
+check('LS3-owner-fence',count('local_setting_changed')===nativeCount);
+restore();await act(async()=>{saved=native.save({theme:'system'})});
+configureAnalytics(undefined);configureAnalytics(config,'web');
+await act(async()=>{releaseNative();await saved});
+check('LS3-consent-fence',count('local_setting_changed')===nativeCount);
+nativeMode='ok';delete window.nodDesktop;
+let permission='granted',releasePermission,permissionRequests=0;
+class SyntheticNotification{static get permission(){return permission}static requestPermission(){permissionRequests++;return new Promise(resolve=>releasePermission=value=>{permission=value;resolve(value)})}close(){this.onclose?.()}}
+window.Notification=SyntheticNotification;
+Object.defineProperty(window,'isSecureContext',{configurable:true,value:true});
+Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_key,...args)=>args.at(-1)({})}});
+let owner='synthetic-settings-owner';
+let handoffMode='fail',releaseHandoff;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ const path=new URL(url,window.location.href).pathname;
+ if(path==='/api/session')return Response.json({user:{id:owner,name:'',email:null,avatarUrl:null},settings:{theme:'system',onboardingCompleted:true,usageData:true,traces:false},capabilities:{developer:true,traces:true},analytics:config});
+ if(path==='/api/browser-handoff/stream')return new Promise((_resolve,reject)=>options.signal?.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+ if(path==='/api/browser-handoff/done'){if(handoffMode==='hold')await new Promise(resolve=>releaseHandoff=resolve);return Response.json(handoffMode==='fail'?{error:'Synthetic handoff failure'}:{ok:true},{status:handoffMode==='fail'?500:200})}
+ throw new Error('Unexpected fixture route '+path);
+};
+const {sessionStore}=await import('./src/web/lib/session.ts');
+await sessionStore.refresh();restore();
+const {BrowserNotificationSettings,BrowserNotificationPrompt}=await import('./src/web/components/browser-notifications.tsx');
+const notice=()=>document.querySelector('[role="switch"][aria-label="Notifications"]');
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+const startNotifications=count('local_setting_changed');
+await click(notice());check('BN1-enabled',count('local_setting_changed')===startNotifications+1);
+await click(button('Send test notification'));check('BN1-test-not-change',count('local_setting_changed')===startNotifications+1);
+await click(notice());check('BN1-disabled',count('local_setting_changed')===startNotifications+2);
+window.localStorage.removeItem('nod.browser-notifications.'+owner);
+await remount(createElement(BrowserNotificationPrompt,{ownerId:owner}));
+await click(button('Not now'));check('BN1-dismissed',count('local_setting_changed')===startNotifications+3);
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+permission='default';await click(notice());await waitFor(()=>releasePermission);
+check('BN2-denied-trigger',permissionRequests===1&&notice().disabled);
+await act(async()=>releasePermission('denied'));
+check('BN2-denied',permission==='denied'&&notice().disabled&&count('local_setting_changed')===startNotifications+3);
+permission='default';await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+assert.equal(notice().disabled,false);
+releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+check('BN2-consent-trigger',permissionRequests===2&&permission==='default'&&notice().disabled);
+configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releasePermission('granted'));
+check('BN2-consent-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.'+owner)==='enabled'&&count('local_setting_changed')===startNotifications+3);
+permission='default';window.localStorage.removeItem('nod.browser-notifications.'+owner);
+await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
+assert.equal(notice().disabled,false);
+releasePermission=undefined;await click(notice());await waitFor(()=>releasePermission);
+check('BN2-owner-trigger',permissionRequests===3&&permission==='default'&&notice().disabled);
+owner='synthetic-another-owner';await act(async()=>sessionStore.refresh());await act(async()=>releasePermission('granted'));
+check('BN2-owner-fence',permission==='granted'&&window.localStorage.getItem('nod.browser-notifications.synthetic-settings-owner')===null&&count('local_setting_changed')===startNotifications+3);
+owner='synthetic-settings-owner';await act(async()=>sessionStore.refresh());restore();
+const {MessageBubble}=await import('./src/web/components/message.tsx');
+const message={id:'00000000-0000-4000-8000-000000000711',role:'assistant',text:'SYNTHETIC_PRIVATE_COPY_89271',createdAt:new Date().toISOString(),attachments:[],reactions:[]};
+let copyMode='fail',releaseCopy;
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{if(copyMode==='fail')throw new Error('Synthetic clipboard failure');if(copyMode==='hold')await new Promise(resolve=>releaseCopy=resolve)}}});
+await remount(createElement(MessageBubble,{message}));
+const copy=()=>document.querySelector('button[aria-label="Copy message"],button[aria-label="Message copied"]')??document.querySelector('button[aria-label="Copy"]');
+assert.ok(copy(),'copy control exists');
+const copyStart=count('message_action');
+await click(copy());check('CP1-rejected',count('message_action')===copyStart);
+copyMode='hold';await click(copy());await waitFor(()=>releaseCopy);
+check('CP1-pending',count('message_action')===copyStart);
+await act(async()=>releaseCopy());check('CP1-success',count('message_action')===copyStart+1);
+await click(copy());configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseCopy());
+check('CP2-consent-fence',count('message_action')===copyStart+1);
+await click(copy());setRequestAccount('synthetic-another-owner');await act(async()=>releaseCopy());
+check('CP2-owner-fence',count('message_action')===copyStart+1);restore();
+const {BrowserHandoff}=await import('./src/web/components/browser-handoff.tsx');
+const handoff=()=>createElement(BrowserHandoff,{turnId:'00000000-0000-4000-8000-000000000712'});
+await remount(handoff());
+const startHandoff=count('browser_handoff_action');
+await click(button('Return to Nod'));check('BH1-rejected',count('browser_handoff_action')===startHandoff);
+handoffMode='hold';await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+check('BH1-pending',count('browser_handoff_action')===startHandoff);
+await act(async()=>releaseHandoff());check('BH1-success',count('browser_handoff_action')===startHandoff+1);
+await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseHandoff());
+check('BH2-consent-fence',count('browser_handoff_action')===startHandoff+1);
+await remount(handoff());await click(button('Return to Nod'));await waitFor(()=>releaseHandoff);
+setRequestAccount('synthetic-another-owner');await act(async()=>releaseHandoff());
+check('BH2-owner-fence',count('browser_handoff_action')===startHandoff+1);restore();
+await remount(handoff());await click(document.querySelector('button[aria-label="Enlarge browser"]'));
+await click(document.querySelector('button[aria-label="Shrink browser"]'));
+check('BH3-resize',count('browser_handoff_action')===startHandoff+3);
+const {deliverBrowserNotification}=await import('./src/web/lib/browser-notifications.ts');
+permission='granted';window.localStorage.setItem('nod.browser-notifications.'+owner,'enabled');window.focus=()=>{};
+Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+let notificationCurrent=true;
+const notification=await deliverBrowserNotification(owner,'private-thread',{id:'private-message',createdAt:'2026-10-31T00:00:00Z'},()=>notificationCurrent);
+assert.ok(notification);
+notificationCurrent=false;notification.onclick();check('NO1-stale-owner',count('notification_opened')===0);
+notificationCurrent=true;configureAnalytics(undefined);notification.onclick();check('NO1-consent-off',count('notification_opened')===0);
+configureAnalytics(config,'web');notification.onclick();check('NO1-current-click',count('notification_opened')===1);
+const {FileActions,reuseFile}=await import('./src/web/components/file-actions.tsx');
+const reused=[];window.addEventListener('nod:attach-artifact',event=>reused.push(event.detail));
+const reuseEvents=()=>events.filter(event=>event.event==='artifact_action'&&event.properties.action==='reuse_requested');
+const artifact={id:'00000000-0000-4000-8000-000000000713',url:'/api/artifacts/00000000-0000-4000-8000-000000000713',name:'SYNTHETIC_PRIVATE_COPY_89271.txt',mimeType:'text/plain',size:12};
+let nativeAction='open',rejectFile=false;
+window.nodDesktop={fileMenu:async()=>nativeAction,fileAction:async()=>{if(rejectFile)throw new Error('Synthetic native action failure')}};
+await remount(createElement(FileActions,{item:artifact,location:'drawer'}));
+const fileMenu=()=>document.querySelector('button[aria-label^="File actions"]');
+const artifactStart=count('artifact_action');
+rejectFile=true;await click(fileMenu());check('FA1-rejected',count('artifact_action')===artifactStart);
+rejectFile=false;await click(fileMenu());nativeAction='show';await click(fileMenu());
+check('FA1-accepted',events.filter(event=>event.event==='artifact_action').slice(-2).map(event=>event.properties.action).join(',')==='open,reveal');
+const buttonReuseStart=reuseEvents().length;
+await click(document.querySelector('button[aria-label^="Use "]'));
+check('FA1-reuse-request',reused.length===1&&reuseEvents().length===buttonReuseStart+1&&reuseEvents().at(-1).properties.location==='drawer');
+nativeAction='reuse';await click(fileMenu());
+check('FA2-native-reuse-once',reused.length===2&&reuseEvents().length===buttonReuseStart+2&&reuseEvents().at(-1).properties.location==='drawer');
+const invalidStart=reuseEvents().length;
+check('FA2-unowned-rejected',reuseFile({...artifact,url:'https://private.example.test/file'},'drawer')===false&&reused.length===2&&reuseEvents().length===invalidStart);
+delete window.nodDesktop;
+const {ChatTools}=await import('./src/web/components/chat-tools.tsx');
+const {ArtifactDrawerContext}=await import('./src/web/components/artifact-context.tsx');
+await remount(createElement(ArtifactDrawerContext.Provider,{value:{selectedId:artifact.id,open(){},setDrafts(){}}},createElement(ChatTools,{files:[artifact]})));
+await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true,cancelable:true})));
+await waitFor(()=>button('Use selected file in message'));
+const commandStart=reuseEvents().length;
+await click(button('Use selected file in message'));
+await waitFor(()=>reused.length===3);
+check('FA3-command-reuse',reused.length===3&&reuseEvents().length===commandStart+1&&reuseEvents().at(-1).properties.location==='commands');
+const openReuseCommand=async()=>{
+ await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true,cancelable:true})));
+ await waitFor(()=>button('Use selected file in message'));
+};
+await openReuseCommand();
+await act(async()=>{
+ button('Use selected file in message').click();
+ configureAnalytics(undefined);configureAnalytics(config,'web');
+});
+await waitFor(()=>reused.length===4);
+check('FA3-command-consent-fence',reuseEvents().length===commandStart+1);
+await openReuseCommand();
+await act(async()=>{
+ button('Use selected file in message').click();
+ setRequestAccount('synthetic-another-owner');
+});
+await waitFor(()=>!document.querySelector('[role="dialog"]'));
+await settle();
+check('FA3-command-owner-fence',reused.length===4&&reuseEvents().length===commandStart+1);restore();
+const {initializeTheme,setTheme}=await import('./src/web/lib/theme.ts');
+let quickTheme={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false};
+let rejectTheme=false,holdTheme=false,releaseTheme;
+window.nodDesktop={getSettings:async()=>quickTheme,getPreferences:async()=>quickTheme,onPreferences:()=>()=>{},setTheme:async theme=>{if(rejectTheme)throw new Error('Synthetic theme failure');if(holdTheme)await new Promise(resolve=>releaseTheme=resolve);quickTheme={...quickTheme,theme};return quickTheme}};
+const stopTheme=initializeTheme();await settle();
+const themeStart=count('local_setting_changed');
+await setTheme('dark');await setTheme('dark');check('QT1-native-change-only',count('local_setting_changed')===themeStart+1);
+rejectTheme=true;await setTheme('light').catch(()=>{});check('QT1-native-failure',count('local_setting_changed')===themeStart+1);rejectTheme=false;
+holdTheme=true;const pendingTheme=setTheme('light');setRequestAccount('synthetic-another-owner');releaseTheme();await pendingTheme;check('QT1-owner-fence',count('local_setting_changed')===themeStart+1);restore();
+stopTheme();delete window.nodDesktop;window.localStorage.setItem('nod.theme','light');
+await setTheme('dark');await setTheme('dark');check('QT1-browser-change-only',count('local_setting_changed')===themeStart+2);
+check('private-data-excluded',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE_COPY_89271')&&!JSON.stringify(events).includes(message.id)&&!JSON.stringify(events).includes('00000000-0000-4000-8000-000000000712'));
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$'))},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 41);
+});
+
+test('internal file drops record reuse intent without changing attachment acceptance', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'https://nod.fixture.invalid',pretendToBeVisual:true});
+for(const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MutationObserver','DOMParser','localStorage','getComputedStyle'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=window.requestAnimationFrame.bind(window);
+globalThis.cancelAnimationFrame=window.cancelAnimationFrame.bind(window);
+globalThis.location=window.location;
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+globalThis.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
+globalThis.IntersectionObserver=class{observe(){}unobserve(){}disconnect(){}};
+const rect={x:0,y:0,left:0,top:0,right:0,bottom:0,width:0,height:0};
+HTMLElement.prototype.getBoundingClientRect=()=>rect;
+HTMLElement.prototype.getClientRects=()=>[];
+HTMLElement.prototype.scrollIntoView=()=>{};
+HTMLElement.prototype.scrollTo=()=>{};
+dom.window.Range.prototype.getBoundingClientRect=()=>rect;
+dom.window.Range.prototype.getClientRects=()=>[];
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const {act,createElement}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const events=[],dispatches=[],renewals=[],uploads=[],checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:drop-owner',environment:'development'};
+setRequestAccount('drop-owner');configureAnalytics(configuration,'web');
+const artifact=number=>({id:'00000000-0000-4000-8000-'+String(number).padStart(12,'0'),name:'SYNTHETIC_PRIVATE_DROP_'+number+'.txt',mimeType:'text/plain',size:12,url:'/api/artifacts/00000000-0000-4000-8000-'+String(number).padStart(12,'0')});
+const available=[artifact(721),artifact(722),artifact(724),artifact(725)];
+let holdRenewals=false,releaseRenewal;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ if(url==='/api/speech')return Response.json({transcription:false});
+ if(url==='/api/apps')return Response.json([]);
+ if(url==='/api/trust')return Response.json({});
+ if(url==='/api/onboarding/introduction')return Response.json({messageId:null});
+ if(url==='/api/uploads/renew'){
+  const ids=JSON.parse(options.body).ids;renewals.push({ids,owner:options.headers.get('X-nod-Account')});
+  if(holdRenewals)await new Promise(resolve=>releaseRenewal=resolve);
+  return Response.json(available.filter(item=>ids.includes(item.id)));
+ }
+ if(url==='/api/uploads'){
+  uploads.push(options.body.get('file'));
+  return Response.json(artifact(730+uploads.length));
+ }
+ throw new Error('Unexpected fixture route '+url);
+};
+window.addEventListener('nod:attach-artifact',event=>dispatches.push(event.detail));
+const {Chat}=await import('./src/web/pages/chat.tsx');
+const root=createRoot(document.getElementById('root'));
+const state={threadId:'drop-thread',turns:[],activity:[],tasks:[],verificationRequests:[],configuration:{llmReady:true},messages:[{id:'drop-message',role:'assistant',text:'Synthetic message',turnId:null,createdAt:'2026-10-31T12:00:00Z',attachments:[]}]};
+const keepAlive=setInterval(()=>{},1000);
+try {
+await act(async()=>root.render(createElement(Chat,{ownerId:'drop-owner',state,streams:{},refresh:async()=>{},resetConversation:async()=>state.threadId})));
+const settle=()=>act(async()=>new Promise(resolve=>setTimeout(resolve,5)));
+const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition(),'drop fixture settled')};
+const editor=()=>document.querySelector('.composer [contenteditable]');
+const conversation=()=>document.querySelector('.conversation-scroll');
+const reuseEvents=()=>events.filter(event=>event.event==='artifact_action'&&event.properties.action==='reuse_requested');
+const attachmentEvents=()=>events.filter(event=>event.event==='attachment_added');
+const drop=async(target,value,files=[])=>{
+ const event=new Event('drop',{bubbles:true,cancelable:true});
+ Object.defineProperty(event,'dataTransfer',{value:{types:value?['application/x-nod-artifact']:['Files'],files,getData:type=>type==='application/x-nod-artifact'?value:''}});
+ await act(async()=>target.dispatchEvent(event));
+ assert.equal(event.defaultPrevented,true);
+};
+await waitFor(()=>editor());
+await drop(editor(),JSON.stringify(artifact(721)));
+await waitFor(()=>renewals.length===1&&!document.querySelector('.composer-file-status')?.textContent.includes('Checking'));
+check('DROP1-editor',dispatches.length===1&&reuseEvents().length===1&&reuseEvents()[0].properties.location==='composer'&&renewals[0].owner==='drop-owner');
+await drop(editor(),JSON.stringify(artifact(721)));
+check('DROP1-duplicate-intent',dispatches.length===2&&reuseEvents().length===2&&renewals.length===1&&document.querySelectorAll('.composer-file').length===1);
+await drop(conversation(),JSON.stringify(artifact(722)));
+await waitFor(()=>renewals.length===2);
+check('DROP2-conversation',dispatches.length===3&&reuseEvents().length===3&&reuseEvents().at(-1).properties.location==='composer'&&document.querySelectorAll('.composer-file').length===2);
+const invalidEvents=reuseEvents().length,invalidRenewals=renewals.length;
+for(const target of [editor(),conversation()]){
+ await drop(target,'{invalid');
+ await drop(target,JSON.stringify({...artifact(723),url:'https://private.example.test/secret'}));
+}
+check('DROP3-invalid',reuseEvents().length===invalidEvents&&renewals.length===invalidRenewals&&document.querySelectorAll('.composer-file').length===2);
+const staleEvents=reuseEvents().length;
+await drop(conversation(),JSON.stringify(artifact(723)));
+await waitFor(()=>document.querySelector('.composer-file.is-failed'));
+check('DROP4-stale-request',reuseEvents().length===staleEvents+1&&document.querySelector('.composer-file.is-failed').textContent.includes('SYNTHETIC_PRIVATE_DROP_723'));
+holdRenewals=true;releaseRenewal=undefined;
+await drop(editor(),JSON.stringify(artifact(724)));await waitFor(()=>releaseRenewal);
+const pendingEvents=reuseEvents().length;
+check('DROP5-pending-request',pendingEvents===staleEvents+2&&document.querySelectorAll('.composer-file').length===4);
+setRequestAccount('other-drop-owner');await act(async()=>releaseRenewal());holdRenewals=false;
+await waitFor(()=>[...document.querySelectorAll('.composer-file.is-failed')].some(item=>item.textContent.includes('SYNTHETIC_PRIVATE_DROP_724')));
+check('DROP5-owner-change',reuseEvents().length===pendingEvents);
+configureAnalytics(undefined);
+await drop(editor(),JSON.stringify(artifact(725)));await waitFor(()=>renewals.at(-1).owner==='other-drop-owner');
+check('DROP6-consent-off',reuseEvents().length===pendingEvents);
+setRequestAccount('drop-owner');configureAnalytics(configuration,'web');
+const externalReuse=reuseEvents().length,externalAttachments=attachmentEvents().length;
+for(const target of [editor(),conversation()])await drop(target,'',[new File(['SYNTHETIC_PRIVATE_DROP_CONTENT'],'SYNTHETIC_PRIVATE_EXTERNAL.txt',{type:'text/plain'})]);
+await waitFor(()=>uploads.length===2);
+check('DROP7-external-files',reuseEvents().length===externalReuse&&attachmentEvents().length===externalAttachments+2&&attachmentEvents().slice(-2).every(event=>event.properties.method==='drop'));
+check('DROP8-private-data',!JSON.stringify(events).includes('SYNTHETIC_PRIVATE')&&!JSON.stringify(events).includes('private.example.test')&&!JSON.stringify(events).includes(artifact(721).id));
+await act(async()=>root.unmount());configureAnalytics(undefined);dom.window.close();
+console.log(JSON.stringify({checks,events:events.filter(event=>!event.event.startsWith('$')),renewals:renewals.map(item=>({count:item.ids.length,owner:item.owner})),dispatchCount:dispatches.length,uploadCount:uploads.length},null,2));
+assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 10);
+});
+
+test('desktop startup theme changes use the persisted preference without stale reads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 15_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html>',{url:'https://nod.fixture.invalid',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,Event:dom.window.Event,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)});
+window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const {setAnalyticsClient,configureAnalytics,captureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const {initializeTheme,setTheme,currentTheme}=await import('./src/web/lib/theme.ts');
+const events=[],checks=[];
+const check=(id,value)=>checks.push({id,status:value?'pass':'fail'});
+const client={init(_key,options){this.options=options;options.loaded?.()},capture(event,properties={}){const item=this.options.before_send({event,properties});if(item)events.push(item)},reset(){},set_config(){},stopSessionRecording(){},startSessionRecording(){}};
+setAnalyticsClient(client);
+const configuration={enabled:true,distinctId:'local:theme-owner',environment:'development'};
+const restore=()=>{setRequestAccount('theme-owner');configureAnalytics(configuration,'desktop')};
+restore();captureAnalytics('settings_viewed',{tab:'general'});assert.equal(events.length,1,'analytics capture is enabled');
+const settings=theme=>({theme,resolvedTheme:theme==='system'?'dark':theme,notifications:false,launchAtLogin:false});
+let releaseRead,rejectRead,listener,readCalls,saveCalls,persisted,rejectSave;
+function bridge(theme){
+ readCalls=0;saveCalls=0;persisted=settings(theme);rejectSave=false;
+ window.nodDesktop={getSettings:async()=>persisted,getPreferences:()=>{readCalls++;return new Promise((resolve,reject)=>{releaseRead=resolve;rejectRead=reject})},onPreferences:callback=>{listener=callback;return()=>{}},setTheme:async next=>{saveCalls++;if(rejectSave)throw new Error('Synthetic theme save failure');persisted=settings(next);return persisted}};
+ return initializeTheme();
+}
+const settle=async()=>{await Promise.resolve();await Promise.resolve()};
+const themeEvents=()=>events.filter(event=>event.event==='local_setting_changed');
+const keepAlive=setInterval(()=>{},1000);
+try {
+ let cleanup=bridge('light');
+ const changed=setTheme('dark');await settle();
+ check('THEME1-read-before-save',readCalls===1&&saveCalls===0);
+ releaseRead(settings('light'));await changed;
+ check('THEME1-startup-change',saveCalls===1&&themeEvents().length===1&&themeEvents()[0].properties.value==='dark'&&currentTheme()==='dark');cleanup();
+ const noOpStart=themeEvents().length;cleanup=bridge('dark');
+ const noOp=setTheme('dark');releaseRead(settings('dark'));await noOp;
+ check('THEME2-no-op',saveCalls===1&&themeEvents().length===noOpStart);cleanup();
+ cleanup=bridge('light');rejectSave=true;
+ const failed=setTheme('dark').catch(error=>error);releaseRead(settings('light'));
+ check('THEME3-save-failed',(await failed) instanceof Error&&saveCalls===1&&themeEvents().length===noOpStart&&currentTheme()==='light');cleanup();
+ cleanup=bridge('light');
+ const consent=setTheme('dark');configureAnalytics(undefined);configureAnalytics(configuration,'desktop');releaseRead(settings('light'));await consent;
+ check('THEME4-consent-fence',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===noOpStart);cleanup();
+ cleanup=bridge('light');
+ const owner=setTheme('dark');setRequestAccount('other-theme-owner');releaseRead(settings('light'));await owner;
+ check('THEME5-owner-fence',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===noOpStart);cleanup();restore();
+ cleanup=bridge('light');listener(settings('dark'));
+ const newerStart=themeEvents().length;
+ await setTheme('system');releaseRead(settings('light'));await settle();
+ check('THEME6-newer-preference',readCalls===1&&saveCalls===1&&themeEvents().length===newerStart+1&&themeEvents().at(-1).properties.value==='system'&&currentTheme()==='dark'&&window.localStorage.getItem('nod.theme')==='system');cleanup();
+ cleanup=bridge('light');
+ const unknownStart=themeEvents().length;
+ const unknown=setTheme('dark');rejectRead(new Error('Synthetic preference read failure'));await unknown;
+ check('THEME7-unknown-baseline',saveCalls===1&&persisted.theme==='dark'&&themeEvents().length===unknownStart);cleanup();
+ configureAnalytics(undefined);dom.window.close();
+ console.log(JSON.stringify({checks,events:themeEvents()},null,2));
+ assert.ok(checks.every(check=>check.status==='pass'),checks.filter(check=>check.status==='fail').map(check=>check.id).join(', '));
+} finally {clearInterval(keepAlive);}
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).checks.length, 8);
+});
+
+test('route analytics stay in the consent period that accepted the request', async () => {
+  const { createAnalytics, registerAnalyticsRoutes } = await import('../src/server/analytics.ts');
+  const captured: { event: string; properties: Record<string, unknown> }[] = [];
+  const analytics = await createAnalytics({
+    provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    environment: 'development',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  const owner = 'route-consent-owner';
+  const app = Fastify();
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+  const requests = new Map<
+    number,
+    {
+      entered: ReturnType<typeof deferred>;
+      released: ReturnType<typeof deferred>;
+      status: number;
+    }
+  >();
+  registerAnalyticsRoutes(app, analytics.forOwner(owner));
+  app.patch('/api/preferences', async (request, reply) => {
+    const { id } = request.body as { id: number };
+    const held = requests.get(id)!;
+    held.entered.resolve();
+    await held.released.promise;
+    return reply.status(held.status).send({ accepted: held.status === 200 });
+  });
+  let nextId = 0;
+  async function start(status = 200) {
+    const id = ++nextId;
+    const held = {
+      entered: deferred(),
+      released: deferred(),
+      status,
+    };
+    requests.set(id, held);
+    const response = app
+      .inject({
+        method: 'PATCH',
+        url: '/api/preferences',
+        payload: { id, private: 'SYNTHETIC_PRIVATE_ROUTE_5278' },
+      })
+      .then((result) => result);
+    await held.entered.promise;
+    return async () => {
+      held.released.resolve();
+      assert.equal((await response).statusCode, status);
+      requests.delete(id);
+    };
+  }
+  try {
+    analytics.setUsageData(owner, true);
+    const failed = await start(500);
+    await failed();
+    assert.equal(captured.length, 0);
+
+    analytics.setUsageData(owner, false);
+    const optedOut = await start();
+    analytics.setUsageData(owner, true);
+    const current = await start();
+    await current();
+    assert.equal(captured.length, 1);
+    await optedOut();
+    assert.equal(captured.length, 1);
+
+    const expired = await start();
+    analytics.setUsageData(owner, false);
+    analytics.setUsageData(owner, true);
+    const later = await start();
+    await expired();
+    assert.equal(captured.length, 1);
+    await later();
+    assert.equal(captured.length, 2);
+    assert.ok(
+      captured.every(
+        ({ event, properties }) =>
+          event === 'settings_updated' &&
+          properties.section === 'preferences' &&
+          properties.operation === 'update',
+      ),
+    );
+    assert.ok(!JSON.stringify(captured).includes('SYNTHETIC_PRIVATE_ROUTE_5278'));
+  } finally {
+    for (const held of requests.values()) held.released.resolve();
+    await app.close();
+    await analytics.shutdown();
+  }
+});

@@ -25,7 +25,8 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
             <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
               basic usage data
             </a>
-            , like which screens you open, but never your messages. You can turn it off in Settings.
+            , like which screens you open, but never your messages or screen recordings. You can
+            turn it off in Settings.
           </Bubble>,
         ]
       : []),
@@ -54,7 +55,7 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
     }
   }
   return (
-    <section className="ob-step ob-privacy" data-analytics-public onClick={done ? undefined : skip}>
+    <section className="ob-step ob-privacy" onClick={done ? undefined : skip}>
       <Messages revealed={revealed} typing={typing} items={items} />
       <Rise show={done} className="ob-choices">
         {traces ? (

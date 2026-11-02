@@ -4,7 +4,7 @@ import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from './icons';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { ApiError, api, apiStream, errorMessage } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
-import { captureAnalytics } from '../lib/analytics';
+import { analyticsForCurrentSession } from '../lib/analytics';
 import { isPrimaryModifier } from '../lib/navigation';
 import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
@@ -196,11 +196,12 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   }
 
   async function navigate(action: 'back' | 'reload') {
-    captureAnalytics('nod_browser_handoff_action', { action });
+    const capture = analyticsForCurrentSession();
     setLoading(action);
     try {
       await flush();
       await post('/api/browser-handoff/navigate', { turnId, action });
+      capture('browser_handoff_action', { action });
       setError('');
     } catch (reason) {
       setError(errorMessage(reason));
@@ -211,11 +212,12 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   async function done() {
     if (paused) return;
-    captureAnalytics('nod_browser_handoff_action', { action: 'done' });
+    const capture = analyticsForCurrentSession();
     setReturning(true);
     try {
       await flush();
       await post('/api/browser-handoff/done', { turnId });
+      capture('browser_handoff_action', { action: 'done' });
       setReturned(true);
       setClosed(true);
     } catch (reason) {
@@ -227,14 +229,15 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   async function resize(value: boolean) {
     if (returning || loading) return;
-    if (value !== expanded)
-      captureAnalytics('nod_browser_handoff_action', { action: value ? 'expand' : 'collapse' });
+    const capture = analyticsForCurrentSession();
     setLoading('resize');
     try {
       await flush();
       setLive(false);
       setShown(false);
       setExpanded(value);
+      if (value !== expanded)
+        capture('browser_handoff_action', { action: value ? 'expand' : 'collapse' });
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {

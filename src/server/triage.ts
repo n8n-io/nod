@@ -7,17 +7,19 @@ import type { PoolClient } from 'pg';
 import type { WorkConsumers } from './work-admission.ts';
 import { logFailure } from './failure-log.ts';
 import { createPreferencesStore } from './preferences.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 
 const preferencesStore = createPreferencesStore(pool, ownerId);
 export const getPreferences = preferencesStore.get;
-const updatePreferences = preferencesStore.update;
 
 export function createTriage(options: {
   consumers?: WorkConsumers;
+  analytics?: CaptureAnalytics;
   signal(sourceId: string, client: PoolClient, summary: string): Promise<void>;
   due(): Promise<unknown>;
   sweep?(): Promise<void>;
 }) {
+  const updatePreferences = createPreferencesStore(pool, ownerId, options.analytics).update;
   async function heartbeat() {
     await options.sweep?.();
     await options.due().catch((error: unknown) => logFailure('proactive_due', error));
@@ -54,7 +56,12 @@ export function createTriage(options: {
   }
   function registerTriageRoutes(app: FastifyInstance) {
     app.get('/api/preferences', getPreferences);
-    app.patch('/api/preferences', async (request) => updatePreferences(request.body));
+    app.patch('/api/preferences', async (request) =>
+      updatePreferences(
+        request.body,
+        request.headers['x-nod-settings-source'] === 'automatic' ? 'system' : 'owner',
+      ),
+    );
   }
   return {
     getPreferences,

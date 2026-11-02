@@ -6,14 +6,31 @@ import { ConnectApps } from './presentation-apps';
 import { Booking } from './presentation-booking';
 import { PresentationChart } from './presentation-chart';
 import { Flights, Seats } from './presentation-travel';
+import { useAnalyticsView } from '../hooks/use-analytics-view';
+import { captureAnalytics } from '../lib/analytics';
 import { Places } from './presentation-places';
 import { Button } from './ui';
 
 type Visual<T extends Presentation['type']> = Extract<Presentation, { type: T }>;
 
-export function MessagePresentation({ value, messageId }: { value: unknown; messageId?: string }) {
+export function MessagePresentation({
+  value,
+  messageId,
+  analyticsKey,
+}: {
+  value: unknown;
+  messageId?: string;
+  analyticsKey?: string;
+}) {
   const parsed = presentationSchema.safeParse(value);
   const drawer = useArtifactDrawer();
+  const titleId = useId();
+  const root = useAnalyticsView<HTMLElement, 'presentation_viewed'>(
+    'presentation_viewed',
+    { kind: parsed.success ? parsed.data.type : 'image' },
+    analyticsKey ?? messageId ?? titleId,
+    parsed.success,
+  );
   if (!parsed.success)
     return (
       <p className="presentation-unavailable" role="status">
@@ -21,7 +38,7 @@ export function MessagePresentation({ value, messageId }: { value: unknown; mess
       </p>
     );
   const visual = parsed.data;
-  if (visual.type === 'apps') return <ConnectApps visual={visual} />;
+  if (visual.type === 'apps') return <ConnectApps visual={visual} analyticsRef={root} />;
   const expandAction =
     messageId && visual.type !== 'image' ? (
       <Button
@@ -30,18 +47,25 @@ export function MessagePresentation({ value, messageId }: { value: unknown; mess
         className="presentation-expand"
         aria-label={`Open ${visual.title}`}
         title="Open visual"
-        onClick={(event) =>
+        onClick={(event) => {
           drawer.open(`presentation:${messageId}`, {
             element: event.currentTarget,
             keyboard: event.detail === 0,
-          })
-        }
+          });
+          captureAnalytics('presentation_action', {
+            kind: visual.type,
+            location: 'message',
+            action: 'open',
+          });
+        }}
       >
         <Maximize2 size={16} aria-hidden="true" />
       </Button>
     ) : null;
   return (
     <section
+      ref={root}
+      data-analytics-private
       className={`message-presentation presentation-${visual.type}`}
       aria-label={visual.title}
     >
@@ -103,12 +127,17 @@ function PresentedImage({ visual }: { visual: Visual<'image'> }) {
       type="button"
       className="presentation-image-button"
       aria-label={`Open image: ${visual.alt}`}
-      onClick={(event) =>
+      onClick={(event) => {
         drawer.open(visual.artifactId, {
           element: event.currentTarget,
           keyboard: event.detail === 0,
-        })
-      }
+        });
+        captureAnalytics('presentation_action', {
+          kind: visual.type,
+          location: 'message',
+          action: 'open',
+        });
+      }}
     >
       <img
         src={`/api/artifacts/${visual.artifactId}`}
