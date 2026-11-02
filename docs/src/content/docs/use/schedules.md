@@ -46,6 +46,7 @@ flowchart TD
 - **What you asked to get arrives every time.** A summary, brief or reminder comes on every run. A watch or check-in messages you only when something needs you, such as a real price drop, a problem or a question. Routine checks stay quiet.
 - **It replies where you asked.** A schedule you set up on Telegram sends its messages to Telegram.
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Nod asks you first. See [Approvals](/trust/approvals/).
+- **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs, so it doesn't ask you again while a question is open. A run does its work itself and can't set up more schedules.
 
 Each run appears in **Tasks → Previous**. Review its cost and recorded app actions in [Usage](/use/spending/). A recurring schedule that has finished priced runs shows about what it costs a month, from the cost of its recent runs and how often it runs.
 

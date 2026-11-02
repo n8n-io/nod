@@ -470,24 +470,28 @@ test(
         let job = await jobFor(schedule.id);
         clock = new Date(schedule.nextRun!);
         await deliver([job]);
+        const [first] = (await runs(schedule.id)).map((run) => run.turnId);
+        await db.pool.query(
+          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.1)',
+          [randomUUID(), ownerId, first],
+        );
+        assert.equal(await monthly(), null);
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first]);
         job = await jobFor(schedule.id);
         clock = new Date('2035-10-28T09:05:00.000Z');
         await deliver([job]);
         const turns = (await runs(schedule.id)).map((run) => run.turnId);
         assert.equal(turns.length, 2);
-        for (const [index, turnId] of turns.entries())
-          await db.pool.query(
-            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,$4)',
-            [randomUUID(), ownerId, turnId, index ? 0.3 : 0.1],
-          );
-        assert.equal(await monthly(), null);
-        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
-          turns,
-        ]);
+        const second = turns.find((turnId) => turnId !== first)!;
+        await db.pool.query(
+          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.3)',
+          [randomUUID(), ownerId, second],
+        );
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [second]);
         assert.equal(Math.round((await monthly())! * 100) / 100, 6);
         await db.pool.query(
           'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,NULL)',
-          [randomUUID(), ownerId, turns[0]],
+          [randomUUID(), ownerId, first],
         );
         assert.equal(Math.round((await monthly())! * 100) / 100, 9);
         assert.equal(
@@ -496,6 +500,39 @@ test(
         );
         assert.equal(await monthly(), null);
       });
+      await t.test(
+        'a recurring schedule starts no run while its last run is busy or waiting on the owner',
+        async () => {
+          const before = clock;
+          const schedule = await create({ cron: '*/15 * * * *' });
+          const fire = async () => {
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            return (await runs(schedule.id)).map((run) => run.turnId);
+          };
+          const [first] = await fire();
+          assert.deepEqual(await fire(), [first]);
+          for (const status of ['running', 'waiting']) {
+            await db.pool.query('UPDATE turns SET status=$2,started_at=now() WHERE id=$1', [
+              first,
+              status,
+            ]);
+            assert.deepEqual(await fire(), [first]);
+          }
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,session_id,parent_turn_id,background,status,started_at)
+             SELECT $1,owner_id,thread_id,'resume','Synthetic answer.',id,id,true,'succeeded',now() FROM turns WHERE id=$2`,
+            [randomUUID(), first],
+          );
+          assert.equal((await fire()).length, 2);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
+            (await runs(schedule.id)).map((run) => run.turnId),
+          ]);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        },
+      );
       await t.test(
         'a baseline added to an existing watch is what its next run compares with',
         async () => {
