@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
@@ -34,12 +33,15 @@ import {
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { FileActions, fileDrag, prepareFile } from './file-actions';
-import { ArtifactEdit } from './artifact-edit';
 import { apiResponse } from '../lib/api';
 import { Button } from './ui';
+import { Tooltip } from './tooltip';
 import { SharedMessageCard } from './shared-message-card';
 import { StickerPlayer } from './sticker-player';
 import { AudioPlayer } from './audio-player';
+import { AttachmentVideo } from './attachment-video';
+import { MessagePresentation } from './message-presentation';
+import { presentationText } from '../../shared/presentation';
 
 const minimumWidth = 360;
 const minimumChat = 360;
@@ -121,14 +123,9 @@ function VideoView({
 }) {
   return (
     <div className="artifact-stage is-video">
-      <video
-        controls
-        playsInline
-        preload="metadata"
-        src={item.url}
-        aria-label={item.name}
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
+      <AttachmentVideo
+        item={item}
+        onMetadata={(video) => {
           onDetail(
             [
               duration(video.duration),
@@ -159,6 +156,12 @@ const ArtifactView = memo(function ArtifactView({
   const fail = useCallback(() => setFailed(true), []);
   const kind = attachmentKind(item.mimeType ?? '', item.name);
   if (failed) return <PreviewUnavailable item={item} />;
+  if (item.presentation)
+    return (
+      <div className="artifact-stage is-presentation" data-artifact-scroll="">
+        <MessagePresentation value={item.presentation} />
+      </div>
+    );
   if (
     item.source === 'location' ||
     item.source === 'contact' ||
@@ -236,7 +239,6 @@ function ArtifactDrawer({
       setDetails((values) => (values[id] === value ? values : { ...values, [id]: value })),
     [],
   );
-  const [editing, setEditing] = useState(false);
   const [copyError, setCopyError] = useState('');
   const viewed = useRef<ImagePreview[]>([]);
   const modesByFile = useRef(new Map<string, 'preview' | 'code'>());
@@ -256,13 +258,14 @@ function ArtifactDrawer({
   const [closing, setClosing] = useState(false);
   const [stage, setStage] = useState('#f1f1f1');
   const index = items.indexOf(current);
-  const kind = attachmentKind(current.mimeType ?? '', current.name);
+  const kind = current.presentation ? null : attachmentKind(current.mimeType ?? '', current.name);
   const vector = kind === 'image' && vectorImage(current.mimeType ?? '', current.name);
   const modes =
     kind === 'markdown' || kind === 'html' || kind === 'csv' || kind === 'n8n-workflow' || vector;
   const copyable =
-    ['markdown', 'html', 'csv', 'text', 'n8n-workflow'].includes(kind ?? '') &&
-    (ownedArtifactUrl(current.url) || localPreviewUrl(current.url));
+    Boolean(current.presentation) ||
+    (['markdown', 'html', 'csv', 'text', 'n8n-workflow'].includes(kind ?? '') &&
+      (ownedArtifactUrl(current.url) || localPreviewUrl(current.url)));
 
   const overlay = expanded || (pageWidth > 0 && pageWidth < minimumWidth + minimumChat + 40);
   const docked = Math.min(
@@ -305,8 +308,9 @@ function ArtifactDrawer({
     };
   }, []);
   useEffect(() => {
-    if (visible) root.current?.focus({ preventScroll: true });
-  }, [visible]);
+    if (visible && !root.current?.contains(document.activeElement))
+      root.current?.focus({ preventScroll: true });
+  }, [current.id, visible]);
   useEffect(() => {
     root.current?.querySelectorAll<HTMLMediaElement>('audio,video').forEach((media) => {
       if (!visible || media.closest('.artifact-retained[hidden]')) media.pause();
@@ -315,7 +319,6 @@ function ArtifactDrawer({
   useEffect(() => {
     setMode('preview');
     setCopied(false);
-    setEditing(false);
     setCopyError('');
     setClosing(false);
   }, [current.id, visible]);
@@ -340,40 +343,51 @@ function ArtifactDrawer({
     window.addEventListener('message', forward);
     return () => window.removeEventListener('message', forward);
   }, [close]);
-  useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
-      if (
-        event.key === 'Escape' &&
-        !event.defaultPrevented &&
-        document.activeElement === document.body
-      )
-        close();
-    };
-    document.addEventListener('keydown', escape);
-    return () => document.removeEventListener('keydown', escape);
-  }, [close]);
   const move = (next: number) => {
     if (next < 0 || next >= items.length) return;
     onSelect(items[next].id);
   };
-  function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
-    if (event.key === 'Escape' && !event.defaultPrevented) {
-      if ((event.target as HTMLElement).closest('video:fullscreen')) return;
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    if (
-      (event.target as HTMLElement).closest(
-        'input,textarea,select,audio,video,[contenteditable="true"],[data-artifact-scroll],[role="separator"],[role="tablist"]',
+  useEffect(() => {
+    if (!visible) return;
+    const navigate = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.defaultPrevented ||
+        !(target instanceof Element) ||
+        (!root.current?.contains(target) && target !== document.body)
       )
-    )
-      return;
-    event.preventDefault();
-    move(index + (event.key === 'ArrowLeft' ? -1 : 1));
-  }
+        return;
+      if (event.key === 'Escape') {
+        if (target.closest('video:fullscreen')) return;
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (window.getSelection()?.toString()) return;
+      if (
+        target.closest(
+          'input,textarea,select,audio,video,[contenteditable]:not([contenteditable="false"]),[role="separator"],[role="slider"],[role="tablist"],[role="listbox"],[role="menu"],[role="tree"],[role="grid"]',
+        ) ||
+        (target.closest('.artifact-drawer-body') && target.closest('button,a,[role="button"]'))
+      )
+        return;
+      const scroll = target.closest<HTMLElement>('[data-artifact-scroll]');
+      if (
+        scroll &&
+        scroll.scrollWidth > scroll.clientWidth + 1 &&
+        ['auto', 'scroll'].includes(getComputedStyle(scroll).overflowX)
+      )
+        return;
+      const next = index + (event.key === 'ArrowLeft' ? -1 : 1);
+      if (next < 0 || next >= items.length) return;
+      event.preventDefault();
+      onSelect(items[next].id);
+    };
+    document.addEventListener('keydown', navigate);
+    return () => document.removeEventListener('keydown', navigate);
+  }, [close, index, items, onSelect, visible]);
   function resize(event: ReactPointerEvent<HTMLDivElement>) {
     const page = root.current?.parentElement;
     if (!page || event.button !== 0) return;
@@ -401,15 +415,21 @@ function ArtifactDrawer({
   async function copy() {
     try {
       setCopyError('');
-      const response = await apiResponse(current.url);
-      if (!response.ok) throw new Error('The file could not be loaded.');
-      await navigator.clipboard.writeText(await response.text());
+      if (current.presentation) {
+        await navigator.clipboard.writeText(presentationText(current.presentation));
+      } else {
+        const response = await apiResponse(current.url);
+        if (!response.ok) throw new Error('The file could not be loaded.');
+        await navigator.clipboard.writeText(await response.text());
+      }
       setCopied(true);
     } catch {
       setCopyError('Could not copy. Select the text or download the file.');
     }
   }
-  const meta = [fileType(current.name), detail, fileSize(current.size)].filter(Boolean).join(' · ');
+  const meta = current.presentation
+    ? current.presentation.type.charAt(0).toUpperCase() + current.presentation.type.slice(1)
+    : [fileType(current.name), detail, fileSize(current.size)].filter(Boolean).join(' · ');
   return (
     <aside
       ref={root}
@@ -418,7 +438,6 @@ function ArtifactDrawer({
       style={overlay ? undefined : { width: docked, ['--artifact-width' as string]: `${docked}px` }}
       aria-label={current.name}
       tabIndex={-1}
-      onKeyDown={onKeyDown}
       onAnimationEnd={(event) => {
         if (closing && event.target === event.currentTarget) onClose();
       }}
@@ -452,31 +471,36 @@ function ArtifactDrawer({
       )}
       <div className="artifact-drawer-panel">
         <header className="artifact-drawer-header">
-          <span
-            className="artifact-drawer-glyph"
-            draggable
-            title={`Drag ${current.name}`}
-            onPointerEnter={() => prepareFile(current)}
-            onDragStart={(event) => fileDrag(event, current)}
-          >
-            <FileGlyph name={current.name} mimeType={current.mimeType ?? ''} />
-          </span>
+          <Tooltip content={current.presentation ? undefined : `Drag ${current.name}`}>
+            <span
+              className="artifact-drawer-glyph"
+              draggable={!current.presentation}
+              onPointerEnter={() => !current.presentation && prepareFile(current)}
+              onDragStart={(event) => !current.presentation && fileDrag(event, current)}
+            >
+              <FileGlyph name={current.name} mimeType={current.mimeType ?? ''} />
+            </span>
+          </Tooltip>
           <div className="artifact-drawer-title">
-            <h2 title={current.name}>
+            <h2>
               {items.length > 1 ? (
-                <select
-                  aria-label="Choose a file"
-                  value={current.id}
-                  onChange={(event) => onSelect(event.target.value)}
-                >
-                  {items.map((item) => (
-                    <option value={item.id} key={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                <Tooltip content={current.name}>
+                  <select
+                    aria-label="Choose a file"
+                    value={current.id}
+                    onChange={(event) => onSelect(event.target.value)}
+                  >
+                    {items.map((item) => (
+                      <option value={item.id} key={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </Tooltip>
               ) : (
-                current.name
+                <Tooltip content={current.name}>
+                  <span>{current.name}</span>
+                </Tooltip>
               )}
             </h2>
             <span>{meta}</span>
@@ -485,16 +509,16 @@ function ArtifactDrawer({
             {modes && (
               <div className="artifact-segmented" role="group" aria-label="View">
                 {(['preview', 'code'] as const).map((value) => (
-                  <button
-                    type="button"
-                    key={value}
-                    aria-pressed={mode === value}
-                    aria-label={value === 'preview' ? 'Preview' : 'Code'}
-                    title={value === 'preview' ? 'Preview' : 'Code'}
-                    onClick={() => setMode(value)}
-                  >
-                    {value === 'preview' ? <Eye size={16} /> : <CodeXml size={16} />}
-                  </button>
+                  <Tooltip content={value === 'preview' ? 'Preview' : 'Code'} key={value}>
+                    <button
+                      type="button"
+                      aria-pressed={mode === value}
+                      aria-label={value === 'preview' ? 'Preview' : 'Code'}
+                      onClick={() => setMode(value)}
+                    >
+                      {value === 'preview' ? <Eye size={16} /> : <CodeXml size={16} />}
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             )}
@@ -504,7 +528,8 @@ function ArtifactDrawer({
                   variant="ghost"
                   size="icon"
                   aria-label="Previous file"
-                  title="Previous file (←)"
+                  title="Previous file"
+                  shortcut="←"
                   disabled={index <= 0}
                   onClick={() => move(index - 1)}
                 >
@@ -517,7 +542,8 @@ function ArtifactDrawer({
                   variant="ghost"
                   size="icon"
                   aria-label="Next file"
-                  title="Next file (→)"
+                  title="Next file"
+                  shortcut="→"
                   disabled={index >= items.length - 1}
                   onClick={() => move(index + 1)}
                 >
@@ -536,19 +562,7 @@ function ArtifactDrawer({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
               </Button>
             )}
-            <FileActions item={current} />
-            {['markdown', 'text'].includes(kind ?? '') &&
-              current.size <= 4000000 &&
-              ownedArtifactUrl(current.url) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditing((value) => !value)}
-                  aria-pressed={editing}
-                >
-                  Edit copy
-                </Button>
-              )}
+            {!current.presentation && <FileActions item={current} />}
             <Button
               variant="ghost"
               size="icon"
@@ -564,7 +578,8 @@ function ArtifactDrawer({
               variant="ghost"
               size="icon"
               aria-label="Close preview"
-              title="Close (Esc)"
+              title="Close"
+              shortcut="Esc"
               onClick={close}
             >
               <X size={16} />
@@ -573,13 +588,10 @@ function ArtifactDrawer({
         </header>
         {copyError && <p role="status">{copyError}</p>}
         <div className="artifact-drawer-body">
-          {editing && (
-            <ArtifactEdit key={current.id} item={current} onClose={() => setEditing(false)} />
-          )}
           {viewed.current.map((item) => (
             <div
               key={`${item.id}:${item.url}`}
-              hidden={editing || item.id !== current.id}
+              hidden={item.id !== current.id}
               className="artifact-retained"
             >
               <RetainedArtifact

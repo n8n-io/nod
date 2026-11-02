@@ -43,7 +43,6 @@ ipcRenderer.on('nod:feedback:open', () => {
 
 contextBridge.exposeInMainWorld('nodDesktop', {
   remote: process.argv.includes('--nod-remote'),
-  openConnectionSettings: () => invoke('nod:connection:open'),
   fileAction: (id, action) => invoke('nod:file:action', id, action),
   fileMenu: (id, image) => invoke('nod:file:menu', id, image),
   ready: () => invoke('nod:renderer-ready'),

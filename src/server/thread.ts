@@ -4,7 +4,16 @@ import {
   presentationText,
   type Presentation,
 } from '../shared/presentation.ts';
+import {
+  answerChoicesSchema,
+  choiceAnswerText,
+  questionAnswerSchema,
+  questionWithChoices,
+  type AnswerChoices,
+  type QuestionAnswer,
+} from '../shared/answer-choices.ts';
 import { logFailure } from './failure-log.ts';
+import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -93,6 +102,7 @@ interface SubmitUserMessageOptions {
   replyQuote?: string;
   seenMessageId?: string;
   clientMessageId?: string;
+  questionAnswer?: QuestionAnswer;
   audioCaption?: string;
   prompt?: string;
   answer?: ChatConfirmationInput['answer'];
@@ -298,6 +308,8 @@ async function assertReplyTarget(client: PoolClient, threadId: string, messageId
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
 }
 
+export { pendingAnswerChoicesSql };
+
 export async function insertAssistantMessage(
   client: PoolClient,
   turn: TurnRef,
@@ -306,9 +318,21 @@ export async function insertAssistantMessage(
   streamId?: string,
   replyToMessageId?: string,
   presentation?: Presentation,
+  answerChoices?: AnswerChoices,
 ) {
   const visual = presentation === undefined ? undefined : presentationSchema.parse(presentation);
-  if (visual && !text.trim()) throw new Error('A complete text answer is required.');
+  const choices =
+    answerChoices === undefined ? undefined : answerChoicesSchema.parse(answerChoices);
+  if (choices) {
+    const waiting = await client.query(
+      `SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
+        AND status='waiting' AND waiting_reason='question' AND handoff_browser_id IS NULL`,
+      [turn.turnId, ownerId, turn.threadId],
+    );
+    if (!waiting.rowCount || !text.trim()) throw new Error('Choices require a waiting question.');
+  }
+  if (!text.trim() && !attachments.length && !visual)
+    throw new Error('A message needs text, an attachment or a presentation.');
   const images = visual ? presentationImages(visual) : [];
   if (images.length) {
     const rows = (
@@ -340,7 +364,7 @@ export async function insertAssistantMessage(
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
   const id = randomUUID();
   await client.query(
-    'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id,presentation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+    'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id,presentation,answer_choices) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
     [
       id,
       ownerId,
@@ -352,6 +376,7 @@ export async function insertAssistantMessage(
       streamId ?? null,
       replyToMessageId ?? null,
       visual ? JSON.stringify(visual) : null,
+      choices ? JSON.stringify(choices) : null,
     ],
   );
   return id;
@@ -488,9 +513,11 @@ export async function submitUserMessage(
     sourceId: options.sourceId,
     hasAttachments: attachments.length > 0 || Boolean(options.prepareAttachments),
   };
-  const answer = options.client
-    ? options.answer
-    : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
+  const answer = options.questionAnswer
+    ? undefined
+    : options.client
+      ? options.answer
+      : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -498,7 +525,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,question_answer FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -511,6 +538,8 @@ export async function submitUserMessage(
           previous.audio_caption !== (options.audioCaption ?? null) ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
           previous.reply_quote !== (options.replyQuote ?? null) ||
+          JSON.stringify(previous.question_answer) !==
+            JSON.stringify(options.questionAnswer ?? null) ||
           JSON.stringify((previous.attachments as Artifact[]).map((item) => item.id)) !==
             JSON.stringify(attachments.map((item) => item.id))
         )
@@ -528,16 +557,53 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
+    let choiceQuestion: { id: string; session_id: string; background: boolean } | undefined;
+    if (options.questionAnswer !== undefined) {
+      const submitted = questionAnswerSchema.parse(options.questionAnswer);
+      if (
+        !options.replyToMessageId ||
+        !text.trim() ||
+        (options.prompt !== undefined && options.prompt !== text)
+      )
+        throw httpError('Answer the question with the text you want to send.', 400);
+      const question = (
+        await client.query(
+          `SELECT u.id,u.session_id,u.background,m.answer_choices FROM messages m
+          JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+          WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND ${pendingAnswerChoicesSql}`,
+          [options.replyToMessageId, ownerId, thread.id],
+        )
+      ).rows[0];
+      if (!question)
+        throw Object.assign(httpError('This question is no longer waiting for an answer.', 409), {
+          code: 'question_unavailable',
+        });
+      const choices = answerChoicesSchema.parse(question.answer_choices);
+      if ('choiceIds' in submitted) {
+        const ids = new Set(submitted.choiceIds);
+        const selected = choices.options.filter((option) => ids.has(option.id));
+        if (
+          ids.size !== submitted.choiceIds.length ||
+          selected.length !== ids.size ||
+          (!choices.multiple && selected.length !== 1) ||
+          text !== choiceAnswerText(selected)
+        )
+          throw httpError('Choose an available answer or write your own.', 400);
+      }
+      choiceQuestion = question;
+    }
     if (
       options.replyQuote !== undefined &&
       (!options.replyToMessageId || !options.replyQuote.trim() || options.replyQuote.length > 4000)
     )
       throw httpError('Select a passage of 4,000 characters or fewer.');
-    const confirmed = await confirmAction?.accept(client, {
-      ...confirmation,
-      threadId: thread.id,
-      answer,
-    });
+    const confirmed = options.questionAnswer
+      ? undefined
+      : await confirmAction?.accept(client, {
+          ...confirmation,
+          threadId: thread.id,
+          answer,
+        });
     if (confirmed && 'turnId' in confirmed) return confirmed;
     await localArtifacts.retainArtifacts(
       attachments.map((attachment) => attachment.id),
@@ -549,6 +615,7 @@ export async function submitUserMessage(
       options.replyToMessageId && (await taskReply?.(client, thread.id, options.replyToMessageId));
     const question =
       taskTarget ||
+      choiceQuestion ||
       confirmed?.waiting ||
       (
         await client.query(
@@ -581,7 +648,7 @@ export async function submitUserMessage(
     if (taskTarget) await taskTarget.record(turnId);
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9)",
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10)",
       [
         messageId,
         ownerId,
@@ -592,6 +659,7 @@ export async function submitUserMessage(
         options.replyToMessageId ?? null,
         options.replyQuote ?? null,
         options.audioCaption ?? null,
+        options.questionAnswer ? JSON.stringify(options.questionAnswer) : null,
       ],
     );
     await sendDrain(client, thread.id);
@@ -1074,7 +1142,7 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,s.audio_caption,r.audio_caption AS reply_audio_caption,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,
+          `SELECT s.attachments,s.audio_caption,r.audio_caption AS reply_audio_caption,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,r.presentation,r.answer_choices,
            s.role='user' AND NOT EXISTS (
              SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
                AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
@@ -1095,6 +1163,7 @@ async function loadMessage(messageId: string | null) {
           : {}),
         attachments: message.reply_attachments,
         presentation: message.presentation,
+        answerChoices: message.answer_choices,
       }
     : undefined;
   return {
@@ -1133,8 +1202,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,audio_caption AS "audioCaption",created_at AS "createdAt",reaction,attachments,presentation,unseen,turn_id AS "turnId" FROM (
-       SELECT m.role,m.text,m.audio_caption,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.turn_id,
+       SELECT role,text,audio_caption AS "audioCaption",created_at AS "createdAt",reaction,attachments,presentation,answer_choices AS "answerChoices",unseen,turn_id AS "turnId" FROM (
+       SELECT m.role,m.text,m.audio_caption,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.answer_choices,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
@@ -1300,7 +1369,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           presentation,
         );
       });
-      if (text.trim()) replies.push({ id, text, source });
+      const spoken = presentation && !text.trim() ? presentationText(presentation) : text;
+      if (spoken.trim()) replies.push({ id, text: spoken, source });
     } catch (error) {
       if (rolledBack) await Promise.allSettled(cleanup.map((remove) => remove()));
       throw error;
@@ -1405,11 +1475,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return staged;
     };
     const attachments = await stageUploads(loaded.uploads, loaded.inputAttachments);
-    const describe = ({ attachments, presentation, ...row }: Record<string, any>): any => {
+    const describe = ({
+      attachments,
+      presentation,
+      answerChoices,
+      ...row
+    }: Record<string, any>): any => {
       const visual =
         row.role === 'assistant' ? presentationSchema.safeParse(presentation) : undefined;
       if (visual?.success)
         row.text = [row.text, presentationText(visual.data)].filter(Boolean).join('\n\n');
+      const choices =
+        row.role === 'assistant' ? answerChoicesSchema.safeParse(answerChoices) : undefined;
+      if (choices?.success) row.text = questionWithChoices(row.text, choices.data);
       const files = (Array.isArray(attachments) ? attachments : []) as StoredAttachment[];
       return files.length
         ? {
@@ -1699,8 +1777,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       !result.handoffBrowserId
         ? result.message
         : undefined;
+    const answerChoices =
+      questionText && result.answerChoices
+        ? answerChoicesSchema.parse(result.answerChoices)
+        : undefined;
     let questionAudio: GeneratedAudio | undefined;
-    const speechText = (questionText ?? finalReply?.text)
+    const speechText = (
+      questionText && answerChoices
+        ? questionWithChoices(questionText, answerChoices)
+        : (questionText ?? finalReply?.text)
+    )
       ?.replace(/```[\s\S]*?```/g, '')
       .replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/https?:\/\/\S+/g, '')
@@ -1764,6 +1850,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ref,
           result.message,
           shared.splice(0),
+          undefined,
+          undefined,
+          undefined,
+          answerChoices,
         );
         if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
           await dependencies.bindVerificationQuestion?.(turnId, messageId, client);

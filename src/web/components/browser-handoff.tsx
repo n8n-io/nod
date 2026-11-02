@@ -5,6 +5,7 @@ import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { ApiError, api, apiStream, errorMessage } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
 import { captureAnalytics } from '../lib/analytics';
+import { isPrimaryModifier } from '../lib/navigation';
 import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
 
@@ -160,11 +161,11 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   function key(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget) return;
+    const mac = /Mac|iPhone|iPad/.test(window.navigator.platform);
     if (
       event.key.length === 1 &&
       !event.metaKey &&
-      (event.getModifierState('AltGraph') ||
-        (!event.ctrlKey && (!event.altKey || /Mac|iPhone|iPad/.test(window.navigator.platform))))
+      (event.getModifierState('AltGraph') || (!event.ctrlKey && (!event.altKey || mac)))
     ) {
       event.preventDefault();
       return queue({ type: 'text', text: event.key });
@@ -172,15 +173,15 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     if (event.altKey) return;
     const letter = event.key.toLowerCase();
     if (event.ctrlKey || event.metaKey) {
-      if (letter === 'v' || !/^[a-z0-9]$/.test(letter)) return;
+      if (!isPrimaryModifier(event, mac) || letter === 'v' || !/^[a-z0-9]$/.test(letter)) return;
       event.preventDefault();
-      return queue({ type: 'key', key: `Control+${letter}` });
+      return queue({ type: 'key', key: `Control+${event.shiftKey ? 'Shift+' : ''}${letter}` });
     }
     if (namedKeys.has(event.key)) {
       event.preventDefault();
       return queue({
         type: 'key',
-        key: event.shiftKey && event.key === 'Tab' ? 'Shift+Tab' : event.key,
+        key: `${event.shiftKey ? 'Shift+' : ''}${event.key}`,
       });
     }
   }
@@ -338,7 +339,16 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     if (!expanded || closed) return;
     screen.current?.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node))
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        !screen.current?.contains(event.target as Node)
+      )
         void resize(false);
     };
     window.addEventListener('keydown', keydown);

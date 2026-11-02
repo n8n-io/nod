@@ -1,6 +1,6 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
+import { ActionMenu, ActionMenuItem } from '../components/action-menu';
 import { ChevronRight, CreditCard, Globe, Import, KeyRound, Plus } from '../components/icons';
 import type { VaultListEntry, VaultSession } from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
@@ -11,7 +11,6 @@ import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
 import { VaultCardPayments } from '../components/vault-card';
 import { VaultImportDialog } from '../components/vault-import-dialog';
-import { WebsiteSessionDialog } from '../components/website-session-dialog';
 import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
 import { Loading, Notice, SearchField } from '../components/ui';
@@ -62,7 +61,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
   const [request] = useState(requested);
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
-  const [website, setWebsite] = useState(false);
   const [importing, setImporting] = useState(false);
   const [adding, setAdding] = useState<'login' | 'card' | null>(request.add);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(request.item);
@@ -72,6 +70,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
   const returnTo = useRef<string | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
+  const returnFromImportMenu = useRef(false);
   const items = vaultItems(entries ?? [], sessions.data ?? []);
   const empty = Boolean(entries && sessions.data) && !items.length;
   const split = !phone && !empty;
@@ -91,6 +90,12 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
     (selectedId === undefined && split && !adding ? visible[0] : undefined);
   const pageMode = Boolean(adding || selected) && !split;
   const backToUsage = Boolean(fromUsage) && selected?.id === fromUsage;
+
+  useEffect(() => {
+    if (importing || !returnFromImportMenu.current) return;
+    returnFromImportMenu.current = false;
+    newTrigger.current?.focus({ preventScroll: true });
+  }, [importing]);
 
   useEffect(() => {
     if (hidden || !window.location.search) return;
@@ -283,61 +288,43 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         <header className="page-heading secondary-heading">
           <PageTitle path="/vault" />
           <div className="secondary-heading-actions">
-            <Popover.Root open={menu} onOpenChange={setMenu}>
-              <Popover.Trigger asChild>
+            <ActionMenu
+              label="Add to Vault"
+              open={menu}
+              onOpenChange={setMenu}
+              contentClassName="vault-new-menu"
+              onCloseAutoFocus={(event) => {
+                if (!openingDialog.current) return;
+                openingDialog.current = false;
+                event.preventDefault();
+              }}
+              trigger={
                 <button ref={newTrigger} type="button" className="button button-primary button-sm">
                   <Plus size={16} aria-hidden="true" />
                   Add
                 </button>
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content
-                  className="connection-menu-options menu vault-new-menu"
-                  align="end"
-                  sideOffset={6}
-                  onCloseAutoFocus={(event) => {
-                    if (!openingDialog.current) return;
-                    openingDialog.current = false;
-                    event.preventDefault();
-                  }}
-                >
-                  <button type="button" className="menu-item" onClick={() => start('login')}>
-                    <Globe size={16} aria-hidden="true" />
-                    Login
-                  </button>
-                  <button type="button" className="menu-item" onClick={() => start('card')}>
-                    <CreditCard size={16} aria-hidden="true" />
-                    Payment card
-                  </button>
-                  {onAsk && (
-                    <button
-                      type="button"
-                      className="menu-item"
-                      onClick={() => {
-                        openingDialog.current = true;
-                        setMenu(false);
-                        setWebsite(true);
-                      }}
-                    >
-                      <Globe size={16} aria-hidden="true" />
-                      Website session
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="menu-item"
-                    onClick={() => {
-                      openingDialog.current = true;
-                      setMenu(false);
-                      setImporting(true);
-                    }}
-                  >
-                    <Import size={16} aria-hidden="true" />
-                    Import passwords
-                  </button>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
+              }
+            >
+              <ActionMenuItem onClick={() => start('login')}>
+                <Globe size={16} aria-hidden="true" />
+                Login
+              </ActionMenuItem>
+              <ActionMenuItem onClick={() => start('card')}>
+                <CreditCard size={16} aria-hidden="true" />
+                Payment card
+              </ActionMenuItem>
+              <ActionMenuItem
+                onClick={() => {
+                  openingDialog.current = true;
+                  returnFromImportMenu.current = true;
+                  setMenu(false);
+                  setImporting(true);
+                }}
+              >
+                <Import size={16} aria-hidden="true" />
+                Import passwords
+              </ActionMenuItem>
+            </ActionMenu>
           </div>
         </header>
       )}
@@ -355,8 +342,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
           <div className="statement vault-start">
             <p className="statement-summary">
               Nod has <b>no logins</b> and <b>no cards</b> yet.
-              <br />
-              It fills them in for you. The AI never sees your passwords or card numbers.
             </p>
             <div className="vault-doors">
               {[
@@ -378,23 +363,15 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
                   detail: 'You approve each payment with its security code',
                   run: () => start('card'),
                 },
-                ...(onAsk
-                  ? [
-                      {
-                        icon: Globe,
-                        label: 'Sign in to a website',
-                        detail: 'Sign in once, later tasks reuse it',
-                        run: () => setWebsite(true),
-                      },
-                    ]
-                  : []),
               ].map(({ icon: Icon, label, detail, run }) => (
                 <button key={label} type="button" className="vault-door" onClick={run}>
                   <span className="vault-door-icon" aria-hidden="true">
                     <Icon size={20} />
                   </span>
-                  <strong>{label}</strong>
-                  <span>{detail}</span>
+                  <span className="vault-door-text">
+                    <strong>{label}</strong>
+                    <span>{detail}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -423,7 +400,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         )}
         {detail && <div className="vault-detail-column">{detail}</div>}
       </div>
-      {onAsk && <WebsiteSessionDialog open={website} onOpenChange={setWebsite} onAsk={onAsk} />}
       <VaultImportDialog
         open={importing}
         onOpenChange={setImporting}

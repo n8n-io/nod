@@ -46,6 +46,50 @@
 .schedule-inactive > .saved-plan-list {
   margin-top: 12px;
 }
+.schedule-runs {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.schedule-runs > h3 {
+  margin: 0;
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.schedule-runs-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.schedule-run {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 0;
+}
+.schedule-run:first-child {
+  padding-top: 0;
+}
+.schedule-run:last-child {
+  padding-bottom: 0;
+}
+.schedule-run + .schedule-run {
+  border-top: 1px solid var(--border);
+}
+.schedule-run-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-control);
+}
+.schedule-run-heading > time {
+  flex: 1;
+}
+.schedule-runs > .schedule-history-more {
+  justify-self: start;
+}
 .task-status {
   display: inline-flex;
   flex-shrink: 0;
@@ -207,7 +251,7 @@
   color: var(--muted-foreground);
 }
 .task-preview-chevron {
-  transition: transform 160ms;
+  transition: transform 220ms var(--ease-reveal);
 }
 .task-preview-head[aria-expanded='true'] .task-preview-chevron {
   transform: rotate(180deg);
@@ -219,8 +263,25 @@
   padding: 16px;
   border-top: 1px solid var(--border);
 }
-.task-preview-body[hidden] {
-  display: none;
+.task-preview-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 220ms var(--ease-reveal),
+    opacity 160ms ease,
+    visibility 0s 220ms;
+}
+.task-preview-disclosure[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.task-preview-clip {
+  min-height: 0;
+  overflow: hidden;
 }
 .task-preview-question {
   display: grid;
@@ -315,9 +376,6 @@
 .task-activity [data-helper='true'] {
   padding-left: 1.5rem;
 }
-.messages > .task-preview {
-  margin-left: 2.75rem;
-}
 @media (max-width: 640px) {
   .tasks-page .task-preview-head,
   .tasks-page .task-preview-body {
@@ -329,7 +387,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-preview-chevron {
+  .task-preview-chevron,
+  .task-preview-disclosure {
     transition: none;
   }
 }
@@ -345,4 +404,39 @@
 }
 [role='tabpanel'] > .tasks-ideas {
   padding-top: var(--secondary-empty-inset);
+}
+
+.schedule-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 440px;
+  margin: clamp(40px, 10vh, 96px) auto;
+  text-align: center;
+}
+.schedule-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 4px;
+  border-radius: 20px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.schedule-empty h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.4px;
+}
+.schedule-empty p {
+  margin: 0 0 8px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+.schedule-empty-note {
+  color: var(--muted-foreground);
+  font-size: 12px;
 }

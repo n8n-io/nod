@@ -3475,6 +3475,7 @@ globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window)
 globalThis.location=window.location;
 globalThis.ResizeObserver=class{observe(){}disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
+HTMLElement.prototype.scrollTo=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
 let store=createSettingsStore(join(directory,'settings.json'),{});
 let failRead=true;
@@ -3495,7 +3496,9 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
  if(path==='/api/account/prepare')return new Promise(()=>{});
  if(path==='/api/models')return Response.json({connections:[{id:'synthetic',provider:'anthropic',method:'api_key',label:'Synthetic model',managed:false,status:'connected',models:[{id:'synthetic-model',name:'Synthetic model',efforts:['medium'],images:false,contextWindow:1000}]}],selection:{connectionId:'synthetic',modelId:'synthetic-model',effort:'medium'}});
- if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon'});
+ if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon',locale:'en-GB',hourCycle:'h23',quietHoursEnabled:false,quietStart:'22:00',quietEnd:'08:00',speechReply:'auto',speechVoice:null});
+ if(path==='/api/speech')return Response.json({transcription:false,synthesis:false,voices:[],speechVoice:null,speechReply:'auto'});
+ if(path==='/api/memory')return Response.json({saving:true,sensitive:false,notes:[],skills:[],archive:[]});
  if(path==='/api/apps'||path==='/api/apps/catalog')return Response.json([]);
  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
  throw new Error('Unexpected request '+path);
@@ -3537,17 +3540,14 @@ assert.equal(document.querySelector('[role="switch"]'),null);
 assert.equal(saves,2,'a completed native step is never written again');
 await act(async()=>root.unmount());
 await store.save({onboardingCompleted:true});
-const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
+const {AccountSettings}=await import('./src/web/components/account-settings.tsx');
 window.nodDesktop.onPreferences=()=>()=>{};
-function GeneralChoices(){
- const native=useDesktopSettings();
- return native.settings?createElement(DesktopOptions,{settings:native.settings,busy:native.busy,onChange:native.save}):null;
-}
+const account={user:session.user,theme:'system',usageData:false,saving:false,onSettings(){},async onTheme(){},async onUsageData(){},async onTraces(){}};
 root=createRoot(document.getElementById('root'));
-await act(async()=>root.render(createElement(GeneralChoices)));
-await waitFor(()=>document.querySelectorAll('[role="switch"]').length===2);
+await act(async()=>root.render(createElement(AccountSettings,{account,open:true,initialTab:'General',openRequest:0,onOpenChange(){}})));
 const login=()=>document.querySelector('[role="switch"][aria-label="Open at login"]');
-const notices=()=>document.querySelector('[role="switch"][aria-label="Desktop notifications"]');
+const notices=()=>document.querySelector('[role="switch"][aria-label="Notifications"]');
+await waitFor(()=>login()&&notices()&&!login().disabled&&!notices().disabled);
 assert.equal(login().getAttribute('aria-checked'),'true');
 assert.equal(notices().getAttribute('aria-checked'),'false');
 await act(async()=>login().click());

@@ -1,11 +1,22 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink } from '../components/icons';
+import { useEffect, useId, useRef, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  CircleCheck,
+  ExternalLink,
+  Settings,
+  Unlink,
+  UserRound,
+} from '../components/icons';
+import { IntegrationCard } from '../components/integration-card';
 import { TelegramSetup } from '../components/telegram-setup';
 import { WhatsAppSetup } from '../components/whatsapp-setup';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState, useChannelSettings } from '../hooks/use-channel-settings';
-import { channelLabel, channelSetupBody, telegramBotUrl } from '../lib/secondary-pages';
+import { channelSetupBody, telegramBotUrl } from '../lib/secondary-pages';
 import {
   Button,
   Checkbox,
@@ -49,6 +60,45 @@ function ExternalLinkText({ href, children }: { href: string; children: React.Re
       {children}
       <ExternalLink size={16} />
     </a>
+  );
+}
+
+function TelegramChat({ url }: { url: string }) {
+  const [phone, setPhone] = useState(false);
+  const id = useId();
+  return (
+    <section className="channel-chat" aria-labelledby={`${id}-title`}>
+      <h3 id={`${id}-title`}>Chat from Telegram</h3>
+      <div className="channel-chat-actions">
+        <Button asChild>
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            Open on this computer
+            <ExternalLink size={16} aria-hidden="true" />
+          </a>
+        </Button>
+        <Button
+          variant="outline"
+          aria-expanded={phone}
+          aria-controls={`${id}-phone`}
+          onClick={() => setPhone((value) => !value)}
+        >
+          Scan on phone
+        </Button>
+      </div>
+      <div className="channel-chat-phone" id={`${id}-phone`} hidden={!phone}>
+        <div className="channel-chat-qr" data-analytics-private>
+          <QRCodeSVG
+            value={url}
+            size={160}
+            marginSize={4}
+            level="M"
+            role="img"
+            title="Open your Telegram bot on your phone"
+          />
+        </div>
+        <p>Scan with your phone camera to open this bot in Telegram.</p>
+      </div>
+    </section>
   );
 }
 
@@ -196,12 +246,6 @@ function ChannelCard({
   onPair(): void;
 }) {
   const comingSoon = 'comingSoon' in provider;
-  const name = setup?.accountName?.trim();
-  const handle = setup?.accountHandle?.trim();
-  const distinctHandle =
-    handle &&
-    name &&
-    handle.replace(/^@/, '').toLowerCase() !== name.replace(/^@/, '').toLowerCase();
   const needsDelivery = Boolean(
     setup?.enabled &&
     (setup.webhookStatus === 'registration_pending' ||
@@ -219,103 +263,92 @@ function ChannelCard({
     : comingSoon
       ? 'coming-soon'
       : null;
-  const statusLabel = channelLabel(setup, configured);
   return (
-    <article className="channel-option" aria-labelledby={`channel-${provider.id}`}>
-      <img src={`/logos/${provider.id}.svg`} alt="" width={24} height={24} />
-      <div className="channel-option-copy">
-        <div className="channel-option-title">
-          <h3 id={`channel-${provider.id}`}>{provider.name}</h3>
-          {status && (
-            <span className="channel-chip" data-status={status}>
-              {channelStatus[status]}
-            </span>
-          )}
-        </div>
-        {connected ? (
-          <>
-            <p className="channel-account-label">
-              {name || handle || 'Saved configuration'}
-              {distinctHandle && <span>{handle}</span>}
-            </p>
-            {(needsDelivery || needsPairing) && statusLabel && (
-              <p className="channel-account-status">{statusLabel}</p>
-            )}
-          </>
-        ) : (
-          <p className="channel-option-benefit">{provider.description}</p>
-        )}
-        {setup?.managed && (
-          <p className="channel-account-status">Managed by the server environment</p>
-        )}
-      </div>
-      {setup?.managed ? (
-        setup.enabled && configured && setup.mode === 'linked' && needsPairing ? (
-          <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
-            Link WhatsApp
-            <ArrowRight size={16} />
-          </Button>
-        ) : null
-      ) : connected ? (
-        <div className="channel-account-actions">
-          {(provider.id === 'telegram' && needsDelivery) || needsPairing ? (
+    <IntegrationCard
+      id={`channel-${provider.id}`}
+      className="channel-option"
+      name={provider.name}
+      logo={<img src={`/logos/${provider.id}.svg`} alt="" width={24} height={24} />}
+      description={provider.description}
+      detail={setup?.managed ? 'Managed by your server' : undefined}
+      badge={
+        status && (
+          <span className="channel-chip" data-status={status}>
+            {channelStatus[status]}
+          </span>
+        )
+      }
+      actions={
+        setup?.managed ? (
+          setup.enabled && configured && setup.mode === 'linked' && needsPairing ? (
             <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
-              {needsDelivery ? 'Retry connection' : 'Finish setup'}
+              Link WhatsApp
               <ArrowRight size={16} />
             </Button>
-          ) : needsDelivery ? (
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" disabled={busy}>
-                  Finish setup
-                  <ArrowRight size={16} />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogTitle>Finish {provider.name} setup</DialogTitle>
-                <DialogDescription>
-                  {setup?.webhookStatus === 'registration_pending'
-                    ? 'Restart Nod to retry the saved setup.'
-                    : 'Finish the callback in Meta and subscribe to messages.'}
-                </DialogDescription>
-                {setup?.webhookUrl && (
-                  <div className="channel-delivery-address">
-                    <span>Callback URL</span>
-                    <code>{setup.webhookUrl}</code>
-                  </div>
-                )}
-                {setup?.webhookStatus !== 'registration_pending' && (
-                  <p>Use the verification token you saved when connecting this channel.</p>
-                )}
-              </DialogContent>
-            </Dialog>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Manage ${provider.name}`}
-            disabled={busy}
-            onClick={onConnect}
-          >
-            Manage
-          </Button>
-        </div>
-      ) : (
-        !comingSoon && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="channel-connect"
-            aria-label={`Connect ${provider.name}`}
-            data-connect-channel={provider.id}
-            disabled={busy}
-            onClick={onConnect}
-          >
-            Connect
-          </Button>
+          ) : null
+        ) : connected ? (
+          <div className="channel-account-actions">
+            {(provider.id === 'telegram' && needsDelivery) || needsPairing ? (
+              <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
+                {needsDelivery ? 'Retry connection' : 'Finish setup'}
+                <ArrowRight size={16} />
+              </Button>
+            ) : needsDelivery ? (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={busy}>
+                    Finish setup
+                    <ArrowRight size={16} />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogTitle>Finish {provider.name} setup</DialogTitle>
+                  <DialogDescription>
+                    {setup?.webhookStatus === 'registration_pending'
+                      ? 'Restart Nod to retry the saved setup.'
+                      : 'Finish the callback in Meta and subscribe to messages.'}
+                  </DialogDescription>
+                  {setup?.webhookUrl && (
+                    <div className="channel-delivery-address">
+                      <span>Callback URL</span>
+                      <code>{setup.webhookUrl}</code>
+                    </div>
+                  )}
+                  {setup?.webhookStatus !== 'registration_pending' && (
+                    <p>Use the verification token you saved when connecting this channel.</p>
+                  )}
+                </DialogContent>
+              </Dialog>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              data-manage-channel={provider.id}
+              title={`Manage ${provider.name}`}
+              aria-label={`Manage ${provider.name}`}
+              disabled={busy}
+              onClick={onConnect}
+            >
+              <Settings size={16} aria-hidden="true" />
+            </Button>
+          </div>
+        ) : (
+          !comingSoon && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="channel-connect"
+              aria-label={`Connect ${provider.name}`}
+              data-connect-channel={provider.id}
+              disabled={busy}
+              onClick={onConnect}
+            >
+              Connect
+            </Button>
+          )
         )
-      )}
-    </article>
+      }
+    />
   );
 }
 
@@ -349,6 +382,8 @@ export function Channels() {
   const [removeError, setRemoveError] = useState('');
   const page = useRef<HTMLDivElement>(null);
   const removeTrigger = useRef<HTMLButtonElement | null>(null);
+  const setupTrigger = useRef<HTMLButtonElement | null>(null);
+  const manageTitle = useRef<HTMLHeadingElement>(null);
   const removeProvider = useRef<ChannelProvider | null>(null);
   const channels = providers.map((provider) => {
     const setup = settings?.channels.find((item) => item.provider === provider.id);
@@ -391,6 +426,8 @@ export function Channels() {
     setManualId(false);
   }
   function open(provider: ChannelProvider) {
+    setupTrigger.current =
+      document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
     setFields({});
     setPolicy(false);
     setError('');
@@ -407,18 +444,25 @@ export function Channels() {
     const provider = editing;
     const result = await save(provider, channelSetupBody(provider, fields, policy));
     if (provider === 'telegram') {
-      if (result.ok || result.channel?.enabled) setFields({});
+      if (result.ok && telegramState(result.channel).paired) close();
+      else if (result.ok || result.channel?.enabled) setFields({});
     } else if (result.ok) close();
   }
   async function telegramAction(action: 'pairing' | 'confirm' | 'user', body: object = {}) {
     if (busy || !settings?.ready) return;
     if (!(await telegramRequest(action, body))) return;
+    if (action !== 'pairing') {
+      close();
+      return;
+    }
     setManualId(false);
     setFields({});
     setEditing('telegram');
   }
   async function resumeTelegram() {
     if (busy || resuming) return;
+    setupTrigger.current =
+      document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
     setError('');
     setManualId(false);
     setEditing('telegram');
@@ -498,15 +542,13 @@ export function Channels() {
         <>
           {connected.length > 0 && (
             <section className="channels-group" aria-labelledby="channels-connected">
-              <h2 id="channels-connected">Connected channels</h2>
+              <h2 id="channels-connected">Connected</h2>
               {cards(connected)}
             </section>
           )}
           {available.length > 0 && (
             <section className="channels-group" aria-labelledby="channels-available">
-              <h2 id="channels-available">
-                {connected.length ? 'More channels' : 'Available channels'}
-              </h2>
+              <h2 id="channels-available">{connected.length ? 'More' : 'Available'}</h2>
               {cards(available)}
             </section>
           )}
@@ -533,9 +575,11 @@ export function Channels() {
             if (trigger?.isConnected) trigger.focus({ preventScroll: true });
             else
               (
+                document.querySelector<HTMLButtonElement>('[data-channel-disconnect]') ??
                 page.current?.querySelector<HTMLButtonElement>(
                   `[data-connect-channel="${removeProvider.current}"]`,
-                ) ?? document.querySelector<HTMLElement>('#workspace')
+                ) ??
+                document.querySelector<HTMLElement>('#workspace')
               )?.focus({ preventScroll: true });
           }}
         >
@@ -560,69 +604,110 @@ export function Channels() {
         </DialogContent>
       </Dialog>
       <Dialog
-        open={Boolean(editing)}
+        open={Boolean(editing) && !removing}
         onOpenChange={(value) => {
           if (!value && !busy && !resuming) close();
         }}
       >
-        <DialogContent className="channel-wizard">
+        <DialogContent
+          className={
+            managing ? 'channel-wizard app-manage-dialog channel-manage-dialog' : 'channel-wizard'
+          }
+          {...(managing ? { 'aria-describedby': undefined } : {})}
+          onOpenAutoFocus={(event) => {
+            if (!managing) return;
+            event.preventDefault();
+            manageTitle.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (removing) return;
+            const trigger = setupTrigger.current;
+            if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+            else
+              (
+                page.current?.querySelector<HTMLElement>(
+                  '[data-manage-channel], [data-connect-channel]',
+                ) ?? document.querySelector<HTMLElement>('#workspace')
+              )?.focus({ preventScroll: true });
+          }}
+        >
           {managing ? (
             <>
-              <DialogTitle className="channel-wizard-title">
-                <img src={`/logos/${editing}.svg`} alt="" width={24} height={24} />
-                {selected?.provider.name}
-              </DialogTitle>
-              <DialogDescription>Keep Nod running to receive messages.</DialogDescription>
-              <div className="channel-wizard-step" data-analytics-private>
-                <div className="channel-manage-identity">
-                  <strong>
+              <div className="dialog-heading app-manage-heading">
+                <img src={`/logos/${editing}.svg`} alt="" width={28} height={28} />
+                <DialogTitle ref={manageTitle} tabIndex={-1}>
+                  {selected?.provider.name}
+                </DialogTitle>
+              </div>
+              <div className="compact-account" data-analytics-private>
+                <span className="app-account-avatar" aria-hidden="true">
+                  {editing === 'telegram' ? <Bot size={18} /> : <UserRound size={18} />}
+                </span>
+                <div className="compact-account-details">
+                  <span className="compact-account-name">
                     {selected?.setup?.accountName ||
                       selected?.setup?.accountHandle ||
                       'Your account'}
-                  </strong>
+                  </span>
                   {selected?.setup?.accountName && selected.setup.accountHandle && (
-                    <span>{selected.setup.accountHandle}</span>
+                    <span className="compact-account-email">{selected.setup.accountHandle}</span>
                   )}
+                  <span className="app-account-status">
+                    <CircleCheck size={12} aria-hidden="true" />
+                    Connected
+                  </span>
                 </div>
-                {editing === 'telegram' && (
-                  <p>
-                    Only{' '}
-                    {telegramSetup?.pairedUser ||
-                      telegramSetup?.pairedUsername ||
-                      telegramSetup?.allowedUserId}{' '}
-                    can message Nod through this bot.
-                  </p>
-                )}
-                <div className="channel-wizard-actions">
+                <div className="app-account-actions">
                   <Button
                     variant="ghost"
+                    size="icon"
+                    className="account-disconnect"
+                    data-channel-disconnect
+                    aria-label={`Disconnect ${selected?.provider.name}`}
+                    title={`Disconnect ${selected?.provider.name}`}
                     disabled={busy}
                     onClick={() => confirmDisconnect(editing!)}
                   >
-                    Disconnect
+                    <Unlink size={16} aria-hidden="true" />
                   </Button>
-                  {editing === 'telegram' && telegramUrl ? (
-                    <Button asChild variant="outline">
-                      <a href={telegramUrl} target="_blank" rel="noopener noreferrer">
-                        Open Telegram
-                      </a>
-                    </Button>
-                  ) : editing === 'whatsapp' ? (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => {
-                        setFields({ connection: 'cloud' });
-                        setStep(0);
-                        setPolicy(false);
-                      }}
-                    >
-                      Update connection
-                    </Button>
-                  ) : null}
-                  <Button onClick={close}>Done</Button>
                 </div>
               </div>
+              {editing === 'telegram' && (
+                <div className="channel-authorized-account" data-analytics-private>
+                  <span className="app-account-avatar" aria-hidden="true">
+                    <UserRound size={18} />
+                  </span>
+                  <div className="compact-account-details">
+                    <span className="channel-identity-label">Allowed account</span>
+                    <span className="compact-account-name">
+                      {telegramSetup?.pairedUser || 'Your Telegram account'}
+                    </span>
+                    {telegramSetup?.pairedUsername && (
+                      <span className="compact-account-email">
+                        @{telegramSetup.pairedUsername.replace(/^@/, '')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {editing === 'telegram' && telegramUrl ? (
+                <TelegramChat key={telegramUrl} url={telegramUrl} />
+              ) : editing === 'whatsapp' ? (
+                <div className="dialog-actions app-manage-actions">
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      setFields({ connection: 'cloud' });
+                      setStep(0);
+                      setPolicy(false);
+                    }}
+                  >
+                    Update connection
+                  </Button>
+                </div>
+              ) : null}
             </>
           ) : editing === 'telegram' ? (
             <>
@@ -630,11 +715,7 @@ export function Channels() {
                 <img src="/logos/telegram.svg" alt="" width={24} height={24} />
                 {telegramStatus.paired ? 'Telegram' : 'Connect Telegram'}
               </DialogTitle>
-              <DialogDescription>
-                {telegramStatus.paired
-                  ? 'Send your bot a message to start.'
-                  : 'Create a bot, then link your account.'}
-              </DialogDescription>
+              <DialogDescription>Create a bot, then link your account.</DialogDescription>
               <TelegramSetup
                 setup={telegramSetup}
                 pairingUrl={pairingUrl}
@@ -643,7 +724,6 @@ export function Channels() {
                 busy={busy || resuming}
                 error={error || loadError}
                 unavailable={!settings?.ready}
-                allowWebhook
                 onField={(name, value) => setFields((current) => ({ ...current, [name]: value }))}
                 onVerify={(event) => void submit(event)}
                 onConfirm={() => void telegramAction('confirm')}
@@ -676,24 +756,6 @@ export function Channels() {
                     onClick={() => void load()}
                   >
                     {loading ? 'Retrying…' : 'Retry loading'}
-                  </Button>
-                )}
-                {telegramStatus.paired && (
-                  <Button variant="ghost" size="sm" disabled={busy || resuming} onClick={close}>
-                    Done
-                  </Button>
-                )}
-                {telegramStatus.paired && telegramUrl && (
-                  <Button asChild size="sm">
-                    <a
-                      data-telegram-primary
-                      href={telegramUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Start conversation
-                      <ExternalLink size={16} />
-                    </a>
                   </Button>
                 )}
               </div>

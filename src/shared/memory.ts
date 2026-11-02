@@ -20,7 +20,14 @@ export interface MemoryFact {
   validTo?: string;
 }
 export type MemoryReason =
-  'superseded' | 'merged' | 'duplicate' | 'expired' | 'stale' | 'obsolete' | 'contradicted';
+  | 'superseded'
+  | 'merged'
+  | 'duplicate'
+  | 'expired'
+  | 'stale'
+  | 'obsolete'
+  | 'contradicted'
+  | 'manual';
 
 export interface MemorySource {
   id: string;
@@ -28,6 +35,7 @@ export interface MemorySource {
   at: string | null;
   channel: string | null;
   quote?: string;
+  canOpenInCurrentChat?: boolean;
 }
 
 export interface MemoryNote {

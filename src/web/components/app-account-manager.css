@@ -1,20 +1,23 @@
 .app-manage-dialog {
-  width: min(440px, calc(100vw - 32px));
+  width: min(480px, calc(100vw - 32px));
 }
 .app-manage-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
-  padding-right: 24px;
+  min-height: 32px;
+  margin-bottom: 24px;
+  padding-right: 32px;
 }
 .app-manage-heading > img,
 .app-manage-heading > svg {
   flex: none;
-  margin-top: 4px;
   color: var(--muted-foreground);
 }
 .app-manage-heading h2 {
+  font-size: 20px;
+  line-height: 1.4;
+  letter-spacing: -0.4px;
   overflow-wrap: anywhere;
 }
 .app-manage-heading h2:focus-visible {
@@ -22,24 +25,36 @@
   outline-offset: 4px;
 }
 .app-manage-accounts {
-  margin-bottom: 16px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  display: grid;
 }
 .compact-account {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 16px 0;
+  padding: 12px 0;
 }
-.compact-account + .compact-account {
+.app-manage-accounts > .compact-account + .compact-account {
   border-top: 1px solid var(--border);
+}
+.app-manage-accounts > .compact-account:first-child {
+  padding-top: 0;
+}
+.app-manage-accounts > .compact-account:last-child {
+  padding-bottom: 0;
+}
+.app-account-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  color: var(--muted-foreground);
 }
 .compact-account-details {
   min-width: 0;
-  padding-top: 0;
 }
 .compact-account-name,
 .compact-account-email {
@@ -52,32 +67,43 @@
   font-weight: 500;
 }
 .compact-account-email {
+  font-size: 13px;
   color: var(--muted-foreground);
 }
-.app-account-issue {
-  margin: 4px 0 0;
-  color: var(--warning);
-  font-size: var(--text-control);
+.app-account-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
   line-height: 1.5;
+}
+.app-account-status > svg {
+  flex: none;
+  color: var(--success);
+}
+.app-account-status[data-attention],
+.app-account-status[data-attention] > svg {
+  color: var(--warning);
 }
 .app-account-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  gap: var(--chat-action-gap);
+}
+.app-account-actions .button {
+  color: var(--muted-foreground);
+}
+.app-account-actions .account-reconnect {
+  color: var(--accent);
 }
 .app-manage-dialog .account-disconnect:hover:not(:disabled) {
   color: var(--error);
   background: var(--error-soft);
 }
-.app-manage-dialog .app-account-actions {
-  justify-content: flex-end;
-  flex-direction: column;
-  align-items: flex-end;
-}
 .app-manage-actions {
-  justify-content: space-between;
+  margin-top: 24px;
 }
 .app-disconnect-dialog {
   width: min(400px, calc(100vw - 32px));
@@ -104,17 +130,23 @@
   visibility: hidden;
 }
 @media (pointer: coarse) {
-  .app-account-actions > .button {
-    min-height: 40px;
+  .app-account-actions .button {
+    width: 40px;
+    height: 40px;
   }
 }
 @media (max-width: 420px) {
-  .app-manage-dialog .compact-account {
-    grid-template-columns: minmax(0, 1fr);
+  .app-manage-dialog {
+    padding: 20px;
+  }
+  .compact-account {
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
   }
-  .app-manage-dialog .app-account-actions {
-    flex-direction: row;
-    align-items: center;
+  .app-account-avatar {
+    display: none;
+  }
+  .app-manage-actions > .button {
+    width: 100%;
   }
 }

@@ -2,6 +2,93 @@
   display: block;
 }
 
+.file-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  width: fit-content;
+  max-width: 100%;
+  pointer-events: none;
+}
+
+.file-actions > :is(.button, a, .tooltip-disabled-trigger) {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  color: var(--muted-foreground);
+  pointer-events: auto;
+}
+
+.file-actions > :is(.button, a, .tooltip-disabled-trigger):hover {
+  color: var(--foreground);
+  background: var(--control-hover);
+}
+
+.attachment-card > .file-actions,
+.attachment-image-item > .file-actions,
+.attachment-video-toolbar {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  max-width: calc(100% - 16px);
+  margin: 0;
+}
+
+.attachment-card > .file-actions > :is(.button, a, .tooltip-disabled-trigger),
+.attachment-image-item > .file-actions > :is(.button, a, .tooltip-disabled-trigger),
+.attachment-video-toolbar :is(.button, a, .tooltip-disabled-trigger) {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.attachment-card > .file-actions > :is(.button, a, .tooltip-disabled-trigger):hover,
+.attachment-image-item > .file-actions > :is(.button, a, .tooltip-disabled-trigger):hover,
+.attachment-video-toolbar :is(.button, a, .tooltip-disabled-trigger):hover {
+  background: var(--control-hover);
+}
+
+.file-actions > .tooltip-disabled-trigger > .button {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.file-action-notice {
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 24px), var(--radix-popover-content-available-width));
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.file-action-notice button {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
 .attachment-cards {
   display: flex;
   flex-direction: column;
@@ -12,9 +99,9 @@
 
 .attachment-card {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  width: 320px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 360px;
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -23,14 +110,14 @@
   color: var(--foreground);
 }
 
-.attachment-card .file-actions {
-  margin: 0 8px 8px;
-  border-color: transparent;
+.attachment-card.has-preview {
+  grid-template-columns: 96px minmax(0, 1fr);
 }
 
 .attachment-card-open {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  min-width: 0;
   width: 100%;
   padding: 0;
   border: 0;
@@ -38,6 +125,12 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.attachment-card-open::after {
+  position: absolute;
+  inset: 0;
+  content: '';
 }
 
 .attachment-card:hover {
@@ -60,11 +153,34 @@
 
 .attachment-card-preview {
   display: block;
-  height: 136px;
-  padding: 12px 16px 0;
+  width: 96px;
+  min-height: 104px;
+  padding: 10px 8px 0;
   overflow: hidden;
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   background: var(--surface-inset);
+}
+
+.attachment-card-preview.is-data {
+  position: relative;
+  padding: 0;
+}
+
+.attachment-card-preview-content {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 640px;
+  height: 694px;
+  overflow: hidden;
+  transform: scale(0.15);
+  transform-origin: top left;
+  background: var(--surface);
+  pointer-events: none;
+}
+
+.attachment-card-preview-content > iframe {
+  width: 100%;
+  height: 100%;
 }
 
 .attachment-card-preview .attachment-pdf-page {
@@ -86,11 +202,16 @@
 
 .attachment-card-details {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  min-height: 56px;
-  padding: 8px 48px 8px 12px;
+  width: 100%;
+  min-height: 104px;
+  padding: 48px 12px 12px;
+}
+
+.attachment-card.has-preview .attachment-card-glyph {
+  display: none;
 }
 
 .attachment-card-glyph {
@@ -121,6 +242,18 @@
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .file-actions > :is(.button, a, .tooltip-disabled-trigger),
+  .attachment-video-toolbar > .button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .attachment-card-details {
+    padding-top: 56px;
+  }
 }
 
 .audio-player {

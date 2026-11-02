@@ -9,17 +9,13 @@ import { useDateFormat } from '../lib/date-format';
 import { DeletePlan } from '../components/delete-plan';
 import { MessageText } from '../components/message';
 import {
-  AskNod,
   PauseSwitch,
   PlanDetails,
-  ScheduleTiming,
+  ScheduleEditor,
   useDirectChange,
 } from '../components/plan-controls';
-import { Button } from '../components/ui';
-import { InlineName } from '../components/inline-name';
+import { Button, Loading, Notice } from '../components/ui';
 import { money } from '../lib/money';
-
-const historyPath = '/api/schedule-runs?limit=20';
 
 export function ScheduleRow({
   schedule,
@@ -29,30 +25,26 @@ export function ScheduleRow({
   onAsk(text: string): void;
 }) {
   const dateFormat = useDateFormat();
+  const [showRuns, setShowRuns] = useState(false);
   const change = useDirectChange(schedule.id);
-  const [asking, setAsking] = useState(false);
   const date = (value: string) => scheduleDate(value, schedule.timeZone, dateFormat);
   const canPause =
     schedule.enabled ||
     schedule.kind !== 'once' ||
     Boolean(schedule.runAt && Date.parse(schedule.runAt) > Date.now());
+  const ranOnce = schedule.kind === 'once' && schedule.lastRun?.scheduledFor === schedule.runAt;
   return (
     <article className="saved-plan">
       <div className="saved-plan-title">
-        <h2>
-          <InlineName
-            value={schedule.title}
-            label="schedule title"
-            save={async (title) => {
-              const error = await change.apply({ title }, 'Title updated.', {
-                title: schedule.title,
-              });
-              if (error) throw new Error(error);
-            }}
-          />
-        </h2>
+        <h2>{schedule.title}</h2>
         <span className="saved-plan-status">
-          {!schedule.enabled ? 'Paused' : schedule.kind === 'once' ? 'One time' : 'Recurring'}
+          {ranOnce
+            ? statusLabels[schedule.lastRun!.status]
+            : !schedule.enabled
+              ? 'Paused'
+              : schedule.kind === 'once'
+                ? 'One time'
+                : 'Recurring'}
         </span>
         {canPause && <PauseSwitch schedule={schedule} change={change} />}
       </div>
@@ -69,19 +61,24 @@ export function ScheduleRow({
           <span>Next {date(schedule.nextRun)}</span>
         )}
         {schedule.timeZone !== dateFormat.timeZone && <span>{schedule.timeZone}</span>}
-        {schedule.monthlyUsd !== null && <span>≈{money(schedule.monthlyUsd)} a month</span>}
       </p>
       <PlanDetails
         label={schedule.title}
-        summary={schedule.prompt}
+        onOpenChange={(open) => {
+          if (open) setShowRuns(true);
+        }}
         actions={
           <>
+            <ScheduleEditor schedule={schedule} change={change} />
             <Button
               variant="ghost"
               size="sm"
-              aria-expanded={asking}
               aria-label={`Ask Nod about ${schedule.title}`}
-              onClick={() => setAsking(!asking)}
+              onClick={() =>
+                onAsk(
+                  `Help me adjust the schedule ${JSON.stringify(schedule.title)}, ${schedule.kind === 'once' && schedule.runAt ? date(schedule.runAt) : scheduleLabel(schedule.cron ?? '', dateFormat)} (${schedule.timeZone}). Ask me what I want to change.`,
+                )
+              }
             >
               <Sparkles size={16} aria-hidden="true" />
               Ask Nod
@@ -97,40 +94,31 @@ export function ScheduleRow({
             {date(schedule.baselineObservation.checkedAt)}
           </p>
         )}
-        <ScheduleTiming
-          key={`${schedule.kind}:${schedule.cron}:${schedule.runAt}:${schedule.timeZone}`}
-          schedule={schedule}
-          change={change}
-        />
+        {showRuns && <ScheduleRuns schedule={schedule} />}
       </PlanDetails>
-      {asking && (
-        <AskNod
-          subject={{ kind: 'schedule', title: schedule.title }}
-          onAsk={onAsk}
-          onClose={() => setAsking(false)}
-        />
-      )}
     </article>
   );
 }
 
-export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
+function ScheduleRunRow({ run }: { run: ScheduleRun }) {
   const dateFormat = useDateFormat();
   const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
   return (
-    <article className="saved-plan schedule-run">
-      <div className="saved-plan-title">
-        <h2>{run.title}</h2>
+    <li className="schedule-run">
+      <div className="schedule-run-heading">
+        <time dateTime={run.scheduledFor}>{date(run.scheduledFor)}</time>
         <span className="task-status" data-status={run.status}>
           <StatusIcon status={run.status} />
           {statusLabels[run.status]}
         </span>
       </div>
-      <p className="saved-plan-meta">
-        <CalendarClock size={16} aria-hidden="true" />
-        <time dateTime={run.scheduledFor}>{date(run.scheduledFor)}</time>
-        {run.timeZone !== dateFormat.timeZone && <span>{run.timeZone}</span>}
-      </p>
+      {run.timeZone !== dateFormat.timeZone && <p className="saved-plan-note">{run.timeZone}</p>}
+      {typeof run.costUsd === 'number' && (
+        <p className="saved-plan-note">
+          {money(run.costUsd)}
+          {['queued', 'running', 'waiting'].includes(run.status) ? ' so far' : ' recorded cost'}
+        </p>
+      )}
       {run.error && <p className="schedule-run-error">{run.error}</p>}
       {run.observation && (
         <p className="saved-plan-note">
@@ -143,18 +131,60 @@ export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
           </a>
         </p>
       )}
-      {run.messageId ? (
-        <PlanDetails label={run.title} summary={run.messagePreview}>
+      {run.messageId && (
+        <PlanDetails label={`${run.title}, ${date(run.scheduledFor)}`} summary={run.messagePreview}>
           <MessageText text={run.messageText ?? run.messagePreview ?? ''} />
         </PlanDetails>
-      ) : (
-        !run.observation && <p className="saved-plan-note">No message</p>
       )}
-    </article>
+    </li>
   );
 }
 
-export function useScheduleHistory() {
+function ScheduleRuns({ schedule }: { schedule: Schedule }) {
+  const history = useScheduleHistory(schedule.id);
+  return (
+    <section className="schedule-runs" aria-label={`Runs for ${schedule.title}`}>
+      <h3>Runs</h3>
+      {history.error && (
+        <Notice>
+          Could not load runs.{' '}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={history.refreshing}
+            onClick={() => void history.refresh()}
+          >
+            {history.refreshing ? 'Retrying…' : 'Try again'}
+          </Button>
+        </Notice>
+      )}
+      {!history.data && history.loading && <Loading label="Loading runs…" />}
+      {history.data && !history.runs.length && <p className="saved-plan-note">No runs yet.</p>}
+      {history.runs.length > 0 && (
+        <ol className="schedule-runs-list">
+          {history.runs.map((run) => (
+            <ScheduleRunRow key={run.id} run={run} />
+          ))}
+        </ol>
+      )}
+      {history.earlierError && <Notice>{history.earlierError}</Notice>}
+      {history.cursor && (
+        <Button
+          variant="ghost"
+          className="schedule-history-more"
+          size="sm"
+          disabled={history.loadingEarlier}
+          onClick={() => void history.loadEarlier()}
+        >
+          {history.loadingEarlier ? 'Loading…' : 'Load earlier runs'}
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function useScheduleHistory(scheduleId: string) {
+  const historyPath = `/api/schedule-runs?scheduleId=${encodeURIComponent(scheduleId)}&limit=10`;
   const recent = usePageData<ScheduleHistory>(historyPath);
   const [earlier, setEarlier] = useState<ScheduleHistory | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);

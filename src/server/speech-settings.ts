@@ -48,14 +48,18 @@ export function registerSpeechSettings(
     const saved = await preferences.get();
     const transcriptionFormat = options.inputFormat?.(saved.speechVoice);
     return {
-      transcription: speech.transcriptionConfigured,
+      transcription: saved.speechVoice?.startsWith('local:')
+        ? options.local?.transcriptionStatus().state === 'ready'
+        : speech.transcriptionConfigured,
       synthesis: speech.configured,
       voices: speech.voices,
       speechVoice: saved.speechVoice,
       defaultVoice: speech.defaultVoice,
       speechReply: saved.speechReply,
       ...(voicesError ? { voicesError } : {}),
-      ...(options.local ? { local: options.local.status() } : {}),
+      ...(options.local
+        ? { local: options.local.status(), localInput: options.local.transcriptionStatus() }
+        : {}),
       ...(transcriptionFormat ? { transcriptionFormat } : {}),
     };
   }
@@ -67,18 +71,28 @@ export function registerSpeechSettings(
     return current(reply, true);
   });
   app.post('/api/speech/prepare', async (request, reply) => {
-    z.object({ locale: z.string().max(35).optional() })
+    const { inputOnly } = z
+      .object({ locale: z.string().max(35).optional(), inputOnly: z.boolean().optional() })
       .strict()
       .parse(request.body ?? {});
+    const saved = await preferences.get();
+    if (inputOnly && !saved.speechVoice?.startsWith('local:') && speech.transcriptionConfigured)
+      return { transcription: true, transcriptionFormat: options.inputFormat?.(saved.speechVoice) };
     if (!options.local) return reply.code(404).send({ error: 'On-device audio is unavailable.' });
     const controller = new AbortController();
     preparations.add(controller);
     const stop = () => controller.abort();
     reply.raw.once('close', stop);
     try {
-      await options.local.prepare(controller.signal);
+      if (inputOnly) await options.local.prepareTranscription(controller.signal);
+      else await options.local.prepare(controller.signal);
       controller.signal.throwIfAborted();
-      return { local: options.local.status() };
+      return {
+        local: options.local.status(),
+        localInput: options.local.transcriptionStatus(),
+        transcription: true,
+        transcriptionFormat: options.inputFormat?.(saved.speechVoice),
+      };
     } finally {
       preparations.delete(controller);
       reply.raw.off('close', stop);
