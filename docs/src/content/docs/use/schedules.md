@@ -22,12 +22,13 @@ Nod uses your time zone, saved from your browser the first time you use Nod. Cha
 
 ## Change or cancel a schedule
 
-Open **Tasks → Scheduled**. Each schedule shows its timing and next run.
+Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Existing schedules show their timing and next run.
 
 - Use the switch to pause or resume it.
-- Select **See details** to read the instruction or change the timing.
+- Select **See details** to read the instruction, any saved baseline, and that schedule's runs.
+- Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
-- Select **Delete schedule**. Future runs stop, and past runs stay in **Previous**.
+- Select **Delete schedule**. Future runs stop, and past activity stays in [Usage](/use/spending/).
 
 You can also tell Nod in chat, for example "stop the morning summary".
 
@@ -48,7 +49,9 @@ flowchart TD
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Nod asks you first. See [Approvals](/trust/approvals/).
 - **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs, so it doesn't ask you again while a question is open. A run does its work itself and can't set up more schedules.
 
-Each run appears in **Tasks → Previous**. Review its cost and recorded app actions in [Usage](/use/spending/). A recurring schedule that has finished priced runs shows about what it costs a month, from the cost of its recent runs and how often it runs.
+Open a schedule's **See details** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
+
+Each run shows its status. When a saved web reply is available, select **See details** on the result to read it within the schedule. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
 ## Work Nod starts on its own
 
@@ -60,7 +63,7 @@ How Nod checks:
 - **Google Calendar.** Nod checks for changed events every 30 minutes without a model call.
 - **Other connected apps.** Every 30 minutes, one quiet private run reads them through their own read tools.
 
-Work Nod starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. [Your rules](/trust/approvals/#your-rules) can change both: a rule to go ahead lets an action run without asking, and a rule to ask first makes Nod ask even when your standing instruction covers the action. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, select it in **Usage**, or tell Nod, for example "stop flagging Slack messages".
+Work Nod starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. [Your rules](/trust/approvals/#your-rules) can change both: a rule to go ahead lets an action run without asking, and a rule to ask first makes Nod ask even when your standing instruction covers the action. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, tell Nod, for example "stop flagging Slack messages".
 
 The private preparation behind nudges can only read, prepare private work and nudge you. It can't send, delete, submit, book, buy or change connected apps. To stop it, tell Nod "Pause preparation".
 
@@ -68,11 +71,13 @@ The first time Nod messages you about something on its own, such as a calendar c
 
 ## Edit schedule details
 
-Select a schedule title to rename it in place. Timing changes show the next run from the same schedule engine that runs the job. The preview does not change the saved schedule. Save applies the change. Undo restores its previous timing only if no newer change has replaced it. The Undo notice stays available while you hover over it, focus it, or switch away from Nod.
+Select **Edit schedule** to review its name, instructions and timing together. Timing changes preview the next run without changing the saved schedule. **Save changes** applies only the fields you changed, so renaming a schedule keeps its next run. **Cancel** closes the editor without saving.
+
+**Undo** restores the previous values only if no newer change has replaced them. The Undo notice stays available while you hover over it, focus it, or switch away from Nod. If the schedule changes while you edit, your draft stays open so you can review it.
 
 ## Quiet hours
 
-Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → General → Quiet hours**.
+Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Notifications → Quiet hours**.
 
 During quiet hours, Nod keeps preparing from new mail and app activity. Its nudges wait until they end, except a high-impact one with strong evidence whose deadline comes first. Any task it starts on its own waits too, with its questions and approvals. Schedules you created still run and deliver on time.
 

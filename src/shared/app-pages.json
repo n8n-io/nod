@@ -1,11 +1,14 @@
 {
   "/": "Chat",
-  "/tasks": "Tasks",
+  "/tasks": "Scheduled",
   "/apps": "Apps",
   "/channels": "Channels",
   "/usage": "Usage",
   "/vault": "Vault",
   "/settings": "Settings",
+  "/settings/notifications": "Settings > Notifications",
   "/settings/models": "Settings > Models",
-  "/settings/memory": "Settings > Memory"
+  "/settings/voice": "Settings > Voice & audio",
+  "/settings/memory": "Settings > Memory",
+  "/settings/privacy": "Settings > Privacy & data"
 }

@@ -4,7 +4,10 @@ import { useModelSignIn, useModels } from '../hooks/use-models';
 import { Check, ExternalLink, LoaderCircle, RefreshCw } from './icons';
 import { modelProviderNames } from '../../shared/models';
 import { ModelKeyHelp } from './models';
-import { Button, Field, Input, Notice } from './ui';
+import { useSettingsDraft } from './settings-drafts';
+import { navigate } from '../lib/navigation';
+import type { ModelConnection } from '../../shared/models';
+import { Button, Dialog, DialogContent, DialogTitle, Field, Input, Notice } from './ui';
 
 export function VoiceConnections({
   voices,
@@ -12,6 +15,7 @@ export function VoiceConnections({
   onRefresh,
   onConnected,
   onBusyChange,
+  onDirtyChange,
   disabled = false,
 }: {
   voices: readonly SpeechVoice[];
@@ -19,6 +23,7 @@ export function VoiceConnections({
   onRefresh(): Promise<void>;
   onConnected(): void;
   onBusyChange(busy: boolean): void;
+  onDirtyChange(dirty: boolean): void;
   disabled?: boolean;
 }) {
   const models = useModels();
@@ -28,6 +33,7 @@ export function VoiceConnections({
   const [key, setKey] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [callback, setCallback] = useState('');
+  const [disconnecting, setDisconnecting] = useState<ModelConnection | null>(null);
   const flow = useModelSignIn(models, () => {
     setKey('');
     setCallback('');
@@ -35,11 +41,50 @@ export function VoiceConnections({
     onConnected();
   });
   const busy = models.busy || flow.pending || !!flow.signIn || refreshing;
-  const dirty = busy || Boolean(key.trim() || callback.trim());
+  const dirty = Boolean(key.trim() || callback.trim());
   useLayoutEffect(() => {
-    onBusyChange(dirty);
+    onBusyChange(busy);
     return () => onBusyChange(false);
-  }, [dirty, onBusyChange]);
+  }, [busy, onBusyChange]);
+  useLayoutEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
+  async function saveKey() {
+    if (disabled || busy || !key.trim()) return false;
+    const saved = await models.change('/api/models/keys', 'POST', { provider, key: key.trim() });
+    if (saved) {
+      setKey('');
+      setKeyProvider(null);
+      onConnected();
+    }
+    return saved;
+  }
+  async function completeCallback() {
+    if (disabled || flow.pending || models.busy || !callback.trim()) return false;
+    const saved = await flow.complete(callback.trim());
+    if (saved) setCallback('');
+    return saved;
+  }
+  useSettingsDraft('voice-connection', {
+    changes: dirty
+      ? [
+          {
+            label: `${modelProviderNames[provider]} voice connection`,
+            before: 'Not saved',
+            after: 'Connection details entered',
+          },
+        ]
+      : [],
+    busy,
+    save: () => (keyProvider ? saveKey() : completeCallback()),
+    discard: () => {
+      setKey('');
+      setCallback('');
+      setKeyProvider(null);
+      models.setError('');
+    },
+  });
   function addKey(provider: 'elevenlabs' | 'openrouter' | 'openai') {
     setKey('');
     setCallback('');
@@ -47,7 +92,16 @@ export function VoiceConnections({
     setKeyProvider(provider);
   }
   const directConnections =
-    models.data?.connections.filter((connection) => connection.provider === 'elevenlabs') ?? [];
+    models.data?.connections.filter(
+      (connection) => connection.provider === provider && connection.method !== 'subscription',
+    ) ?? [];
+  const eligibleConnections = directConnections.filter(
+    (connection) => connection.status === 'connected',
+  );
+  const selectedConnection = eligibleConnections.find(
+    (connection) => connection.id === models.data?.selection?.connectionId,
+  );
+  const ambiguous = eligibleConnections.length > 1 && !selectedConnection;
   const available = voices.some(
     (voice) =>
       voice.source === provider ||
@@ -122,7 +176,7 @@ export function VoiceConnections({
                 )}
               </>
             )}
-            {!connected && keyProvider !== provider && flow.signIn?.provider !== provider && (
+            {keyProvider !== provider && flow.signIn?.provider !== provider && (
               <div className="voice-connect-actions">
                 {provider === 'openrouter' && (
                   <Button
@@ -141,6 +195,8 @@ export function VoiceConnections({
                         <LoaderCircle size={14} className="voice-preview-loading" />
                         Opening sign-in…
                       </>
+                    ) : connected ? (
+                      'Connect another account'
                     ) : (
                       'Sign in with OpenRouter'
                     )}
@@ -153,43 +209,94 @@ export function VoiceConnections({
                   disabled={disabled || busy || Boolean(key.trim())}
                   onClick={() => addKey(provider)}
                 >
-                  {provider === 'openrouter' ? 'Use API key' : 'Connect'}
+                  {provider === 'openrouter'
+                    ? 'Use API key'
+                    : connected
+                      ? 'Add API key'
+                      : 'Connect'}
                 </Button>
               </div>
             )}
-            {provider === 'elevenlabs' && directConnections.length > 0 && (
+            {directConnections.length > 0 && (
               <div className="voice-connect-manage">
                 {directConnections.map((connection) => (
                   <div className="voice-connection-entry" key={connection.id}>
-                    <span>
-                      {connection.managed
-                        ? 'Set up on this device'
-                        : connection.keyEnding
-                          ? `Key …${connection.keyEnding}`
-                          : 'Saved key'}
-                      {connection.status === 'reconnect' && ' · Reconnect to continue'}
+                    <span className="voice-connection-identity" data-analytics-private>
+                      <span>
+                        {connection.managed
+                          ? 'Set up on this device'
+                          : connection.method === 'oauth'
+                            ? connection.label
+                            : connection.keyEnding
+                              ? `Key …${connection.keyEnding}`
+                              : 'Saved key'}
+                      </span>
+                      <small>
+                        {connection.status === 'reconnect'
+                          ? 'Reconnect to continue'
+                          : connection.status === 'loading'
+                            ? 'Loading connection…'
+                            : connection.id === selectedConnection?.id
+                              ? 'Selected model connection'
+                              : 'Connected'}
+                      </small>
                     </span>
                     {!connection.managed && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={disabled || busy || Boolean(key.trim())}
-                        onClick={() => {
-                          void models
-                            .change(`/api/models/connections/${connection.id}`, 'DELETE')
-                            .then((removed) => {
-                              if (removed) void onRefresh();
-                            });
-                        }}
-                      >
-                        Disconnect
-                      </Button>
+                      <div className="voice-connect-actions">
+                        {provider === 'openrouter' &&
+                          connection.method === 'oauth' &&
+                          connection.status === 'reconnect' && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={disabled || busy || Boolean(key.trim())}
+                              onClick={() => void flow.connect('openrouter', connection.id)}
+                            >
+                              Reconnect
+                            </Button>
+                          )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={disabled || busy || Boolean(key.trim())}
+                          onClick={() => setDisconnecting(connection)}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}
-                {directConnections.length > 1 && (
-                  <p className="field-hint">Keep one ElevenLabs connection to use its voices.</p>
+                {ambiguous && (
+                  <p className="field-hint">
+                    {provider === 'elevenlabs' ? (
+                      'Keep one ElevenLabs connection to use its voices.'
+                    ) : (
+                      <>
+                        Choose a {modelProviderNames[provider]} model connection in{' '}
+                        <a
+                          href="/settings/models"
+                          onClick={(event) => {
+                            if (
+                              event.button ||
+                              event.metaKey ||
+                              event.ctrlKey ||
+                              event.shiftKey ||
+                              event.altKey
+                            )
+                              return;
+                            event.preventDefault();
+                            navigate('/settings/models');
+                          }}
+                        >
+                          Models
+                        </a>
+                        , or disconnect extra accounts.
+                      </>
+                    )}
+                  </p>
                 )}
               </div>
             )}
@@ -198,22 +305,13 @@ export function VoiceConnections({
                 className="voice-connect-form"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  if (disabled || busy || !key.trim()) return;
-                  const value = key.trim();
-                  setKey('');
-                  void models
-                    .change('/api/models/keys', 'POST', { provider, key: value })
-                    .then((saved) => {
-                      if (saved) {
-                        setKeyProvider(null);
-                        onConnected();
-                      }
-                    });
+                  void saveKey();
                 }}
               >
                 <Field label={`${modelProviderNames[provider]} API key`}>
                   <Input
                     type="password"
+                    data-analytics-private
                     value={key}
                     required
                     minLength={8}
@@ -286,15 +384,13 @@ export function VoiceConnections({
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (disabled || flow.pending || models.busy || !callback.trim()) return;
-                      const url = callback.trim();
-                      setCallback('');
-                      void flow.complete(url);
+                      void completeCallback();
                     }}
                   >
                     <Field label="Callback URL">
                       <Input
                         type="url"
+                        data-analytics-private
                         value={callback}
                         required
                         autoComplete="off"
@@ -336,6 +432,48 @@ export function VoiceConnections({
           )}
         </Notice>
       )}
+      <Dialog
+        open={disconnecting !== null}
+        onOpenChange={(open) => {
+          if (!open && !models.busy) setDisconnecting(null);
+        }}
+      >
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>Disconnect {modelProviderNames[provider]}?</DialogTitle>
+          <p className="field-hint">
+            Voices and models using this connection will need another account.
+          </p>
+          {models.error && <Notice>{models.error}</Notice>}
+          <div className="dialog-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={models.busy}
+              onClick={() => setDisconnecting(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={models.busy}
+              onClick={() => {
+                if (!disconnecting) return;
+                void models
+                  .change(`/api/models/connections/${disconnecting.id}`, 'DELETE')
+                  .then((removed) => {
+                    if (removed) {
+                      setDisconnecting(null);
+                      void onRefresh();
+                    }
+                  });
+              }}
+            >
+              Disconnect
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

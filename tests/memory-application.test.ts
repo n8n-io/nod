@@ -18,6 +18,9 @@ import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createHistorySearch } from '../src/server/history.ts';
 import { createMemoryRecall } from '../src/server/memory-recall.ts';
+import type { MemoryBrief, MemoryReplyVisual } from '../src/ports/memory-recall.ts';
+import { presentationText, type Presentation } from '../src/shared/presentation.ts';
+import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -496,6 +499,42 @@ test(
       const guess = (await view()).notes.find((note) => note.path === 'about/planted')!;
       assert.deepEqual([guess.status, guess.sources[0].text], ['tentative', null]);
       assert.deepEqual(await notices(), []);
+
+      const archivedResponse = await application.app.inject({
+        method: 'POST',
+        url: '/api/memory/notes/about/planted/archive',
+        headers,
+      });
+      assert.equal(archivedResponse.statusCode, 200, archivedResponse.body);
+      const archivedNote = archivedResponse
+        .json<MemoryView>()
+        .archive.find((note) => note.path === 'about/planted')!;
+      assert.equal(archivedNote.reason, 'manual');
+      assert.equal(archivedNote.sources[0].text, null);
+      assert.ok(!archivedNote.sources[0].canOpenInCurrentChat);
+      assert.ok(
+        !archivedResponse.json<MemoryView>().notes.some((note) => note.path === 'about/planted'),
+      );
+      assert.equal(
+        (
+          await application.app.inject({
+            method: 'POST',
+            url: '/api/memory/notes/about/planted/archive',
+            headers,
+          })
+        ).statusCode,
+        404,
+      );
+      const restoredResponse = await application.app.inject({
+        method: 'POST',
+        url: '/api/memory/archive/restore',
+        headers,
+        payload: { path: archivedNote.path, archived: archivedNote.archived },
+      });
+      assert.equal(restoredResponse.statusCode, 200, restoredResponse.body);
+      assert.ok(
+        restoredResponse.json<MemoryView>().notes.some((note) => note.path === archivedNote.path),
+      );
 
       const clear = 'Clear everything you saved about me.';
       await ask(clear, [personal('memory_control', { clear: true, quote: clear })]);
@@ -1077,6 +1116,590 @@ test('memory corrections keep their evidence, type and dates and do not archive 
   }
 });
 
+test('memory review excludes unsafe current-read text while retaining safe evidence and known memory paths', async () => {
+  const pool = {} as pg.Pool;
+  const memory = createMemoryService({ pool, ownerId: 'review-owner', store: memoryObjectStore() });
+  const path = 'preferences/lighting';
+  const retained = [
+    {
+      action: 'usage_get',
+      args: {},
+      result: untrustedBlock(
+        'usage_get',
+        JSON.stringify({ requests: 31, costUsd: 0.16345004999999999 }),
+      ),
+    },
+    { action: 'memory_read', args: { path }, result: { path, text: 'Prefers amber light.' } },
+    {
+      action: 'history_search',
+      args: { query: 'amber' },
+      result: { messages: [{ role: 'user', text: 'I prefer amber light.' }] },
+    },
+  ];
+  const unsafeValues = [
+    '4111111111111111',
+    '4111 1111 1111 1111',
+    '4111-1111-1111-1111',
+    '4111111111111111.0',
+    '4111111111111111.',
+    ['sk', 'synthetic', 'a'.repeat(20)].join('-'),
+  ];
+  const packets: MemoryBrief[] = [];
+  let beforeLoad = async () => {};
+  let beforeCurate = async () => {};
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'review-owner',
+    memory: {
+      ...memory,
+      load: async () => {
+        await beforeLoad();
+        return memory.load();
+      },
+    },
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        await beforeCurate();
+        packets.push(structuredClone((input as { evidence: MemoryBrief }).evidence));
+        return { supported: false, usedPaths: [path], answer: 'You prefer amber light.' };
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Which light do I prefer?',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: {
+      mode: 'recall',
+      facts: [],
+      messages: [],
+      searches: [],
+      reads: [
+        ...retained,
+        ...unsafeValues.map((value) => ({
+          action: 'apps',
+          args: {},
+          result: untrustedBlock('apps', `A bare value: ${value}`),
+        })),
+      ],
+    },
+  };
+  assert.equal(await recall.review(context, 'You prefer blue light.'), 'You prefer amber light.');
+  assert.equal(packets.length, 1);
+  const evidence = packets[0];
+  assert.equal(evidence.readsTruncated, true);
+  assert.deepEqual(evidence.reads, retained);
+  for (const value of unsafeValues) assert.ok(!JSON.stringify(evidence).includes(value));
+
+  const safeRead = {
+    action: 'usage_get',
+    args: {},
+    result: untrustedBlock('usage_get', JSON.stringify({ requests: 32, costUsd: 0.25 })),
+  };
+  const unsafeRead = {
+    action: 'apps',
+    args: {},
+    result: untrustedBlock('apps', unsafeValues[0]),
+  };
+  for (const lateRead of [safeRead, unsafeRead]) {
+    let started!: () => void;
+    let release!: () => void;
+    const loading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    beforeLoad = async () => {
+      started();
+      await held;
+    };
+    context.memoryBrief!.reads = [...retained];
+    const pending = recall.review(context, 'You prefer blue light.');
+    await loading;
+    context.memoryBrief!.reads.push(lateRead);
+    release();
+    await pending;
+    assert.deepEqual(
+      packets.at(-1)!.reads,
+      lateRead === safeRead ? [...retained, safeRead] : retained,
+    );
+    assert.equal(packets.at(-1)!.readsTruncated, lateRead === unsafeRead ? true : undefined);
+  }
+  beforeLoad = async () => {};
+  let started!: () => void;
+  let release!: () => void;
+  const curating = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  beforeCurate = async () => {
+    started();
+    await held;
+  };
+  context.memoryBrief!.reads = [...retained];
+  const pending = recall.review(context, 'You prefer blue light.');
+  await curating;
+  context.memoryBrief!.reads.push(unsafeRead);
+  context.memoryBrief!.readsTruncated = true;
+  release();
+  await pending;
+  assert.equal(packets.length, 4);
+  assert.deepEqual(packets[3].reads, retained);
+  assert.equal(packets[3].readsTruncated, undefined);
+  beforeCurate = async () => {};
+  await recall.review(context, 'You prefer blue light.');
+  assert.equal(packets.length, 5);
+  assert.deepEqual(packets[4].reads, retained);
+  assert.equal(packets[4].readsTruncated, true);
+  beforeLoad = async () => {
+    context.memoryBrief = undefined;
+  };
+  assert.equal(await recall.review(context, 'You prefer blue light.'), 'You prefer blue light.');
+  assert.equal(packets.length, 5);
+});
+
+test('memory review permits silence only for a redundant recap of complete successful delivery', async () => {
+  const pool = {} as pg.Pool;
+  const memory = createMemoryService({
+    pool,
+    ownerId: 'delivery-owner',
+    store: memoryObjectStore(),
+  });
+  let verdict: unknown = { supported: true, usedPaths: [], answer: '', redundant: true };
+  const packets: Array<{ evidence: MemoryBrief; lastDelivery?: MemoryBrief['lastDelivery'] }> = [];
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'delivery-owner',
+    memory,
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        packets.push(structuredClone(input) as (typeof packets)[number]);
+        return verdict;
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Show the synthetic result.',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: { mode: 'recall', facts: [], messages: [], searches: [] },
+  };
+  const draft = 'The synthetic result is already visible.';
+  assert.equal(await recall.review(context, draft), draft);
+  const delivered: NonNullable<MemoryBrief['lastDelivery']> = {
+    text: 'The source confirms amber.',
+    presentation: { type: 'diagram', text: 'Synthetic result\nAmber' },
+  };
+  context.memoryBrief!.lastDelivery = delivered;
+  for (const supported of [false, true]) {
+    verdict = { supported, usedPaths: [], answer: '', redundant: true };
+    assert.equal(await recall.review(context, draft), supported ? '' : draft);
+    assert.deepEqual(packets.at(-1)!.lastDelivery, delivered);
+    assert.equal(packets.at(-1)!.evidence.lastDelivery, undefined);
+  }
+  for (const [supported, redundant] of [
+    [true, false],
+    [true, undefined],
+    [undefined, true],
+    ['true', true],
+    [true, 'true'],
+  ]) {
+    verdict = { supported, usedPaths: [], answer: '', redundant };
+    assert.equal(await recall.review(context, draft), draft);
+  }
+  for (const followup of [
+    'The source was updated today.',
+    'The value is an estimate, not a measurement.',
+    'Which result would you like to use?',
+    'The subsequent download failed.',
+  ]) {
+    verdict = { supported: true, usedPaths: [], answer: followup, redundant: false };
+    assert.equal(await recall.review(context, followup), followup);
+  }
+  for (const [followup, answer] of [
+    [`${draft} The subsequent download failed.`, 'The subsequent download failed.'],
+    [
+      `${draft} The value is a verified measurement. The subsequent download failed.`,
+      'Correction: amber is a recorded preference, not a verified measurement. The subsequent download failed.',
+    ],
+  ] as const) {
+    for (const supported of [true, false]) {
+      verdict = { supported, usedPaths: [], answer, redundant: false };
+      assert.equal(await recall.review(context, followup), supported ? followup : answer);
+      assert.deepEqual(packets.at(-1)!.lastDelivery, delivered);
+      assert.deepEqual(context.memoryBrief!.lastDelivery, delivered);
+    }
+  }
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: 'Correction: amber is a recorded preference, not a verified measurement.',
+    redundant: false,
+  };
+  assert.equal(
+    await recall.review(context, draft),
+    'Correction: amber is a recorded preference, not a verified measurement.',
+  );
+  verdict = { supported: true, usedPaths: ['about/foreign'], answer: '', redundant: true };
+  assert.equal(await recall.review(context, draft), draft);
+  verdict = { supported: true, usedPaths: [], answer: '', redundant: true };
+  context.memoryBrief!.lastDelivery = { ...delivered, truncated: true };
+  assert.equal(await recall.review(context, draft), draft);
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: 'Correction: the source describes a preference rather than a measurement.',
+    redundant: false,
+  };
+  assert.equal(
+    await recall.review(context, draft),
+    'Correction: the source describes a preference rather than a measurement.',
+  );
+  assert.equal(packets.at(-1)!.lastDelivery?.truncated, true);
+  verdict = { supported: true, usedPaths: [], answer: '', redundant: true };
+  context.memoryBrief!.lastDelivery = { text: '' };
+  assert.equal(await recall.review(context, draft), draft);
+  context.memoryBrief!.lastDelivery = { ...delivered, text: '4111 1111 1111 1111' };
+  assert.equal(await recall.review(context, draft), draft);
+  assert.equal(packets.at(-1)!.lastDelivery?.truncated, true);
+  assert.equal(packets.at(-1)!.lastDelivery?.presentation?.type, 'diagram');
+  assert.doesNotMatch(JSON.stringify(packets.at(-1)), /4111/);
+  context.memoryBrief!.lastDelivery = delivered;
+  verdict = {
+    supported: false,
+    usedPaths: [],
+    answer: '',
+    redundant: true,
+    presentationSupported: false,
+  };
+  const visual: MemoryReplyVisual = {
+    text: '',
+    presentation: {
+      version: 1,
+      type: 'diagram',
+      title: 'A new result',
+      sources: [],
+      nodes: [{ id: 'new', label: 'New value' }],
+      edges: [],
+    },
+  };
+  assert.equal(await recall.review(context, draft, visual), draft);
+});
+
+test('memory review separates supported visuals from revised prose without weakening rejected claims', async () => {
+  const pool = {} as pg.Pool;
+  const store = memoryObjectStore();
+  const memory = createMemoryService({ pool, ownerId: 'visual-owner', store });
+  const visual: MemoryReplyVisual = {
+    text: 'An unsupported introduction.',
+    presentation: {
+      version: 1,
+      type: 'diagram',
+      title: 'Lighting preference',
+      sources: [],
+      nodes: [{ id: 'lamp', label: 'Warm amber light' }],
+      edges: [],
+    },
+  };
+  let draft = `${visual.text}\n\n${presentationText(visual.presentation)}`;
+  let verdict: unknown;
+  let expectedVisual: MemoryReplyVisual | undefined = visual;
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'visual-owner',
+    memory,
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ task, input, instructions }) {
+        assert.equal(task, 'memory_check');
+        const templates = [...instructions.matchAll(/Return (\{[^\n]+?\})\./g)];
+        assert.equal(templates.length, 1);
+        assert.deepEqual(
+          [...templates[0][1].matchAll(/"(\w+)":/g)].map((match) => match[1]),
+          expectedVisual
+            ? [
+                'supported',
+                'presentationSupported',
+                'usedPaths',
+                'answer',
+                'correctedVisual',
+                'supported',
+                'text',
+                'presentation',
+              ]
+            : ['supported', 'usedPaths', 'answer'],
+        );
+        const packet = input as {
+          draft: string;
+          visual?: MemoryReplyVisual;
+          savedFacts: unknown[];
+        };
+        assert.equal(packet.draft, draft);
+        assert.deepEqual(packet.visual, expectedVisual);
+        assert.deepEqual(packet.savedFacts, []);
+        return verdict;
+      },
+    },
+  });
+  const unexpectedAction = async () => assert.fail('Memory review performed a runtime action.');
+  const threadId = randomUUID();
+  const context: Parameters<typeof recall.review>[0] = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Show the lighting preference.',
+    history: [],
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: unexpectedAction,
+    reply: unexpectedAction,
+    delta: () => assert.fail('Memory review streamed a reply.'),
+    publish: unexpectedAction,
+    requestCredential: unexpectedAction,
+    integration: unexpectedAction,
+    manage: unexpectedAction,
+    memoryBrief: { mode: 'recall', facts: [], messages: [], searches: [] },
+  };
+  for (const supported of [false, true])
+    for (const presentationSupported of [true, false, undefined]) {
+      const answer =
+        presentationSupported === true ? 'Corrected introduction.' : 'Warm amber light.';
+      verdict = { supported, usedPaths: [], answer, presentationSupported };
+      assert.deepEqual(
+        await recall.review(context, draft, visual),
+        supported && presentationSupported === true
+          ? draft
+          : { text: answer, presentationSupported: presentationSupported === true },
+      );
+    }
+  verdict = { supported: false, usedPaths: [], answer: '', presentationSupported: true };
+  assert.deepEqual(await recall.review(context, draft, visual), {
+    text: '',
+    presentationSupported: true,
+  });
+  const repaired: MemoryReplyVisual = {
+    text: '',
+    presentation: {
+      ...visual.presentation,
+      title: 'Supported lighting preference',
+    },
+  };
+  const fallback = 'The supported preference is warm amber light.';
+  verdict = {
+    supported: false,
+    presentationSupported: false,
+    usedPaths: [],
+    answer: fallback,
+    correctedVisual: { supported: true, ...repaired },
+  };
+  assert.deepEqual(await recall.review(context, draft, visual), {
+    text: fallback,
+    presentationSupported: false,
+    correctedVisual: repaired,
+  });
+  for (const correctedVisual of [
+    undefined,
+    null,
+    'Use this replacement',
+    { supported: false, ...repaired },
+    repaired,
+    { supported: true, presentation: repaired.presentation },
+    { supported: true, ...repaired, text: '4111 1111 1111 1111' },
+    { supported: true, ...repaired, presentation: { ...repaired.presentation, version: 2 } },
+    {
+      supported: true,
+      ...repaired,
+      presentation: { ...repaired.presentation, title: '4111 1111 1111 1111' },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: {
+        ...repaired.presentation,
+        sources: [{ label: 'Private', url: 'http://127.0.0.1' }],
+      },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: { ...repaired.presentation, edges: [{ from: 'missing', to: 'lamp' }] },
+    },
+    {
+      supported: true,
+      ...repaired,
+      presentation: {
+        version: 1,
+        type: 'image',
+        title: 'Unrelated image',
+        sources: [],
+        artifactId: randomUUID(),
+        alt: 'An unrelated image',
+      },
+    },
+  ]) {
+    verdict = {
+      supported: false,
+      presentationSupported: false,
+      usedPaths: [],
+      answer: fallback,
+      correctedVisual,
+    };
+    assert.deepEqual(await recall.review(context, draft, visual), {
+      text: fallback,
+      presentationSupported: false,
+    });
+  }
+  verdict = { supported: false, usedPaths: ['about/foreign'], answer: 'Unsupported replacement.' };
+  assert.equal(await recall.review(context, draft, visual), draft);
+  verdict = { supported: false, usedPaths: [], answer: '', presentationSupported: false };
+  assert.equal(await recall.review(context, draft, visual), draft);
+  verdict = { supported: false, usedPaths: [], answer: 'Corrected text-only answer.' };
+  expectedVisual = undefined;
+  assert.equal(await recall.review(context, draft), 'Corrected text-only answer.');
+  const flight: Presentation = {
+    version: 1,
+    type: 'flights',
+    title: 'Synthetic itinerary',
+    sources: [],
+    options: [
+      {
+        id: 'trip',
+        status: 'booked',
+        journeys: [
+          {
+            id: 'outbound',
+            label: 'Outbound',
+            segments: [
+              {
+                airline: 'Synthetic Air',
+                aircraft: 'An unsupported aircraft claim',
+                operatedBy: 'An unestablished operating carrier',
+                departure: { airport: 'AAA', time: '10:00' },
+                arrival: { airport: 'BBB', time: '12:00' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const corrected = structuredClone(flight);
+  delete corrected.options[0].journeys[0].segments[0].aircraft;
+  delete corrected.options[0].journeys[0].segments[0].operatedBy;
+  expectedVisual = { text: '', presentation: flight };
+  draft = presentationText(flight);
+  const flightFallback = 'Booked Synthetic Air flight from AAA at 10:00 to BBB at 12:00.';
+  verdict = {
+    supported: false,
+    presentationSupported: false,
+    usedPaths: [],
+    answer: flightFallback,
+    correctedVisual: { supported: true, text: '', presentation: corrected },
+  };
+  const flightContext = { ...context, prompt: 'Show my itinerary.' };
+  assert.deepEqual(await recall.review(flightContext, draft, expectedVisual), {
+    text: flightFallback,
+    presentationSupported: false,
+    correctedVisual: { text: '', presentation: corrected },
+  });
+  delete corrected.options[0].status;
+  assert.deepEqual(await recall.review(flightContext, draft, expectedVisual), {
+    text: flightFallback,
+    presentationSupported: false,
+  });
+});
+
+test('manual archive preserves facts and evidence, restores the note and stays separate from forgetting', async () => {
+  const original = entry({
+    slug: 'workshop',
+    text: 'Attended a print workshop on 2026-01-03.',
+    abstract: 'Print workshop',
+    origin: 'inferred',
+    expires: '2099-01-01',
+    quote: 'I attended a print workshop on 2026-01-03.',
+    fact: { kind: 'event', entities: ['Print workshop'], occurredOn: '2026-01-03' },
+  });
+  const tree = treeOf(original);
+  tree.enabled = false;
+  tree.archive.push({
+    ...entry({ slug: 'earlier', text: 'Planned a print workshop.' }),
+    reason: 'superseded',
+    by: 'about/workshop',
+    archived: when,
+  });
+  const store = memoryObjectStore();
+  await store.write('memory/MEMORY.md', render(tree), { expectedVersion: null });
+  const memory = createMemoryService({ pool: {} as pg.Pool, ownerId: 'archive-owner', store });
+  await memory.archiveNote('about/workshop');
+  const archived = await memory.load();
+  assert.equal(archived.enabled, false);
+  assert.equal(archived.entries.length, 0);
+  assert.equal(archived.archive.length, 2);
+  const last = archived.archive.at(-1)!;
+  assert.deepEqual(last, { ...original, reason: 'manual', archived: last.archived });
+  await assert.rejects(memory.archiveNote('about/workshop'), { statusCode: 404 });
+  await assert.rejects(memory.archiveNote('../workshop'));
+  const restoredPath = await memory.restore({ path: 'about/workshop', archived: last.archived });
+  assert.equal(restoredPath, 'about/workshop');
+  const restored = await memory.load();
+  assert.equal(restored.archive.length, 1);
+  assert.equal(restored.entries[0].text, original.text);
+  assert.deepEqual(restored.entries[0].fact, original.fact);
+  assert.deepEqual(restored.entries[0].sources, original.sources);
+  assert.equal(restored.entries[0].quote, original.quote);
+  assert.equal(restored.entries[0].abstract, original.abstract);
+  assert.equal(restored.entries[0].expires, original.expires);
+  await memory.change(restoredPath, { expires: '2099-02-01' });
+  assert.deepEqual((await memory.load()).entries[0].sources, original.sources);
+  await memory.change(restoredPath, { text: 'Prefers print workshops.' });
+  const rewritten = (await memory.load()).entries[0];
+  assert.deepEqual(rewritten.sources, []);
+  assert.equal(rewritten.fact, undefined);
+  assert.equal(rewritten.quote, undefined);
+  assert.equal(rewritten.abstract, undefined);
+  await memory.forget(restoredPath);
+  const forgotten = await memory.load();
+  assert.equal(forgotten.entries.length, 0);
+  assert.equal(forgotten.archive.length, 0);
+});
+
 test(
   'history pages keep every match and memory evidence stays within its owner and active conversation',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -1227,6 +1850,16 @@ test(
     });
     await memory.add({ area: 'about', text: 'A saved fact outside the selected packet.' });
     const ownView = await memory.view();
+    assert.deepEqual(
+      ownView.notes
+        .find((note) => note.path === 'about/maple')!
+        .sources.map((source) => Boolean(source.canOpenInCurrentChat)),
+      [true, false, false],
+    );
+    assert.equal(
+      ownView.notes.find((note) => note.path === 'about/amber')!.sources[0].canOpenInCurrentChat,
+      false,
+    );
     assert.ok(
       ownView.notes
         .find((note) => note.path === 'about/amber')!
@@ -1295,5 +1928,15 @@ test(
     const changed = await memory.read({ path: 'about/amber' });
     assert.ok('sources' in changed);
     assert.equal(changed.sources[0].text, null);
+    await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [active]);
+    const afterReset = await memory.view();
+    assert.equal(
+      afterReset.notes.find((note) => note.path === 'about/maple')!.sources[0].canOpenInCurrentChat,
+      false,
+    );
+    assert.equal(
+      afterReset.notes.find((note) => note.path === 'about/maple')!.sources[0].text,
+      records[0].text,
+    );
   },
 );

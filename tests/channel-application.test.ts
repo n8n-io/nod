@@ -267,7 +267,11 @@ test('speech previews reject unavailable voices, serialize generation and releas
           prepare: async () => {
             ready = true;
           },
+          prepareTranscription: async () => {
+            ready = true;
+          },
           status: () => ({ state: ready ? 'ready' : 'not_downloaded' }),
+          transcriptionStatus: () => ({ state: ready ? 'ready' : 'not_downloaded' }),
           close: async () => {},
         },
       });
@@ -300,6 +304,55 @@ test('speech previews reject unavailable voices, serialize generation and releas
       }
     },
   );
+});
+
+test('input preparation reuses cloud transcription and preserves an explicit local speech choice', async (t) => {
+  const app = Fastify();
+  let voice: string | null = null;
+  let inputReady = false;
+  let inputPreparations = 0;
+  let fullPreparations = 0;
+  registerSpeechSettings(app, {
+    speech: createSpeech({
+      id: 'synthetic-cloud',
+      configured: true,
+      transcriptionConfigured: true,
+      synthesize: async () => assert.fail('Input preparation must not synthesize audio.'),
+      transcribe: async () => assert.fail('Preparation must not receive a recording.'),
+    }),
+    preferences: { get: async () => ({ ...defaultPreferences, speechVoice: voice }) } as ReturnType<
+      typeof createPreferencesStore
+    >,
+    local: {
+      prepare: async () => {
+        fullPreparations++;
+      },
+      prepareTranscription: async () => {
+        inputPreparations++;
+        inputReady = true;
+      },
+      status: () => ({ state: 'not_downloaded' }),
+      transcriptionStatus: () => ({ state: inputReady ? 'ready' : 'not_downloaded' }),
+      close: async () => {},
+    },
+    inputFormat: (selected) => (selected?.startsWith('local:') ? 'wav' : undefined),
+  });
+  t.after(() => app.close());
+  const prepare = () =>
+    app.inject({ method: 'POST', url: '/api/speech/prepare', payload: { inputOnly: true } });
+  assert.equal((await prepare()).json().transcription, true);
+  assert.equal(inputPreparations, 0);
+  voice = 'local:af_heart';
+  assert.equal((await app.inject('/api/speech')).json().transcription, false);
+  const local = await prepare();
+  assert.equal(local.statusCode, 200);
+  assert.equal(local.json().transcriptionFormat, 'wav');
+  assert.equal(local.json().local.state, 'not_downloaded');
+  assert.equal(local.json().localInput.state, 'ready');
+  assert.equal(inputPreparations, 1);
+  assert.equal(fullPreparations, 0);
+  assert.equal(voice, 'local:af_heart');
+  assert.equal((await app.inject('/api/speech')).json().transcription, true);
 });
 
 test('OpenAI previews preserve configured voices and enforce the selected speech model', async (t) => {

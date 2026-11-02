@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
 import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges } from './analytics-settings.ts';
+import { activeThreadSql } from './history.ts';
 import {
   archive,
   area,
@@ -332,6 +333,14 @@ export function createMemoryService(options: {
     });
   }
 
+  async function archiveNote(raw: unknown) {
+    const target = path.parse(raw);
+    await owned((tree, now) => {
+      const entry = locate(tree, target) ?? fail('This note is no longer in memory.', 404);
+      archive(tree, entry, 'manual', now);
+    });
+  }
+
   async function restore(raw: unknown) {
     const input = archivedInput.parse(raw);
     return owned((tree, now) => {
@@ -401,7 +410,8 @@ export function createMemoryService(options: {
 
   async function sources(ids: string[]) {
     const { rows } = await options.pool.query(
-      `SELECT m.id,m.text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
+      `SELECT m.id,m.text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel,
+       COALESCE(${activeThreadSql()},false) AS can_open
        FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
       [options.ownerId, ids],
@@ -409,7 +419,13 @@ export function createMemoryService(options: {
     return new Map(
       rows.map((row) => [
         row.id as string,
-        { id: row.id, text: row.text, at: row.created_at.toISOString(), channel: row.channel },
+        {
+          id: row.id,
+          text: row.text,
+          at: row.created_at.toISOString(),
+          channel: row.channel,
+          canOpenInCurrentChat: row.can_open === true,
+        },
       ]),
     );
   }
@@ -449,6 +465,7 @@ export function createMemoryService(options: {
     restate,
     style,
     change,
+    archiveNote,
     restore,
     forgetArchived,
     settings,

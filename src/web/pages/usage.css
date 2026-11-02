@@ -2,6 +2,24 @@
   display: grid;
   gap: 32px;
 }
+.usage-overview {
+  display: grid;
+  gap: 12px;
+}
+.usage-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.usage-plan-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
 .usage-month {
   display: grid;
   gap: 12px;
@@ -41,35 +59,29 @@
   appearance: none;
   margin: 0;
 }
-.usage-rule-form {
-  display: grid;
-  gap: 8px;
-  width: min(420px, calc(100vw - 64px));
-}
-.usage-rule-form textarea {
-  width: 100%;
-  min-height: 96px;
-  resize: vertical;
-}
-.usage-rule-actions {
-  display: flex;
-  gap: 4px;
-}
-.usage-task-limit {
-  display: grid;
-  justify-items: start;
-  gap: 8px;
-}
-.usage-task-limit .vault-seg > button[aria-pressed='true'] {
-  background: var(--surface);
-  color: var(--foreground);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.08),
-    inset 0 0 0 1px var(--border);
-}
 .usage-row-cost {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  flex-shrink: 0;
   font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
+}
+.usage-row-cost small,
+.vault-use-text .usage-model-source {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.vault-use-text .usage-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.vault-use-text .usage-models > span {
+  color: var(--foreground);
 }
 .usage-row-cost.is-label {
   color: var(--muted-foreground);

@@ -449,57 +449,216 @@ test(
           );
         },
       );
-      await t.test('a recurring schedule shows what its finished runs cost a month', async () => {
-        const { createLedger } = await import('../src/server/ledger.ts');
-        const ledger = createLedger({ pool: db.pool, ownerId });
-        await ledger.initialize();
-        const priced = createPersonalService({
-          pool: db.pool,
-          ownerId,
-          scheduler: thread.boss,
-          now: () => clock,
-          enqueueTurn: thread.enqueueTurn,
-          refresh() {},
-          sessionCosts: ledger.sessionCosts,
-        });
-        clock = new Date('2035-10-26T12:00:00.000Z');
-        const schedule = await create({ cron: '5 9 * * *' });
-        const monthly = async () =>
-          (await priced.listSchedules()).find((item) => item.id === schedule.id)!.monthlyUsd;
-        assert.equal(await monthly(), null);
-        let job = await jobFor(schedule.id);
-        clock = new Date(schedule.nextRun!);
-        await deliver([job]);
-        const [first] = (await runs(schedule.id)).map((run) => run.turnId);
-        await db.pool.query(
-          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.1)',
-          [randomUUID(), ownerId, first],
-        );
-        assert.equal(await monthly(), null);
-        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first]);
-        job = await jobFor(schedule.id);
-        clock = new Date('2035-10-28T09:05:00.000Z');
-        await deliver([job]);
-        const turns = (await runs(schedule.id)).map((run) => run.turnId);
-        assert.equal(turns.length, 2);
-        const second = turns.find((turnId) => turnId !== first)!;
-        await db.pool.query(
-          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.3)',
-          [randomUUID(), ownerId, second],
-        );
-        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [second]);
-        assert.equal(Math.round((await monthly())! * 100) / 100, 6);
-        await db.pool.query(
-          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,NULL)',
-          [randomUUID(), ownerId, first],
-        );
-        assert.equal(Math.round((await monthly())! * 100) / 100, 9);
-        assert.equal(
-          (await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false })).statusCode,
-          200,
-        );
-        assert.equal(await monthly(), null);
-      });
+      await t.test(
+        'schedule costs retain recorded charges and exclude plan estimates',
+        async (t) => {
+          const { createLedger } = await import('../src/server/ledger.ts');
+          const ledger = createLedger({ pool: db.pool, ownerId });
+          await ledger.initialize();
+          let failCosts = false;
+          const costRequests: string[][] = [];
+          const priced = createPersonalService({
+            pool: db.pool,
+            ownerId,
+            scheduler: thread.boss,
+            now: () => clock,
+            enqueueTurn: thread.enqueueTurn,
+            refresh() {},
+            sessionCosts: async (ids) => {
+              costRequests.push(ids);
+              if (failCosts) throw new Error('Synthetic cost lookup unavailable');
+              return ledger.sessionCosts(ids);
+            },
+          });
+          const pricedApp = Fastify();
+          priced.registerRoutes(pricedApp);
+          t.after(() => pricedApp.close());
+          const costs = async (id: string) => {
+            const response = await pricedApp.inject({
+              method: 'GET',
+              url: `/api/schedule-runs?scheduleId=${id}`,
+            });
+            assert.equal(response.statusCode, 200, response.body);
+            return Object.fromEntries(
+              response.json<ScheduleHistory>().runs.map((run) => [run.turnId, run.costUsd]),
+            );
+          };
+          clock = new Date('2035-10-26T12:00:00.000Z');
+          const schedule = await create({ cron: '5 9 * * *' });
+          const monthly = async () =>
+            (await priced.listSchedules()).find((item) => item.id === schedule.id)!.monthlyUsd;
+          assert.equal(await monthly(), null);
+          let job = await jobFor(schedule.id);
+          clock = new Date(schedule.nextRun!);
+          await deliver([job]);
+          const [firstRun] = await runs(schedule.id);
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.3)',
+            [randomUUID(), ownerId, firstRun!.turnId],
+          );
+          assert.equal(await monthly(), null);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+            firstRun!.turnId,
+          ]);
+          job = await jobFor(schedule.id);
+          clock = new Date('2035-10-28T09:05:00.000Z');
+          await deliver([job]);
+          const turns = (await runs(schedule.id)).map((run) => run.turnId);
+          assert.equal(turns.length, 2);
+          await t.test(
+            'filtered history paginates without exposing another owner’s runs',
+            async () => {
+              const otherOwner = 'schedule-history-other';
+              const otherThread = await thread.activeThread(db.pool, otherOwner);
+              const otherTurn = randomUUID();
+              const otherSchedule = randomUUID();
+              await db.pool.query(
+                `INSERT INTO turns(id,owner_id,thread_id,source,status,prompt)
+               VALUES($1,$2,$3,'schedule','succeeded','Synthetic other-owner run')`,
+                [otherTurn, otherOwner, otherThread.id],
+              );
+              await db.pool.query(
+                `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone)
+               SELECT $1,$2,$3,0,$4,title,$5,scheduled_for,time_zone FROM schedule_runs
+               WHERE owner_id=$6 AND turn_id=$7`,
+                [
+                  randomUUID(),
+                  otherOwner,
+                  otherSchedule,
+                  randomUUID(),
+                  otherTurn,
+                  ownerId,
+                  turns[0],
+                ],
+              );
+              const path = `/api/schedule-runs?scheduleId=${schedule.id}&limit=1`;
+              const firstResponse = await request('GET', path);
+              assert.equal(firstResponse.statusCode, 200, firstResponse.body);
+              const first = firstResponse.json<ScheduleHistory>();
+              assert.deepEqual(
+                first.runs.map((run) => run.turnId),
+                [turns[0]],
+              );
+              assert.ok(first.nextCursor);
+              const secondResponse = await request(
+                'GET',
+                `${path}&cursor=${encodeURIComponent(first.nextCursor)}`,
+              );
+              assert.equal(secondResponse.statusCode, 200, secondResponse.body);
+              const second = secondResponse.json<ScheduleHistory>();
+              assert.deepEqual(
+                second.runs.map((run) => run.turnId),
+                [turns[1]],
+              );
+              assert.equal(second.nextCursor, null);
+              for (const id of [otherSchedule, randomUUID()]) {
+                const response = await request('GET', `/api/schedule-runs?scheduleId=${id}`);
+                assert.equal(response.statusCode, 200, response.body);
+                assert.deepEqual(response.json<ScheduleHistory>(), { runs: [], nextCursor: null });
+              }
+              assert.deepEqual(await runs(otherSchedule), []);
+              for (const id of ['', 'not-a-uuid'])
+                assert.equal(
+                  (await request('GET', `/api/schedule-runs?scheduleId=${id}`)).statusCode,
+                  400,
+                );
+            },
+          );
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.1)',
+            [randomUUID(), ownerId, turns[0]],
+          );
+          assert.deepEqual(await costs(schedule.id), { [turns[0]!]: 0.1, [turns[1]!]: 0.3 });
+          await t.test(
+            'history stays pageable when recorded cost lookup is unavailable',
+            async () => {
+              const path = `/api/schedule-runs?scheduleId=${schedule.id}&limit=1`;
+              const before = await pricedApp.inject({ method: 'GET', url: path });
+              assert.equal(before.statusCode, 200, before.body);
+              const expected = before.json<ScheduleHistory>();
+              assert.ok(expected.nextCursor);
+              const withoutCosts = expected.runs.map(({ costUsd: _cost, ...run }) => run);
+              const previousRequests = costRequests.length;
+              failCosts = true;
+              try {
+                const first = await pricedApp.inject({ method: 'GET', url: path });
+                assert.equal(first.statusCode, 200, first.body);
+                const firstPage = first.json<ScheduleHistory>();
+                assert.deepEqual(firstPage, {
+                  runs: withoutCosts,
+                  nextCursor: expected.nextCursor,
+                });
+                const second = await pricedApp.inject({
+                  method: 'GET',
+                  url: `${path}&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
+                });
+                assert.equal(second.statusCode, 200, second.body);
+                const secondPage = second.json<ScheduleHistory>();
+                assert.deepEqual(
+                  secondPage.runs.map((run) => run.turnId),
+                  [turns[1]],
+                );
+                assert.equal(Object.hasOwn(secondPage.runs[0]!, 'costUsd'), false);
+                assert.equal(secondPage.nextCursor, null);
+                assert.deepEqual(costRequests.slice(previousRequests), [[turns[0]], [turns[1]]]);
+              } finally {
+                failCosts = false;
+              }
+              const recovered = await pricedApp.inject({ method: 'GET', url: path });
+              assert.equal(recovered.statusCode, 200, recovered.body);
+              assert.deepEqual(recovered.json<ScheduleHistory>(), expected);
+            },
+          );
+          assert.equal(Math.round((await monthly())! * 100) / 100, 9);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
+            turns,
+          ]);
+          assert.equal(Math.round((await monthly())! * 100) / 100, 6);
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,NULL)',
+            [randomUUID(), ownerId, turns[0]],
+          );
+          assert.equal(Math.round((await monthly())! * 100) / 100, 9);
+          assert.deepEqual(await costs(schedule.id), { [turns[0]!]: null, [turns[1]!]: 0.3 });
+          assert.equal(
+            (await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false }))
+              .statusCode,
+            200,
+          );
+          assert.equal(await monthly(), null);
+          const continuation = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,prompt)
+           SELECT $1,owner_id,thread_id,session_id,'resume','succeeded','Synthetic follow-up'
+           FROM turns WHERE id=$2`,
+            [continuation, turns[1]],
+          );
+          await db.pool.query(
+            `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,0.2),
+           ($4,'another-owner',$5,99)`,
+            [randomUUID(), ownerId, continuation, randomUUID(), turns[1]],
+          );
+          assert.deepEqual(await costs(schedule.id), { [turns[0]!]: null, [turns[1]!]: 0.5 });
+          assert.equal((await request('DELETE', `/api/schedules/${schedule.id}`)).statusCode, 200);
+          assert.deepEqual(await costs(schedule.id), { [turns[0]!]: null, [turns[1]!]: 0.5 });
+
+          const planSchedule = await create({ cron: '0 10 * * *' });
+          clock = new Date(planSchedule.nextRun!);
+          await deliver([await jobFor(planSchedule.id)]);
+          const [planRun] = await runs(planSchedule.id);
+          await db.pool.query(
+            `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details)
+           VALUES($1,$2,$3,NULL,'{"estimateUsd":2.5}')`,
+            [randomUUID(), ownerId, planRun!.turnId],
+          );
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [planRun!.turnId]);
+          assert.deepEqual(await costs(planSchedule.id), { [planRun!.turnId]: null });
+          assert.equal(
+            (await priced.listSchedules()).find((item) => item.id === planSchedule.id)!.monthlyUsd,
+            null,
+          );
+        },
+      );
       await t.test(
         'a recurring schedule starts no run while its last run is busy or waiting on the owner',
         async () => {

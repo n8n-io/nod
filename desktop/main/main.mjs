@@ -148,6 +148,8 @@ let engineBound = false;
 let authToken = '';
 let remoteConnection;
 let connectionSettingsOpen = false;
+let onboardingSetupOpen = false;
+let connectionReturnsToOnboarding = false;
 let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
@@ -669,7 +671,7 @@ function showSettings(section = 'general', loading = false) {
     title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 20, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
       ...rendererSecurity,
@@ -707,6 +709,7 @@ function showSettings(section = 'general', loading = false) {
     if (setupWindow === window) {
       setupWindow = undefined;
       connectionSettingsOpen = false;
+      onboardingSetupOpen = false;
     }
   });
   setupWindowLoaded = Promise.all([
@@ -715,6 +718,9 @@ function showSettings(section = 'general', loading = false) {
         `${setupURL}?${new URLSearchParams({
           firstSetup: String(!onboardingCompleted),
           ...(section === 'server' ? { server: 'true' } : {}),
+          ...(section === 'onboarding'
+            ? { onboarding: 'true', remote: String(Boolean(remoteConnection || status.remote)) }
+            : {}),
           ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
         })}`,
       )
@@ -726,7 +732,11 @@ function showSettings(section = 'general', loading = false) {
 
 function showEngine({ focus = true } = {}) {
   if (quitting) return;
-  if (connectionSettingsOpen && setupWindow && !setupWindow.isDestroyed()) {
+  if (
+    (connectionSettingsOpen || onboardingSetupOpen) &&
+    setupWindow &&
+    !setupWindow.isDestroyed()
+  ) {
     if (focus) {
       setupWindow.show();
       setupWindow.focus();
@@ -775,7 +785,7 @@ function showEngine({ focus = true } = {}) {
     title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 20, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'engine.cjs'),
       ...rendererSecurity,
@@ -1116,7 +1126,9 @@ function configureAppSession() {
 
 function showConnectionSettings() {
   if (quitting) return;
+  const returnToOnboarding = onboardingSetupOpen;
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
+  connectionReturnsToOnboarding = returnToOnboarding;
   connectionSettingsOpen = true;
   return showSettings('server', true);
 }
@@ -1359,7 +1371,6 @@ function refreshUpdateMenu() {
       Menu.buildFromTemplate([
         { label: 'Open Nod', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
-        { label: 'Server connection…', click: showConnectionSettings },
         { label: 'Send feedback…', click: showFeedback },
         {
           label,
@@ -1578,7 +1589,7 @@ async function quit(complete, failure = 'Nod could not finish shutting down.') {
 
 async function removeAllData() {
   if (quitting) return;
-  if (remoteConnection) return showConnectionSettings();
+  if (remoteConnection) return replayOnboarding();
   const { response } = await dialog.showMessageBox({
     type: 'warning',
     message: 'Remove all data and start over?',
@@ -1842,8 +1853,14 @@ async function prepare(options = {}) {
 }
 
 function replayOnboarding() {
-  replayingProductOnboarding = onboardingCompleted;
-  showEngine();
+  if (quitting) return status;
+  if (onboardingSetupOpen && setupWindow && !setupWindow.isDestroyed()) {
+    showEngine();
+    return status;
+  }
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
+  onboardingSetupOpen = true;
+  void showSettings('onboarding', true);
   return status;
 }
 
@@ -2014,7 +2031,6 @@ else {
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
-              { label: 'Server connection…', click: showConnectionSettings },
               { label: 'Send feedback…', click: showFeedback },
               {
                 id: 'desktop-update',
@@ -2095,12 +2111,21 @@ else {
         return saveConnection(value);
       });
       ipcMain.handle('nod:connection:open', (event) => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        allowSetup(event);
         return showConnectionSettings();
       });
       ipcMain.handle('nod:connection:close', (event) => {
         allowSetup(event);
+        const returnToOnboarding = connectionSettingsOpen && connectionReturnsToOnboarding;
         setupWindow.destroy();
+        if (returnToOnboarding) replayOnboarding();
+        else showEngine();
+      });
+      ipcMain.handle('nod:onboarding:continue', (event) => {
+        allowSetup(event);
+        if (!onboardingSetupOpen) throw new Error('This setup action is unavailable.');
+        setupWindow.destroy();
+        replayingProductOnboarding = onboardingCompleted;
         showEngine();
       });
       ipcMain.handle('nod:feedback:context', (event) => {

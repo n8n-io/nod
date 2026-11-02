@@ -100,10 +100,10 @@ With LM Studio 0.4 or later, Nod reads each model's details. It skips embedding 
 
 <Steps>
 
-1. Open **Settings → Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
+1. Open **Settings → Models**, select **Add connection** or **Add**, then choose **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
 2. Check the **Server address**. Nod fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, Nod tries it for you.
 3. Add an **API key** only if the server needs one.
-4. Select **Save connection**, or **Connect** during onboarding.
+4. Select **Connect**.
 
 </Steps>
 
@@ -111,9 +111,7 @@ With LM Studio 0.4 or later, Nod reads each model's details. It skips embedding 
 
 Nod checks the address by listing the server's models. The connection shows the server's host, such as `localhost:11434`. If you haven't chosen a model yet, Nod selects the server's first one. To switch, open **Settings → Models** and choose a model.
 
-![The Models dialog lists the OpenAI-compatible server localhost:11434 with one model, selected, next to the Add server button.](../../../assets/screens/local-models-settings.png)
-
-After you pull or load another model, select the refresh button next to the connection. To change a server's key, add the same address again: Nod updates that connection instead of adding a second one.
+After you pull or load another model, or to change a server’s key, open **Manage** beside **OpenAI-compatible** and add the same address again. Nod updates that connection instead of adding a second one.
 
 ## Set the server in `.env`
 
@@ -126,7 +124,7 @@ OPENAI_COMPATIBLE_API_KEY=
 LLM_MODEL=gpt-oss:20b
 ```
 
-Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. After editing `.env`, [apply the configuration change](/deploy/configuration/#how-settings-work). If the server isn't running when Nod starts, start it and select the refresh button next to the connection.
+Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. After editing `.env`, [apply the configuration change](/deploy/configuration/#how-settings-work). If the server isn't running when Nod starts, start it, open **Manage** beside **OpenAI-compatible**, then select **Load models** or **Try again**.
 
 ## Other OpenAI-compatible services
 
@@ -150,15 +148,15 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 
 ## Troubleshooting
 
-| Problem                                                       | Fix                                                                                                                                            |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models. |
-| **This server has no models Nod can use**                     | Nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                    |
-| Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
-| A new model doesn't appear                                    | Select the refresh button next to the connection.                                                                                              |
-| **Can’t load its models** next to a server set in `.env`      | Start the server, then select the refresh button next to the connection.                                                                       |
-| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                |
-| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
+| Problem                                                       | Fix                                                                                                                                                      |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Nod couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models.           |
+| **This server has no models Nod can use**                     | Nod needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                              |
+| Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                               |
+| A new model doesn't appear on a server added in Settings      | Open **Manage** next to the connection, choose **Add connection**, then enter the same server address and API key, if used. This updates its model list. |
+| **Can’t load its models** next to a server set in `.env`      | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                  |
+| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                          |
+| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                                    |
 
 ## Related resources
 

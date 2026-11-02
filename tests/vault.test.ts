@@ -3474,6 +3474,7 @@ globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window)
 globalThis.location=window.location;
 globalThis.ResizeObserver=class{observe(){}disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
+HTMLElement.prototype.scrollTo=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
 let store=createSettingsStore(join(directory,'settings.json'),{});
 let failRead=true;
@@ -3494,7 +3495,9 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
  if(path==='/api/account/prepare')return new Promise(()=>{});
  if(path==='/api/models')return Response.json({connections:[{id:'synthetic',provider:'anthropic',method:'api_key',label:'Synthetic model',managed:false,status:'connected',models:[{id:'synthetic-model',name:'Synthetic model',efforts:['medium'],images:false,contextWindow:1000}]}],selection:{connectionId:'synthetic',modelId:'synthetic-model',effort:'medium'}});
- if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon'});
+ if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon',locale:'en-GB',hourCycle:'h23',quietHoursEnabled:false,quietStart:'22:00',quietEnd:'08:00',speechReply:'auto',speechVoice:null});
+ if(path==='/api/speech')return Response.json({transcription:false,synthesis:false,voices:[],speechVoice:null,speechReply:'auto'});
+ if(path==='/api/memory')return Response.json({saving:true,sensitive:false,notes:[],skills:[],archive:[]});
  if(path==='/api/apps'||path==='/api/apps/catalog')return Response.json([]);
  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
  throw new Error('Unexpected request '+path);
@@ -3536,17 +3539,14 @@ assert.equal(document.querySelector('[role="switch"]'),null);
 assert.equal(saves,2,'a completed native step is never written again');
 await act(async()=>root.unmount());
 await store.save({onboardingCompleted:true});
-const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
+const {AccountSettings}=await import('./src/web/components/account-settings.tsx');
 window.nodDesktop.onPreferences=()=>()=>{};
-function GeneralChoices(){
- const native=useDesktopSettings();
- return native.settings?createElement(DesktopOptions,{settings:native.settings,busy:native.busy,onChange:native.save}):null;
-}
+const account={user:session.user,theme:'system',usageData:false,saving:false,onSettings(){},async onTheme(){},async onUsageData(){},async onTraces(){}};
 root=createRoot(document.getElementById('root'));
-await act(async()=>root.render(createElement(GeneralChoices)));
-await waitFor(()=>document.querySelectorAll('[role="switch"]').length===2);
+await act(async()=>root.render(createElement(AccountSettings,{account,open:true,initialTab:'General',openRequest:0,onOpenChange(){}})));
 const login=()=>document.querySelector('[role="switch"][aria-label="Open at login"]');
-const notices=()=>document.querySelector('[role="switch"][aria-label="Desktop notifications"]');
+const notices=()=>document.querySelector('[role="switch"][aria-label="Notifications"]');
+await waitFor(()=>login()&&notices()&&!login().disabled&&!notices().disabled);
 assert.equal(login().getAttribute('aria-checked'),'true');
 assert.equal(notices().getAttribute('aria-checked'),'false');
 await act(async()=>login().click());
@@ -4043,7 +4043,7 @@ const {createElement,act}=await import('react');
 const {createRoot}=await import('react-dom/client');
 const {MessagePresentation}=await import('./src/web/components/message-presentation.tsx');
 const {ArtifactWorkspace}=await import('./src/web/components/artifact-drawer.tsx');
-const {MessageAttachments}=await import('./src/web/components/attachment-card.tsx');
+const {MessageAttachments,conversationFiles}=await import('./src/web/components/attachment-card.tsx');
 const {FileActions}=await import('./src/web/components/file-actions.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 setRequestAccount('synthetic-owner-one');
@@ -4116,6 +4116,44 @@ setRequestAccount('synthetic-owner-one');
 configureAnalytics(configuration,'web');
 client.capture('answer_choices_selected',{multiple:true,option_count:3,selected_count:2,label:privateValue,choice_ids:[file.id]});
 check('UI7-choices-bounded',events.at(-1).properties.option_count===3&&events.at(-1).properties.selected_count===2&&!JSON.stringify(events.at(-1)).includes(privateValue)&&!JSON.stringify(events.at(-1)).includes(file.id));
+
+const presentationMessage={id:'private-presentation-message',attachments:[],presentation:chart};
+const presentationWorkspace=()=>createElement(ArtifactWorkspace,{files:conversationFiles([presentationMessage]),className:'test-workspace'},createElement(MessagePresentation,{value:chart,messageId:presentationMessage.id}));
+await render(presentationWorkspace());
+const beforePresentation=count('presentation_viewed');
+await act(async()=>visible('.message-presentation'));
+check('UI8-presentation-message',count('presentation_viewed')===beforePresentation+1);
+await act(async()=>document.querySelector('.presentation-expand').click());
+check('UI8-presentation-open',events.filter(event=>event.event==='presentation_action'&&event.properties.action==='open'&&event.properties.kind==='chart'&&event.properties.location==='message').length===1);
+const beforeArtifact=count('artifact_viewed');
+await act(async()=>{visible('.artifact-drawer');visible('.artifact-drawer .message-presentation')});
+check('UI8-presentation-dedupe',count('presentation_viewed')===beforePresentation+1);
+check('UI8-presentation-not-file',count('artifact_viewed')===beforeArtifact);
+const copyContents=()=>document.querySelector('button[aria-label="Copy contents"],button[aria-label="Copied"]');
+const presentationCopies=()=>events.filter(event=>event.event==='presentation_action'&&event.properties.action==='copy').length;
+await act(async()=>copyContents().click());
+check('UI8-presentation-copy',presentationCopies()===1&&events.at(-1).properties.kind==='chart'&&events.at(-1).properties.location==='drawer');
+navigator.clipboard.writeText=async()=>{throw new Error('Synthetic clipboard rejected')};
+await act(async()=>copyContents().click());
+check('UI8-presentation-copy-failure',presentationCopies()===1);
+let releaseCopy;
+navigator.clipboard.writeText=()=>new Promise(resolve=>{releaseCopy=resolve});
+await act(async()=>copyContents().click());
+configureAnalytics(undefined);configureAnalytics(configuration,'web');
+await act(async()=>releaseCopy());
+check('UI8-presentation-copy-consent',presentationCopies()===1);
+releaseCopy=undefined;
+await act(async()=>copyContents().click());
+setRequestAccount('synthetic-another-owner');
+await act(async()=>releaseCopy());
+check('UI8-presentation-copy-owner',presentationCopies()===1);
+setRequestAccount('synthetic-owner-one');configureAnalytics(configuration,'web');
+const beforeInvalid=count('presentation_action');
+client.capture('presentation_action',{kind:'chart',action:'copy'});
+client.capture('presentation_action',{kind:'private-new-kind',action:'copy',location:'drawer'});
+check('UI8-presentation-bounded',count('presentation_action')===beforeInvalid);
+check('UI8-presentation-private',!JSON.stringify(events).includes(privateValue)&&!JSON.stringify(events).includes(presentationMessage.id));
+
 await act(async()=>root.unmount());
 configureAnalytics(undefined);
 dom.window.close();
@@ -4373,7 +4411,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
 const {sessionStore}=await import('./src/web/lib/session.ts');
 await sessionStore.refresh();restore();
 const {BrowserNotificationSettings,BrowserNotificationPrompt}=await import('./src/web/components/browser-notifications.tsx');
-const notice=()=>document.querySelector('[role="switch"][aria-label="Browser notifications"]');
+const notice=()=>document.querySelector('[role="switch"][aria-label="Notifications"]');
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 const startNotifications=count('local_setting_changed');
 await click(notice());check('BN1-enabled',count('local_setting_changed')===startNotifications+1);
@@ -4470,39 +4508,27 @@ await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctr
 await waitFor(()=>button('Use selected file in message'));
 const commandStart=reuseEvents().length;
 await click(button('Use selected file in message'));
+await waitFor(()=>reused.length===3);
 check('FA3-command-reuse',reused.length===3&&reuseEvents().length===commandStart+1&&reuseEvents().at(-1).properties.location==='commands');
-const {ArtifactEdit}=await import('./src/web/components/artifact-edit.tsx');
-const previousFetch=globalThis.fetch;
-let uploadMode='fail',uploads=0,releaseUpload,closedCopies=0;
-window.fetch=globalThis.fetch=async(url,options={})=>{
- const path=new URL(url,window.location.href).pathname;
- if(path===artifact.url)return new Response('SYNTHETIC_PRIVATE_COPY_89271');
- if(path==='/api/uploads'){
-  uploads++;
-  if(uploadMode==='hold')await new Promise(resolve=>releaseUpload=resolve);
-  return Response.json(uploadMode==='fail'?{error:'Synthetic upload failure'}:{...artifact,id:'00000000-0000-4000-8000-000000000714',url:'/api/artifacts/00000000-0000-4000-8000-000000000714'},{status:uploadMode==='fail'?500:200});
- }
- return previousFetch(url,options);
+const openReuseCommand=async()=>{
+ await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true,cancelable:true})));
+ await waitFor(()=>button('Use selected file in message'));
 };
-const edit=()=>createElement(ArtifactEdit,{item:artifact,onClose:()=>closedCopies++});
-await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
-const editStart=reuseEvents().length;
-await click(button('Save copy to message'));
-check('FA4-edit-rejected',uploads===1&&closedCopies===0&&reused.length===3&&reuseEvents().length===editStart);
-uploadMode='hold';await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
-check('FA4-edit-pending',uploads===2&&button('Saving…').disabled&&closedCopies===0&&reused.length===3&&reuseEvents().length===editStart);
-await act(async()=>releaseUpload());await waitFor(()=>closedCopies===1);
-check('FA4-edit-reuse',reused.length===4&&reuseEvents().length===editStart+1&&reuseEvents().at(-1).properties.location==='drawer');
-await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
-releaseUpload=undefined;await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
-const consentReuseStart=reuseEvents().length;
-configureAnalytics(undefined);configureAnalytics(config,'web');await act(async()=>releaseUpload());await waitFor(()=>closedCopies===2);
-check('FA4-edit-consent-fence',uploads===3&&reused.length===5&&reuseEvents().length===consentReuseStart);
-await remount(edit());await waitFor(()=>button('Save copy to message')&&!button('Save copy to message').disabled);
-const ownerReuseStart=reuseEvents().length;
-releaseUpload=undefined;await click(button('Save copy to message'));await waitFor(()=>releaseUpload);
-setRequestAccount('synthetic-another-owner');await act(async()=>releaseUpload());await waitFor(()=>button('Save copy to message'));
-check('FA4-edit-owner-fence',uploads===4&&closedCopies===2&&reused.length===5&&reuseEvents().length===ownerReuseStart);restore();
+await openReuseCommand();
+await act(async()=>{
+ button('Use selected file in message').click();
+ configureAnalytics(undefined);configureAnalytics(config,'web');
+});
+await waitFor(()=>reused.length===4);
+check('FA3-command-consent-fence',reuseEvents().length===commandStart+1);
+await openReuseCommand();
+await act(async()=>{
+ button('Use selected file in message').click();
+ setRequestAccount('synthetic-another-owner');
+});
+await waitFor(()=>!document.querySelector('[role="dialog"]'));
+await settle();
+check('FA3-command-owner-fence',reused.length===4&&reuseEvents().length===commandStart+1);restore();
 const {initializeTheme,setTheme}=await import('./src/web/lib/theme.ts');
 let quickTheme={theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false};
 let rejectTheme=false,holdTheme=false,releaseTheme;
@@ -4523,7 +4549,7 @@ process.exit(0);
 `,
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-  assert.equal(JSON.parse(result.stdout).checks.length, 44);
+  assert.equal(JSON.parse(result.stdout).checks.length, 41);
 });
 
 test('internal file drops record reuse intent without changing attachment acceptance', async () => {

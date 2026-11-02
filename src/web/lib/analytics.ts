@@ -21,6 +21,11 @@ type AnalyticsEvents = {
   notification_opened: { kind: 'reply' };
   app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
   presentation_viewed: { kind: Presentation['type'] };
+  presentation_action: {
+    kind: Presentation['type'];
+    action: 'open' | 'copy';
+    location: 'message' | 'drawer';
+  };
   answer_choices_viewed: { multiple: boolean; option_count: number };
   answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
   artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
@@ -30,7 +35,7 @@ type AnalyticsEvents = {
     action: 'copy' | 'download' | 'download_requested' | 'open' | 'reveal' | 'reuse_requested';
   };
   settings_viewed: {
-    tab: 'general' | 'models' | 'memory';
+    tab: 'general' | 'notifications' | 'models' | 'voice' | 'memory' | 'privacy';
   };
   chat_message_sent: {
     has_attachments: boolean;
@@ -68,9 +73,7 @@ type AnalyticsEvents = {
     count: '1' | '2-5' | '6+';
   };
   task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  tab_viewed:
-    | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
-    | { page: 'apps'; tab: 'all' | 'connected' };
+  tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
   ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
@@ -82,6 +85,16 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
+const presentationKinds = [
+  'image',
+  'map',
+  'flights',
+  'seats',
+  'booking',
+  'chart',
+  'apps',
+  'diagram',
+];
 const artifactKinds = [
   'image',
   'sticker',
@@ -111,8 +124,11 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   notification_opened: { kind: ['reply'] },
   app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
-  presentation_viewed: {
-    kind: ['image', 'map', 'flights', 'seats', 'booking', 'chart', 'apps', 'diagram'],
+  presentation_viewed: { kind: presentationKinds },
+  presentation_action: {
+    kind: presentationKinds,
+    action: ['open', 'copy'],
+    location: ['message', 'drawer'],
   },
   answer_choices_viewed: { multiple: [true, false], option_count: [1, 2, 3, 4, 5, 6] },
   answer_choices_selected: {
@@ -127,7 +143,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     action: ['copy', 'download', 'download_requested', 'open', 'reveal', 'reuse_requested'],
   },
   settings_viewed: {
-    tab: ['general', 'models', 'memory'],
+    tab: ['general', 'notifications', 'models', 'voice', 'memory', 'privacy'],
   },
   chat_message_sent: {
     has_attachments: [true, false],
@@ -166,8 +182,8 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
   tab_viewed: {
-    page: ['tasks', 'apps'],
-    tab: ['current', 'scheduled', 'previous', 'all', 'connected'],
+    page: ['apps'],
+    tab: ['all', 'connected'],
   },
   ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
@@ -257,6 +273,14 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event || !configuration?.enabled) return null;
   const allowed = eventProperties[event.event as keyof AnalyticsEvents];
   if (event.event !== '$pageview' && !allowed) return null;
+  if (
+    (event.event === 'answer_choices_viewed' ||
+      event.event === 'answer_choices_selected' ||
+      event.event === 'chat_message_sent' ||
+      event.event === 'presentation_action') &&
+    Object.entries(allowed).some(([key, values]) => !values.includes(event.properties[key]))
+  )
+    return null;
   const properties = Object.fromEntries(
     sdkProperties
       .filter((key) => key in event.properties)
@@ -436,7 +460,8 @@ export function observeAnalyticsView<
     typeof IntersectionObserver === 'undefined'
       ? undefined
       : new IntersectionObserver((entries) => {
-          intersecting = entries.some((entry) => entry.target === element && entry.isIntersecting);
+          for (const entry of entries)
+            if (entry.target === element) intersecting = entry.isIntersecting;
           capture();
         });
   observer?.observe(element);

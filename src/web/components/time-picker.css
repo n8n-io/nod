@@ -1,0 +1,146 @@
+.settings-time-field {
+  min-width: 0;
+  gap: 8px;
+}
+.settings-time-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  min-height: 20px;
+}
+.settings-time-heading .field-label {
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--muted-foreground);
+}
+.settings-time-edited {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.settings-time-control {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 42px;
+  padding: 3px 4px 3px 8px;
+  gap: 1px;
+  border: 1px solid var(--input);
+  border-radius: var(--input-radius);
+  background: var(--input-background);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.settings-time-control:hover:not([data-disabled]) {
+  border-color: var(--input-hover);
+}
+.settings-time-control:focus-within:not([data-disabled]),
+.settings-time-control[data-open]:not([data-disabled]) {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-halo);
+}
+.settings-time-control[data-invalid] {
+  border-color: var(--error);
+}
+.settings-time-control[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.settings-time-control > .settings-time-segment {
+  flex: 0 1 32px;
+  width: 32px;
+  min-width: 25px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 3px;
+  margin: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  caret-color: var(--accent);
+  appearance: none;
+}
+.settings-time-control > .settings-time-segment:focus,
+.settings-time-control > .settings-time-segment:focus-visible,
+.settings-time-control .settings-time-toggle.button:focus,
+.settings-time-control .settings-time-toggle.button:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.settings-time-segment::selection {
+  background: var(--selection);
+  color: var(--foreground);
+}
+.settings-time-segment:disabled {
+  opacity: 1;
+  -webkit-text-fill-color: var(--foreground);
+  cursor: not-allowed;
+}
+.settings-time-colon {
+  flex: none;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+.settings-time-control > .action-menu-root {
+  flex: none;
+  margin-left: auto;
+}
+.settings-time-control .settings-time-toggle.button {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+.settings-time-control .settings-time-toggle.button:focus-visible,
+.settings-time-control .settings-time-toggle.button[data-state='open'] {
+  background: var(--hover);
+}
+.settings-time-menu.action-menu-surface {
+  width: 144px;
+  min-width: 144px;
+  max-height: min(280px, var(--radix-popover-content-available-height, calc(100dvh - 24px)));
+  font-variant-numeric: tabular-nums;
+}
+.settings-time-menu .action-menu-item {
+  justify-content: space-between;
+  min-width: 0;
+  padding-inline: 12px;
+}
+@media (pointer: coarse) {
+  .settings-time-control {
+    height: 46px;
+    padding-block: 0;
+    padding-inline: 4px 0;
+  }
+  .settings-time-control > .settings-time-segment {
+    flex-basis: 34px;
+    height: 44px;
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .settings-time-control .settings-time-toggle.button {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-time-control {
+    transition: none;
+  }
+}

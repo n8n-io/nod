@@ -2374,6 +2374,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .object({
             returnTo: z.enum(['apps', 'onboarding', 'window', 'desktop']).default('apps'),
             connectionId: z.uuid().optional(),
+            newAccount: z.boolean().optional(),
             restartAttempt: z
               .string()
               .regex(/^[A-Za-z0-9_-]{43}$/)
@@ -2395,7 +2396,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             );
           return options.discovered.authorize(
             request.params.slug,
-            selected?.status === 'disconnected' ? input.connectionId : undefined,
+            selected?.status === 'disconnected' && !input.newAccount
+              ? input.connectionId
+              : undefined,
             input.returnTo,
             input.restartAttempt,
           );
@@ -2413,8 +2416,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               request.params.slug,
               input.connectionId,
               input.returnTo,
+              input.newAccount,
             ) ?? Promise.reject(new IntegrationError('This service is unavailable.', 404))
           );
+        if (input.connectionId && input.newAccount)
+          throw new IntegrationError('An additional account cannot replace a saved account.', 400);
         if (input.connectionId)
           return reconnect(
             slugSchema.parse(request.params.slug),

@@ -1926,70 +1926,126 @@ test('send_message validates structured visuals and delivers each distinct prese
     ],
     edges: [{ from: 'request', to: 'answer' }],
   };
-  const replies: Array<Parameters<RuntimeContext['reply']>> = [];
-  const replyTo = randomUUID();
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (input) => ({
-        resumed: false,
-        abort() {},
-        dispose() {},
-        prompt: async () => {
-          const skills = input.tools.find((tool) => tool.name === 'skills')!;
-          const result = await skills.execute({ action: 'read', name: 'visual-replies' });
-          const guide = JSON.parse(result.content.find((part) => part.type === 'text')!.text);
-          assert.ok(guide.presentationSchema);
-          const exposed = Compile(guide.presentationSchema as Parameters<typeof Compile>[0]);
-          assert.equal(exposed.Check(presentation), true);
-          assert.equal(exposed.Check({ ...presentation, version: 2 }), false);
-          const send = input.tools.find((tool) => tool.name === 'send_message')!;
-          for (const value of [
-            { text: 'Answer', presentation: { ...presentation, version: 2 } },
-            {
-              text: 'Answer',
-              presentation: { ...presentation, edges: [{ from: 'missing', to: 'answer' }] },
+  const legacyFlight: Presentation = {
+    version: 1,
+    type: 'flights',
+    title: 'Synthetic itinerary',
+    sources: [],
+    options: [
+      {
+        id: 'trip',
+        journeys: [
+          {
+            id: 'outbound',
+            label: 'Outbound',
+            segments: [
+              {
+                airline: 'Synthetic Air',
+                departure: { airport: 'AAA', time: '10:00' },
+                arrival: { airport: 'BBB', time: '12:00' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  for (const text of ['The request reaches the answer.', ''])
+    await t.test(text ? 'with accompanying text' : 'visual only', async (t) => {
+      const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+      const replyTo = randomUUID();
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              const skills = input.tools.find((tool) => tool.name === 'skills')!;
+              const result = await skills.execute({ action: 'read', name: 'visual-replies' });
+              const guide = JSON.parse(result.content.find((part) => part.type === 'text')!.text);
+              assert.ok(guide.presentationSchema);
+              const exposed = Compile(guide.presentationSchema as Parameters<typeof Compile>[0]);
+              assert.equal(exposed.Check(presentation), true);
+              assert.equal(exposed.Check({ ...presentation, version: 2 }), false);
+              assert.equal(exposed.Check(legacyFlight), false);
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await assert.rejects(
+                send.execute({ text: '', presentation: legacyFlight }),
+                (error: unknown) => {
+                  assert.ok(error instanceof Error);
+                  assert.match(error.message, /\/presentation\/options\/0\/status/);
+                  for (const status of ['booked', 'option', 'unknown'])
+                    assert.ok(error.message.includes(status));
+                  assert.ok(!error.message.includes(legacyFlight.title));
+                  return true;
+                },
+              );
+              for (const value of [
+                { text: 'Answer', presentation: { ...presentation, version: 2 } },
+                {
+                  text: '',
+                  presentation: {
+                    ...legacyFlight,
+                    options: [{ ...legacyFlight.options[0], status: 'unverified' }],
+                  },
+                },
+                {
+                  text: 'Answer',
+                  presentation: { ...presentation, edges: [{ from: 'missing', to: 'answer' }] },
+                },
+                { text: ' ' },
+              ])
+                await assert.rejects(send.execute(value));
+              assert.equal(replies.length, 0);
+              for (const status of ['booked', 'option', 'unknown'] as const) {
+                const flight: Presentation = {
+                  ...legacyFlight,
+                  options: [{ ...legacyFlight.options[0], status }],
+                };
+                assert.equal(exposed.Check(flight), true);
+                await send.execute({ text: '', presentation: flight });
+              }
+              const value = {
+                text,
+                replyToMessageId: replyTo,
+                presentation,
+              };
+              await send.execute(value);
+              await send.execute(value);
+              await send.execute({
+                ...value,
+                presentation: { ...presentation, title: 'Updated synthetic delivery' },
+              });
+              input.onEvent({ type: 'final', text: value.text });
             },
-            { text: ' ', presentation },
-          ])
-            await assert.rejects(send.execute(value));
-          assert.equal(replies.length, 0);
-          const value = {
-            text: 'The request reaches the answer.',
-            replyToMessageId: replyTo,
-            presentation,
-          };
-          await send.execute(value);
-          await send.execute(value);
-          await send.execute({
-            ...value,
-            presentation: { ...presentation, title: 'Updated synthetic delivery' },
-          });
-          input.onEvent({ type: 'final', text: value.text });
+          }),
+          dispose() {},
         },
-      }),
-      dispose() {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-    skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
-  });
-  t.after(() => runtime.dispose());
-  const result = await runtime.runTurn({
-    ...context(directory),
-    turnId: randomUUID(),
-    reply: async (...args) => {
-      replies.push(args);
-    },
-  });
-  assert.equal(result.status, 'succeeded');
-  assert.equal(replies.length, 2);
-  assert.deepEqual(replies[0], [
-    'The request reaches the answer.',
-    undefined,
-    replyTo,
-    presentation,
-  ]);
-  assert.equal(replies[1][3]?.title, 'Updated synthetic delivery');
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+        skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
+      });
+      t.after(() => runtime.dispose());
+      const result = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        reply: async (...args) => {
+          replies.push(args);
+        },
+      });
+      assert.equal(result.status, 'succeeded');
+      assert.equal(replies.length, 5);
+      assert.deepEqual(replies[3], [text, undefined, replyTo, presentation]);
+      assert.equal(replies[4][3]?.title, 'Updated synthetic delivery');
+      assert.deepEqual(
+        replies.slice(0, 3).map((reply) => {
+          assert.equal(reply[3]?.type, 'flights');
+          return reply[3]?.type === 'flights' ? reply[3].options[0].status : undefined;
+        }),
+        ['booked', 'option', 'unknown'],
+      );
+    });
 });
 
 const chatgptHostId = '6f1c2f4e-3b8a-4d2e-9c51-0a7e2b9d4f10';
@@ -2677,6 +2733,10 @@ test('a long tool call does not send model requests without usage records', asyn
       let tools = 0;
       let current: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
       let persistedRefreshes = 0;
+      let completeRefresh: () => void;
+      const refreshCompleted = new Promise<void>((resolve) => {
+        completeRefresh = resolve;
+      });
       const usage: Array<{
         id: string;
         operation?: string;
@@ -2806,8 +2866,10 @@ test('a long tool call does not send model requests without usage records', asyn
               event.type === 'entry_appended' &&
               event.entry.type === 'usage' &&
               event.entry.kind === 'cache_warm'
-            )
+            ) {
               persistedRefreshes++;
+              completeRefresh();
+            }
           });
           return result;
         },
@@ -2823,7 +2885,11 @@ test('a long tool call does not send model requests without usage records', asyn
         shouldStop: () => false,
         onEvent: (event) => {
           if (event.type === 'model_usage') usage.push(event);
-          if (event.type === 'provider_usage') usage.push(event.usage);
+          if (event.type === 'provider_usage') {
+            usage.push(event.usage);
+            if (event.usage.operation === 'cache_warm' && (outcome === 'failed' || changeContext))
+              completeRefresh();
+          }
         },
         tools: [
           {
@@ -2833,7 +2899,12 @@ test('a long tool call does not send model requests without usage records', asyn
             eager: true,
             execute: async () => {
               tools++;
-              await setTimeout(2200);
+              await Promise.race([
+                refreshCompleted,
+                setTimeout(5000, undefined, { ref: false }).then(() =>
+                  assert.fail('The synthetic cache refresh did not complete.'),
+                ),
+              ]);
               return { content: [{ type: 'text', text: 'The synthetic wait finished.' }] };
             },
           },

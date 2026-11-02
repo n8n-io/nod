@@ -57,6 +57,7 @@ type Desktop = {
   saveConnection(connection: { url: string; token: string } | null): Promise<void>;
   openConnectionSettings(): Promise<void>;
   closeConnectionSettings(): Promise<void>;
+  continueOnboarding(): Promise<void>;
   prepare(options?: { retry: boolean }): Promise<Status>;
   warmup?(): Promise<void>;
   installWsl(): Promise<Status>;
@@ -79,6 +80,88 @@ function applyPreferences(value: Preferences) {
       ? value.resolvedTheme ||
         (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : value.theme;
+}
+
+function OnboardingSetup() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
+  useEffect(() => {
+    if (!desktop) return;
+    let active = true;
+    void desktop
+      .getPreferences()
+      .then((value) => {
+        if (active) applyPreferences(value);
+      })
+      .catch(() => {});
+    const unsubscribe = desktop.onPreferences(applyPreferences);
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+  async function run(action: () => Promise<void>) {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Setup could not be opened. Try again.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="titlebar" aria-hidden="true" />
+      <OnboardingFrame
+        step="welcome"
+        footer={
+          <div className="setup-entry-actions">
+            <button
+              className="server-entry"
+              type="button"
+              disabled={busy || !desktop}
+              onClick={() => void run(() => desktop!.closeConnectionSettings())}
+            >
+              Back to Nod
+            </button>
+            <button
+              className="server-entry"
+              type="button"
+              disabled={busy || !desktop}
+              onClick={() => void run(() => desktop!.openConnectionSettings())}
+            >
+              {parameters.get('remote') === 'true' ? 'Change server' : 'Connect to a server'}
+            </button>
+          </div>
+        }
+      >
+        <div className="ob-screen" inert={busy || !desktop} aria-busy={busy}>
+          <Welcome
+            arrived="forward"
+            local={parameters.get('remote') !== 'true'}
+            actionLabel="Continue setup"
+            onNext={() => {
+              if (desktop) void run(() => desktop.continueOnboarding());
+            }}
+            onBack={() => {
+              if (desktop) void run(() => desktop.closeConnectionSettings());
+            }}
+          />
+        </div>
+        {error && (
+          <p className="ob-native-error" role="alert">
+            {error}
+          </p>
+        )}
+      </OnboardingFrame>
+    </>
+  );
 }
 
 function ConnectionSetup() {
@@ -525,7 +608,13 @@ function Setup() {
   useEffect(() => {
     void desktop?.ready?.();
   }, []);
-  return parameters.get('server') === 'true' ? <ConnectionSetup /> : <Startup />;
+  return parameters.get('server') === 'true' ? (
+    <ConnectionSetup />
+  ) : parameters.get('onboarding') === 'true' ? (
+    <OnboardingSetup />
+  ) : (
+    <Startup />
+  );
 }
 
 initializeFocusVisibility();

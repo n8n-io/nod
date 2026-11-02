@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, Power } from './icons';
 import {
   getDesktopSettings,
   saveDesktopSettings,
-  openServerConnectionSettings,
   subscribeDesktopPreferences,
   type DesktopSettings,
   type DesktopSettingsChange,
 } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
-import { Button, Switch } from './ui';
 import { analyticsForCurrentSession } from '../lib/analytics';
 
 export function useDesktopSettings(enabled = true) {
@@ -85,48 +82,4 @@ export function useDesktopSettings(enabled = true) {
     }
   }
   return { settings, loading, busy, error, refresh, save };
-}
-
-export function DesktopOptions({
-  settings,
-  busy,
-  onChange,
-}: {
-  settings: DesktopSettings;
-  busy: boolean;
-  onChange(change: DesktopSettingsChange): Promise<unknown>;
-}) {
-  return (
-    <div className="desktop-options">
-      <div className="account-preference-row">
-        <span>Assistant location</span>
-        <Button variant="outline" size="sm" onClick={() => void openServerConnectionSettings()}>
-          Server connection
-        </Button>
-      </div>
-      {(
-        [
-          ['launchAtLogin', 'Open at login', Power],
-          ['notifications', 'Desktop notifications', Bell],
-        ] as const
-      ).map(([key, label, Icon]) => (
-        <div className="account-preference-row" key={key}>
-          <span>
-            <Icon size={16} aria-hidden="true" />
-            {label}
-          </span>
-          <Switch
-            checked={settings[key]}
-            disabled={busy}
-            aria-label={label}
-            onCheckedChange={(value) => void onChange({ [key]: value }).catch(() => {})}
-          />
-        </div>
-      ))}
-      <p className="field-hint">
-        If notifications don’t appear, allow Nod in your computer’s notification settings and check
-        Focus or Do Not Disturb.
-      </p>
-    </div>
-  );
 }

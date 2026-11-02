@@ -1,6 +1,7 @@
 import type { Presentation } from './presentation';
 import type { TaskSuggestions } from './onboarding';
 import type { TrustBecause } from './trust';
+import type { AnswerChoices } from './answer-choices';
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
 export interface Artifact {
   id: string;
@@ -32,6 +33,8 @@ export interface Message {
   replyToMessageId?: string | null;
   replyTo?: { id: string; role: 'user' | 'assistant'; text: string; isQuote?: boolean } | null;
   suggestions?: TaskSuggestions | null;
+  answerChoices?: AnswerChoices;
+  answerChoicesPending?: boolean;
 }
 export interface SubmitMessageResponse {
   threadId: string;
@@ -234,6 +237,7 @@ export interface AppState {
   tasks?: Task[];
   threadId: string;
   hasEarlierMessages?: boolean;
+  pendingAnswerChoiceMessageIds?: string[];
   verificationRequests?: VerificationRequest[];
   planningTasks?: boolean;
   messages: Message[];
@@ -331,6 +335,7 @@ export interface ScheduleRun {
   messageId: string | null;
   messagePreview: string | null;
   messageText: string | null;
+  costUsd?: number | null;
 }
 export interface ScheduleHistory {
   runs: ScheduleRun[];

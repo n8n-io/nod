@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Flag, Gamepad2, Heart, Leaf, Lightbulb, Plane, Plus, Smile, Utensils } from './icons';
 import { reactionEmoji } from '../../shared/emoji';
@@ -86,7 +87,16 @@ export default function ReactionPicker({
       aria-label="Quick reactions"
       ref={strip}
       onKeyDown={(event) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        if (
+          !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) ||
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey
+        )
+          return;
         event.preventDefault();
         const buttons = Array.from(event.currentTarget.querySelectorAll('button'));
         const next =
@@ -100,30 +110,31 @@ export default function ReactionPicker({
       }}
     >
       {commonReactions.map((emoji, index) => (
-        <button
-          key={emoji}
-          type="button"
-          aria-label={reactionName(emoji)}
-          title={reactionName(emoji)}
-          aria-pressed={reactionEmoji(selected ?? '') === emoji}
-          tabIndex={active === index ? 0 : -1}
-          onFocus={() => setActive(index)}
-          onClick={() => onSelect(emoji, reactionName(emoji))}
-        >
-          <span aria-hidden="true">{emoji}</span>
-        </button>
+        <Tooltip key={emoji} content={reactionName(emoji)}>
+          <button
+            type="button"
+            aria-label={reactionName(emoji)}
+            aria-pressed={reactionEmoji(selected ?? '') === emoji}
+            tabIndex={active === index ? 0 : -1}
+            onFocus={() => setActive(index)}
+            onClick={() => onSelect(emoji, reactionName(emoji))}
+          >
+            <span aria-hidden="true">{emoji}</span>
+          </button>
+        </Tooltip>
       ))}
-      <button
-        type="button"
-        className="chat-reaction-more"
-        aria-label="More emoji"
-        title="More emoji"
-        tabIndex={active === commonReactions.length ? 0 : -1}
-        onFocus={() => setActive(commonReactions.length)}
-        onClick={onExpand}
-      >
-        <Plus size={19} aria-hidden="true" />
-      </button>
+      <Tooltip content="More emoji">
+        <button
+          type="button"
+          className="chat-reaction-more"
+          aria-label="More emoji"
+          tabIndex={active === commonReactions.length ? 0 : -1}
+          onFocus={() => setActive(commonReactions.length)}
+          onClick={onExpand}
+        >
+          <Plus size={19} aria-hidden="true" />
+        </button>
+      </Tooltip>
     </div>
   );
 }

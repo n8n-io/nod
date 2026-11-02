@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Download, LoaderCircle, Pause, Play, RotateCcw } from './icons';
 import { loadAudioWaveform } from '../lib/audio-waveform';
@@ -212,20 +213,21 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           <span className="audio-player-separator"> / </span>
           <span className="audio-player-total">{duration ? audioTime(duration) : '–:––'}</span>
         </span>
-        <button
-          type="button"
-          className="audio-player-rate"
-          disabled={failed}
-          aria-label={`Playback speed ${rate}×. Change speed`}
-          title="Change playback speed"
-          onClick={() => {
-            const speeds = [1, 1.25, 1.5, 2, 0.75];
-            if (audio.current)
-              audio.current.playbackRate = speeds[(speeds.indexOf(rate) + 1) % speeds.length];
-          }}
-        >
-          {rate}×
-        </button>
+        <Tooltip content="Change playback speed">
+          <button
+            type="button"
+            className="audio-player-rate"
+            disabled={failed}
+            aria-label={`Playback speed ${rate}×. Change speed`}
+            onClick={() => {
+              const speeds = [1, 1.25, 1.5, 2, 0.75];
+              if (audio.current)
+                audio.current.playbackRate = speeds[(speeds.indexOf(rate) + 1) % speeds.length];
+            }}
+          >
+            {rate}×
+          </button>
+        </Tooltip>
         <Button variant="ghost" size="icon" className="audio-player-download" asChild>
           <a href={item.url} download={item.name} aria-label={`Download ${item.name}`}>
             <Download size={16} aria-hidden="true" />

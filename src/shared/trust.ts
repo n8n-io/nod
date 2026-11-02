@@ -8,14 +8,22 @@ export interface TrustAction {
   because?: TrustBecause;
 }
 
+export interface TrustModel {
+  provider: string | null;
+  model: string | null;
+  billing: 'api' | 'plan';
+}
+
 export interface TrustEntry {
   id: string;
+  messageId: string | null;
   at: string;
   title: string;
   source: TrustSource;
   channel: string;
   error: string | null;
   costUsd: number | null;
+  models: TrustModel[];
   pricing?: 'plan' | 'unpriced';
   actions: TrustAction[];
 }
@@ -36,6 +44,7 @@ export interface TrustView extends TrustPage {
     planUsd: number;
     daily: number[];
     unpriced: boolean;
+    planUsage: boolean;
   };
   limit: { monthlyUsd: number; reached: boolean } | null;
   taskUsd: number | null;

@@ -1,3 +1,4 @@
+import { Tooltip } from './tooltip';
 import { useEffect, useRef, useState } from 'react';
 import { CircleHelp, CreditCard, Hash, KeyRound, Pause } from './icons';
 import type {
@@ -96,9 +97,9 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
         <b>{title(entry)}</b>
         <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
         {entry.because && entry.because.kind !== 'approved' && (
-          <small className="usage-because" title={becauseText(entry.because)}>
-            {becauseText(entry.because)}
-          </small>
+          <Tooltip content={becauseText(entry.because)}>
+            <small className="usage-because">{becauseText(entry.because)}</small>
+          </Tooltip>
         )}
       </span>
       <span className={`vault-pill ${tone}`}>{text}</span>

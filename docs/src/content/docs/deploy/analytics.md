@@ -13,7 +13,7 @@ Messages, generated content, connected-app results, credentials, and free-form i
 
 ## Turn usage sharing on or off
 
-Change **Share usage data** in **Settings → General**. Existing owners keep their saved choice. Onboarding's privacy step explains sharing; the native Welcome window sends no events.
+Change **Share usage data** in **Settings → Privacy & data**. Existing owners keep their saved choice. Onboarding's privacy step explains sharing; the native Welcome window sends no events.
 
 The deployment must also allow collection. `NOD_ANALYTICS_ENABLED=false` always disables it.
 
@@ -89,7 +89,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 | `onboarding_step_viewed`                          | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
 | `onboarding_step_skipped`                         | Skipped `email` step.                                                                                        |
 | `onboarding_completed`                            | First saved completion and selected model provider, when available.                                          |
-| `settings_viewed`, `tab_viewed`                   | Fixed settings tab or tasks/apps page tab.                                                                   |
+| `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                     |
 | `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                  |
 | `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.         |
 | `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source. |
@@ -103,6 +103,8 @@ Model events use one `provider` property. Onboarding completion and execution st
 | `model_selected`                                  | Provider, settings/onboarding entry, and whether the recommendation was chosen.                              |
 | `ui_error`                                        | Fixed area and action, without error text.                                                                   |
 | `feedback_sent`                                   | Bug/feature/other category and attachment/report booleans, without feedback content.                         |
+
+Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
 Connecting email is optional. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
@@ -197,6 +199,7 @@ Category views show the observed mix, execution outcomes and duration, known mod
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `output_created`          | Committed assistant presentation or file delivery, by kind and count.                                                 |
 | `presentation_viewed`     | Visible image/map/flights/seats/booking/chart/apps/diagram presentation.                                              |
+| `presentation_action`     | Presentation kind, message/drawer location, and successful open/copy action.                                          |
 | `artifact_viewed`         | Artifact kind and message/drawer location.                                                                            |
 | `artifact_action`         | Kind, message/drawer/commands/composer location, and copy/download/download-request/open/reveal/reuse-request action. |
 | `answer_choices_viewed`   | Single/multiple mode and number offered (one to six).                                                                 |
@@ -204,11 +207,13 @@ Category views show the observed mix, execution outcomes and duration, known mod
 
 Views require a visible app and content intersecting its viewport. Repeated mounting doesn't count again within the current capture period. These observations aren't unique files or a linked conversion funnel.
 
+Presentation open means expanding the native presentation into its drawer; copy follows clipboard success. A presentation keeps the same impression identity in the message and drawer, and does not count as a file artifact view. Presentation content, labels, and identifiers are excluded.
+
 `download_requested` records a browser request. `download` records a native save that returned successfully. A request alone doesn't prove a local file exists.
 
 `open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted or sent. Reuse locations also cover the command palette (`commands`) and internal file drops (`composer`); artifact views remain limited to message and drawer locations.
 
-Answer-choice collectors and dashboards are ready for the separate answer-choice feature integration. They exclude option labels, selected text, and response content.
+Answer-choice views count once per question in a sharing period, while the choices are in the viewport and the app is visible. Selections follow a server-accepted answer. Option toggles, custom composer answers, and failed, rejected, or unavailable submissions are not selections. Accepted choices also emit `chat_message_sent` with `source=answer_choice` and `input=text`. Question and option IDs, labels, selected text, and response content are excluded.
 
 ### Read first-attempt outcomes
 

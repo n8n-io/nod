@@ -91,7 +91,7 @@ This export is separate from the sharing switches in Settings. Your collector co
 
 ## Usage analytics
 
-Usage analytics are on by default for new owners; owners who already saved a choice keep it. Turn off **Share usage data** in **Settings → General** to stop them. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
+Usage analytics are on by default for new owners; owners who already saved a choice keep it. Turn off **Share usage data** in **Settings → Privacy & data** to stop them. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
 Usage data leaves your installation and goes to the Nod team at n8n through its EU-hosted PostHog project. This also applies to source installations. Operators can disable collection for everyone with `NOD_ANALYTICS_ENABLED=false`.
 
@@ -99,7 +99,7 @@ Analytics have no fields for raw messages, replies, tool arguments or results, V
 
 Setting-change events identify a fixed control and bounded state, such as on, off, or configured. They exclude rule text, voice names, exact quiet-hour times, location and timezone or locale values, and spending-limit amounts. Navigation uses fixed page names without query strings or private IDs.
 
-Events include tool use, approvals, model tokens and cost, run timing and failures, connection outcomes, and the kinds of replies and files shown or opened. Run-scoped events record whether work was owner-requested and whether it ran as immediate, scheduled, or background work. Model usage without a known work context is unclassified; UI output events have no work classification. They exclude website domains, purchase amounts and currencies, Vault inventory, file names, task answer-choice labels, and generated reply content.
+Events include tool use, approvals, model tokens and cost, run timing and failures, connection outcomes, and the kinds of replies and files shown, opened, or copied. Run-scoped events record whether work was owner-requested and whether it ran as immediate, scheduled, or background work. Model usage without a known work context is unclassified; UI output events have no work classification. They exclude website domains, purchase amounts and currencies, Vault inventory, file names, task answer-choice labels, and generated reply content.
 
 While usage sharing is on, Nod uses an approved small model on your selected connection to infer a broad task purpose, such as research, scheduling, or content creation. After the execution ends, it sends that model up to 6,000 characters from the original request, saved task brief, or schedule instruction, with known secrets redacted. Nod doesn't add assistant replies, tool history, or attachments. This request still reaches your model provider. PostHog receives only a fixed category, classification status, taxonomy version, and existing execution context, never the request or a generated description.
 
@@ -109,7 +109,7 @@ Analytics stop when you turn sharing off, including in-flight classification and
 
 ## Conversation traces
 
-Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, Nod sends scrubbed model requests and replies to its configured trace receiver. The default is n8n's Nod Traces service, which forwards them to n8n's LangSmith project in the EU. There, traces are deleted after 14 days, and n8n doesn't use them to train AI models. A different receiver has its own access and retention policies.
+Conversation traces are off until you turn on **Share conversation traces** in **Settings → Privacy & data**. While it's on, Nod sends scrubbed model requests and replies to its configured trace receiver. The default is n8n's Nod Traces service, which forwards them to n8n's LangSmith project in the EU. There, traces are deleted after 14 days, and n8n doesn't use them to train AI models. A different receiver has its own access and retention policies.
 
 Before a trace leaves the machine running your assistant, Nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID and Nod's IDs inside it change every day and whenever Nod restarts, your home folder path becomes `~`, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
 
@@ -142,7 +142,7 @@ During setup, Nod can read small samples from your connected tools to suggest fi
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Nod to forget something.
 - **Vault items.** Open the item in **Vault** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
-- **A local desktop assistant.** Select **Remove all data** in **Settings → General**. Nod deletes your local profile, private computer, and app browser storage, including unsent drafts. It then restarts and opens setup. The app stays installed. If connected to a server, first choose **Use this computer** in **Server connection**. This deletes no server data.
+- **A local desktop assistant.** Select **Remove all data** in **Settings → Privacy & data**. Nod deletes your local profile, private computer, and app browser storage, including unsent drafts. It then restarts and opens setup. The app stays installed. If connected to a server, first open **Replay onboarding… → Change server → Use this computer**. This deletes no server data.
 - **A source install or self-hosted server.** Stop it, then remove its data directory and Docker volumes. For a server, follow [Server operations](/deploy/server-operations/). Disconnecting or uninstalling a client keeps the server's data.
 
 Uninstalling the desktop app alone keeps its data. A service you signed in to through Nod may still list Nod as a connected app until you remove it there.
