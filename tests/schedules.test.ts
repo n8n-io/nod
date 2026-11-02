@@ -513,10 +513,13 @@ test(
           };
           const [first] = await fire();
           assert.deepEqual(await fire(), [first]);
-          await db.pool.query("UPDATE turns SET status='waiting',started_at=now() WHERE id=$1", [
-            first,
-          ]);
-          assert.deepEqual(await fire(), [first]);
+          for (const status of ['running', 'waiting']) {
+            await db.pool.query('UPDATE turns SET status=$2,started_at=now() WHERE id=$1', [
+              first,
+              status,
+            ]);
+            assert.deepEqual(await fire(), [first]);
+          }
           await db.pool.query(
             `INSERT INTO turns(id,owner_id,thread_id,source,prompt,session_id,parent_turn_id,background,status,started_at)
              SELECT $1,owner_id,thread_id,'resume','Synthetic answer.',id,id,true,'succeeded',now() FROM turns WHERE id=$2`,
