@@ -34,7 +34,7 @@ What Usage shows depends on how you pay for the model.
 | A ChatGPT plan                                                                                                     | **ChatGPT plan**, and what the plan covered at API prices | Doesn't count | Counts at API prices |
 | A model with no price, such as an [OpenAI-compatible server](/connect/local-models/), a free model or a token plan | **No price**                                              | Doesn't count | Doesn't count        |
 
-Costs are Nod's estimates from each model's API price. Your provider's bill is the final word. A voice reply or transcription without a known price also shows **No price**.
+Costs are Nod's estimates from each model's API price. Your provider's bill is the final word. Any request whose API price Nod doesn't know shows **No price**, on a ChatGPT plan too, as does a voice reply or transcription without a known price.
 
 ## Set a monthly limit
 

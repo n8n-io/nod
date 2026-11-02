@@ -78,6 +78,13 @@ const width = (text: string, size: number) =>
     size) /
   1000;
 
+function fit(text: string, size: number, room: number) {
+  if (width(text, size) <= room) return text;
+  let cut = text;
+  while (cut && width(`${cut}…`, size) > room) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
 export function usagePdf(report: UsageReport, exported: Date) {
   const { view, entries, timeZone, locale } = report;
   const lines: Array<[number, number, string, number, string?]> = [];
@@ -93,7 +100,7 @@ export function usagePdf(report: UsageReport, exported: Date) {
       .push([
         y,
         size,
-        cost && text.length > 92 ? `${text.slice(0, 91)}…` : text,
+        cost ? fit(text, size, 539 - width(cost, size) - 68) : text,
         bold ? 2 : 1,
         cost,
       ]);

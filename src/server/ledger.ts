@@ -37,8 +37,8 @@ const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UT
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
 const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
-const planUsage = `(cost_usd IS NULL AND details->>'estimateUsd' IS NOT NULL)`;
-const unpricedUsage = `(cost_usd=0 OR (cost_usd IS NULL AND details->>'estimateUsd' IS NULL AND details->>'status'='succeeded'))`;
+const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
+const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
 const cost = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
