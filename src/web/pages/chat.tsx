@@ -1699,8 +1699,8 @@ export function Chat({
                 <Working label="Pulling together a few ideas to get started" />
               ) : (
                 (visibleWork.length > 0 ||
-                  ((sending || welcoming) && !working && streamEntries.length === 0)) && (
-                  <Working items={visibleWork} label={sending ? 'Sending message' : undefined} />
+                  (welcoming && !working && streamEntries.length === 0)) && (
+                  <Working items={visibleWork} />
                 )
               )}
             </div>
