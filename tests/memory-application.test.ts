@@ -2014,6 +2014,15 @@ test('onboarding answers become one replaceable stated note and the email reache
     current[0]!.text,
     'Where they want Nod’s help: Mostly personal life. What they do: Retired teacher.',
   );
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'both', roleText: '4242 4242 4242', jobs: [], jobsText: '4242' },
+  });
+  assert.deepEqual(
+    (await notes()).map((entry) => entry.text),
+    ['Where they want Nod’s help: Both.'],
+  );
   assert.notEqual(
     (
       await app.inject({
@@ -2035,6 +2044,7 @@ test('onboarding answers become one replaceable stated note and the email reache
     ).statusCode,
     404,
   );
+  const remembered = JSON.stringify(await memory.load());
   const subscribed = await app.inject({
     method: 'POST',
     url: '/api/onboarding/updates',
@@ -2048,6 +2058,7 @@ test('onboarding answers become one replaceable stated note and the email reache
     'synthetic-updates-token-0123456789abcdef',
   );
   assert.deepEqual(JSON.parse(sent[0]!.body), { version: 1, email: 'owner@example.test' });
+  assert.equal(JSON.stringify(await memory.load()), remembered);
   status = 500;
   const failed = await app.inject({
     method: 'POST',
@@ -2066,4 +2077,7 @@ test('onboarding answers become one replaceable stated note and the email reache
     200,
   );
   assert.throws(() => createN8nUpdates({ url: 'http://updates.example.test/webhook', token: 't' }));
+  assert.throws(() =>
+    createN8nUpdates({ url: 'https://updates.example.test/webhook?', token: 't' }),
+  );
 });

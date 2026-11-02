@@ -35,7 +35,10 @@ function label(list: readonly { id: string; label: string }[], id?: string) {
 }
 
 export function profileNote(profile: OnboardingProfile) {
-  const own = (value?: string) => (value && !unsafe(value) ? value : undefined);
+  const split =
+    unsafe(`${profile.roleText ?? ''}${profile.jobsText ?? ''}`) &&
+    !unsafe(profile.roleText, profile.jobsText);
+  const own = (value?: string) => (value && !split && !unsafe(value) ? value : undefined);
   const role = own(profile.roleText) ?? label(profileRoles, profile.role);
   const jobs = [
     ...new Set(profile.jobs.map((job) => label(profileJobs, job))),

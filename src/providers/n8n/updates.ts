@@ -9,6 +9,7 @@ export function createN8nUpdates(options: {
   const token = options.token;
   const endpoint = new URL(options.url);
   if (
+    /[?#]/.test(options.url) ||
     endpoint.protocol !== 'https:' ||
     endpoint.username ||
     endpoint.password ||

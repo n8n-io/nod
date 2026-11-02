@@ -21,8 +21,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
 
   async function subscribe() {
     const address = email.trim();
-    if (!address || status === 'saved') return true;
-    if (status === 'saving') return false;
+    if (!address || status !== 'idle') return;
     setStatus('saving');
     setError('');
     try {
@@ -32,16 +31,10 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
       });
       captureAnalytics('nod_onboarding_updates_subscribed');
       setStatus('saved');
-      return true;
     } catch (cause) {
       setError(errorMessage(cause));
       setStatus('idle');
-      return false;
     }
-  }
-
-  async function next() {
-    if (await subscribe()) onNext();
   }
 
   return (
@@ -147,7 +140,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
       </Rise>
       <Footer
         onBack={onBack}
-        onNext={() => void next()}
+        onNext={onNext}
         nextLabel={nextLabel ?? 'Continue'}
         busy={status === 'saving'}
       />

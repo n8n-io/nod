@@ -205,9 +205,12 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
     if (text) settle('role', { ...profile, role: undefined, roleText: text });
   }
 
+  function trimmed(value: OnboardingProfile): OnboardingProfile {
+    return { ...value, jobsText: value.jobsText?.trim() || undefined };
+  }
+
   function sendJobs() {
-    const jobsText = profile.jobsText?.trim() || undefined;
-    settle('jobs', { ...profile, jobsText });
+    settle('jobs', trimmed(profile));
   }
 
   function toggle(job: ProfileJob) {
@@ -388,7 +391,7 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       <div ref={end} />
       <Footer
         onBack={onBack}
-        onSkip={current === 'done' ? undefined : () => settle(current, profile)}
+        onSkip={current === 'done' ? undefined : () => settle(current, trimmed(profile))}
         skipLabel="Not now"
         onNext={ready}
         busy={saving}
