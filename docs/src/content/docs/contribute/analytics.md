@@ -115,7 +115,7 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 
 1. Run focused regression tests, then `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`.
 2. Run `pnpm exec tsx scripts/analytics-fixture.ts`. It selects an available port and prints its URL. Use synthetic data, exercise the changed UI, and inspect `/__fixture__/summary`.
-3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. `recordingEvents`, `recordingRequests`, and `remoteConfigurationRequests` must all be zero. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
+3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. `captureErrors`, `recordingEvents`, `recordingRequests`, and `remoteConfigurationRequests` must all be zero, with at least one captured event. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
 4. Check opt-out, account changes, stale callbacks, retries, hidden views, and private content. Tests must intercept transport rather than send synthetic production events.
 5. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
 

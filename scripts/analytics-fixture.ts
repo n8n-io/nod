@@ -13,6 +13,8 @@ const output = resolve(
   process.env.NOD_ANALYTICS_FIXTURE_OUTPUT ?? join(tmpdir(), `nod-analytics-${randomUUID()}.json`),
 );
 const events: unknown[] = [];
+let captureRequests = 0;
+let captureErrors = 0;
 let recordingRequests = 0;
 let remoteConfigurationRequests = 0;
 const privateText = 'SYNTHETIC_PRIVATE_CANARY_89271';
@@ -156,21 +158,29 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (['/i/v0/e/', '/e/', '/s/', '/batch/'].includes(url.pathname)) {
+    captureRequests++;
     if (url.pathname === '/s/') recordingRequests++;
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     let body = Buffer.concat(chunks);
     if (
+      (body[0] === 0x1f && body[1] === 0x8b) ||
       url.searchParams.get('compression') === 'gzip' ||
       request.headers['content-encoding'] === 'gzip'
     )
       body = gunzipSync(body);
     try {
-      let decoded = JSON.parse(body.toString());
+      const data = new URLSearchParams(body.toString()).get('data');
+      const payload =
+        url.searchParams.get('compression') === 'base64' && data
+          ? Buffer.from(data, 'base64').toString()
+          : body.toString();
+      let decoded = JSON.parse(payload);
       if (!Array.isArray(decoded)) decoded = decoded.batch ?? [decoded];
       events.push(...decoded);
       await writeFile(output, JSON.stringify(events, null, 2));
     } catch {
+      captureErrors++;
       response.statusCode = 400;
       response.end();
       return;
@@ -184,6 +194,8 @@ const server = createServer(async (request, response) => {
     json({
       enabled: usageData,
       count: events.length,
+      captureRequests,
+      captureErrors,
       recordingEvents: events.filter(
         (event) =>
           event && typeof event === 'object' && 'event' in event && event.event === '$snapshot',
