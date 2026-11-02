@@ -1001,7 +1001,7 @@ test('past the spending check-in a turn stops working but can ask, and one that 
         },
       });
       assert.equal(options.shouldStop(), false);
-      await assert.rejects(read(tools));
+      await assert.rejects(read(tools), /\$5\.50 \(\$1\.50 of it ChatGPT plan usage/);
       await call(tools, 'ask_user', { question: 'Read 12 of 40 threads. Keep going?' });
     },
     { integration, checkIn },

@@ -71,6 +71,9 @@
   font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
 }
+.usage-row-cost.is-label {
+  color: var(--muted-foreground);
+}
 .vault-use-text span.is-error {
   color: var(--error);
 }

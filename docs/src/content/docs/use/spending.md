@@ -14,7 +14,7 @@ Nod itself doesn't charge you. Your model provider bills you for the requests No
 Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app).
 
 - **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Nod did this week, the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own and [your rules](/trust/approvals/#your-rules). Select a value to see more or change it.
-- **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Nod did and the cost. Under an action your words allowed, it shows those words, such as _You said "Send Lena the report"_.
+- **The list.** Every request that used a model or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Nod did and the cost, or **ChatGPT plan** or **No price**. Under an action your words allowed, it shows those words, such as _You said "Send Lena the report"_.
 
 Standing instructions and rules appear as short labels. Select **follows your instruction** or **your rules** to read or edit the full text.
 
@@ -23,6 +23,18 @@ Chat messages don't include cost or action receipts. Review spending and app act
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
 ![Usage shows model spending, a monthly limit, task check-in, links to instructions and rules, and recent activity.](../../../assets/screens/usage-light.png)
+
+## How each model is priced
+
+What Usage shows depends on how you pay for the model.
+
+| You use                                                                                                            | Usage shows                                               | Monthly limit | Task check-ins       |
+| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ------------- | -------------------- |
+| An API key or a cloud account, such as OpenAI, Anthropic, OpenRouter or Amazon Bedrock                             | What each request costs                                   | Counts        | Counts               |
+| A ChatGPT plan                                                                                                     | **ChatGPT plan**, and what the plan covered at API prices | Doesn't count | Counts at API prices |
+| A model with no price, such as an [OpenAI-compatible server](/connect/local-models/), a free model or a token plan | **No price**                                              | Doesn't count | Doesn't count        |
+
+Costs are Nod's estimates from each model's API price. Your provider's bill is the final word. Any request whose API price Nod doesn't know shows **No price**, on a ChatGPT plan too, as does a voice reply or transcription without a known price.
 
 ## Set a monthly limit
 
@@ -50,9 +62,7 @@ When the month's spending reaches your limit:
 
 The pause lifts at the start of next month, or as soon as you raise or remove the limit.
 
-:::caution[Some usage has no price]
-Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the list it shows no cost. Nod doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0. It doesn't count toward the limit or task check-ins. Costs are Nod's estimates. Your provider's bill is the final word.
-:::
+Only paid usage counts toward the limit. See [How each model is priced](#how-each-model-is-priced).
 
 ## Task check-ins
 
@@ -71,7 +81,7 @@ An action that your words cover needs one authorization review. If it needs appr
 
 To reduce repeated questions, set [rules for what Nod can do directly](/trust/approvals/#your-rules). Nod can change from an app tool to the same service's website when the account and requested outcome stay the same. It also reuses saved procedures and writing style. Routine drafts do not require fresh style samples, and optional offers do not require extra schedule or history reads.
 
-Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra.
+Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra. The check-in says how much of the amount is plan usage.
 
 ### Change when tasks check in
 

@@ -492,7 +492,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     for (const row of recurring) {
       const priced = runs.flatMap((run) => {
         const cost = run.schedule_id === row.id ? costs[run.turn_id] : undefined;
-        return typeof cost === 'number' ? [cost] : [];
+        return typeof cost === 'number' && cost > 0 ? [cost] : [];
       });
       if (!priced.length) continue;
       const upcoming = scheduler.previewSchedule(row.cron!, { tz: row.timeZone, count: 200, from });
