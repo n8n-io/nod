@@ -3070,6 +3070,210 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
+test('answer-choice analytics count visible questions and accepted answers within their consent and account', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLButtonElement', 'Event', 'MouseEvent', 'MutationObserver'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      let visibility = 'visible';
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+      const observations = [];
+      globalThis.IntersectionObserver = class {
+        constructor(callback) { this.callback = callback; observations.push(this); }
+        observe(element) { this.element = element; }
+        disconnect() { this.disconnected = true; }
+        intersect(...values) { this.callback(values.map(value => ({ target: this.element, isIntersecting: value }))); }
+      };
+      globalThis.fetch = async () => { throw new Error('This fixture cannot use the network.'); };
+      const sent = [];
+      const client = {
+        init(_key, options) { this.options = options; },
+        capture(event, properties = {}) {
+          const value = this.options.before_send({ event, properties });
+          if (value) this._send_request({ data: [value] });
+          return value;
+        },
+        _send_request(request) { sent.push(...request.data); },
+        set_config(options) { this.options = { ...this.options, ...options }; },
+        reset() {}, startSessionRecording() {}, stopSessionRecording() {},
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AnswerChoices } = await import('./src/web/components/answer-choices.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      const { setAnalyticsClient, configureAnalytics, captureAnalytics } = await import('./src/web/lib/analytics.ts');
+      const configuration = { enabled: true, distinctId: 'synthetic-installation', environment: 'development' };
+      setRequestAccount('synthetic-owner-one');
+      setAnalyticsClient(client);
+      const consent = enabled => configureAnalytics({ ...configuration, enabled }, 'web');
+      consent(true);
+      const container = document.querySelector('#root');
+      const root = createRoot(container);
+      const pending = [], custom = [];
+      const mount = async (id, multiple = false, count = 2) => {
+        const choices = {
+          multiple,
+          options: Array.from({ length: count }, (_, index) => ({
+            id: 'PRIVATE_OPTION_' + index,
+            label: 'PRIVATE_LABEL_' + index,
+            description: 'PRIVATE_DESCRIPTION_' + index,
+          })),
+        };
+        await act(() => root.render(createElement(AnswerChoices, {
+          key: id, choices, question: { id: 'PRIVATE_QUESTION_' + id, text: 'PRIVATE_QUESTION_TEXT' },
+          onAnswer: (text, selection) => new Promise((resolve, reject) => pending.push({ text, selection, resolve, reject })),
+          onWriteAnswer: text => custom.push(text),
+        })));
+      };
+      const events = name => sent.filter(item => item.event === name);
+      const viewed = () => events('answer_choices_viewed');
+      const selected = () => events('answer_choices_selected');
+      const intersect = (...values) => act(() => observations.at(-1)?.intersect(...values));
+      const visible = value => act(() => {
+        visibility = value ? 'visible' : 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const click = selector => act(() => document.querySelector(selector).click());
+      const finish = outcome => act(async () => {
+        if (outcome instanceof Error) pending.at(-1).reject(outcome);
+        else pending.at(-1).resolve(outcome);
+      });
+      await mount('visible');
+      assert.equal(viewed().length, 0);
+      await visible(false);
+      await intersect(true, false);
+      await visible(true);
+      assert.equal(viewed().length, 0);
+      await intersect(false);
+      await visible(false);
+      await intersect(false, true);
+      assert.equal(viewed().length, 0);
+      await visible(true);
+      assert.equal(viewed().length, 1);
+      assert.equal(viewed()[0].properties.multiple, false);
+      assert.equal(viewed()[0].properties.option_count, 2);
+      await intersect(false);
+      await intersect(true);
+      await act(() => root.render(null));
+      assert.equal(observations.at(-1).disconnected, true);
+      await mount('visible');
+      await intersect(true);
+      assert.equal(viewed().length, 1);
+      container.hidden = true;
+      await mount('hidden');
+      await intersect(true);
+      assert.equal(viewed().length, 1);
+      container.hidden = false;
+      await intersect(true);
+      assert.equal(viewed().length, 2);
+      consent(false);
+      await intersect(true);
+      assert.equal(viewed().length, 2);
+      consent(true);
+      assert.equal(viewed().length, 3);
+      const count = pending.length;
+      await click('.answer-choice');
+      await click('.answer-choice');
+      assert.equal(pending.length, count + 1);
+      assert.equal(selected().length, 0);
+      await finish(true);
+      assert.equal(selected().length, 1);
+      assert.equal(selected()[0].properties.multiple, false);
+      assert.equal(selected()[0].properties.option_count, 2);
+      assert.equal(selected()[0].properties.selected_count, 1);
+      assert.equal(document.querySelector('.answer-choices'), null);
+      await mount('multiple', true, 6);
+      await intersect(true);
+      await click('.answer-choice:nth-child(1)');
+      await click('.answer-choice:nth-child(2)');
+      await click('.answer-choice:nth-child(2)');
+      await click('.answer-choices-write');
+      assert.equal(custom.length, 1);
+      assert.equal(selected().length, 1);
+      await click('.answer-choice:nth-child(3)');
+      await click('.answer-choices-send');
+      assert.equal(selected().length, 1);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      assert.equal(selected().at(-1).properties.multiple, true);
+      assert.equal(selected().at(-1).properties.option_count, 6);
+      assert.equal(selected().at(-1).properties.selected_count, 2);
+      for (const [index, outcome] of ['unavailable', false, new Error('Synthetic rejection')].entries()) {
+        await mount('rejected-' + index);
+        await click('.answer-choice');
+        await finish(outcome);
+        assert.equal(selected().length, 2);
+      }
+      await mount('late-consent');
+      await click('.answer-choice');
+      consent(false);
+      consent(true);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      await mount('late-account');
+      await intersect(true);
+      await click('.answer-choice');
+      const oldViews = viewed().length;
+      setRequestAccount('synthetic-owner-two');
+      await intersect(true);
+      assert.equal(viewed().length, oldViews);
+      await finish(true);
+      assert.equal(selected().length, 2);
+      await mount('accepted-after-unmount');
+      await click('.answer-choice');
+      const observer = observations.at(-1);
+      await act(() => root.render(null));
+      observer.intersect(true);
+      assert.equal(viewed().length, oldViews);
+      await finish(true);
+      assert.equal(selected().length, 3);
+      const beforeInvalid = sent.length;
+      for (const value of [undefined, 0, 7, -1, 1.5, NaN, '2']) {
+        captureAnalytics('answer_choices_viewed', { multiple: false, option_count: value });
+        captureAnalytics('answer_choices_selected', { multiple: true, option_count: 2, selected_count: value });
+      }
+      captureAnalytics('answer_choices_viewed', { multiple: 'false', option_count: 2 });
+      captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source: 'composer' });
+      for (const input of [undefined, null, '', 'invalid', 'audio', false, 0])
+        captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source: 'composer', input });
+      assert.equal(sent.length, beforeInvalid);
+      for (const [source, input] of [['answer_choice', 'text'], ['composer', 'text'], ['composer', 'voice']]) {
+        const before = sent.length;
+        captureAnalytics('chat_message_sent', { has_attachments: false, is_reply: true, source, input });
+        assert.equal(sent.length, before + 1);
+        assert.equal(sent.at(-1).event, 'chat_message_sent');
+        assert.equal(sent.at(-1).properties.source, source);
+        assert.equal(sent.at(-1).properties.input, input);
+      }
+      captureAnalytics('answer_choices_selected', {
+        multiple: true, option_count: 6, selected_count: 6,
+        question_id: 'PRIVATE_QUESTION_ID', choice_ids: ['PRIVATE_OPTION_ID'], text: 'PRIVATE_TEXT',
+      });
+      assert.equal(selected().length, 4);
+      assert.equal(selected().at(-1).properties.selected_count, 6);
+      assert.ok(!JSON.stringify(sent).includes('PRIVATE_'));
+      assert.ok(sent.every(item => item.properties.analytics_schema === 'nod_v3'));
+      consent(false);
+      await act(() => root.unmount());
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
 test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -5292,6 +5496,107 @@ test(
     }
   },
 );
+
+test('chat waits for an authored activity description while keeping active work stoppable', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      let messageRequest, releaseMessage, stops = 0;
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        if (path === '/api/thread/stop') {
+          stops++;
+          return Response.json({});
+        }
+        assert.equal(path, '/api/messages');
+        messageRequest = JSON.parse(options.body);
+        return new Promise(resolve => { releaseMessage = resolve; });
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      const root = createRoot(document.getElementById('root'));
+      let state = {
+        threadId: 'synthetic-thread', turns: [], activity: [], tasks: [],
+        verificationRequests: [], configuration: { llmReady: true },
+        messages: [{ id: 'synthetic-message', role: 'assistant', text: 'Synthetic conversation',
+          attachments: [], turnId: null, createdAt: '2026-10-26T12:00:00Z' }],
+      };
+      const render = (props = {}) => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {}, ...props,
+      })));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected activity transition to settle');
+      };
+      const activity = {
+        turnId: 'synthetic-turn', taskId: null, title: null, step: null, site: null,
+        since: '2026-10-26T12:00:00Z',
+      };
+      try {
+        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' } });
+        await settle(() => messageRequest && document.querySelector('.message-user'));
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        await act(async () => releaseMessage(Response.json({
+          messageId: messageRequest.clientMessageId, turnId: activity.turnId,
+        })));
+        state = { ...state, activity: [activity] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        const stop = document.querySelector('[aria-label="Stop all work"]');
+        assert.ok(stop && !stop.disabled);
+        await act(async () => stop.click());
+        assert.equal(stops, 1);
+        for (const detail of [{ site: 'example.test' }, { title: 'Synthetic task', taskId: 'synthetic-task' }, { step: '   ' }]) {
+          state = { ...state, activity: [{ ...activity, ...detail }] };
+          await render();
+          assert.equal(Boolean(document.querySelector('.thinking')), false);
+          assert.ok(document.querySelector('[aria-label="Stop all work"]'));
+        }
+        state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',
+          title: 'Synthetic task', step: 'Comparing **flight prices**' }] };
+        await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });
+        assert.equal(document.querySelectorAll('.thinking .working-text').length, 1);
+        assert.match(document.querySelector('.thinking').textContent, /Comparing flight prices/);
+        assert.ok(!document.querySelector('.thinking').textContent.includes('**'));
+        state = { ...state, activity: [{ ...activity, step: 'Checking the return journey' }] };
+        await render();
+        assert.equal(document.querySelector('.thinking').textContent, 'Checking the return journey');
+        state = { ...state, activity: [] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
 
 test('Settings saves only reviewed draft revisions and retains failed edits', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

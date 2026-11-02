@@ -5,6 +5,7 @@ import {
   type QuestionAnswer,
 } from '../../shared/answer-choices';
 import { errorMessage } from '../lib/api';
+import { analyticsForCurrentSession, observeAnalyticsView } from '../lib/analytics';
 import { Check, PenLine } from './icons';
 import { Button } from './ui';
 
@@ -43,8 +44,25 @@ export function AnswerChoices({
     };
   }, []);
 
+  useEffect(() => {
+    if (submitted || !root.current) return;
+    return observeAnalyticsView(root.current, question.id, 'answer_choices_viewed', {
+      multiple: choices.multiple,
+      option_count: choices.options.length,
+    });
+  }, [choices.multiple, choices.options.length, question.id, submitted]);
+
   async function answer(value: string, selection: QuestionAnswer) {
     if (!mounted.current || unavailable.current || pending.current || !value.trim()) return;
+    const capture = analyticsForCurrentSession();
+    const properties =
+      'choiceIds' in selection
+        ? {
+            multiple: choices.multiple,
+            option_count: choices.options.length,
+            selected_count: selection.choiceIds.length,
+          }
+        : undefined;
     pending.current = true;
     setBusy(true);
     setError('');
@@ -52,6 +70,7 @@ export function AnswerChoices({
     const message = root.current?.closest<HTMLElement>('[data-message-id]');
     try {
       const outcome = await onAnswer(value.trim(), selection);
+      if (outcome === true && properties) capture('answer_choices_selected', properties);
       if (outcome === true || outcome === 'unavailable') {
         if (
           message?.isConnected &&

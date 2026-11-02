@@ -2,7 +2,7 @@ import { Tooltip } from '../components/tooltip';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import Markdown from 'react-markdown';
-import { ArrowDown, Check, CornerUpLeft, Globe2, LoaderCircle, Repeat } from '../components/icons';
+import { ArrowDown, Check, CornerUpLeft, LoaderCircle, Repeat } from '../components/icons';
 import type {
   Activity,
   AppState,
@@ -109,8 +109,9 @@ function Welcome() {
     </div>
   );
 }
-function Working({ items = [], label = 'Nod is working' }: { items?: Activity[]; label?: string }) {
-  const details = items.filter((item) => item.title || item.step || item.site);
+function Working({ items = [], label }: { items?: Activity[]; label?: string }) {
+  const details = items.filter((item) => item.step?.trim());
+  if (!details.length && !label) return null;
   return (
     <div className="thinking" role="status">
       <NodGlyph size={28} mode="thinking" />
@@ -119,20 +120,11 @@ function Working({ items = [], label = 'Nod is working' }: { items?: Activity[];
           details.map((item) => (
             <span className="working-text" key={item.turnId}>
               {item.title && <strong>{item.title}</strong>}
-              {item.step ? (
-                <span key={item.step}>
-                  <Markdown allowedElements={[]} unwrapDisallowed>
-                    {item.step}
-                  </Markdown>
-                </span>
-              ) : (
-                item.site && (
-                  <span key={item.site}>
-                    {item.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}
-                    {item.site}
-                  </span>
-                )
-              )}
+              <span key={item.step}>
+                <Markdown allowedElements={[]} unwrapDisallowed>
+                  {item.step}
+                </Markdown>
+              </span>
             </span>
           ))
         ) : (
@@ -552,9 +544,6 @@ export function Chat({
   const persistedStreams = new Set(allMessages.map((message) => message.streamId).filter(Boolean));
   const streamEntries = Object.entries(streams).filter(
     ([id, value]) => value && !persistedStreams.has(id),
-  );
-  const visibleWork = live.filter(
-    (item) => item.taskId || item.step?.trim() || streamEntries.length === 0,
   );
   const streamIds = new Set(streamEntries.map(([id]) => id));
   for (const id of streamTimes.current.keys())
@@ -1035,8 +1024,9 @@ export function Chat({
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
       if (!privateVerification)
-        captureAnalytics('nod_chat_message_sent', {
+        captureAnalytics('chat_message_sent', {
           has_attachments: attachments.length > 0 || Boolean(recording),
+          input: recording ? 'voice' : 'text',
           is_reply: Boolean(replyId),
           source,
         });
@@ -1698,10 +1688,7 @@ export function Chat({
               {planning ? (
                 <Working label="Pulling together a few ideas to get started" />
               ) : (
-                (visibleWork.length > 0 ||
-                  (welcoming && !working && streamEntries.length === 0)) && (
-                  <Working items={visibleWork} />
-                )
+                <Working items={live} />
               )}
             </div>
             <div ref={bottom} />

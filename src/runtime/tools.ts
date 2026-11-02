@@ -327,7 +327,7 @@ export const toolDefinitions = {
   ),
   ask_user: defineTool(
     'ask_user',
-    'Ask one necessary question and pause. Offer useful known choices when they make answering easier, normally two to four. Descriptions may disambiguate options. The owner can always reply in their own words. Never use choices for action approvals, passwords, codes or other secrets.',
+    'Ask one necessary question and pause. For a finite decision, supply known choices instead of a prose list, normally two to four. Add descriptions only to distinguish options. The owner can write another answer. Never use choices for action approvals or secrets.',
     Type.Object({
       question: Type.String(),
       choices: Type.Optional(
