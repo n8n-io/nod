@@ -38,7 +38,6 @@ export type StepProps = {
   onBack(): void;
   onSkip?(): void;
   nextLabel?: string;
-  onReady?(): void;
   usageShared?: boolean;
   updates?: boolean;
   traces?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
@@ -142,8 +141,8 @@ export function Onboarding({
   } | null>(null);
 
   useEffect(() => {
-    if (step !== 'email') desktopRendererReady();
-  }, [step]);
+    desktopRendererReady();
+  }, []);
 
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion });
@@ -411,7 +410,6 @@ export function Onboarding({
           key={step}
           arrived={arrived}
           quiet={position.quiet}
-          onReady={desktopRendererReady}
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}

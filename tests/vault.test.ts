@@ -3483,8 +3483,14 @@ let failSave=true;
 let failLogin=false;
 let saves=0;
 let reads=0;
+let rendererReady=0;
+let delayApps=false;
+let completePreparation;
+let preparationCompleted=false;
+let completions=0;
 let statusListener;
 window.nodDesktop={
+  ready:async()=>{rendererReady++},
   status:async()=>({phase:'ready',runtime:{phase:'preparing'}}),
   onStatus:listener=>{statusListener=listener;return()=>{statusListener=undefined}},
   prepare:async()=>{const ready={phase:'ready',runtime:{phase:'ready'}};statusListener(ready);return ready},
@@ -3494,12 +3500,13 @@ window.nodDesktop={
 const calls=[];
 window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
- if(path==='/api/account/prepare')return new Promise(()=>{});
+ if(path==='/api/account/prepare')return new Promise(resolve=>{completePreparation=()=>resolve(Response.json({ok:true}))});
  if(path==='/api/models')return Response.json({connections:[{id:'synthetic',provider:'anthropic',method:'api_key',label:'Synthetic model',managed:false,status:'connected',models:[{id:'synthetic-model',name:'Synthetic model',efforts:['medium'],images:false,contextWindow:1000}]}],selection:{connectionId:'synthetic',modelId:'synthetic-model',effort:'medium'}});
  if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon',locale:'en-GB',hourCycle:'h23',quietHoursEnabled:false,quietStart:'22:00',quietEnd:'08:00',speechReply:'auto',speechVoice:null});
  if(path==='/api/speech')return Response.json({transcription:false,synthesis:false,voices:[],speechVoice:null,speechReply:'auto'});
  if(path==='/api/memory')return Response.json({saving:true,sensitive:false,notes:[],skills:[],archive:[]});
- if(path==='/api/apps'||path==='/api/apps/catalog')return Response.json([]);
+ if(path==='/api/configuration')return delayApps?new Promise(()=>{}):Response.json({integrationsReady:true});
+ if(path==='/api/apps'||path==='/api/apps/catalog')return delayApps?new Promise(()=>{}):Response.json([]);
  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
  throw new Error('Unexpected request '+path);
 };
@@ -3509,7 +3516,7 @@ const {Onboarding}=await import('./src/web/pages/onboarding/index.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const session={user:{id:'synthetic-native-owner',name:'',email:null,avatarUrl:null},settings:{usageData:false,onboardingCompleted:false}};
 let root=createRoot(document.getElementById('root'));
-const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>assert.fail('No completion before runtime ready')})));
+const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>{completions++;assert.equal(preparationCompleted,true,'No completion before server preparation finishes')}})));
 const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
 const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition())};
 const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
@@ -3585,6 +3592,33 @@ assert.equal((await store.get()).onboardingCompleted,true);
 assert.equal((await store.get()).launchAtLogin,false);
 await act(async()=>root.unmount());
 assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
+store=createSettingsStore(join(directory,'pending-runtime-settings.json'),{});
+failLogin=false;
+delayApps=true;
+rendererReady=0;
+sessionStorage.clear();
+document.cookie='nod_onboarding_step=; path=/; max-age=0';
+window.history.replaceState(null,'','/onboarding?welcome=complete');
+root=createRoot(document.getElementById('root'));
+await render();
+await waitFor(()=>document.querySelector('[data-step="email"]'));
+assert.ok(rendererReady>0,'The email screen must become visible before account discovery finishes');
+assert.equal(button('Skip for now').disabled,false);
+await act(async()=>button('Skip for now').click());
+await waitFor(()=>document.querySelector('[data-step="privacy"]'));
+await act(async()=>button('Continue').click());
+await waitFor(()=>document.querySelector('.setup-progress [role="status"]'));
+assert.equal((await store.get()).onboardingPreferenceStep,'complete');
+assert.equal(completions,0);
+await act(async()=>statusListener({phase:'ready',runtime:{phase:'ready'}}));
+await settle();
+assert.equal(completions,0,'Desktop readiness must not complete onboarding before server preparation');
+assert.ok(document.querySelector('.setup-progress [role="status"]'));
+await act(async()=>{preparationCompleted=true;completePreparation()});
+await waitFor(()=>completions===1);
+await settle();
+assert.equal(completions,1);
+await act(async()=>root.unmount());
 await rm(directory,{recursive:true,force:true});
 dom.window.close();
 process.exit(0);
