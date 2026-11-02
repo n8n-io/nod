@@ -11,7 +11,7 @@ import {
 } from '../shared/onboarding.ts';
 import { logFailure } from './failure-log.ts';
 import type { MemoryService } from './memory.ts';
-import { unsafe } from './memory-tree.ts';
+import { archive, locate, unsafe } from './memory-tree.ts';
 
 function choice<T extends string>(list: readonly { id: T }[]) {
   return z.enum(list.map((option) => option.id) as [T, ...T[]]);
@@ -55,15 +55,20 @@ export function profileNote(profile: OnboardingProfile) {
 }
 
 export function createOnboardingProfile(options: {
-  memory: Pick<MemoryService, 'enabled' | 'restate'>;
+  memory: Pick<MemoryService, 'edit' | 'enabled' | 'restate'>;
   updates?: UpdatesSubscription;
 }) {
   function registerRoutes(app: FastifyInstance) {
     app.post('/api/onboarding/profile', async (request, response) => {
       const note = profileNote(profileInput.parse(request.body));
       response.header('cache-control', 'no-store');
-      if (note && (await options.memory.enabled()))
-        await options.memory.restate([{ area: 'about', slug: 'onboarding', text: note }]);
+      if (!(await options.memory.enabled())) return { ok: true };
+      if (note) await options.memory.restate([{ area: 'about', slug: 'onboarding', text: note }]);
+      else
+        await options.memory.edit((tree) => {
+          const previous = locate(tree, 'about/onboarding');
+          if (previous) archive(tree, previous, 'superseded', new Date().toISOString());
+        });
       return { ok: true };
     });
     app.post('/api/onboarding/updates', async (request, response) => {

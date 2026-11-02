@@ -2023,6 +2023,12 @@ test('onboarding answers become one replaceable stated note and the email reache
     (await notes()).map((entry) => entry.text),
     ['Where they want Nod’s help: Both.'],
   );
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { roleText: '4242 4242 4242', jobs: [], jobsText: '4242' },
+  });
+  assert.deepEqual(await notes(), []);
   assert.notEqual(
     (
       await app.inject({

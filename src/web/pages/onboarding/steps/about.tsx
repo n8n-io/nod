@@ -247,10 +247,9 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       job_routines: chose('routines'),
       job_other: Boolean(final.jobsText),
     });
-    if (asked.some((question) => answer(question, saved)))
-      await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) }).catch(
-        () => capture('nod_ui_error', { area: 'onboarding', action: 'save' }),
-      );
+    await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) }).catch(
+      () => capture('nod_ui_error', { area: 'onboarding', action: 'save' }),
+    );
     setSaving(false);
     onNext();
   }
