@@ -140,8 +140,8 @@ test('server analytics ignore obsolete replay links while preserving permitted e
 test('turn analytics keep the actual agent provider and remove stale model details', async (t) => {
   for (const [provider, model, expected] of [
     ['openai', 'gpt-6-luna', { provider: 'openai', model: 'gpt-6-luna' }],
-    ['compatible', 'PRIVATE_MODEL_CANARY', { provider: 'compatible', model: 'custom' }],
-    ['PRIVATE_PROVIDER_CANARY', 'PRIVATE_MODEL_CANARY', { provider: 'other', model: 'custom' }],
+    ['compatible', 'private-model-canary', { provider: 'compatible', model: 'custom' }],
+    ['private-provider-canary', 'private-model-canary', { provider: 'other', model: 'custom' }],
     ['openai', undefined, { provider: 'openai', model: undefined }],
   ] as const) {
     await t.test(`${expected.provider}/${expected.model ?? 'unknown'}`, async (t) => {
@@ -209,7 +209,7 @@ test('turn analytics keep the actual agent provider and remove stale model detai
         assert.equal(properties.run_id, started.run_id);
         assert.equal(Object.hasOwn(properties, 'model_provider'), false);
       }
-      assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
+      assert.doesNotMatch(JSON.stringify(captured), /private-(?:provider|model)-canary/);
     });
   }
 });

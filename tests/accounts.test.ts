@@ -21,6 +21,7 @@ import { createMailCheck } from '../src/server/mail-check.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
+import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 
@@ -807,6 +808,7 @@ describe('analytics privacy', () => {
       analytics: analytics.forOwner('owner-fixture'),
       telemetry,
     });
+    let subscription = false;
     const agent = ledger.agent({
       open: async (session) => ({
         resumed: false,
@@ -823,8 +825,9 @@ describe('analytics privacy', () => {
             cacheReadTokens: 2000,
             cacheWriteTokens: 0,
             totalTokens: 2025,
-            costUsd: 0.001,
-            costSource: 'sdk_estimate',
+            costUsd: subscription ? null : 0.001,
+            ...(subscription ? { estimateUsd: 0.001 } : {}),
+            costSource: subscription ? 'unavailable' : 'sdk_estimate',
             createdAt: new Date(Date.now() - 1_500).toISOString(),
           }),
       }),
@@ -877,12 +880,168 @@ describe('analytics privacy', () => {
     assert.equal(used.properties.input_tokens, 2020);
     assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
+    assert.equal(used.properties.pricing, 'api');
+    subscription = true;
+    await opened.prompt('Synthetic subscription usage', []);
+    const plan = captured.filter(({ event }) => event === 'model_used').at(-1)!;
+    assert.equal(plan.properties.pricing, 'plan_estimate');
+    assert.equal(plan.properties.cost_usd, 0.001);
     analytics.setUsageData('owner-fixture', false);
     await opened.prompt('Synthetic private content', []);
     await telemetry.shutdown();
-    assert.equal(spans.length, 2);
+    assert.equal(spans.length, 3);
     assert.equal(spans[0].traceId, spans[1].traceId);
-    assert.equal(captured.filter((event) => event.event === 'model_used').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'model_used').length, 2);
+  });
+
+  test('model usage analytics distinguish evidenced prices from unknown zero costs', async (t) => {
+    const cases: {
+      name: string;
+      usage: Pick<ProviderUsageEvent, 'costUsd' | 'estimateUsd' | 'pricing'>;
+      pricing: 'api' | 'plan_estimate' | 'unavailable';
+      cost?: number;
+    }[] = [
+      {
+        name: 'positive API estimate',
+        usage: { costUsd: 0.0123456, pricing: 'sdk_estimate' },
+        pricing: 'api',
+        cost: 0.012346,
+      },
+      {
+        name: 'positive API without pricing metadata',
+        usage: { costUsd: 0.02 },
+        pricing: 'api',
+        cost: 0.02,
+      },
+      {
+        name: 'positive plan estimate',
+        usage: { costUsd: null, estimateUsd: 0.03, pricing: 'sdk_estimate' },
+        pricing: 'plan_estimate',
+        cost: 0.03,
+      },
+      { name: 'missing cost', usage: {}, pricing: 'unavailable' },
+      { name: 'null cost', usage: { costUsd: null, estimateUsd: null }, pricing: 'unavailable' },
+      { name: 'negative cost', usage: { costUsd: -1, estimateUsd: -2 }, pricing: 'unavailable' },
+      {
+        name: 'infinite cost',
+        usage: { costUsd: Infinity, estimateUsd: Infinity },
+        pricing: 'unavailable',
+      },
+      { name: 'NaN cost', usage: { costUsd: NaN, estimateUsd: NaN }, pricing: 'unavailable' },
+      { name: 'unknown zero', usage: { costUsd: 0 }, pricing: 'unavailable' },
+      { name: 'SDK zero', usage: { costUsd: 0, pricing: 'sdk_estimate' }, pricing: 'unavailable' },
+      {
+        name: 'reported zero',
+        usage: { costUsd: 0, pricing: 'reported' },
+        pricing: 'api',
+        cost: 0,
+      },
+      {
+        name: 'zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'sdk_estimate' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'reported zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'reported' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'unavailable zero',
+        usage: { costUsd: 0, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'unavailable positive API cost',
+        usage: { costUsd: 0.04, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'subscription plan estimate with unavailable API price',
+        usage: { costUsd: null, estimateUsd: 0.05, pricing: 'unavailable' },
+        pricing: 'plan_estimate',
+        cost: 0.05,
+      },
+      {
+        name: 'subscription zero plan estimate',
+        usage: { costUsd: null, estimateUsd: 0, pricing: 'unavailable' },
+        pricing: 'unavailable',
+      },
+      {
+        name: 'tiny positive API cost',
+        usage: { costUsd: 0.0000001, pricing: 'sdk_estimate' },
+        pricing: 'api',
+        cost: 0,
+      },
+      {
+        name: 'tiny positive subscription estimate',
+        usage: { costUsd: null, estimateUsd: 0.0000001, pricing: 'unavailable' },
+        pricing: 'plan_estimate',
+        cost: 0,
+      },
+    ];
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const saved: unknown[][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    t.after(() => analytics.shutdown());
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: {
+        query: async (sql: string, values: unknown[]) => {
+          if (sql.startsWith('INSERT INTO model_usage')) saved.push(values);
+          return { rows: [] };
+        },
+      } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    let usage: ProviderUsageEvent;
+    const agent = ledger.agent({
+      open: async (session) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => session.onEvent({ type: 'provider_usage', usage }),
+      }),
+      dispose() {},
+    });
+    const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
+    t.after(() => opened.dispose());
+    for (const scenario of cases) {
+      await t.test(scenario.name, async () => {
+        usage = {
+          id: randomUUID(),
+          provider: 'openai',
+          model: 'gpt-6-luna',
+          category: 'agent',
+          operation: 'request',
+          status: 'succeeded',
+          durationMs: 1,
+          inputTokens: 20,
+          outputTokens: 5,
+          ...scenario.usage,
+        };
+        const before = captured.length;
+        await opened.prompt('Synthetic usage fixture', []);
+        assert.equal(captured.length, before + 1);
+        const event = captured.at(-1)!;
+        assert.equal(event.event, 'model_used');
+        assert.equal(event.properties.provider, 'openai');
+        assert.equal(event.properties.pricing, scenario.pricing);
+        assert.equal(event.properties.cost_usd, scenario.cost);
+        assert.equal(Object.hasOwn(event.properties, 'cost_usd'), scenario.cost !== undefined);
+        const charge = scenario.usage.costUsd;
+        assert.equal(
+          saved.at(-1)![3],
+          typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 ? charge : null,
+        );
+      });
+    }
   });
 });
 

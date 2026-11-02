@@ -68,7 +68,12 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
     typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
   const charged = cost(usage.costUsd);
   const estimated = cost(usage.estimateUsd);
-  const spent = charged ?? estimated;
+  const apiPriced =
+    usage.pricing !== 'unavailable' &&
+    charged !== null &&
+    (charged > 0 || usage.pricing === 'reported');
+  const planPriced = estimated !== null && estimated > 0;
+  const spent = apiPriced ? charged : planPriced ? estimated : null;
   return {
     event: 'model_used',
     properties: {
@@ -82,7 +87,7 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
         ? { cached_input_tokens: tokens(usage.cacheReadTokens) }
         : {}),
       ...(spent !== null ? { cost_usd: Math.round(spent * 1e6) / 1e6 } : {}),
-      pricing: charged !== null ? 'api' : estimated !== null ? 'plan_estimate' : 'unavailable',
+      pricing: apiPriced ? 'api' : planPriced ? 'plan_estimate' : 'unavailable',
       ...(usage.durationMs > 0 && Number.isFinite(usage.durationMs)
         ? { duration_ms: Math.round(usage.durationMs) }
         : {}),

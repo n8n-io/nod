@@ -115,6 +115,8 @@ Check property types against the capture schema. Enum properties such as `status
 
 For installation checks, show event details from the application's property allowlist. Preserve zero and false values, omit absent properties, and exclude SDK metadata. Keep these development views separate from production dashboards.
 
+Check pricing before rounding costs. Preserve explicitly reported API zero and positive plan estimates. A zero SDK estimate or a missing price is unavailable; omit `cost_usd` rather than treating it as free usage.
+
 When retiring insights, preserve a recoverable definition snapshot outside the repository before removing their tiles. Remove unused saved insights too.
 
 ## Check a change

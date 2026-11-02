@@ -138,6 +138,8 @@ Task completion records a declared status, not verified success. `notified` mean
 
 `cost_usd` is a model price estimate, including API-equivalent estimates for plan usage. Check `pricing` (`api`, `plan_estimate`, `unavailable`) before interpreting totals. Unpriced usage isn't free. Browser runtime fees, independent integration charges, and who pays aren't measured.
 
+An explicitly reported API cost of zero remains zero. A zero estimate without a reported charge is unpriced and has no `cost_usd`. Positive plan estimates remain priced even when the provider reports no charge. Costs are rounded to six decimal places after pricing is classified, so a tiny known cost can display as zero.
+
 Saved connections don't prove access works. Successful service calls don't prove task success. Connection observations occur at startup, when sharing turns on, and after changes; they aren't a live account inventory. Source reads measure observed calls and bounded results, without source identifiers or content.
 
 Setting changes exclude rejected and unchanged writes. Turning usage sharing off prevents capture of that change too. Local browser notification choices are `enabled`, `disabled`, or `dismissed`. `dismissed` means saving **Not now**, not closing a delivered notification. Theme values are `light`, `dark`, or `system`. Launch-at-login and desktop notifications use `enabled` or `disabled`.
