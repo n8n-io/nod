@@ -163,13 +163,13 @@ const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     let body = Buffer.concat(chunks);
-    if (
-      (body[0] === 0x1f && body[1] === 0x8b) ||
-      url.searchParams.get('compression') === 'gzip' ||
-      request.headers['content-encoding'] === 'gzip'
-    )
-      body = gunzipSync(body);
     try {
+      if (
+        (body[0] === 0x1f && body[1] === 0x8b) ||
+        url.searchParams.get('compression') === 'gzip' ||
+        request.headers['content-encoding'] === 'gzip'
+      )
+        body = gunzipSync(body);
       const data = new URLSearchParams(body.toString()).get('data');
       const payload =
         url.searchParams.get('compression') === 'base64' && data
