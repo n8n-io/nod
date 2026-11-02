@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { communityLinks } from '../../../../shared/onboarding';
-import { At } from '../../../components/icons';
+import { Envelope } from '../../../components/icons';
 import { Rise } from '../../../components/motion';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Button, Input } from '../../../components/ui';
@@ -88,7 +88,7 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
             <div className="ob-join-divider" aria-hidden="true" />
             <div className="ob-join-updates">
               <div className="ob-join-row">
-                <At size={24} aria-hidden="true" />
+                <Envelope size={24} aria-hidden="true" />
                 <label className="ob-join-title" htmlFor="ob-join-email">
                   Be the first to hear what’s new
                 </label>
