@@ -25,7 +25,7 @@ export function ComposioMark({ src = '/logos/composio.svg' }: { src?: string }) 
   );
 }
 
-export function EmailPreview({ logos, status }: { logos: Record<string, string>; status: string }) {
+export function EmailPreview({ logos }: { logos: Record<string, string> }) {
   const { revealed, typing } = useReveal(connectionSequence);
   return (
     <section className="ob-step ob-email" data-analytics-public aria-busy="true">
@@ -44,7 +44,7 @@ export function EmailPreview({ logos, status }: { logos: Record<string, string>;
                 <img className="service-logo" src={logos[slug]} alt="" width={28} height={28} />
               }
               name={names[slug]}
-              details={[status]}
+              details={['Getting ready…']}
               actions={
                 <Button
                   variant="secondary"
