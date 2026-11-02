@@ -210,7 +210,7 @@ export function createAccountSession(options: {
         options.analytics?.capture(owner, {
           event: 'onboarding_completed',
           ...(model?.configured
-            ? { properties: { model_provider: analyticsModel(model.provider).provider } }
+            ? { properties: { provider: analyticsModel(model.provider).provider } }
             : {}),
         });
       }

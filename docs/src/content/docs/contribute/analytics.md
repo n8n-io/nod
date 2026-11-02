@@ -18,6 +18,8 @@ Change the event schema, collectors, privacy checks, and dashboards together.
 - **Count the observed result.** Save/change events follow committed writes or successful responses. Record clicks and requests separately when those are the actual measurement.
 - **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning.
 
+Use `provider` for the model provider across onboarding, connection, selection, execution, and usage events. Keep the event's meaning: selected provider at setup/start, last observed agent provider at completion, and actual provider for each model request.
+
 Don't infer completed tasks or frustration from conversations. Execution success, useful output, and user satisfaction are separate questions.
 
 ## Add an event
@@ -59,11 +61,11 @@ Opt-out must discard queued and retry events. Asynchronous callbacks from an ear
 
 ## Change or remove a contract
 
-| Change                                                             | Action                                                                                  |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Add an optional property or bounded value without changing meaning | Update schemas, collectors, docs, and relevant insights.                                |
-| Rename an event/property or change its meaning                     | Bump `schemaVersion` in `src/shared/analytics.ts` and replace affected insight queries. |
-| Remove collection                                                  | Delete the collector and schema entry, then remove or replace dependent insights.       |
+| Change                                                                | Action                                                                                  |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Add an optional property or bounded value without changing meaning    | Update schemas, collectors, docs, and relevant insights.                                |
+| Rename an event/property or change its meaning in a released contract | Bump `schemaVersion` in `src/shared/analytics.ts` and replace affected insight queries. |
+| Remove collection                                                     | Delete the collector and schema entry, then remove or replace dependent insights.       |
 
 The current contract is `v4`. It starts fresh. There is no historical migration or requirement to preserve a one-to-one event mapping. Earlier events can remain in PostHog storage but aren't used by current dashboards.
 
@@ -108,6 +110,10 @@ The pre-mortem's named-group retention, NPS, and departure-reason questions rema
 Keep each dashboard focused on questions the team reads. Prefer native trend, funnel, and retention queries; use SQL only where the calculation requires it.
 
 Run a query before saving it, then read back the saved definition and execute the dashboard. Keep descriptions clear about units and limits. Save canonical definitions in the Data Catalog when available; dashboard text isn't a governed metric definition.
+
+Check property types against the capture schema. Enum properties such as `status` use String; token counts, durations, and costs use Numeric. Verify received values as well as query execution: a wrong property type can turn a stored value into a blank breakdown.
+
+For installation checks, show event details from the application's property allowlist. Preserve zero and false values, omit absent properties, and exclude SDK metadata. Keep these development views separate from production dashboards.
 
 When retiring insights, preserve a recoverable definition snapshot outside the repository before removing their tiles. Remove unused saved insights too.
 

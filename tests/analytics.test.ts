@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { build } from 'esbuild';
 import { runProcess } from '../src/providers/process.ts';
-import { createAnalytics, type AnalyticsDelivery } from '../src/server/analytics.ts';
+import {
+  analyticsModel,
+  createAnalytics,
+  type AnalyticsDelivery,
+} from '../src/server/analytics.ts';
+import { analyticsEvent } from '../src/server/analytics-events.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 
 test('usage sharing captures bounded events without recording screens or reviving old consent', async () => {
@@ -129,5 +134,112 @@ test('server analytics ignore obsolete replay links while preserving permitted e
     assert.equal(Object.hasOwn(analytics, 'replaySession'), false);
   } finally {
     await analytics.shutdown();
+  }
+});
+
+test('turn analytics keep the actual agent provider and remove stale model details', async (t) => {
+  for (const [provider, model, expected] of [
+    ['openai', 'gpt-6-luna', { provider: 'openai', model: 'gpt-6-luna' }],
+    ['compatible', 'PRIVATE_MODEL_CANARY', { provider: 'compatible', model: 'custom' }],
+    ['PRIVATE_PROVIDER_CANARY', 'PRIVATE_MODEL_CANARY', { provider: 'other', model: 'custom' }],
+    ['openai', undefined, { provider: 'openai', model: undefined }],
+  ] as const) {
+    await t.test(`${expected.provider}/${expected.model ?? 'unknown'}`, async (t) => {
+      const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        environment: 'development',
+        dataRoot: '.',
+        installationId: randomUUID(),
+      });
+      t.after(() => analytics.shutdown());
+      const owner = 'synthetic-owner';
+      analytics.setUsageData(owner, true);
+      const initial = {
+        source: 'user' as const,
+        channel: 'web' as const,
+        background: false,
+        work_type: 'immediate' as const,
+        owner_requested: true,
+        ...analyticsModel('anthropic', 'claude-sonnet-4-5'),
+      };
+      await analytics.withRun(owner, async () => {
+        analytics.capture(owner, { event: 'turn_started', properties: initial });
+        analytics.capture(owner, {
+          event: 'model_used',
+          properties: {
+            ...analyticsModel(provider, model),
+            purpose: 'agent',
+            outcome: 'succeeded',
+            input_tokens: 20,
+            output_tokens: 5,
+            pricing: 'api',
+          },
+        });
+        analytics.capture(owner, {
+          event: 'model_used',
+          properties: {
+            provider: 'google',
+            model: 'gemini-2.5-flash',
+            purpose: 'memory',
+            outcome: 'succeeded',
+            input_tokens: 10,
+            output_tokens: 2,
+            pricing: 'api',
+          },
+        });
+        analytics.capture(owner, {
+          event: 'turn_completed',
+          properties: { ...initial, outcome: 'succeeded', duration_ms: 10 },
+        });
+      });
+      assert.deepEqual(
+        captured.map(({ event }) => event),
+        ['turn_started', 'model_used', 'model_used', 'turn_completed'],
+      );
+      const [started, used, memory, completed] = captured.map(({ properties }) => properties);
+      assert.equal(started.provider, 'anthropic');
+      assert.equal(started.model, 'claude-sonnet-4-5');
+      assert.equal(memory.provider, 'google');
+      for (const properties of [used, completed]) {
+        assert.equal(properties.provider, expected.provider);
+        assert.equal(properties.model, expected.model);
+      }
+      for (const properties of [started, used, memory, completed]) {
+        assert.equal(properties.run_id, started.run_id);
+        assert.equal(Object.hasOwn(properties, 'model_provider'), false);
+      }
+      assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
+    });
+  }
+});
+
+test('analytics reject the old provider field instead of accepting two contracts', () => {
+  const turn = {
+    source: 'user',
+    channel: 'web',
+    background: false,
+    work_type: 'immediate',
+    owner_requested: true,
+  };
+  for (const [event, properties] of [
+    ['onboarding_completed', {}],
+    ['turn_started', turn],
+    ['turn_completed', { ...turn, outcome: 'succeeded', duration_ms: 10 }],
+  ] as const) {
+    assert.equal(
+      analyticsEvent.safeParse({ event, properties: { ...properties, provider: 'openai' } })
+        .success,
+      true,
+    );
+    for (const provider of [
+      { model_provider: 'openai' },
+      { provider: 'openai', model_provider: 'openai' },
+    ]) {
+      assert.equal(
+        analyticsEvent.safeParse({ event, properties: { ...properties, ...provider } }).success,
+        false,
+      );
+    }
   }
 });

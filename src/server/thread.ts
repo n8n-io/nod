@@ -1286,9 +1286,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ? providerChannel
       : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
     background: Boolean(turn.background),
-    ...(model
-      ? { model_provider: model.provider, ...(model.model ? { model: model.model } : {}) }
-      : {}),
+    ...model,
   };
   let outcome: Extract<AnalyticsEvent, { event: 'turn_completed' }>['properties']['outcome'] =
     'failed';

@@ -212,6 +212,7 @@ describe('account routes', () => {
     onTraces?: (enabled: boolean) => void,
     key?: string,
     onboardingMissing?: () => Promise<'brain' | 'email' | null>,
+    model?: Parameters<typeof createAccountSession>[0]['model'],
   ) {
     let record: AccountSettings = {
       theme: 'system',
@@ -259,6 +260,7 @@ describe('account routes', () => {
       traces: onTraces !== undefined,
       onTraces,
       onboardingMissing,
+      model,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
@@ -370,6 +372,44 @@ describe('account routes', () => {
       assert.equal(declined.json().analytics.enabled, false);
       analytics.capture('local-owner', { event: 'chat_stopped' });
       assert.equal(captured.length, available ? 4 : 0);
+    }
+  });
+
+  test('onboarding analytics report only the selected bounded provider', async (t) => {
+    for (const [provider, expected] of [
+      ['anthropic', 'anthropic'],
+      ['compatible', 'compatible'],
+      ['PRIVATE_PROVIDER_CANARY', 'other'],
+    ]) {
+      const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        environment: 'development',
+        dataRoot: '.',
+        installationId: randomUUID(),
+      });
+      t.after(() => analytics.shutdown());
+      const f = await fixture(analytics, undefined, undefined, undefined, () => ({
+        provider,
+        name: 'PRIVATE_MODEL_CANARY',
+        configured: true,
+      }));
+      t.after(() => f.app.close());
+      const complete = () =>
+        f.app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers: { origin },
+          payload: { usageData: true, onboardingCompleted: true },
+        });
+      assert.equal((await complete()).statusCode, 200);
+      assert.equal((await complete()).statusCode, 200);
+      const events = captured.filter(({ event }) => event === 'onboarding_completed');
+      assert.equal(events.length, 1);
+      assert.equal(events[0].properties.provider, expected);
+      assert.equal(Object.hasOwn(events[0].properties, 'model_provider'), false);
+      assert.equal(Object.hasOwn(events[0].properties, 'model'), false);
+      assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
     }
   });
 
@@ -800,12 +840,37 @@ describe('analytics privacy', () => {
           background: true,
           work_type: 'background',
           owner_requested: false,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
         },
       });
       await opened.prompt('Synthetic', []);
+      analytics.capture('owner-fixture', {
+        event: 'turn_completed',
+        properties: {
+          source: 'event',
+          channel: 'web',
+          background: true,
+          work_type: 'background',
+          owner_requested: false,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
+          outcome: 'succeeded',
+          duration_ms: 1_500,
+        },
+      });
     });
     const used = captured.find((event) => event.event === 'model_used')!;
     const started = captured.find((event) => event.event === 'turn_started')!;
+    const completed = captured.find((event) => event.event === 'turn_completed')!;
+    assert.ok(started);
+    assert.ok(completed);
+    assert.equal(started.properties.provider, 'anthropic');
+    assert.equal(used.properties.provider, 'openai');
+    assert.equal(completed.properties.provider, 'openai');
+    assert.equal(completed.properties.model, 'gpt-6-luna');
+    assert.equal(completed.properties.run_id, started.properties.run_id);
+    assert.ok(captured.every(({ properties }) => !Object.hasOwn(properties, 'model_provider')));
     assert.equal(used.properties.run_id, started.properties.run_id);
     assert.equal(used.properties.work_type, 'background');
     assert.equal(used.properties.owner_requested, false);

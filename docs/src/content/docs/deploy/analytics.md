@@ -79,6 +79,8 @@ Autonomous work outside a turn uses `work_type=background`, `owner_requested=fal
 
 Server events must pass a strict schema. UI events keep only allowed properties and values. Public provider and app names come from supported catalogs; custom connections report `custom`.
 
+Model events use one `provider` property. Onboarding completion and execution starts report the selected provider. Execution completion reports the last agent provider used, when observed. Each `model_used` event identifies the provider for that request, so model switches remain visible.
+
 ### Setup and app interaction
 
 | Event                                             | What it records                                                                                              |

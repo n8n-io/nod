@@ -53,14 +53,14 @@ const turnProperties = z.object({
   background: z.boolean(),
   work_type: z.enum(['immediate', 'scheduled', 'background']),
   owner_requested: z.boolean(),
-  model_provider: analyticsModelProvider.optional(),
+  provider: analyticsModelProvider.optional(),
   model: analyticsModel.optional(),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
   z
     .object({
       event: z.literal('onboarding_completed'),
-      properties: z.object({ model_provider: analyticsModelProvider }).strict().optional(),
+      properties: z.object({ provider: analyticsModelProvider }).strict().optional(),
     })
     .strict(),
   z

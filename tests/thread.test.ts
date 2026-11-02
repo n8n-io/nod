@@ -1772,6 +1772,9 @@ test(
             for (const event of [...starts, ...ends]) {
               assert.equal(event.properties.work_type, work_type);
               assert.equal(event.properties.owner_requested, owner_requested);
+              assert.equal(event.properties.provider, 'compatible');
+              assert.equal(event.properties.model, 'custom');
+              assert.equal(Object.hasOwn(event.properties, 'model_provider'), false);
               assert.notEqual(event.properties.run_id, id);
               assert.equal(JSON.stringify(event).includes(id), false);
             }

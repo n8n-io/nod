@@ -10,7 +10,6 @@ import { apiKeyModelProviders } from '../shared/models.ts';
 
 import {
   analyticsEvent,
-  analyticsModelProvider,
   analyticsTool,
   analyticsVersion,
   type AnalyticsEvent,
@@ -95,12 +94,6 @@ export function analyticsModel(provider: string, model?: string) {
   };
 }
 
-type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model?: string };
-
-function turnModel(provider: TurnModel['model_provider'], model?: string): TurnModel {
-  return { model_provider: provider, ...(model ? { model } : {}) };
-}
-
 const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
 const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', 'code_search']);
 
@@ -143,7 +136,7 @@ export async function createAnalytics(options: {
     owner: string;
     id: string;
     consent: ReturnType<typeof consent>;
-    model?: TurnModel;
+    model?: ReturnType<typeof analyticsModel>;
     work?: { work_type: 'immediate' | 'scheduled' | 'background'; owner_requested: boolean };
   }>();
   const systems = new AsyncLocalStorage<{
@@ -209,13 +202,13 @@ export async function createAnalytics(options: {
           work_type: data.properties.work_type,
           owner_requested: data.properties.owner_requested,
         };
-        if (data.properties.model_provider)
-          run.model ??= turnModel(data.properties.model_provider, data.properties.model);
+        if (data.properties.provider)
+          run.model ??= analyticsModel(data.properties.provider, data.properties.model);
       }
       if (data.event === 'model_used' && data.properties.purpose === 'agent')
-        run.model = turnModel(data.properties.provider, data.properties.model);
+        run.model = analyticsModel(data.properties.provider, data.properties.model);
       if (data.event === 'turn_completed' && run.model) {
-        const { model_provider: _, model: __, ...properties } = data.properties;
+        const { provider: _, model: __, ...properties } = data.properties;
         data.properties = { ...properties, ...run.model };
       }
     }
