@@ -25,8 +25,8 @@ globalThis.cancelAnimationFrame=id=>frames.delete(id);
 const flushFrames=()=>{for(const [id,callback] of frames){frames.delete(id);callback(0)}};
 const sent=[];const captured=[];const configurations=[];let recordingStarts=0;let remoteLoads=0;
 const client={
- init(_key,options){this.options=options;configurations.push(options);options.loaded?.()},
- capture(event,properties={}){const value=this.options.before_send({event,properties});if(value){captured.push(value);this._send_request({data:[value]})}return value},
+ init(key,options){this.token=key;this.options=options;configurations.push(options);options.loaded?.()},
+ capture(event,properties={}){const value=this.options.before_send({event,properties});if(value){captured.push(value);this._send_request({url:this.options.api_host+'/e/',data:[value]})}return value},
  _send_request(request){sent.push(request)},
  _retryQueue:{retriableRequest(request){sent.push(request)},unload(){},resume(){}},
  _requestQueue:{unload(){}},
@@ -43,7 +43,9 @@ const checks=[];const check=(id,pass)=>checks.push({id,pass});
 const configuration={enabled:true,distinctId:'local:synthetic-owner-one',environment:'production'};
 setRequestAccount('synthetic-owner-one');setAnalyticsClient(client);configureAnalytics(configuration,'web');flushFrames();
 check('NR1-config',client.options.disable_session_recording===true&&client.options.disable_external_dependency_loading===true);
-check('NR1-flags',client.options.advanced_disable_flags===true);
+client._send_request({url:client.options.api_host+'/flags/?v=2',method:'POST',data:{token:client.token,distinct_id:configuration.distinctId}});
+client._send_request({url:client.options.api_host+'/array/'+client.token+'/config',method:'GET'});
+check('NR1-flags',sent.length===0);
 capturePageview(window.location.href);
 check('NR4-pageview',sent.length===1&&sent[0].data[0].event==='$pageview'&&sent[0].data[0].properties.$current_url==='https://app.example/settings');
 check('NE1-schema',sent[0].data[0].properties.analytics_schema==='v4');
@@ -74,12 +76,12 @@ const queued=client.options.before_send({event:'settings_viewed',properties:{tab
 configureAnalytics(undefined);
 const before=sent.length;
 captureAnalytics('settings_viewed',{tab:'general'});
-client._send_request({data:[queued]});
+client._send_request({url:client.options.api_host+'/e/',data:[queued]});
 check('NR5-disabled',sent.length===before&&client.options.before_send(snapshot)===null);
 configureAnalytics(configuration,'web');flushFrames();
 staleCapture('settings_viewed',{tab:'memory'});
-client._send_request({data:[queued]});
-client._retryQueue.retriableRequest({data:[queued]});
+client._send_request({url:client.options.api_host+'/e/',data:[queued]});
+client._retryQueue.retriableRequest({url:client.options.api_host+'/e/',data:[queued]});
 check('NR5-stale',sent.length===before);
 captureAnalytics('settings_viewed',{tab:'models'});
 check('NR5-current',sent.length===before+1&&sent.at(-1).data[0].properties.tab==='models');

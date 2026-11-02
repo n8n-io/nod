@@ -10,4 +10,5 @@ export interface AnalyticsConfiguration {
   distinctId: string | null;
   environment: 'development' | 'production';
   appVersion?: string;
+  surveys?: boolean;
 }

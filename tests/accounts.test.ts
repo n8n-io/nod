@@ -222,12 +222,18 @@ describe('account routes', () => {
       traces: false,
     };
     const calls = { writes: 0, started: 0 };
+    const activity = { days: 0, reads: 0, wait: undefined as (() => Promise<void>) | undefined };
     const accounts: AccountStore = {
       async readConsent() {
         return { enabled: record.usageData, revision: '0' };
       },
       async read() {
         return record;
+      },
+      async activeDays(owner, limit) {
+        activity.reads++;
+        await activity.wait?.();
+        return owner === 'local-owner' ? Math.min(activity.days, limit) : 0;
       },
       async update(_owner, input) {
         calls.writes++;
@@ -264,7 +270,7 @@ describe('account routes', () => {
       model,
     }).register(app);
     await app.ready();
-    return { app, calls, record: () => record };
+    return { app, calls, activity, record: () => record };
   }
 
   test('first completion requires setup readiness without rechecking a completed profile', async (t) => {
@@ -316,6 +322,7 @@ describe('account routes', () => {
         installationId,
       });
       const f = await fixture(analytics);
+      f.activity.days = 3;
       t.after(() => f.app.close());
       const request = (payload?: object) =>
         f.app.inject({
@@ -331,6 +338,8 @@ describe('account routes', () => {
         [initial.json().analytics.enabled, initial.json().analytics.distinctId],
         [false, null],
       );
+      assert.notEqual(initial.json().analytics.surveys, true);
+      assert.equal(f.activity.reads, 0);
       await request({ onboardingCompleted: true });
       assert.equal(f.calls.started, 1);
       analytics.capture('local-owner', { event: 'conversation_reset' });
@@ -340,6 +349,8 @@ describe('account routes', () => {
       assert.equal(opted.json().user.name, 'You');
       assert.equal(opted.json().settings.usageData, true);
       assert.equal(opted.json().analytics.enabled, available);
+      assert.equal(opted.json().analytics.surveys, available ? true : undefined);
+      assert.equal(f.activity.reads, available ? 1 : 0);
       assert.equal(f.record().usageData, true);
       await request({ theme: 'dark' });
       analytics.forOwner('local-owner')({ event: 'chat_stopped' });
@@ -369,11 +380,67 @@ describe('account routes', () => {
             ]
           : [],
       );
+      const reads = f.activity.reads;
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
+      assert.notEqual(declined.json().analytics.surveys, true);
+      assert.equal(f.activity.reads, reads);
       analytics.capture('local-owner', { event: 'chat_stopped' });
       assert.equal(captured.length, available ? 4 : 0);
     }
+  });
+
+  test('surveys require three active days and do not outlive an opt-out during eligibility lookup', async (t) => {
+    const analytics = await createAnalytics({
+      provider: { capture() {}, shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    t.after(() => analytics.shutdown());
+    const f = await fixture(analytics);
+    t.after(() => f.app.close());
+    const request = (payload?: object) =>
+      f.app.inject({
+        method: payload ? 'PATCH' : 'GET',
+        url: payload ? '/api/account' : '/api/session',
+        headers: { origin },
+        ...(payload ? { payload } : {}),
+      });
+    assert.equal((await request({ usageData: true })).statusCode, 200);
+    for (const [days, eligible] of [
+      [0, false],
+      [2, false],
+      [3, true],
+      [4, true],
+    ] as const) {
+      f.activity.days = days;
+      const response = await request();
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.json().analytics.surveys, eligible);
+    }
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.activity.wait = async () => {
+      entered();
+      await blocked;
+    };
+    const pending = request().then((response) => response);
+    await started;
+    assert.equal((await request({ usageData: false })).statusCode, 200);
+    release();
+    const response = await pending;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().settings.usageData, false);
+    assert.equal(response.json().analytics.enabled, false);
+    assert.equal(response.json().analytics.distinctId, null);
+    assert.notEqual(response.json().analytics.surveys, true);
   });
 
   test('onboarding analytics report only the selected bounded provider', async (t) => {
@@ -4342,13 +4409,13 @@ test('feedback capture runs once for a fresh owned draft and skips restored or p
 });
 
 describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABASE_URL }, () => {
-  async function fixture(t: import('node:test').TestContext) {
+  async function fixture(t: import('node:test').TestContext, timeZone = 'UTC') {
     const schema = `test_setting_analytics_${randomUUID().replaceAll('-', '')}`;
     const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await root.query(`CREATE SCHEMA ${schema}`);
     const database = new pg.Pool({
       connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
+      options: `-c search_path=${schema} -c timezone=${timeZone}`,
       max: 4,
     });
     t.after(async () => {
@@ -4357,6 +4424,7 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
       await root.end();
     });
     await database.query(`CREATE TABLE turns(id uuid PRIMARY KEY);
+      CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,thread_id uuid,created_at timestamptz NOT NULL);
       CREATE TABLE preferences(owner_id text PRIMARY KEY,notification_rule text NOT NULL DEFAULT '',rules text NOT NULL DEFAULT '',
         time_zone text,quiet_start text NOT NULL DEFAULT '22:00',quiet_end text NOT NULL DEFAULT '08:00',
         quiet_hours_enabled boolean NOT NULL DEFAULT true,locale text,hour_cycle text NOT NULL DEFAULT 'auto',
@@ -4380,6 +4448,50 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
         }));
     return { database, captured, analytics, owner, changes };
   }
+
+  test("survey eligibility counts the owner's distinct UTC message days across conversations", async (t) => {
+    const { createAccountStore } = await import('../src/server/account-store.ts');
+    const f = await fixture(t, 'America/Los_Angeles');
+    const accounts = createAccountStore(f.database);
+    await accounts.initialize();
+    const app = Fastify();
+    t.after(() => app.close());
+    createAccountSession({
+      accounts,
+      analytics: f.analytics,
+      origin: 'http://localhost:4399',
+      localUser: { id: f.owner, name: 'Synthetic Owner', email: null, avatarUrl: null },
+    }).register(app);
+    const session = async () => {
+      const response = await app.inject({ method: 'GET', url: '/api/session' });
+      assert.equal(response.statusCode, 200);
+      return response.json();
+    };
+    const message = (owner: string, role: string, thread: string, at: string) =>
+      f.database.query(
+        'INSERT INTO messages(id,owner_id,role,thread_id,created_at) VALUES ($1,$2,$3,$4,$5)',
+        [randomUUID(), owner, role, thread, at],
+      );
+    const previousThread = randomUUID();
+    const currentThread = randomUUID();
+    for (const day of ['2026-10-28', '2026-10-29', '2026-10-30']) {
+      await message('foreign-survey-owner', 'user', previousThread, `${day}T12:00:00Z`);
+      await message(f.owner, 'assistant', previousThread, `${day}T12:00:00Z`);
+    }
+    assert.equal(await accounts.activeDays(f.owner, 3), 0);
+    assert.equal((await session()).analytics.surveys, false);
+    await message(f.owner, 'user', previousThread, '2026-10-30T23:30:00-01:00');
+    await message(f.owner, 'user', previousThread, '2026-11-01T00:30:00+01:00');
+    assert.equal(await accounts.activeDays(f.owner, 3), 1);
+    await message(f.owner, 'user', currentThread, '2026-11-01T00:30:00Z');
+    assert.equal(await accounts.activeDays(f.owner, 3), 2);
+    assert.equal((await session()).analytics.surveys, false);
+    await message(f.owner, 'user', currentThread, '2026-11-02T00:01:00Z');
+    assert.equal((await session()).analytics.surveys, true);
+    await message(f.owner, 'user', currentThread, '2026-11-03T12:00:00Z');
+    assert.equal(await createAccountStore(f.database).activeDays(f.owner, 3), 3);
+    assert.equal(await accounts.activeDays('owner-without-messages', 3), 0);
+  });
 
   test('preferences and spending expose committed bounded states across actors, owners and consent periods', async (t) => {
     const { createPreferencesStore } = await import('../src/server/preferences.ts');

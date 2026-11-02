@@ -12,11 +12,11 @@ Change the event schema, collectors, privacy checks, and dashboards together.
 ## Collection rules
 
 - **Honor both switches.** New owners share usage by default; existing choices remain. The deployment gate and owner's saved preference must both allow capture.
-- **Use the capture boundary.** Server events use `CaptureAnalytics` from [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts). UI events use `captureAnalytics` from [`src/web/lib/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics.ts). Don't call PostHog directly.
-- **Exclude private content.** No conversations, tool arguments/results, names, contact details, private IDs, URLs/domains, file names/paths, purchase amounts, or raw errors.
+- **Use the capture boundary.** Server events use `CaptureAnalytics` from [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts). UI events use `captureAnalytics`, and surveys use `captureSurvey`, from [`src/web/lib/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics.ts). Don't call PostHog directly.
+- **Exclude private content.** No conversations, tool arguments/results, names, contact details, private IDs, URLs/domains, file names/paths, purchase amounts, or raw errors. Answers the owner chooses to submit in a [survey](#surveys) are the only content exception.
 - **Use bounded facts.** Prefer enums, booleans, counts, and milliseconds. Public model/app names require catalog validation; custom values become `custom`.
 - **Count the observed result.** Save/change events follow committed writes or successful responses. Record clicks and requests separately when those are the actual measurement.
-- **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning.
+- **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning. Survey events retain PostHog's required names and properties.
 
 Use `provider` for the model provider across onboarding, connection, selection, execution, and usage events. Keep the event's meaning: selected provider at setup/start, last observed agent provider at completion, and actual provider for each model request.
 
@@ -62,6 +62,20 @@ Events fired while sharing is off are lost. Don't replay them when sharing turns
 Use `presentation_action` for successful native presentation open/copy, with bounded `kind`, `action`, and message/drawer `location`; missing or invalid fields drop the event. Keep its impression identity shared across message and drawer, and don't emit file artifact views for presentations. Copy follows clipboard success and uses a capture snapshot from before the asynchronous operation.
 
 Committed output delivery, visible presentation, artifact view, and artifact action are different events. `download_requested` means a browser request; `download` follows a successful native save. `open` and `reveal` follow native API success. `reuse_requested` means the app dispatched a reuse request, not that an attachment was accepted. Answer-choice collectors run in the question renderer and after server-accepted selection. They report `multiple`, `option_count`, and `selected_count`, with counts from one to six; missing or invalid required fields drop the whole event. The question ID is only a client-side impression key and never enters the event. Option toggles, custom composer answers, and failed, rejected, or unavailable submissions are not selections. Accepted choices also emit `chat_message_sent(source=answer_choice, input=text)`.
+
+## Surveys
+
+Surveys are defined in PostHog and drawn by Nod's own [`SurveyCard`](https://github.com/n8n-io/nod/blob/main/src/web/components/survey-card.tsx). PostHog's automatic popup is disabled. The bundled survey extension supplies eligibility checks. Create surveys as type `api` and check that their internal targeting flag is active after launch.
+
+- The server enables surveys after the owner has sent messages on at least three different UTC calendar days. The count stays on the Nod installation and isn't sent to PostHog.
+- `watchAnalyticsSurvey` selects the first eligible survey whose questions have UUID IDs and supported types: ratings with scales of 3, 5, 7, or 10, or open text. A survey with an unsupported question isn't shown.
+- The card shows one question at a time. Choosing a score sends it immediately, even if the owner later closes the survey. Typed answers are sent only with **Next** or **Send**. Each `survey sent` includes submitted answers so far and a shared submission ID. `$survey_completed` is true only on the final question.
+- Closing sends `survey dismissed` without answers. After any partial submission, it also includes the submission ID and `$survey_partially_completed`. Unsubmitted text never enters the event.
+- The sanitizer accepts only UUID survey IDs, nonnegative iterations, UUID submission IDs, and the event's allowed completion markers. `survey sent` also carries question IDs and wording, integer scores from 0 to 10, and submitted text capped at 2,000 characters. Survey names, profile updates, and recording metadata are excluded.
+- Eligible sessions can fetch survey definitions with the project token and evaluate survey-only targeting flags with the token and distinct ID. The SDK adds a request timestamp in the URL. General feature-flag and remote-configuration requests remain blocked.
+- Keep survey impressions tied to visible cards. Preserve seen-survey markers when the same installation resumes sharing, while clearing draft answers and requests from the previous sharing period.
+- Survey answers are sent as entered. Don't ask for conversations, credentials, names, account details, or other [excluded content](/deploy/analytics/#what-is-excluded).
+- Keep `data-analytics-private` on the card to exclude it from user-triggered feedback screenshots. Session recording stays disabled.
 
 ## Keep capture bounded
 
@@ -118,9 +132,9 @@ Internal/test exclusions are off for these dashboards. The production sample int
 - **Memory and Vault:** Changes and import batches measure writes. They don't establish inventory, reading, successful sign-in, or usefulness.
 - **Interaction reach:** Distinct installations using reactions, copy/reply, task and browser controls, starter cards, feedback, browser notifications, or voice input. Rows overlap; reactions and feedback reports aren't satisfaction scores.
 
-These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. Audience characteristics such as role, company size, AI experience, and preferred tools are not collected. NPS and stopped-use surveys are outside this instrumentation. Use independent operational checks and separate user research for those questions.
+These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. Audience characteristics such as role, company size, AI experience, and preferred tools are not collected. Survey answers are separate, voluntary observations; they don't make usage events a measure of satisfaction or reasons for leaving. Use independent operational checks and user research for those questions.
 
-The pre-mortem's named-group retention, NPS, and departure-reason questions remain unanswered by this schema. A fresh cohort needs 35 days before its complete W4 window can be read. Model costs exclude independent browser and integration bills, and execution duration isn't time to the first useful answer.
+The pre-mortem's named-group retention, NPS, and departure-reason questions need audience information and a sufficient response sample. Survey collection alone doesn't answer them. A fresh cohort needs 35 days before its complete W4 window can be read. Model costs exclude independent browser and integration bills, and execution duration isn't time to the first useful answer.
 
 Measuring fresh owner return across channels would require a deduplicated server event for each accepted owner input. The existing `chat_message_sent` event covers web and desktop only and cannot establish that cross-channel measure.
 
@@ -145,8 +159,9 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 1. Run focused regression tests, then `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`.
 2. Run `pnpm exec tsx scripts/analytics-fixture.ts`. It selects an available port and prints its URL. Use synthetic data, exercise the changed UI, and inspect `/__fixture__/summary`.
 3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. `captureErrors`, `recordingEvents`, `recordingRequests`, and `remoteConfigurationRequests` must all be zero, with at least one captured event. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
-4. Check opt-out, account changes, stale callbacks, retries, hidden views, and private content. Tests must intercept transport rather than send synthetic production events.
-5. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
+4. To check surveys, prepare with `/__fixture__/prepare?sharing=on&surveys=on` and reload. Submit a score and reason, close another survey with an unsent draft, then turn sharing off and on. Inspect `surveyFlagRequests` for token-and-identity-only bodies and `surveyDefinitionRequests`; neither request type should run before eligibility or while sharing is off. Completed or dismissed surveys should stay hidden for the same installation.
+5. Check opt-out, account changes, stale callbacks, retries, hidden views, and private content. Tests must intercept transport rather than send synthetic production events.
+6. Run `pnpm --dir docs build`. After release, separately verify aggregate PostHog ingestion and the relevant saved insights.
 
 Fixture results prove controlled transport behavior, not live delivery or production retention. Read every property boundary as well as testing it.
 

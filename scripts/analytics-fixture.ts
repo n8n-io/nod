@@ -17,6 +17,35 @@ let captureRequests = 0;
 let captureErrors = 0;
 let recordingRequests = 0;
 let remoteConfigurationRequests = 0;
+const surveyFlagRequests: { query: string; body: unknown }[] = [];
+let surveyDefinitionRequests = 0;
+let surveysEnabled = false;
+const survey = {
+  id: '0190c1a2-0000-7000-8000-000000000001',
+  name: 'Synthetic Nod survey',
+  type: 'api',
+  start_date: '2026-01-01T00:00:00Z',
+  end_date: null,
+  current_iteration: null,
+  internal_targeting_flag_key: 'synthetic-survey-target',
+  enable_partial_responses: true,
+  questions: [
+    {
+      id: '0190c1a2-0000-7000-8000-000000000002',
+      type: 'rating',
+      scale: 10,
+      question: 'How likely are you to recommend Nod to a friend or colleague?',
+      lowerBoundLabel: 'Not at all likely',
+      upperBoundLabel: 'Extremely likely',
+    },
+    {
+      id: '0190c1a2-0000-7000-8000-000000000003',
+      type: 'open',
+      question: "What's the main reason for your score?",
+      optional: true,
+    },
+  ],
+};
 const privateText = 'SYNTHETIC_PRIVATE_CANARY_89271';
 function decode(value: unknown): unknown {
   if (typeof value === 'string' && value.charCodeAt(0) === 31 && value.charCodeAt(1) === 139)
@@ -84,6 +113,7 @@ const session = () => ({
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
     environment: 'development',
+    surveys: surveysEnabled,
   },
 });
 const preferences = {
@@ -143,6 +173,39 @@ const server = createServer(async (request, response) => {
     response.end(JSON.stringify(value));
   };
   if (
+    url.pathname === '/flags/' &&
+    url.searchParams.get('only_evaluate_survey_feature_flags') === 'true'
+  ) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    let body = Buffer.concat(chunks);
+    let decoded: unknown = null;
+    try {
+      if (
+        (body[0] === 0x1f && body[1] === 0x8b) ||
+        url.searchParams.get('compression') === 'gzip' ||
+        request.headers['content-encoding'] === 'gzip'
+      )
+        body = gunzipSync(body);
+      const data = new URLSearchParams(body.toString()).get('data');
+      decoded = JSON.parse(data ? Buffer.from(data, 'base64').toString() : body.toString());
+    } catch {
+      captureErrors++;
+    }
+    surveyFlagRequests.push({ query: url.search, body: decoded });
+    json({
+      featureFlags: { 'synthetic-survey-target': true },
+      featureFlagPayloads: {},
+      surveys: surveysEnabled,
+    });
+    return;
+  }
+  if (url.pathname === '/api/surveys/') {
+    surveyDefinitionRequests++;
+    json({ surveys: surveysEnabled ? [survey] : [] });
+    return;
+  }
+  if (
     url.pathname.startsWith('/array/') ||
     url.pathname === '/flags/' ||
     url.pathname === '/decide/'
@@ -154,6 +217,7 @@ const server = createServer(async (request, response) => {
       featureFlagPayloads: {},
       sessionRecording: { endpoint: '/s/', sampleRate: 1, minimumDurationMilliseconds: 0 },
       capturePerformance: false,
+      surveys: surveysEnabled,
     });
     return;
   }
@@ -202,6 +266,8 @@ const server = createServer(async (request, response) => {
       ).length,
       recordingRequests,
       remoteConfigurationRequests,
+      surveyFlagRequests,
+      surveyDefinitionRequests,
       privateDataLeaked: serialized.includes(privateText),
       generatedContentLeaked: hasGeneratedNode(decoded),
       ...(url.searchParams.get('compact') === '1' ? {} : { events: decoded }),
@@ -218,6 +284,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/__fixture__/prepare') {
     completed = true;
     usageData = url.searchParams.get('sharing') === 'on';
+    surveysEnabled = url.searchParams.get('surveys') === 'on';
     messages.splice(
       0,
       messages.length,

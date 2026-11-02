@@ -1363,6 +1363,9 @@ test('scenario API calls use authenticated local transport and refuse outside ta
         assert.equal(owner, 'synthetic-owner');
         return { enabled: account.usageData, revision: '0' };
       },
+      async activeDays() {
+        return 0;
+      },
       async update(owner, input) {
         assert.equal(owner, 'synthetic-owner');
         writes++;

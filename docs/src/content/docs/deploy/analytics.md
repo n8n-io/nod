@@ -9,7 +9,7 @@ Nod shares bounded product events so the team can understand usage, reliability,
 
 Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, credentials, and free-form input are excluded from analytics events. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
+Messages, generated content, connected-app results, and credentials are excluded from analytics events. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the only content exception. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
 ## Turn usage sharing on or off
 
@@ -60,6 +60,8 @@ Packaged release builds with a plain `x.y.z` version report `production`. Local 
 - Vault values and login inventories, payment amounts and currencies, card details, codes, keys, and order details.
 - Raw errors, console output, and network headers or bodies.
 - Owner-configured model names and endpoints. These report bounded categories such as `compatible` and `custom`.
+
+Survey text is sent as entered, so leave out the private information listed above.
 
 Task categories describe the inferred purpose of a request. They don't establish completed goals, usefulness, satisfaction, or frustration.
 
@@ -220,6 +222,20 @@ Presentation open means expanding the native presentation into its drawer; copy 
 
 Answer-choice views count once per question in a sharing period, while the choices are in the viewport and the app is visible. Selections follow a server-accepted answer. Option toggles, custom composer answers, and failed, rejected, or unavailable submissions are not selections. Accepted choices also emit `chat_message_sent` with `source=answer_choice` and `input=text`. Question and option IDs, labels, selected text, and response content are excluded.
 
+### Surveys
+
+While **Share usage data** is on, the Nod team can show a short survey, such as how likely you are to recommend Nod. Surveys become eligible after you've sent Nod messages on at least three different UTC calendar days. That count stays on your Nod installation and isn't sent to PostHog. Questions and targeting are set in PostHog.
+
+The survey asks one question at a time. Choosing a score, such as a recommendation score from 0 to 10, sends it immediately, even if you close the survey afterward. Typed text is sent only when you select **Next** or **Send**. Closing never sends unsubmitted text or withdraws answers already sent. You can close a survey without answering.
+
+| Event              | When                                              | Properties                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `survey shown`     | A survey appears                                  | `$survey_id`, `$survey_iteration`                                                                                                                                                                                         |
+| `survey sent`      | You choose a score or select **Next** or **Send** | `$survey_id`, `$survey_iteration`, `$survey_submission_id`, `$survey_completed`, `$survey_questions` (question IDs and wording), and submitted answers so far: integer scores from 0 to 10 or text up to 2,000 characters |
+| `survey dismissed` | You close a survey                                | `$survey_id`, `$survey_iteration`; after a partial submission, also `$survey_submission_id` and `$survey_partially_completed`. No answers or unsubmitted text                                                             |
+
+These answers go to the same EU PostHog project as other usage events. Text is sent as entered, so don't include private conversations, credentials, or account details. Turning sharing off hides the card and stops further survey events.
+
 ### Read first-attempt outcomes
 
 The first-attempt table starts with each installation's first observed `v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
@@ -251,7 +267,7 @@ Mean, median, and p90 use samples with at least one priced request and can repre
 
 ## Measurement gaps
 
-NPS, reasons for leaving, role, company size, AI experience, and preferred AI tools are not collected. Usage events cannot establish satisfaction, useful task completion, trust, or why someone never returns. These remain questions for separate research.
+Survey answers can provide recommendation scores and reasons from respondents. They don't establish satisfaction among everyone who uses Nod or explain why someone never returns. Role, company size, AI experience, and preferred AI tools are not collected. Named-group NPS and retention need audience information and sufficient responses. Usage events cannot establish useful task completion or trust.
 
 ## Collection safeguards
 
@@ -259,7 +275,7 @@ Nod does not collect session recordings, screen captures, DOM snapshots, or reco
 
 Page URLs use `https://app.example` plus a fixed app route, such as `/settings`. This placeholder preserves navigation counts without sharing your host, query strings, fragments, or private IDs. Nod doesn't contact that address.
 
-Autocapture, console and network capture, automatic exceptions, feature-flag events, and remote survey popups are disabled.
+Autocapture, console and network capture, automatic exceptions, feature-flag events, and PostHog's automatic survey popups are disabled. Nod draws survey cards itself and requests only the feature flags needed for survey targeting.
 
 Capture failures don't interrupt Nod. PostHog configuration and model keys never enter the workspace.
 

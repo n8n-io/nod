@@ -5,6 +5,8 @@ import type { AccountStore } from './account-store.ts';
 import { analyticsModel, snapshotAnalytics, type Analytics } from './analytics.ts';
 import { captureSettingChanges } from './analytics-settings.ts';
 
+const surveyActiveDays = 3;
+
 const accountUpdate = z
   .object({
     theme: z.enum(['light', 'dark', 'system']).optional(),
@@ -108,22 +110,32 @@ export function createAccountSession(options: {
     });
   }
   async function response(): Promise<SessionResponse> {
-    const account = await readAccount();
-    return {
-      user,
-      settings: {
-        theme: account.theme,
-        onboardingCompleted: account.onboardingCompleted,
-        usageData: account.usageData,
-        traces: account.traces,
-      },
-      capabilities: {
-        developer: Boolean(options.developerIds?.has(owner)),
-        traces: options.traces === true,
-        updates: options.updates === true,
-      },
-      ...(options.analytics ? { analytics: options.analytics.configuration(owner) } : {}),
-    };
+    for (;;) {
+      const version = accountVersion;
+      const account = await readAccount();
+      const analytics = options.analytics?.configuration(owner);
+      const surveys =
+        analytics?.enabled &&
+        (await options.accounts.activeDays(owner, surveyActiveDays)) >= surveyActiveDays;
+      if (accountVersion !== version || pending) continue;
+      return {
+        user,
+        settings: {
+          theme: account.theme,
+          onboardingCompleted: account.onboardingCompleted,
+          usageData: account.usageData,
+          traces: account.traces,
+        },
+        capabilities: {
+          developer: Boolean(options.developerIds?.has(owner)),
+          traces: options.traces === true,
+          updates: options.updates === true,
+        },
+        ...(analytics && {
+          analytics: analytics.enabled ? { ...analytics, surveys } : analytics,
+        }),
+      };
+    }
   }
   function guard(request: FastifyRequest, reply: FastifyReply) {
     if (request.headers.origin !== origin || request.headers['sec-fetch-site'] === 'cross-site') {
