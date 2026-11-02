@@ -1135,7 +1135,12 @@ export async function createDiscoveredConnections(
     options.refresh?.();
     return { ok: true };
   }
-  async function reconnect(service: string, templateId?: string, returnTo?: ReturnTarget) {
+  async function reconnect(
+    service: string,
+    templateId?: string,
+    returnTo?: ReturnTarget,
+    newAccount = false,
+  ) {
     const rows = await pool.query<AccountRow>(
       'SELECT * FROM discovered_connections WHERE owner_id=$1 AND service=$2 AND ($3::uuid IS NULL OR id=$3) ORDER BY created_at LIMIT 1',
       [owner, service, templateId ? z.uuid().parse(templateId) : null],
@@ -1146,7 +1151,7 @@ export async function createDiscoveredConnections(
       {
         service,
         name: row.name,
-        ...(row.reconnect_required ? { connectionId: row.id } : {}),
+        ...(row.reconnect_required && !newAccount ? { connectionId: row.id } : {}),
         paths: row.paths.map((path) => {
           if (path.kind === 'cli') {
             if (!path.source || !path.env) throw error('Ask Nod to set up this CLI again.', 409);
@@ -1412,6 +1417,41 @@ export async function createDiscoveredConnections(
     return rows.rows.flatMap((row) => row.paths.map(connection));
   }
   function registerRoutes(app: FastifyInstance) {
+    app.post('/api/apps/mcp', async (request, reply) => {
+      const parsed = z
+        .object({
+          name: proposalSchema.shape.name,
+          endpoint: z.url().max(2048),
+          auth: z.enum(['oauth', 'bearer', 'x-api-key']),
+          clientIdRequired: z.boolean().optional(),
+        })
+        .strict()
+        .refine((value) => !value.clientIdRequired || value.auth === 'oauth')
+        .safeParse(request.body);
+      if (!parsed.success) throw error('Enter a name, server URL and authentication method.');
+      const { name, auth } = parsed.data;
+      const endpoint = await options.transport.validateEndpoint(parsed.data.endpoint).catch(() => {
+        throw error('Use a public HTTPS server address without a query or fragment.');
+      });
+      const service = `mcp-${createHash('sha256').update(endpoint).digest('hex').slice(0, 24)}`;
+      const result = await create(
+        {
+          name,
+          service,
+          paths: [
+            {
+              kind: 'mcp',
+              endpoint,
+              auth,
+              ...(parsed.data.clientIdRequired ? { clientIdRequired: true } : {}),
+            },
+          ],
+        },
+        undefined,
+        'apps',
+      );
+      return reply.header('Cache-Control', 'no-store').send(result);
+    });
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
       const { row, grant } = await transaction(async (client) => {
         const row = await proposal(request.params.id, client, true);

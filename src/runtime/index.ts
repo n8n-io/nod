@@ -1,10 +1,14 @@
-import { presentationText, type Presentation } from '../shared/presentation.ts';
+import {
+  presentationInputSchema,
+  presentationText,
+  type Presentation,
+} from '../shared/presentation.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
-import { Type } from '@sinclair/typebox';
+import { Kind, Type } from '@sinclair/typebox';
 import type {
   Agent,
   AgentEvent,
@@ -33,9 +37,9 @@ import {
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
 import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
-import type { Turn } from './turn.ts';
+import type { ReplyDelivery, Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
-import type { MemoryBrief } from '../ports/memory-recall.ts';
+import type { MemoryBrief, MemoryReplyReview, MemoryReplyVisual } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
@@ -154,7 +158,8 @@ export function createAgentRuntime(dependencies: {
     context: RuntimeContext,
     text: string,
     execution: ExecutionScope & { onEvent(event: AgentEvent): void },
-  ): Promise<string>;
+    visual?: MemoryReplyVisual,
+  ): Promise<MemoryReplyReview>;
   withExecution?<T>(
     execution: ExecutionScope & { onEvent(event: AgentEvent): void },
     work: () => T,
@@ -198,6 +203,7 @@ export function createAgentRuntime(dependencies: {
     let waitingForUser = false;
     let waitingFor: RuntimeResult['waitingFor'];
     let waitingMessage: string | undefined;
+    let answerChoices: RuntimeResult['answerChoices'];
     const sites = new Map<string, string>();
     let stopped = false;
     let modelError: string | undefined;
@@ -206,6 +212,7 @@ export function createAgentRuntime(dependencies: {
     let lastReply = '';
     let lastPresentation = '';
     let checkInSpent = context.checkIn?.spentUsd ?? 0;
+    let checkInPlan = context.checkIn?.planUsd ?? 0;
     let checkInBlocked = false;
     let checkInStrikes = 0;
     let checkInStopped = false;
@@ -220,7 +227,15 @@ export function createAgentRuntime(dependencies: {
             : undefined;
       if (usage) {
         checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
+        if (usage.costUsd == null) checkInPlan += usage.estimateUsd ?? 0;
       }
+    };
+    const checkInUsed = () => {
+      const plan = Math.min(checkInPlan, checkInSpent);
+      if (plan < 0.005) return dollars(checkInSpent);
+      return checkInSpent - plan < 0.005
+        ? `${dollars(checkInSpent)} of ChatGPT plan usage at API prices`
+        : `${dollars(checkInSpent)} (${dollars(plan)} of it ChatGPT plan usage at API prices)`;
     };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
@@ -233,6 +248,8 @@ export function createAgentRuntime(dependencies: {
     let answered = false;
     let lastNote = '';
     let reported = false;
+    let finalDelivered = false;
+    let requestRevision = 0;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -258,11 +275,21 @@ export function createAgentRuntime(dependencies: {
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
-    const reviewedReplies = new Map<string, string>();
+    const reviewedReplies = new Map<string, MemoryReplyReview>();
     let outsideEvidence = false;
-    const reviewReply = async (text: string) => {
+    let evidenceRevision = 0;
+    const rememberRead = (read: NonNullable<MemoryBrief['reads']>[number]) => {
+      if (!context.memoryBrief) return;
+      const reads = (context.memoryBrief.reads ??= []);
+      if (JSON.stringify([...reads, read]).length <= 80_000) reads.push(read);
+      else context.memoryBrief.readsTruncated = true;
+      evidenceRevision++;
+      reviewedReplies.clear();
+    };
+    const reviewReply = async (text: string, visual?: MemoryReplyVisual) => {
       const draft = text.trim();
-      if (reviewedReplies.has(draft)) return reviewedReplies.get(draft)!;
+      const key = JSON.stringify([draft, visual, evidenceRevision]);
+      if (reviewedReplies.has(key)) return reviewedReplies.get(key)!;
       if (
         !draft ||
         outsideEvidence ||
@@ -272,47 +299,97 @@ export function createAgentRuntime(dependencies: {
         overBudget()
       )
         return draft;
-      if (!reviewedReplies.has(draft)) {
-        let checked = draft;
+      if (!reviewedReplies.has(key)) {
+        let checked: MemoryReplyReview = draft;
         try {
           checked = await untilAborted(
-            dependencies.reviewMemoryReply(context, draft, { ...execution, onEvent: countUsage }),
+            dependencies.reviewMemoryReply(
+              context,
+              draft,
+              { ...execution, onEvent: countUsage },
+              visual,
+            ),
             signal,
           );
         } catch {
           signal.throwIfAborted();
         }
         signal.throwIfAborted();
-        reviewedReplies.set(draft, checked);
+        reviewedReplies.set(key, checked);
       }
-      return reviewedReplies.get(draft)!;
+      return reviewedReplies.get(key)!;
     };
     const deliverReply = async (
       text: string,
       id?: string,
       replyToMessageId?: string,
       presentation?: Presentation,
-    ) => {
+    ): Promise<ReplyDelivery> => {
       signal.throwIfAborted();
+      const requestedPresentation = Boolean(presentation);
       const draft = presentation
-        ? `${text.trim()}\n\n${presentationText(presentation)}`
+        ? `${text.trim()}\n\n${presentationText(presentation)}`.trim()
         : text.trim();
-      const checked = await reviewReply(draft);
-      if (checked !== draft) presentation = undefined;
-      const trimmed = presentation ? text.trim() : checked;
+      const reviewVisual = presentation ? { text: text.trim(), presentation } : undefined;
+      const reviewRevision = evidenceRevision;
+      const checked = await reviewReply(draft, reviewVisual);
+      const correctedVisual =
+        typeof checked !== 'string' && checked.presentationSupported !== true
+          ? checked.correctedVisual
+          : undefined;
+      if (correctedVisual) presentation = correctedVisual.presentation;
+      else if (
+        typeof checked === 'string' ? checked !== draft : checked.presentationSupported !== true
+      )
+        presentation = undefined;
+      const trimmed = correctedVisual
+        ? correctedVisual.text.trim()
+        : typeof checked === 'string'
+          ? presentation
+            ? text.trim()
+            : checked
+          : checked.text.trim();
       const visual = presentation ? JSON.stringify(presentation) : '';
-      if (!trimmed || (trimmed === lastReply && (!visual || visual === lastPresentation)))
-        return false;
+      const outcome: ReplyDelivery['presentation'] = correctedVisual
+        ? 'corrected'
+        : presentation
+          ? 'original'
+          : requestedPresentation
+            ? 'omitted'
+            : 'none';
+      if (
+        (!trimmed && !visual) ||
+        (trimmed === lastReply && (!visual || visual === lastPresentation))
+      )
+        return { delivered: false, presentation: outcome };
       await context.reply(trimmed, id, replyToMessageId, presentation);
+      if (!stopped && !signal.aborted && context.memoryBrief) {
+        const unchanged = evidenceRevision === reviewRevision;
+        const visible = presentation ? presentationText(presentation) : '';
+        const redact = dependencies.redactError ?? String;
+        const redactedText = redact(trimmed);
+        const redactedVisual = redact(visible);
+        const text = redactedText.length <= 20_000 ? redactedText : '';
+        const shown = redactedVisual.length <= 20_000 - text.length ? redactedVisual : '';
+        context.memoryBrief.lastDelivery = {
+          text,
+          ...(presentation ? { presentation: { type: presentation.type, text: shown } } : {}),
+          ...(text !== trimmed || shown !== visible ? { truncated: true } : {}),
+        };
+        evidenceRevision++;
+        reviewedReplies.clear();
+        if (unchanged)
+          reviewedReplies.set(JSON.stringify([draft, reviewVisual, evidenceRevision]), checked);
+      }
       lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
       replyOwed = false;
-      return true;
+      return { delivered: true, presentation: outcome };
     };
     const reply = deliverReply;
     let handoffBrowserId: string | undefined;
-    const pause: Turn['pause'] = async (reason, message) => {
+    const pause: Turn['pause'] = async (reason, message, choices) => {
       if (browsed) {
         const hold = computer.hold(browserId, true);
         if (reason === 'browser') await hold;
@@ -321,6 +398,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason === 'browser' ? 'question' : reason;
       waitingMessage = message;
+      answerChoices = reason === 'question' ? choices : undefined;
       if (reason === 'browser') handoffBrowserId = browserId;
       stopped = true;
       abortSession();
@@ -373,6 +451,7 @@ export function createAgentRuntime(dependencies: {
     const assertActive = () => {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
+      if (finalDelivered) throw new Error('The final answer is already delivered.');
     };
     const servers = new Map(
       mcpNamespaces(context.mcpServers ?? []).map(({ server, namespace }) => [
@@ -403,6 +482,7 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
         assertActive();
+        const revision = requestRevision;
         if (context.proactivity) {
           const safe =
             name === 'read_source' ||
@@ -431,7 +511,7 @@ export function createAgentRuntime(dependencies: {
         ) {
           if (source === execution) checkInBlocked = true;
           throw new Error(
-            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to state the cost and what continuing would do, then ask whether to keep going. Follow the shared reporting rules for any result you include.`,
+            `This work has used ${checkInUsed()} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in.${checkInPlan >= 0.005 ? ' Plan usage costs the owner nothing extra.' : ''} Do no more work now. Call ask_user to state the cost and what continuing would do, then ask whether to keep going. Follow the shared reporting rules for any result you include.`,
           );
         }
         const id = randomUUID();
@@ -480,6 +560,18 @@ export function createAgentRuntime(dependencies: {
           const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
           if (
+            name === 'send_message' &&
+            (params as { intent?: unknown } | null)?.intent === 'final'
+          ) {
+            const delivery = output as ReplyDelivery;
+            if (
+              delivery.delivered &&
+              delivery.presentation !== 'omitted' &&
+              revision === requestRevision
+            )
+              finalDelivered = true;
+          }
+          if (
             !factlessTools.has(name) &&
             !(
               name === 'manage_personal_context' &&
@@ -511,6 +603,48 @@ export function createAgentRuntime(dependencies: {
                 ? context.timeZone
                 : undefined,
             );
+          if (
+            context.memoryBrief &&
+            !stopped &&
+            output !== confirmationNotice &&
+            !('isError' in result && result.isError === true)
+          ) {
+            const personal =
+              name === 'manage_personal_context'
+                ? (params as { action: string; args: Record<string, unknown> })
+                : undefined;
+            if (
+              personal &&
+              ['memory_read', 'memory_find', 'history_search'].includes(personal.action)
+            ) {
+              rememberRead({ action: personal.action, args: personal.args, result: output });
+            } else if (
+              source.runId === execution.runId &&
+              ((personal &&
+                [
+                  'usage_get',
+                  'models_get',
+                  'notification_preferences_get',
+                  'schedule_list',
+                  'prepared_list',
+                ].includes(personal.action)) ||
+                (name === 'apps' && (params as { action?: unknown })?.action !== 'SEARCH_TOOLS') ||
+                name.startsWith('mcp__') ||
+                ['read', 'web_search', 'fetch_content', 'get_search_content'].includes(name))
+            ) {
+              const text = result.content
+                .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                .join('\n');
+              if (text) {
+                const action = personal?.action ?? name;
+                rememberRead({
+                  action,
+                  args: {},
+                  result: untrustedBlock(action, (dependencies.redactError ?? String)(text)),
+                });
+              }
+            }
+          }
           end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
@@ -556,7 +690,7 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         if (overBudget())
           throw new Error(
-            `This work has used ${dollars(checkInSpent)}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+            `This work has used ${checkInUsed()}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
           );
       }
       const screenSources = () =>
@@ -680,6 +814,14 @@ export function createAgentRuntime(dependencies: {
                     async () => {
                       if (!deferred && !Value.Check(parameters, params)) {
                         const error = Value.Errors(parameters, params).First();
+                        if (error?.schema[Kind] === 'NodPresentation') {
+                          const parsed = presentationInputSchema.safeParse(error.value);
+                          const issue = !parsed.success ? parsed.error.issues[0] : undefined;
+                          if (issue)
+                            throw new Error(
+                              `Invalid ${name} arguments at ${[error.path, ...issue.path].join('/')}: ${issue.message}. Correct the presentation and call ${name} again; read visual-replies for its current schema.`,
+                            );
+                        }
                         throw new Error(
                           `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
                         );
@@ -713,16 +855,8 @@ export function createAgentRuntime(dependencies: {
             signal.throwIfAborted();
             if (action === 'memory_forget' || action === 'memory_control') {
               context.memoryBrief = undefined;
+              evidenceRevision++;
               reviewedReplies.clear();
-            }
-            if (
-              context.memoryBrief &&
-              ['memory_read', 'memory_find', 'history_search'].includes(action)
-            ) {
-              const read = { action, args, result };
-              const reads = (context.memoryBrief.reads ??= []);
-              if (JSON.stringify([...reads, read]).length <= 80_000) reads.push(read);
-              else context.memoryBrief.readsTruncated = true;
             }
             return result;
           },
@@ -735,7 +869,7 @@ export function createAgentRuntime(dependencies: {
           replyToMessageId?: string,
           presentation?: Presentation,
         ) => {
-          await reply(text, id, replyToMessageId, presentation);
+          return reply(text, id, replyToMessageId, presentation);
         },
         pause,
         confirm,
@@ -942,7 +1076,7 @@ export function createAgentRuntime(dependencies: {
         timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => {
-          if (stopped) return true;
+          if (stopped || finalDelivered) return true;
           if (checkInBlocked) checkInStrikes++;
           checkInBlocked = false;
           return (checkInStopped = checkInStrikes >= 2);
@@ -954,9 +1088,12 @@ export function createAgentRuntime(dependencies: {
             const messages = [];
             const incoming = await takeMessages();
             if (incoming.length) {
+              requestRevision++;
+              finalDelivered = false;
               context.memoryBrief = undefined;
+              evidenceRevision++;
               reviewedReplies.clear();
-              checkInSpent = checkInStrikes = 0;
+              checkInSpent = checkInPlan = checkInStrikes = 0;
               replyOwed = true;
             }
             for (const message of incoming) {
@@ -991,6 +1128,11 @@ export function createAgentRuntime(dependencies: {
           }),
         onEvent: (event) => {
           countUsage(event);
+          if (
+            finalDelivered &&
+            ['message_start', 'text_delta', 'message_end', 'final'].includes(event.type)
+          )
+            return;
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
@@ -1098,7 +1240,10 @@ export function createAgentRuntime(dependencies: {
       }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
-      if (context.taskContext && taskResult) taskResult = await reviewReply(taskResult);
+      if (context.taskContext && taskResult) {
+        const checked = await reviewReply(taskResult);
+        taskResult = typeof checked === 'string' ? checked : checked.text;
+      }
       const result =
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult
@@ -1112,6 +1257,7 @@ export function createAgentRuntime(dependencies: {
         ...(spokenReply ? { spokenReply } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
+        ...(answerChoices ? { answerChoices } : {}),
         ...(handoffBrowserId ? { handoffBrowserId } : {}),
       };
     } finally {

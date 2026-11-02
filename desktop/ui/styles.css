@@ -76,6 +76,13 @@ button:focus-visible {
   text-underline-offset: 4px;
 }
 
+.setup-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 .server-setup {
   min-height: 100vh;
   display: grid;

@@ -1,0 +1,70 @@
+.tooltip-surface {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--black);
+  color: var(--white);
+  box-shadow: var(--shadow-menu);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: start;
+  overflow-wrap: anywhere;
+  -webkit-app-region: no-drag;
+}
+.tooltip {
+  position: fixed;
+  z-index: 400;
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  animation: tooltip-reveal 100ms ease;
+}
+.tooltip-label {
+  min-width: 0;
+  white-space: pre-line;
+}
+.tooltip-surface kbd {
+  flex: 0 0 auto;
+  font: inherit;
+  white-space: nowrap;
+  opacity: 0.65;
+}
+@keyframes tooltip-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tooltip {
+    animation: none;
+  }
+}
+
+:root[data-theme='dark'] .tooltip-surface {
+  background: var(--surface-overlay);
+}
+.tooltip-disabled-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: middle;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+.tooltip-disabled-trigger > :disabled {
+  pointer-events: none;
+}
+
+.tooltip-disabled-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-full);
+}

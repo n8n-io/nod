@@ -27,6 +27,8 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `event`    | A source batch, observer task, or reaction to a Nod message                                | The observer, the task, or a new reaction session |
 | `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                            |
 
+A recurring schedule skips a firing while an earlier run of it is still queued, running or waiting on you, and a schedule run can't create schedules.
+
 Creating a turn also queues a `thread-drain` job in the same transaction. Unless the turn waits for a start time, such as a task held until quiet hours end, the worker is woken as soon as that transaction commits instead of waiting for its next poll.
 
 ## How the worker starts turns
@@ -145,11 +147,11 @@ Turns and tool calls are never retried. Pi retries a model request that fails wi
 
 When the monthly spending limit is reached, new turns end `failed` before they call the model, and work you started posts one limit notice.
 
-Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Usage**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and so do the task actions that report, update, finish, list or stop saved work; `task start` and `task reply` do not, in any session. Helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. An observer turn that ends past the check-in without asking waits on that notice as its question instead, so no new batch starts until you reply. Your next message to that session starts a new count.
+Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, changed by asking Nod in chat), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and so do the task actions that report, update, finish, list or stop saved work; `task start` and `task reply` do not, in any session. Helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. An observer turn that ends past the check-in without asking waits on that notice as its question instead, so no new batch starts until you reply. Your next message to that session starts a new count.
 
 ## Reset
 
-Reset is a development tool. In a local development build, **Clear messages** archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
+Reset is available through the development API at `POST /api/conversation/reset`. It archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
 
 | Archived                                             | Deleted                                                    | Kept                                                          |
 | ---------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |

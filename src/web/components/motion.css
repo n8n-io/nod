@@ -66,6 +66,67 @@
     transform: translate(-0.5px, 0.5px) scale(1.04);
   }
 }
+.brand-glyph svg > circle:last-child {
+  transform-box: view-box;
+  transform-origin: 25px 6px;
+}
+.sidebar .brand-glyph {
+  transition: transform 240ms var(--ease-enter);
+}
+.sidebar .brand-glyph svg {
+  transform-box: view-box;
+  transform-origin: center;
+}
+@media (hover: hover) {
+  .sidebar :is(.brand, .mobile-chat-link):hover .brand-glyph {
+    transform: scale(1.04);
+  }
+  .sidebar :is(.brand, .mobile-chat-link):hover .brand-glyph svg {
+    animation: ob-brand-nod 1.8s ease-in-out infinite;
+  }
+  :is(.brand, .mobile-chat-link):hover .brand-glyph svg > circle:last-child {
+    animation: ob-brand-dot-hop 600ms var(--ease-enter);
+  }
+}
+.sidebar :is(.brand, .mobile-chat-link):focus-visible .brand-glyph svg {
+  animation: ob-brand-nod 1.8s ease-in-out infinite;
+}
+:is(.brand, .mobile-chat-link):focus-visible .brand-glyph svg > circle:last-child {
+  animation: ob-brand-dot-hop 600ms var(--ease-enter);
+}
+.sidebar :is(.brand, .mobile-chat-link):active .brand-glyph {
+  transform: scale(0.96);
+  transition-duration: 100ms;
+}
+.sidebar :is(.brand, .mobile-chat-link):active .brand-glyph svg {
+  animation: none;
+}
+@keyframes ob-brand-nod {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  28% {
+    transform: translateY(2px) rotate(-7deg) scale(1.03, 0.94);
+  }
+  55% {
+    transform: rotate(4deg) scale(0.98, 1.04);
+  }
+  78% {
+    transform: translateY(0) rotate(-1deg) scale(1);
+  }
+}
+@keyframes ob-brand-dot-hop {
+  30% {
+    transform: translate(1px, -1px) scale(1.2);
+  }
+  55% {
+    transform: translate(0.5px, 1px) scale(0.95, 1.05);
+  }
+  75% {
+    transform: translate(0.25px, -0.5px) scale(1.04);
+  }
+}
 .ob-glyph-bounce > circle,
 .ob-glyph-bounce > .ob-glyph-orbit {
   transform-box: view-box;
@@ -109,7 +170,9 @@
 @media (prefers-reduced-motion: reduce) {
   .ob-glyph *,
   .ob-glyph *::before,
-  .ob-glyph *::after {
+  .ob-glyph *::after,
+  .sidebar .brand-glyph,
+  .sidebar .brand-glyph * {
     animation: none !important;
     transition: none !important;
   }

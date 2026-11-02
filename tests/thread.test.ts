@@ -1,4 +1,9 @@
 import type { Presentation } from '../src/shared/presentation.ts';
+import {
+  choiceAnswerText,
+  questionWithChoices,
+  type AnswerChoices,
+} from '../src/shared/answer-choices.ts';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -507,12 +512,18 @@ test(
           await context.reply('Synthetic long paragraph. '.repeat(200));
           return { status: 'succeeded' };
         }
-        if (context.prompt === 'presentation-source-fixture') {
-          await context.reply('The two-step synthetic process.', undefined, undefined, {
+        if (['presentation-source-fixture', 'presentation-text-fixture'].includes(context.prompt)) {
+          const text =
+            context.prompt === 'presentation-text-fixture'
+              ? 'The synthetic review is still pending.'
+              : '';
+          await context.reply(text, undefined, undefined, {
             version: 1,
             type: 'diagram',
             title: 'Synthetic handoff',
-            sources: [],
+            caption: 'Review is still pending.',
+            asOf: 'Synthetic fixture checked 2026-10-29',
+            sources: [{ label: 'Fixture workflow', url: 'https://example.com/workflow' }],
             nodes: [
               { id: 'before', label: 'Research' },
               { id: 'after', label: 'Comparison' },
@@ -926,29 +937,45 @@ test(
                 },
               ])
                 await assert.rejects(
-                  thread.reply(ref, 'Invalid visual.', [], undefined, undefined, invalid),
+                  thread.reply(ref, '', [], undefined, undefined, invalid),
                   /unavailable/,
                 );
             await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
               image.id,
             ]);
             await assert.rejects(
-              thread.reply(ref, 'Foreign visual.', [], undefined, undefined, visual),
+              thread.reply(ref, '', [], undefined, undefined, visual),
               /unavailable/,
             );
             await assert.rejects(
-              thread.reply(ref, 'Foreign venue.', [], undefined, undefined, venue),
+              thread.reply(ref, '', [], undefined, undefined, venue),
               /unavailable/,
             );
             await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [
               image.id,
               ownerId,
             ]);
-            await assert.rejects(
-              thread.reply(ref, ' ', [], undefined, undefined, visual),
-              /text answer/,
-            );
-            assert.equal(await count(), 2);
+            await thread.reply(ref, '', [], undefined, undefined, visual);
+            const visualOnly = (
+              await db.pool.query("SELECT * FROM messages WHERE turn_id=$1 AND text=''", [turnId])
+            ).rows[0];
+            assert.deepEqual(visualOnly.presentation, visual);
+            assert.equal(visualOnly.attachments.length, 1);
+            assert.equal(visualOnly.attachments[0].id, image.id);
+            for (const path of [
+              '/api/state',
+              '/api/messages',
+              `/api/messages/around/${visualOnly.id}`,
+            ]) {
+              const body = (await request('GET', path)).json();
+              const shown = (Array.isArray(body) ? body : body.messages).find(
+                (message: { id: string }) => message.id === visualOnly.id,
+              );
+              assert.equal(shown.text, '');
+              assert.deepEqual(shown.presentation, visual);
+            }
+            await assert.rejects(thread.reply(ref, ' '), /message needs/);
+            assert.equal(await count(), 3);
             await db.pool.query('UPDATE messages SET presentation=$2 WHERE id=$1', [
               saved.id,
               JSON.stringify({ ...visual, version: 2 }),
@@ -963,7 +990,7 @@ test(
               thread.reply(ref, 'Late visual.', [], undefined, undefined, visual),
               /no longer active/,
             );
-            assert.equal(await count(), 2);
+            assert.equal(await count(), 3);
           } finally {
             await db.pool.query('DELETE FROM messages WHERE turn_id=$1', [turnId]);
             await db.pool.query('DELETE FROM turns WHERE id=$1', [turnId]);
@@ -1440,26 +1467,53 @@ test(
       });
 
       await t.test(
-        'visual facts reach owned reply and rebuilt history context without changing stored text',
+        'visual-only replies reach speech and owned history without changing stored text',
         async () => {
-          const source = await thread.submitUserMessage('presentation-source-fixture');
-          await waitFor(settled(source.turnId));
+          const before = spoken.length;
+          let source: Awaited<ReturnType<typeof thread.submitUserMessage>>;
+          audioReplyMode = 'always';
+          try {
+            source = await thread.submitUserMessage('presentation-source-fixture');
+            await waitFor(settled(source.turnId));
+          } finally {
+            audioReplyMode = 'never';
+          }
+          assert.equal(spoken.length, before + 1);
+          assert.match(spoken.at(-1)!, /Research → Comparison: Once reviewed/);
+          assert.match(spoken.at(-1)!, /Review is still pending/);
+          assert.match(spoken.at(-1)!, /Synthetic fixture checked 2026-10-29/);
+          assert.match(spoken.at(-1)!, /Fixture workflow/);
           const shown = (
             await db.pool.query(
-              "SELECT id,text FROM messages WHERE turn_id=$1 AND role='assistant'",
+              "SELECT id,text FROM messages WHERE turn_id=$1 AND role='assistant' AND presentation IS NOT NULL",
               [source.turnId],
             )
           ).rows[0];
-          assert.equal(shown.text, 'The two-step synthetic process.');
+          assert.equal(shown.text, '');
+          const audio = (
+            await db.pool.query('SELECT attachments FROM messages WHERE reply_to_message_id=$1', [
+              shown.id,
+            ])
+          ).rows;
+          assert.equal(audio.length, 1);
+          assert.equal(audio[0].attachments[0].mimeType, 'audio/ogg');
           const followup = await thread.submitUserMessage(
             'What follows the first synthetic step?',
             [],
             { replyToMessageId: shown.id },
           );
           await waitFor(settled(followup.turnId));
+          const reloaded = (await request('GET', '/api/messages'))
+            .json()
+            .messages.find((message: { id: string }) => message.id === followup.messageId);
+          assert.equal(reloaded.replyTo.id, shown.id);
+          assert.match(reloaded.replyTo.text, /Research → Comparison: Once reviewed/);
+          assert.match(reloaded.replyTo.text, /Review is still pending/);
           const followupContext = ran(followup.turnId)!;
           assert.equal(followupContext.replyTo?.id, shown.id);
           assert.match(followupContext.replyTo!.text, /Research → Comparison: Once reviewed/);
+          assert.match(followupContext.replyTo!.text, /Review is still pending/);
+          assert.match(followupContext.replyTo!.text, /https:\/\/example.com\/workflow/);
           const previous = followupContext.history.find(
             (message) => message.turnId === source.turnId && message.role === 'assistant',
           );
@@ -1468,6 +1522,30 @@ test(
             followupContext.history.some((message) => message.text === 'done: first message'),
           );
           assert.doesNotMatch(JSON.stringify(followupContext.replyTo), /"edges"|"presentation"/);
+        },
+      );
+
+      await t.test(
+        'visual replies speak accompanying text without reading the whole card',
+        async () => {
+          const before = spoken.length;
+          audioReplyMode = 'always';
+          try {
+            const source = await thread.submitUserMessage('presentation-text-fixture');
+            await waitFor(settled(source.turnId));
+            assert.equal(spoken.length, before + 1);
+            assert.equal(spoken.at(-1), 'The synthetic review is still pending.');
+            const shown = (
+              await db.pool.query(
+                "SELECT text,presentation FROM messages WHERE turn_id=$1 AND role='assistant' AND presentation IS NOT NULL",
+                [source.turnId],
+              )
+            ).rows[0];
+            assert.equal(shown.text, 'The synthetic review is still pending.');
+            assert.equal(shown.presentation.type, 'diagram');
+          } finally {
+            audioReplyMode = 'never';
+          }
         },
       );
 
@@ -2586,6 +2664,496 @@ test(
             synthesisError = undefined;
             synthesisGate = undefined;
             releaseSynthesis?.();
+          }
+        },
+      );
+
+      await t.test(
+        'answer choices bind owned pending questions across sessions and reject stale or altered submissions',
+        async (t) => {
+          await waitFor(settledThread);
+          const runTurn = dependencies.runTurn;
+          const acceptVerification = verification.accept;
+          const contexts: RuntimeContext[] = [];
+          const created: string[] = [];
+          const laterMessages = Array.from({ length: 160 }, () => randomUUID());
+          let verificationCalls = 0;
+          const choices = (multiple = false): AnswerChoices => ({
+            multiple,
+            options: [
+              { id: randomUUID(), label: 'Work', description: 'Shared project mailbox' },
+              { id: randomUUID(), label: 'Personal', description: 'Personal' },
+            ],
+          });
+          const spokenChoices = choices();
+          dependencies.runTurn = async (context) => {
+            contexts.push(context);
+            if (context.prompt.startsWith('answer-choice-')) {
+              const kind = context.prompt.slice('answer-choice-'.length);
+              return {
+                status: kind === 'credentials' ? 'waiting_credentials' : 'waiting_user',
+                waitingFor: kind === 'approval' || kind === 'credentials' ? kind : 'question',
+                message: 'Which mailbox should I use?',
+                answerChoices: spokenChoices,
+                ...(kind === 'handoff' ? { handoffBrowserId: context.threadId } : {}),
+              };
+            }
+            return { status: 'succeeded' };
+          };
+          verification.accept = async (...input) => {
+            verificationCalls++;
+            return acceptVerification(...input);
+          };
+          const addQuestion = async (sessionId = randomUUID(), multiple = false) => {
+            const turnId = randomUUID();
+            created.push(turnId);
+            const answerChoices = choices(multiple);
+            const id = await transaction(async (client) => {
+              await thread.lockThread(client);
+              await client.query(
+                `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,waiting_reason,background)
+                  VALUES($1,$2,$3,$4,'event','Synthetic choice question','waiting','question',true)`,
+                [turnId, ownerId, threadId, sessionId],
+              );
+              return thread.insertAssistantMessage(
+                client,
+                { threadId, turnId },
+                'Which mailbox should I use?',
+                [],
+                undefined,
+                undefined,
+                undefined,
+                answerChoices,
+              );
+            }, db.pool);
+            return { id, turnId, sessionId, answerChoices };
+          };
+          const shown = async (id: string) =>
+            (await request('GET', `/api/messages/around/${id}`))
+              .json()
+              .find((message: { id: string }) => message.id === id);
+          const payload = (question: Awaited<ReturnType<typeof addQuestion>>) => ({
+            threadId,
+            replyToMessageId: question.id,
+            clientMessageId: randomUUID(),
+            text: choiceAnswerText([question.answerChoices.options[0]!]),
+            questionAnswer: { choiceIds: [question.answerChoices.options[0]!.id] },
+          });
+          try {
+            const first = await addQuestion();
+            const independent = await addQuestion();
+            for (const path of [
+              '/api/state',
+              '/api/messages',
+              `/api/messages/around/${first.id}`,
+            ]) {
+              const body = (await request('GET', path)).json();
+              const message = (Array.isArray(body) ? body : body.messages).find(
+                (item: { id: string }) => item.id === first.id,
+              );
+              assert.equal(message.text, 'Which mailbox should I use?');
+              assert.deepEqual(message.answerChoices, first.answerChoices);
+              assert.equal(message.answerChoicesPending, true);
+            }
+            await db.pool.query(
+              `INSERT INTO messages(id,owner_id,thread_id,role,text)
+                SELECT id,$2,$3,'assistant','Later synthetic message' FROM unnest($1::uuid[]) id`,
+              [laterMessages, ownerId, threadId],
+            );
+            const pendingIds = async () =>
+              (await request('GET', '/api/state')).json().pendingAnswerChoiceMessageIds as string[];
+            const olderState = (await request('GET', '/api/state')).json();
+            assert.equal(olderState.messages.length, 150);
+            assert.ok(
+              !olderState.messages.some((message: { id: string }) => message.id === first.id),
+            );
+            assert.ok(olderState.pendingAnswerChoiceMessageIds.includes(first.id));
+            assert.ok(olderState.pendingAnswerChoiceMessageIds.includes(independent.id));
+            const selected = payload(first);
+            for (const invalid of [
+              { questionAnswer: { choiceIds: [] } },
+              { questionAnswer: { choiceIds: [randomUUID()] } },
+              {
+                questionAnswer: {
+                  choiceIds: [
+                    selected.questionAnswer.choiceIds[0],
+                    selected.questionAnswer.choiceIds[0],
+                  ],
+                },
+              },
+              {
+                questionAnswer: { choiceIds: first.answerChoices.options.map(({ id }) => id) },
+                text: choiceAnswerText(first.answerChoices.options),
+              },
+              { text: 'Work' },
+              { replyToMessageId: undefined },
+              { verificationRequestId: randomUUID() },
+              { questionAnswer: { custom: true, choiceIds: selected.questionAnswer.choiceIds } },
+            ])
+              assert.equal((await sendJson({ ...selected, ...invalid })).statusCode, 400);
+            assert.equal((await shown(first.id)).answerChoicesPending, true);
+            const beforeVerification = verificationCalls;
+            const responses = await Promise.all([sendJson(selected), sendJson(selected)]);
+            assert.ok(responses.every((response) => response.statusCode === 200));
+            assert.deepEqual(responses[0]!.json(), responses[1]!.json());
+            assert.equal(verificationCalls, beforeVerification);
+            const accepted = responses[0]!.json();
+            created.push(accepted.turnId);
+            await waitFor(settled(accepted.turnId));
+            assert.equal((await shown(first.id)).answerChoicesPending, false);
+            assert.equal((await shown(independent.id)).answerChoicesPending, true);
+            assert.ok(!(await pendingIds()).includes(first.id));
+            assert.ok((await pendingIds()).includes(independent.id));
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [laterMessages]);
+            const staleChoice = await sendJson({ ...selected, clientMessageId: randomUUID() });
+            assert.equal(staleChoice.statusCode, 409);
+            assert.equal(staleChoice.json().code, 'question_unavailable');
+            const staleCustom = await sendJson({
+              ...selected,
+              clientMessageId: randomUUID(),
+              text: 'A different answer',
+              questionAnswer: { custom: true },
+            });
+            assert.equal(staleCustom.statusCode, 409);
+            assert.equal(staleCustom.json().code, 'question_unavailable');
+            const reusedId = await sendJson({ ...selected, text: 'A different answer' });
+            assert.equal(reusedId.statusCode, 409);
+            assert.equal(reusedId.json().code, undefined);
+            const historicalReply = await sendJson({
+              threadId,
+              clientMessageId: randomUUID(),
+              replyToMessageId: first.id,
+              text: 'What did we decide about that mailbox?',
+            });
+            assert.equal(historicalReply.statusCode, 200);
+            created.push(historicalReply.json().turnId);
+            await waitFor(settled(historicalReply.json().turnId));
+            const historicalMessage = (
+              await db.pool.query(
+                'SELECT reply_to_message_id,question_answer FROM messages WHERE id=$1',
+                [historicalReply.json().messageId],
+              )
+            ).rows[0];
+            assert.equal(historicalMessage.reply_to_message_id, first.id);
+            assert.equal(historicalMessage.question_answer, null);
+            assert.equal((await shown(independent.id)).answerChoicesPending, true);
+            const resumed = contexts.find((context) => context.turnId === accepted.turnId)!;
+            assert.equal(resumed.sessionId, first.sessionId);
+            assert.equal(
+              resumed.replyTo?.text,
+              questionWithChoices('Which mailbox should I use?', first.answerChoices),
+            );
+            assert.equal(
+              (
+                await db.pool.query('SELECT text FROM messages WHERE id=$1', [
+                  selected.clientMessageId,
+                ])
+              ).rows[0].text,
+              selected.text,
+            );
+            const custom =
+              'Use the shared project mailbox, but only for drafts.\nKeep the personal account unchanged.';
+            const customVerification = verificationCalls;
+            const customReply = await sendJson({
+              ...payload(independent),
+              text: custom,
+              questionAnswer: { custom: true },
+            });
+            assert.equal(customReply.statusCode, 200);
+            assert.equal(verificationCalls, customVerification + 1);
+            created.push(customReply.json().turnId);
+            await waitFor(settled(customReply.json().turnId));
+            assert.equal(
+              contexts.find((context) => context.turnId === customReply.json().turnId)!.prompt,
+              custom,
+            );
+            assert.ok(
+              contexts
+                .find((context) => context.turnId === customReply.json().turnId)!
+                .history.some(
+                  (message) =>
+                    message.text ===
+                    questionWithChoices('Which mailbox should I use?', independent.answerChoices),
+                ),
+            );
+            await t.test(
+              'custom audio answers retain their question, reject invalid metadata and deduplicate retries',
+              async () => {
+                const question = await addQuestion();
+                const other = await addQuestion();
+                const message = {
+                  threadId,
+                  replyToMessageId: question.id,
+                  clientMessageId: randomUUID(),
+                  text: 'For tomorrow’s report:',
+                  questionAnswer: { custom: true },
+                };
+                const beforeTranscription = transcriptions.length;
+                for (const invalid of [
+                  { questionAnswer: { choiceIds: [question.answerChoices.options[0]!.id] } },
+                  { replyToMessageId: undefined },
+                  { verificationRequestId: randomUUID() },
+                  { questionAnswer: { custom: false } },
+                ])
+                  assert.equal((await sendAudio({ ...message, ...invalid })).statusCode, 400);
+                assert.equal(transcriptions.length, beforeTranscription);
+                assert.equal(
+                  (
+                    await db.pool.query('SELECT 1 FROM audio_messages WHERE message_id=$1', [
+                      message.clientMessageId,
+                    ])
+                  ).rowCount,
+                  0,
+                );
+                const beforeVerification = verificationCalls;
+                transcript =
+                  'Use the shared mailbox for drafts only. Keep the personal mailbox unchanged.';
+                try {
+                  const response = await sendAudio(message);
+                  assert.equal(response.statusCode, 200, response.body);
+                  assert.equal(transcriptions.length, beforeTranscription + 1);
+                  assert.equal(verificationCalls, beforeVerification + 1);
+                  const accepted = response.json();
+                  created.push(accepted.turnId);
+                  await waitFor(settled(accepted.turnId));
+                  const context = contexts.find((item) => item.turnId === accepted.turnId)!;
+                  assert.equal(context.sessionId, question.sessionId);
+                  assert.equal(context.prompt, `${message.text}\n\n${transcript}`);
+                  assert.equal(
+                    context.replyTo?.text,
+                    questionWithChoices('Which mailbox should I use?', question.answerChoices),
+                  );
+                  const saved = (
+                    await db.pool.query(
+                      'SELECT m.reply_to_message_id,u.parent_turn_id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.id=$1',
+                      [message.clientMessageId],
+                    )
+                  ).rows[0];
+                  assert.equal(saved.reply_to_message_id, question.id);
+                  assert.equal(saved.parent_turn_id, question.turnId);
+                  assert.equal((await shown(question.id)).answerChoicesPending, false);
+                  assert.equal((await shown(other.id)).answerChoicesPending, true);
+                  assert.equal(await turnStatus(other.turnId), 'waiting');
+                  assert.deepEqual((await sendAudio(message)).json(), accepted);
+                  assert.equal(transcriptions.length, beforeTranscription + 1);
+                  assert.equal(verificationCalls, beforeVerification + 1);
+                  const artifactCount = (
+                    await db.pool.query('SELECT count(*)::int AS count FROM artifacts')
+                  ).rows[0].count;
+                  const staleId = randomUUID();
+                  assert.equal(
+                    (await sendAudio({ ...message, clientMessageId: staleId })).statusCode,
+                    409,
+                  );
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                        [staleId],
+                      )
+                    ).rowCount,
+                    0,
+                  );
+                  assert.equal(
+                    (await db.pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0]
+                      .count,
+                    artifactCount,
+                  );
+                  assert.equal((await shown(other.id)).answerChoicesPending, true);
+                  const foreignId = randomUUID();
+                  await db.pool.query(
+                    "INSERT INTO messages(id,owner_id,role,text,thread_id,answer_choices) VALUES($1,'foreign-audio-owner','assistant','Foreign question',$2,$3)",
+                    [foreignId, threadId, JSON.stringify(choices())],
+                  );
+                  try {
+                    const calls = transcriptions.length;
+                    assert.equal(
+                      (
+                        await sendAudio({
+                          ...message,
+                          replyToMessageId: foreignId,
+                          clientMessageId: randomUUID(),
+                        })
+                      ).statusCode,
+                      400,
+                    );
+                    assert.equal(transcriptions.length, calls);
+                  } finally {
+                    await db.pool.query('DELETE FROM messages WHERE id=$1', [foreignId]);
+                  }
+                } finally {
+                  transcript = 'Synthetic spoken request';
+                }
+              },
+            );
+            const freeform = await addQuestion();
+            const ordinary = await sendJson({
+              threadId,
+              replyToMessageId: freeform.id,
+              clientMessageId: randomUUID(),
+              text: 'Use another mailbox I will connect later.',
+            });
+            assert.equal(ordinary.statusCode, 200);
+            created.push(ordinary.json().turnId);
+            await waitFor(settled(ordinary.json().turnId));
+            assert.equal((await shown(freeform.id)).answerChoicesPending, false);
+            assert.equal(
+              contexts.find((context) => context.turnId === ordinary.json().turnId)!.sessionId,
+              freeform.sessionId,
+            );
+            const multiple = await addQuestion(undefined, true);
+            const both = await sendJson({
+              ...payload(multiple),
+              questionAnswer: {
+                choiceIds: multiple.answerChoices.options.map(({ id }) => id).reverse(),
+              },
+              text: choiceAnswerText(multiple.answerChoices.options),
+            });
+            assert.equal(both.statusCode, 200);
+            created.push(both.json().turnId);
+            await waitFor(settled(both.json().turnId));
+            const superseded = await addQuestion();
+            const replacement = await addQuestion(superseded.sessionId);
+            assert.equal((await shown(superseded.id)).answerChoicesPending, false);
+            assert.equal((await shown(replacement.id)).answerChoicesPending, true);
+            assert.equal((await sendJson(payload(superseded))).statusCode, 409);
+            await transaction(
+              (client) =>
+                thread.insertAssistantMessage(
+                  client,
+                  { threadId, turnId: replacement.turnId },
+                  'A different question now.',
+                ),
+              db.pool,
+            );
+            assert.equal((await shown(replacement.id)).answerChoicesPending, false);
+            const stopped = await addQuestion();
+            await transaction(async (client) => {
+              await thread.lockThread(client);
+              await thread.cancelTurns(client, threadId, { sessionId: stopped.sessionId });
+            }, db.pool);
+            assert.equal((await shown(stopped.id)).answerChoicesPending, false);
+            assert.ok(!(await pendingIds()).includes(stopped.id));
+            assert.ok(!(await pendingIds()).includes(superseded.id));
+            assert.equal((await sendJson(payload(stopped))).statusCode, 409);
+            const foreignId = randomUUID();
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,answer_choices) VALUES($1,'foreign-choice-owner','assistant','Foreign question',$2,$3)",
+              [foreignId, threadId, JSON.stringify(choices())],
+            );
+            assert.equal(
+              (await sendJson({ ...payload(stopped), replyToMessageId: foreignId })).statusCode,
+              404,
+            );
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [foreignId]);
+            const archivedThread = randomUUID();
+            const archivedTurn = randomUUID();
+            await db.pool.query(
+              'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())',
+              [archivedThread, ownerId],
+            );
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,waiting_reason) VALUES($1,$2,$3,$1,'user','Archived question','waiting','question')",
+              [archivedTurn, ownerId, archivedThread],
+            );
+            created.push(archivedTurn);
+            const archivedMessage = await transaction(
+              (client) =>
+                thread.insertAssistantMessage(
+                  client,
+                  { threadId: archivedThread, turnId: archivedTurn },
+                  'Archived question?',
+                  [],
+                  undefined,
+                  undefined,
+                  undefined,
+                  choices(),
+                ),
+              db.pool,
+            );
+            assert.equal(
+              (
+                await db.pool.query(
+                  `SELECT ${thread.pendingAnswerChoicesSql} AS pending FROM messages m WHERE m.id=$1`,
+                  [archivedMessage],
+                )
+              ).rows[0].pending,
+              false,
+            );
+            assert.equal(
+              (
+                await sendJson({
+                  ...payload(stopped),
+                  threadId: archivedThread,
+                  replyToMessageId: archivedMessage,
+                })
+              ).statusCode,
+              409,
+            );
+            assert.equal(
+              (await request('GET', `/api/messages/around/${archivedMessage}`)).statusCode,
+              404,
+            );
+            const calls: string[] = [];
+            const guarded = thread.createUserMessageService({
+              confirmAction: {
+                answer: async () => {
+                  calls.push('classify');
+                  return undefined;
+                },
+                accept: async () => {
+                  calls.push('accept');
+                  return undefined;
+                },
+              },
+              taskReply: async () => {
+                calls.push('task');
+                return undefined;
+              },
+            });
+            await assert.rejects(
+              guarded.submit(selected.text, [], { ...selected, clientMessageId: randomUUID() }),
+              /no longer waiting/,
+            );
+            assert.deepEqual(calls, []);
+            const guardedQuestion = await addQuestion();
+            const guardedPayload = payload(guardedQuestion);
+            const guardedReply = await guarded.submit(guardedPayload.text, [], guardedPayload);
+            created.push(guardedReply.turnId);
+            await waitFor(settled(guardedReply.turnId));
+            assert.deepEqual(calls, ['task']);
+            audioReplyMode = 'always';
+            const spokenBefore = spoken.length;
+            const spokenQuestion = await thread.submitUserMessage('answer-choice-spoken');
+            created.push(spokenQuestion.turnId);
+            await waitFor(settled(spokenQuestion.turnId));
+            assert.equal(
+              spoken.at(-1),
+              `Which mailbox should I use?\n\n${choiceAnswerText(spokenChoices.options)}`,
+            );
+            assert.equal(spoken.length, spokenBefore + 1);
+            for (const kind of ['approval', 'credentials', 'handoff']) {
+              const excluded = await thread.submitUserMessage(`answer-choice-${kind}`);
+              created.push(excluded.turnId);
+              await waitFor(settled(excluded.turnId));
+              assert.ok(
+                (
+                  await db.pool.query('SELECT answer_choices FROM messages WHERE turn_id=$1', [
+                    excluded.turnId,
+                  ])
+                ).rows.every((message) => message.answer_choices === null),
+              );
+              assert.equal(spoken.length, spokenBefore + 1);
+            }
+          } finally {
+            audioReplyMode = 'never';
+            dependencies.runTurn = runTurn;
+            verification.accept = acceptVerification;
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [laterMessages]);
+            await db.pool.query(
+              "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=ANY($1::uuid[]) AND status='waiting'",
+              [created],
+            );
           }
         },
       );
@@ -3863,6 +4431,134 @@ test(
             "UPDATE messages SET text='Fixture archived content',created_at=now() WHERE id=$1",
             [archived.id],
           );
+          const itinerary: Presentation = {
+            version: 1,
+            type: 'flights',
+            title: 'Synthetic booking',
+            caption: 'Terminal details are not confirmed.',
+            sources: [],
+            options: [
+              {
+                id: 'hidden-itinerary',
+                label: 'Booked itinerary',
+                status: 'booked',
+                bookingReference: 'SYNTH42',
+                journeys: [
+                  {
+                    id: 'hidden-outbound',
+                    label: 'Outbound',
+                    segments: [
+                      {
+                        airline: 'Synthetic Air',
+                        flightNumber: 'NDAX731',
+                        departure: { airport: 'Lisbon (LIS)', time: '08:15' },
+                        arrival: { airport: 'Zurich (ZRH)', time: '12:10' },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          };
+          const chart: Presentation = {
+            version: 1,
+            type: 'chart',
+            title: 'Synthetic quarterly margins',
+            chart: 'bar',
+            unit: 'EUR',
+            sources: [],
+            series: [
+              {
+                id: 'hidden-series',
+                label: 'Net margin',
+                points: [{ label: 'March', value: 223.75 }],
+              },
+            ],
+          };
+          const diagram: Presentation = {
+            version: 1,
+            type: 'diagram',
+            title: 'Synthetic review',
+            caption: 'Keep [entry] visible.',
+            sources: [],
+            nodes: [
+              { id: 'entry', label: 'Inspection [entry] desk' },
+              { id: 'exit', label: 'Inspection [entry] desk' },
+            ],
+            edges: [{ from: 'entry', to: 'exit', label: 'After approval' }],
+          };
+          const booking: Presentation = {
+            version: 1,
+            type: 'booking',
+            title: 'Synthetic venues',
+            sources: [],
+            name: 'Cedar room',
+            status: 'option',
+            facts: [{ label: 'Guests', value: 'Two guests' }],
+            notes: ['Zephyr entrance closes before dusk.'],
+            alternatives: [
+              {
+                name: 'Atrium',
+                status: 'option',
+                facts: [{ label: 'Access', value: 'Step-free' }],
+                notes: ['Amber gate stays staffed.'],
+              },
+            ],
+          };
+          const seats: Presentation = {
+            version: 1,
+            type: 'seats',
+            title: 'Synthetic seats',
+            sources: [],
+            sections: [
+              {
+                id: 'hidden-seat-section',
+                name: 'Aft cabin',
+                rows: [{ label: '24', groups: [[{ label: '24C', status: 'available' }]] }],
+              },
+            ],
+            recommended: { sectionId: 'hidden-seat-section', seatLabel: '24C' },
+          };
+          const [itineraryId, chartId, diagramId, bookingId, seatsId] = Array.from(
+            { length: 5 },
+            () => randomUUID(),
+          );
+          for (const [id, presentation] of [
+            [itineraryId, itinerary],
+            [chartId, chart],
+            [diagramId, diagram],
+            [bookingId, booking],
+            [seatsId, seats],
+          ])
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,presentation) VALUES($1,$2,'assistant','',$3,$4,$5)",
+              [id, ownerId, freshThread, turn, JSON.stringify(presentation)],
+            );
+          await db.pool.query('UPDATE messages SET presentation=$2 WHERE id=ANY($1::uuid[])', [
+            [foreign, archived.id],
+            JSON.stringify(itinerary),
+          ]);
+          const metadataOnlyIds = new Set(
+            (
+              await db.pool.query(
+                "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,presentation) SELECT gen_random_uuid(),$1,'assistant','',$2,$3,$4 FROM generate_series(1,55) RETURNING id",
+                [
+                  ownerId,
+                  freshThread,
+                  turn,
+                  JSON.stringify({
+                    ...diagram,
+                    title: 'Quiet diagram',
+                    nodes: [
+                      { id: 'internal-1', label: 'Unrelated' },
+                      { id: 'internal-2', label: 'Unrelated' },
+                    ],
+                    edges: [{ from: 'internal-1', to: 'internal-2', label: 'Next' }],
+                  }),
+                ],
+              )
+            ).rows.map((row) => row.id),
+          );
           const state = (await request('GET', '/api/state')).json<{
             messages: Array<{ id: string; turnId: string | null }>;
             turns: Array<{ id: string; status: string }>;
@@ -3887,7 +4583,7 @@ test(
           const matches = (await request('GET', '/api/messages/search?q=Fixture')).json<
             Array<{ id: string }>
           >();
-          assert.ok(matches.length > 0);
+          assert.equal(matches.length, 50);
           assert.equal(
             matches.some((message) => message.id === foreign || message.id === archived.id),
             false,
@@ -3898,6 +4594,92 @@ test(
           assert.equal(separated.length, 1);
           assert.match(separated[0].snippet, /crimson seats beside sapphire curtains/);
           assert.equal(separated[0].snippet.includes('<b>'), false);
+          for (const query of ['NDAX731', 'AX7', 'SYNTH42', 'Lisbon Zurich']) {
+            const found = (
+              await request('GET', `/api/messages/search?q=${encodeURIComponent(query)}`)
+            ).json<Array<{ id: string; text: string; snippet: string }>>();
+            assert.deepEqual(
+              found.map((message) => message.id),
+              [itineraryId],
+            );
+            assert.equal(found[0].text, '');
+            assert.match(found[0].snippet, /NDAX731|SYNTH42|Lisbon/);
+            assert.doesNotMatch(
+              found[0].snippet,
+              /hidden-itinerary|hidden-outbound|bookingReference|flightNumber|journeys|<b>/,
+            );
+          }
+          for (const query of ['223.75', 'quarterly margins']) {
+            const found = (
+              await request('GET', `/api/messages/search?q=${encodeURIComponent(query)}`)
+            ).json<Array<{ id: string; snippet: string }>>();
+            assert.deepEqual(
+              found.map((message) => message.id),
+              [chartId],
+            );
+            assert.match(found[0].snippet, /March: 223.75 EUR/);
+            assert.doesNotMatch(found[0].snippet, /hidden-series|"points"|"value"/);
+          }
+          const inspected = (await request('GET', '/api/messages/search?q=Inspection')).json<
+            Array<{ id: string; snippet: string }>
+          >();
+          assert.deepEqual(
+            inspected.map((message) => message.id),
+            [diagramId],
+          );
+          assert.match(inspected[0].snippet, /Inspection \[entry\] desk/);
+          assert.match(inspected[0].snippet, /Inspection \[entry\] desk \(entry\)/);
+          assert.match(inspected[0].snippet, /Inspection \[entry\] desk \(exit\)/);
+          assert.doesNotMatch(inspected[0].snippet, /"nodes"|"edges"|"from"|"to"|"version"/);
+          for (const query of ['Zephyr', 'phyr', 'Amber']) {
+            const found = (
+              await request('GET', `/api/messages/search?q=${encodeURIComponent(query)}`)
+            ).json<Array<{ id: string; snippet: string }>>();
+            assert.deepEqual(
+              found.map((message) => message.id),
+              [bookingId],
+            );
+            assert.match(found[0].snippet, /Zephyr entrance|Amber gate/);
+          }
+          const availableSeat = (await request('GET', '/api/messages/search?q=24C')).json<
+            Array<{ id: string; snippet: string }>
+          >();
+          assert.deepEqual(
+            availableSeat.map((message) => message.id),
+            [seatsId],
+          );
+          assert.match(availableSeat[0].snippet, /24C/);
+          assert.doesNotMatch(availableSeat[0].snippet, /hidden-seat-section|sectionId/);
+          assert.deepEqual(
+            (await request('GET', '/api/messages/search?q=bookingReference')).json(),
+            [],
+          );
+          for (const query of [
+            'hidden-itinerary',
+            'hidden-series',
+            'exit',
+            'internal-1',
+            'hidden-seat-section',
+          ])
+            assert.deepEqual(
+              (await request('GET', `/api/messages/search?q=${encodeURIComponent(query)}`)).json(),
+              [],
+            );
+          const numeric = (await request('GET', '/api/messages/search?q=1')).json<
+            Array<{ id: string }>
+          >();
+          assert.ok(numeric.some((message) => message.id === itineraryId));
+          assert.ok(numeric.length <= 50);
+          assert.ok(
+            numeric.every(
+              (message) =>
+                !metadataOnlyIds.has(message.id) &&
+                message.id !== chartId &&
+                message.id !== diagramId &&
+                message.id !== bookingId &&
+                message.id !== seatsId,
+            ),
+          );
           for (const id of [foreign, archived.id])
             assert.equal((await request('GET', `/api/messages/around/${id}`)).statusCode, 404);
           const around = await request('GET', `/api/messages/around/${matches[0].id}`);
@@ -4034,7 +4816,7 @@ test(
             assert.doesNotMatch(reply.text, /\p{Surrogate}/u);
             assert.ok(reply.text.length <= 4000);
           }
-          const message = [...seen][0];
+          const message = matches[0].id;
           const react = (id: string, reaction: string) =>
             request('POST', `/api/messages/${id}/reaction`, { reaction });
           assert.equal((await react(message, '❤️')).statusCode, 200);
@@ -5824,7 +6606,7 @@ const memoryFixture = async (tables: string[] = []) => {
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
+    "CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz); CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';

@@ -642,7 +642,7 @@ export async function createChannelSettings(
           verification_failed:
             'The account could not be verified. Check the token, account and permissions.',
           existing_webhook:
-            'This Telegram bot already uses a webhook. Remove that webhook or enter its public URL before switching to local polling.',
+            'This bot already uses a webhook. Remove it before connecting here, or configure webhook delivery on your server.',
           webhook_failed:
             'Telegram did not confirm the webhook registration. Check the public URL and try again.',
           activation_pending:

@@ -79,6 +79,8 @@ export async function initializeDatabase() {
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_caption text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS presentation jsonb;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_choices jsonb;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS question_answer jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;
     CREATE INDEX IF NOT EXISTS messages_owner_agent_reaction_time ON messages(owner_id,assistant_reacted_at DESC) WHERE assistant_reacted_at IS NOT NULL;

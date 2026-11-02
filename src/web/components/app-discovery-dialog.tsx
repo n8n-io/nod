@@ -1,5 +1,7 @@
+import { Tooltip } from './tooltip';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ExternalLink } from './icons';
+import { ServiceLogo } from './service-logo';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
@@ -440,50 +442,68 @@ export function AppDiscoveryDialog({
           }
         }}
       >
-        <DialogTitle ref={title} tabIndex={-1}>
-          Connect {discovery?.name ?? 'app'}
-        </DialogTitle>
-        <DialogDescription>
-          {oauth
-            ? 'Sign in to allow access to your account.'
-            : paths.some((path) => path.kind === 'cli')
-              ? 'Add your account securely. CLI tokens are saved without a setup check.'
-              : 'Nod will check access before saving your connection.'}
-        </DialogDescription>
-        {discovery?.setupText && <p>{discovery.setupText}</p>}
-        {paths.map((path) => (
-          <div className="app-discovery-path" key={`${path.kind}:${path.endpoint ?? path.command}`}>
-            <span>{path.kind === 'mcp' ? 'MCP server' : path.kind.toUpperCase()}</span>
-            <strong>
-              {path.source?.npm
-                ? `npm ${path.source.npm}`
-                : path.source?.pypi
-                  ? `PyPI ${path.source.pypi}`
-                  : (path.source?.url ?? path.endpoint ?? path.command)}
-            </strong>
-            {path.scope && <span>Requested access: {path.scope}</span>}
+        <div className="app-discovery-heading">
+          <span className="app-discovery-logo">
+            <ServiceLogo slug={discovery?.service ?? 'mcp'} />
+          </span>
+          <div>
+            <DialogTitle ref={title} tabIndex={-1}>
+              Connect {discovery?.name ?? 'app'}
+            </DialogTitle>
+            <DialogDescription>
+              {oauth
+                ? 'Sign in to connect your account.'
+                : paths.some((path) => path.kind === 'cli')
+                  ? 'Save credentials. The command is not checked during setup.'
+                  : 'Nod will check access before connecting.'}
+            </DialogDescription>
           </div>
-        ))}
-        {discovery?.setupUrl && (
-          <Button asChild variant="outline" size="sm" className="app-discovery-setup">
-            <a href={discovery.setupUrl} target="_blank" rel="noopener noreferrer">
-              Open setup page
-              <ExternalLink size={16} aria-hidden="true" />
-            </a>
-          </Button>
+        </div>
+        {paths[0]?.endpoint && (
+          <Tooltip content={paths[0].endpoint}>
+            <p className="app-discovery-address">{paths[0].endpoint}</p>
+          </Tooltip>
         )}
-        {paths.some((path) => path.testPath || path.kind === 'cli') && (
-          <details className="app-discovery-methods">
+        {discovery && (discovery.setupText || discovery.setupUrl || paths.length > 0) && (
+          <details className="app-discovery-methods app-discovery-details">
             <summary>Connection details</summary>
+            {discovery.setupText && <p>{discovery.setupText}</p>}
             {paths.map((path) => (
-              <div key={`${path.kind}:${path.endpoint ?? path.command}`}>
+              <div
+                className="app-discovery-path"
+                key={`${path.kind}:${path.endpoint ?? path.command}`}
+              >
+                <span>
+                  {path.kind === 'mcp'
+                    ? 'MCP server'
+                    : path.kind === 'http'
+                      ? 'HTTP API'
+                      : 'Command-line tool'}
+                </span>
+                <strong>{path.endpoint ?? path.command}</strong>
+                {path.source && (
+                  <span>
+                    {path.source.npm
+                      ? `npm ${path.source.npm}`
+                      : path.source.pypi
+                        ? `PyPI ${path.source.pypi}`
+                        : path.source.url}
+                  </span>
+                )}
+                {path.scope && <span>Requested access: {path.scope}</span>}
                 {path.kind === 'http' && path.testPath && (
                   <p>Read check: GET {readCheckUrl(path) ?? 'unavailable'}</p>
                 )}
-                {path.kind === 'cli' && <p>CLI: {path.command} (not checked during setup)</p>}
                 {path.source?.sha256 && <p>SHA-256: {path.source.sha256}</p>}
               </div>
             ))}
+            {discovery.setupUrl && (
+              <Button asChild variant="ghost" size="sm" className="app-discovery-setup">
+                <a href={discovery.setupUrl} target="_blank" rel="noopener noreferrer">
+                  Open setup guide <ExternalLink size={16} aria-hidden="true" />
+                </a>
+              </Button>
+            )}
           </details>
         )}
         {(error || loadError) && (

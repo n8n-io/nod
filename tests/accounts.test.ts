@@ -2509,6 +2509,114 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   }
 });
 
+test('unread chat boundary crosses the badge cap and keeps equal-time visual replies, cancellation and read scopes intact', async (t) => {
+  const {
+    latestChatReadCursor,
+    loadUnreadChatBoundary,
+    mergeChatReadCursor,
+    readChatReadCursor,
+    writeChatReadCursor,
+  } = await import('../src/web/lib/chat-unread.ts');
+  const messages: import('../src/shared/contracts.ts').Message[] = Array.from(
+    { length: 245 },
+    (_, index) => ({
+      id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      role: 'assistant',
+      text: index === 1 ? '' : `Synthetic reply ${index}`,
+      createdAt: new Date(Date.UTC(2026, 9, 30, 12, Math.max(0, index - 1))).toISOString(),
+      turnId: null,
+      attachments: [],
+      ...(index === 1
+        ? {
+            presentation: {
+              version: 1 as const,
+              type: 'chart' as const,
+              chart: 'bar' as const,
+              title: 'Synthetic values',
+              sources: [],
+              series: [{ id: 'sample', label: 'Sample', points: [{ label: 'One', value: 1 }] }],
+            },
+          }
+        : {}),
+    }),
+  );
+  const cursor = latestChatReadCursor(messages.slice(0, 1));
+  const initial = messages.slice(-60);
+  const calls: string[] = [];
+  const load = async (before: { id: string }) => {
+    calls.push(before.id);
+    const end = messages.findIndex((message) => message.id === before.id);
+    const start = Math.max(0, end - 60);
+    return { messages: messages.slice(start, end), hasMore: start > 0 };
+  };
+  const result = await loadUnreadChatBoundary(
+    initial,
+    true,
+    cursor,
+    load,
+    new AbortController().signal,
+  );
+  assert.equal(result.messageId, messages[1].id);
+  assert.equal(result.messages.length, 245);
+  assert.equal(result.hasMore, false);
+  assert.equal(calls.length, 4);
+  assert.equal(new Set(calls).size, calls.length);
+  assert.equal(result.messages[1].presentation?.type, 'chart');
+  assert.deepEqual(cursor.messageIds, [messages[0].id]);
+  const latest = latestChatReadCursor(messages);
+  assert.equal(mergeChatReadCursor(latest, cursor), latest);
+  const read = await loadUnreadChatBoundary(
+    initial,
+    true,
+    latest,
+    load,
+    new AbortController().signal,
+  );
+  assert.equal(read.messageId, null);
+  assert.equal(calls.length, 4);
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('', { url: 'https://nod.fixture.invalid' });
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
+  t.after(() => {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+    dom.window.close();
+  });
+  await writeChatReadCursor('one', 'thread', cursor);
+  assert.equal(await readChatReadCursor('two', 'thread'), null);
+  assert.equal(await readChatReadCursor('one', 'reset'), null);
+  await writeChatReadCursor('two', 'thread', latest);
+  await writeChatReadCursor('one', 'reset', latest);
+  assert.deepEqual(await readChatReadCursor('one', 'thread'), cursor);
+  assert.deepEqual(await readChatReadCursor('two', 'thread'), latest);
+  assert.deepEqual(await readChatReadCursor('one', 'reset'), latest);
+  await assert.rejects(
+    loadUnreadChatBoundary(
+      initial,
+      true,
+      cursor,
+      async () => ({ messages: initial, hasMore: true }),
+      new AbortController().signal,
+    ),
+    /did not advance/,
+  );
+  const controller = new AbortController();
+  await assert.rejects(
+    loadUnreadChatBoundary(
+      initial,
+      true,
+      cursor,
+      async (before) => {
+        controller.abort();
+        return load(before);
+      },
+      controller.signal,
+    ),
+    { name: 'AbortError' },
+  );
+});
+
 async function notificationPage(t: import('node:test').TestContext) {
   const { JSDOM } = await import('jsdom');
   const { act, createElement } = await import('react');

@@ -160,6 +160,14 @@ const profile = join(root, 'profile');
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const record = (event, fields = {}) => appendFile(join(root, 'events.jsonl'), JSON.stringify({ event, pid: process.pid, version: app.getVersion(), ...fields }) + '\\n');
 app.setPath('userData', join(root, 'electron'));
+if (!app.requestSingleInstanceLock()) app.quit();
+else if (process.argv.includes('--quit')) app.exit();
+else {
+app.on('second-instance', async (_event, argv) => {
+  if (!argv.includes('--quit')) return;
+  await record('stopped');
+  app.exit(0);
+});
 app.whenReady().then(async () => {
   const settingsPath = join(profile, 'settings.json');
   const fresh = await stat(settingsPath).then(() => false, (error) => { if (error.code === 'ENOENT') return true; throw error; });
@@ -208,6 +216,7 @@ app.whenReady().then(async () => {
   await record('error', { message: error.message });
   app.exit(1);
 });
+}
 `,
   );
   const installers = {};
@@ -346,6 +355,17 @@ app.whenReady().then(async () => {
   assert.deepEqual(recovered.files, first.files);
   assert.equal(recovered.keyHash, first.keyHash);
   verifyIdentity(recovered);
+  receipt.stage = 'reinstalling 1.0.0 while it runs';
+  await run(installers['1.0.0'], ['/S', `/D=${installation}`], {
+    env: environment,
+    timeout: 180_000,
+    windowsVerbatimArguments: true,
+    argv0: `"${installers['1.0.0']}"`,
+  });
+  await waitFor((entries) =>
+    entries.find((entry) => entry.event === 'stopped' && entry.pid === child.pid),
+  );
+  verifyIdentity(await start());
   receipt.stage = 'updating to 1.0.1';
   const success = await replace(dirname(installers['1.0.1']));
   assert.equal(success.ok, true, success.error?.diagnostic);
@@ -367,6 +387,7 @@ app.whenReady().then(async () => {
     realNsis: true,
     realElectron: true,
     failedInstallPreserved: true,
+    runningAppQuitByInstaller: true,
     foreignInstallerRefused: true,
     windowsCatalogInstallerRefused: true,
     encryptedProfilePreserved: true,

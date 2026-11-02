@@ -196,7 +196,7 @@ app.whenReady().then(async () => {
     receipt('artifact-prepared', { hash: createHash('sha256').update(bytes).digest('hex') });
   }
   autoUpdater.on('error', (error) => {
-    receipt('error', { message: String(error.message).slice(0, 2000) });
+    receipt('error', { source: 'native', message: String(error.message).slice(0, 2000) });
     app.quit();
   });
   if (fixture.kind === 'install') {
@@ -246,7 +246,7 @@ app.whenReady().then(async () => {
   autoUpdater.setFeedURL({ url: fixture.feed });
   autoUpdater.checkForUpdates();
 }).catch((error) => {
-  receipt('error', { message: String(error.message).slice(0, 2000) });
+  receipt('error', { source: 'fixture', message: String(error.message).slice(0, 2000) });
   app.quit();
 });
 `,
@@ -522,8 +522,8 @@ async function main() {
       const entry = {
         id: {
           install: 'UPD-NATIVE.v6',
-          reject: 'UPD-SIGNATURE.v4',
-          downgrade: 'UPD-DOWNGRADE.v2',
+          reject: 'UPD-SIGNATURE.v5',
+          downgrade: 'UPD-DOWNGRADE.v3',
           migrate: 'UPD-KEYCHAIN-MIGRATION.v1',
         }[fixture.kind],
         startedAt: new Date().toISOString(),
@@ -593,10 +593,12 @@ async function main() {
         ),
       );
       check(
-        'UPD-DOWNLOAD',
+        installs ? 'UPD-DOWNLOAD' : 'UPD-REQUEST',
         ['feed', 'archive.zip'].every((path) =>
           report.requests.some(
-            (request) => request.path === `/${fixture.kind}/${path}` && request.completed,
+            (request) =>
+              request.path === `/${fixture.kind}/${path}` &&
+              (request.completed || (!installs && path === 'archive.zip')),
           ),
         ),
       );
@@ -638,10 +640,16 @@ async function main() {
             events.some(
               (event) =>
                 event.event === 'error' &&
+                event.source === 'native' &&
+                event.version === fixture.installed &&
                 (fixture.kind === 'reject'
-                  ? /sign|signature|requirement|validation/i
-                  : /downgrade|lower version/i
-                ).test(event.message),
+                  ? /^Code signature at URL .+ did not pass validation:/.test(event.message) &&
+                    event.message.includes('code failed to satisfy specified code requirement(s)')
+                  : event.message.includes(
+                      'Cannot update to a bundle with a lower version number.',
+                    ) &&
+                    event.message.includes('ElectronSquirrelPreventDowngrades') &&
+                    event.message.includes(`from '${fixture.installed}' to '${latestVersion}'`)),
             ) &&
             !events.some((event) => event.event === 'downloaded') &&
             installedSignature ===

@@ -6,7 +6,7 @@ import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
-import { Tasks } from './pages/tasks';
+import { Scheduled } from './pages/tasks';
 import { PreparedWork } from './pages/prepared';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
@@ -21,7 +21,7 @@ import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { createFeedbackCapture } from './lib/feedback-capture';
-import { navigate, sidebarItems } from './lib/navigation';
+import { navigate, replaceNavigation, sidebarItems, subscribeNavigation } from './lib/navigation';
 import { appPagePath, preparedWorkId } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
@@ -29,7 +29,7 @@ import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shar
 import type { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
-import { AccountSettings } from './components/account-settings';
+import { AccountSettings, isSettingsPage, settingsSections } from './components/account-settings';
 import { capturePageview } from './lib/analytics';
 import type { AccountControls, AccountTab } from './components/account-menu';
 import { usePageData } from './hooks/use-page-data';
@@ -82,7 +82,7 @@ function useSavedDateFormat() {
 }
 
 function settingsPage(path: string) {
-  return ['/settings', '/settings/models', '/settings/memory'].includes(path);
+  return isSettingsPage(path);
 }
 
 function Workspace({
@@ -94,6 +94,7 @@ function Workspace({
   initialFocusMessageId,
   onFocusMessageHandled,
   settings,
+  onReturnToMemory,
 }: {
   path: string;
   session: SessionResponse;
@@ -103,17 +104,25 @@ function Workspace({
   initialFocusMessageId?: string;
   onFocusMessageHandled(): void;
   settings: ReactNode;
+  onReturnToMemory?(): void;
 }) {
-  const { state, streams, error, connected, refresh, resetConversation } = useAppState(
-    session.user!.id,
-  );
+  const { state, streams, error, connected, refresh } = useAppState(session.user!.id);
   const unread = useChatUnread(session.user!.id, state);
   useBrowserNotifications(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
   const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');
-  const [sidebarMotion, setSidebarMotion] = useState(false);
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
+  const [mobileActions, setMobileActions] = useState<HTMLDivElement | null>(null);
+  const [mobileHeader, setMobileHeader] = useState(
+    () => window.matchMedia?.('(max-width: 640px)').matches ?? false,
+  );
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 640px)');
+    const update = () => setMobileHeader(media?.matches ?? false);
+    media?.addEventListener('change', update);
+    return () => media?.removeEventListener('change', update);
+  }, []);
   const [pendingMessageFocus, setPendingMessageFocus] = useState(initialFocusMessageId);
   useEffect(() => {
     if (initialFocusMessageId) onFocusMessageHandled();
@@ -176,36 +185,30 @@ function Workspace({
   useEffect(() => {
     writeUiPreference('nod.sidebar', collapsed ? 'collapsed' : 'expanded');
   }, [collapsed]);
-  function toggleSidebar(animate: boolean) {
-    setSidebarMotion(animate);
+  function toggleSidebar() {
     setCollapsed((value) => !value);
   }
   return (
     <div
-      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${sidebarMotion ? 'sidebar-motion' : ''} ${entering ? 'shell-entering' : ''}`}
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${entering ? 'shell-entering' : ''} ${settingsPage(path) ? 'settings-open' : ''}`}
     >
       <a href="#workspace" className="skip-link">
         Skip to content
       </a>
-      {desktopSettingsAvailable() && (
-        <DesktopToolbar
-          collapsed={collapsed}
-          onToggle={() => toggleSidebar(true)}
-          actionsRef={setToolbarActions}
+      {desktopSettingsAvailable() && <DesktopToolbar actionsRef={setToolbarActions} />}
+      {!settingsPage(path) && (
+        <Sidebar
+          path={path}
+          unreadCount={unread.count}
+          unreadPending={unread.pending}
+          onToggle={toggleSidebar}
+          onNavigate={navigate}
+          account={account}
+          actionsRef={setMobileActions}
         />
       )}
-      <Sidebar
-        path={path}
-        unreadCount={unread.count}
-        unreadPending={unread.pending}
-        onToggle={() => toggleSidebar(false)}
-        onNavigate={navigate}
-        account={account}
-      />
       <div className="workspace-frame">
-        {!desktopSettingsAvailable() && (
-          <SidebarToggle collapsed={collapsed} onToggle={() => toggleSidebar(true)} />
-        )}
+        {!settingsPage(path) && <SidebarToggle collapsed={collapsed} onToggle={toggleSidebar} />}
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
             <div className="chat-route" hidden={path !== '/'}>
@@ -215,10 +218,18 @@ function Workspace({
                   state={state}
                   streams={streams}
                   refresh={refresh}
-                  resetConversation={resetConversation}
                   initialFocusMessageId={pendingMessageFocus}
-                  toolbarActions={path === '/' ? toolbarActions : null}
+                  onReturnToMemory={onReturnToMemory}
+                  toolbarActions={
+                    path === '/'
+                      ? !desktopSettingsAvailable() && mobileHeader
+                        ? mobileActions
+                        : toolbarActions
+                      : null
+                  }
                   visible={path === '/'}
+                  readCursor={unread.cursor}
+                  readUnavailable={unread.unavailable}
                   onReadLatest={unread.markRead}
                   onFeedback={onFeedback}
                   onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
@@ -246,7 +257,7 @@ function Workspace({
             )}
             {path === '/apps' && <Apps configuration={state?.configuration} onAsk={askInChat} />}
             {path === '/channels' && <Channels />}
-            {path === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
+            {path === '/tasks' && <Scheduled onAsk={askInChat} />}
             {preparedWorkId(path) && <PreparedWork key={path} id={preparedWorkId(path)!} />}
             {settings}
             {!settingsPage(path) &&
@@ -356,6 +367,18 @@ function AuthenticatedApp({
     if (!settingsOpen && path !== '/memory') settingsReturn.current = { path, trigger: null };
   }, [path, settingsOpen]);
   const [browserNotificationTarget, setBrowserNotificationTarget] = useState<string>();
+  const [memorySource, setMemorySource] = useState(false);
+  useEffect(() => {
+    if (path !== '/') setMemorySource(false);
+  }, [path]);
+  useEffect(() => {
+    const focus = (event: Event) => {
+      const detail = (event as CustomEvent<{ source?: unknown }>).detail;
+      if (detail?.source !== 'memory') setMemorySource(false);
+    };
+    window.addEventListener('nod:focus-message', focus);
+    return () => window.removeEventListener('nod:focus-message', focus);
+  }, []);
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const onboarding =
     finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
@@ -369,9 +392,9 @@ function AuthenticatedApp({
   }, [onboarding, path]);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const settingsTab: AccountTab =
-    path === '/settings/models' ? 'Models' : path === '/settings/memory' ? 'Memory' : 'General';
+    settingsSections.find((section) => section.path === path)?.label ?? 'General';
   const settingsPath = (tab: AccountTab) =>
-    tab === 'General' ? '/settings' : `/settings/${tab.toLowerCase()}`;
+    settingsSections.find((section) => section.label === tab)?.path ?? '/settings';
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     const current = window.location.pathname;
     if (!settingsPage(current) && current !== '/memory')
@@ -391,11 +414,7 @@ function AuthenticatedApp({
     if (!destination) return;
     if (settingsPage(destination))
       openSettings(
-        destination === '/settings/models'
-          ? 'Models'
-          : destination === '/settings/memory'
-            ? 'Memory'
-            : 'General',
+        settingsSections.find((section) => section.path === destination)?.label ?? 'General',
         trigger,
       );
     else {
@@ -427,8 +446,7 @@ function AuthenticatedApp({
   }, [onboarding]);
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
-    window.history.replaceState(null, '', '/settings/memory');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    replaceNavigation('/settings/memory');
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
     const openAppLink = (event: MouseEvent) => {
@@ -545,12 +563,21 @@ function AuthenticatedApp({
           account={account}
           initialFocusMessageId={browserNotificationTarget}
           onFocusMessageHandled={() => setBrowserNotificationTarget(undefined)}
+          onReturnToMemory={memorySource ? () => openSettings('Memory') : undefined}
           settings={
             <AccountSettings
               account={account}
               open={settingsOpen}
               initialTab={settingsTab}
               openRequest={settingsRequest}
+              onOpenSource={(messageId) => {
+                setMemorySource(true);
+                window.dispatchEvent(
+                  new CustomEvent('nod:focus-message', {
+                    detail: { messageId, source: 'memory' },
+                  }),
+                );
+              }}
               onOpenChange={(open) => {
                 if (!open) {
                   const previous = settingsReturn.current;
@@ -578,8 +605,7 @@ function AuthenticatedApp({
               }}
               onTabChange={(tab, replace) => {
                 if (replace) {
-                  window.history.replaceState(null, '', settingsPath(tab));
-                  window.dispatchEvent(new PopStateEvent('popstate'));
+                  replaceNavigation(settingsPath(tab));
                 } else navigate(settingsPath(tab));
               }}
               onReplayOnboarding={
@@ -709,9 +735,7 @@ export function App({ sessionState }: { sessionState: ReturnType<typeof useSessi
     return stop;
   }, []);
   useEffect(() => {
-    const update = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', update);
-    return () => window.removeEventListener('popstate', update);
+    return subscribeNavigation(() => setPath(window.location.pathname));
   }, []);
   useEffect(
     () =>

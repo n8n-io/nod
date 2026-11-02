@@ -145,13 +145,13 @@ Nod allows five minutes to receive a request body. This does not limit the durat
 
 ## Connect the desktop app
 
-Open **Server connection** in the Nod app menu or tray. On first launch, you can also choose **Connect to a server**. Enter the server address and the value of `NOD_AUTH_TOKEN`.
+Choose **Connect to a server** on first launch. After setup, open **Replay onboarding…** in the Nod menu, then choose **Connect to a server**. Enter the server address and the value of `NOD_AUTH_TOKEN`.
 
 Use the HTTPS address, or `http://localhost:4310` while your SSH tunnel is open. The app uses the server's conversation, files, models, and connected accounts. Closing the app does not stop the server.
 
 The app verifies the server before saving the token in your operating system's secure storage. It restarts into the remote assistant without starting a local runtime. The server owns the Composio identity and connected accounts, so another device reaches the same assistant without reconnecting those accounts.
 
-The app's local assistant is separate. Connecting does not migrate its data. To return to it, open **Server connection** and choose **Use this computer**.
+The app's local assistant is separate. Connecting does not migrate its data. To return to it, choose **Replay onboarding… → Change server → Use this computer**. Connection changes are also available on the startup recovery screen if the server is unavailable.
 
 Model and app connections run on the server too. Use addresses the server can reach; `localhost` inside a Docker installation refers to its server container, not the device running the client. For ChatGPT subscription sign-in, follow the [remote callback instructions](/connect/models/#connect-a-service).
 

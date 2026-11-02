@@ -13,6 +13,8 @@
 }
 .private-entry-panel {
   position: relative;
+  display: flex;
+  flex-direction: column;
   z-index: 22;
   flex: 0 0 clamp(360px, 36%, 440px);
   min-width: 0;
@@ -27,12 +29,23 @@
   outline: none;
 }
 .private-entry-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
+  flex: none;
   justify-content: flex-end;
   padding: 12px 12px 0;
+  background: var(--surface);
 }
-.private-entry-panel .credential-embedded {
-  padding: 24px;
+.private-entry-panel .credential-embedded,
+.private-entry-card {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 32px 24px;
 }
 .credential-embedded .credential-card {
   width: 100%;
@@ -44,6 +57,9 @@
 }
 .credential-embedded .credential-card h1 {
   font-size: 24px;
+}
+.credential-embedded .credential-card:focus {
+  outline: none;
 }
 .credential-method-back {
   margin: 0 0 16px -8px;
@@ -68,7 +84,7 @@
 .private-entry-workspace.is-narrow .credential-embedded {
   width: min(440px, 100%);
   margin-inline: auto;
-  padding: 24px 20px 40px;
+  padding: 32px 20px max(32px, env(safe-area-inset-bottom));
 }
 
 :root[data-desktop='true'] .private-entry-toolbar {
@@ -90,15 +106,9 @@
   visibility: hidden;
 }
 
-.private-entry-card {
-  padding: 12px 24px 32px;
-}
 .private-entry-card .vault-hero {
-  padding-top: 24px;
+  padding-top: 0;
 }
 .private-entry-card .vault-hero-title {
   font-size: 24px;
-}
-.private-entry-card .credential-complete {
-  padding-top: 24px;
 }

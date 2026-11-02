@@ -1,333 +1,54 @@
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Bell,
+  Brain,
+  Ellipsis,
+  KeyRound,
+  Mic,
+  Settings,
+  ShieldCheck,
+} from './icons';
+import type { AccountControls, AccountTab } from './account-menu';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  Notice,
+  Switch,
+} from './ui';
 import { ModelSettings } from './models';
 import { VoiceSettings } from './voice-settings';
-import { useEffect, useId, useRef, useState } from 'react';
-import {
-  ChartColumn,
-  Ellipsis,
-  Clock3,
-  Globe,
-  MessageSquareText,
-  MapPin,
-  Monitor,
-  Moon,
-  Sun,
-  X,
-} from './icons';
-import type { AccountPreferences, AccountTheme } from '../../shared/account';
-import type { HourCycle } from '../../shared/contracts';
-import type { AccountControls, AccountTab } from './account-menu';
-import { Button, Field, Input, Loading, Notice, Switch } from './ui';
-import { usePageData } from '../hooks/use-page-data';
-import { errorMessage } from '../lib/api';
-import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
-import { posthogConfig } from '../../shared/analytics';
-import { SearchPicker, TimeZonePicker } from './time-zone-picker';
-import {
-  dateFormatFrom,
-  formatDateTime,
-  regionLocale,
-  regions,
-  useBrowserRegion,
-} from '../lib/date-format';
-import { savePreferences } from '../lib/preferences';
-import { localeRegion } from '../../shared/date-locale';
+import { Memory, type MemoryNavigationState } from '../pages/memory';
+import { GeneralPreferences, QuietHours } from './settings-preferences';
+import { SettingsDraftContext, useSettingsDrafts } from './settings-drafts';
+import { ActionMenu, ActionMenuItem } from './action-menu';
+import { BrowserNotificationSettings } from './browser-notifications';
+import { useDesktopSettings } from './desktop-settings';
 import {
   desktopRuntimeAvailable,
   desktopSettingsAvailable,
   removeDesktopData,
 } from '../lib/desktop';
-import { DesktopOptions, useDesktopSettings } from './desktop-settings';
-import { BrowserNotificationSettings } from './browser-notifications';
-import { Memory } from '../pages/memory';
-import { ConnectionMenu } from './connection-menu';
+import { guardNavigation } from '../lib/navigation';
+import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
+import { errorMessage } from '../lib/api';
+import { posthogConfig } from '../../shared/analytics';
 
-const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
-const regionLabels = {
-  choose: 'Choose region',
-  search: 'Search regions',
-  placeholder: 'Search country or region',
-  clear: 'Clear region search',
-  list: 'Regions',
-  empty: 'No regions found.',
-};
-const clockOptions: Array<{ value: HourCycle; label: string }> = [
-  { value: 'auto', label: 'Automatic' },
-  { value: 'h12', label: '12-hour' },
-  { value: 'h23', label: '24-hour' },
-];
+export const settingsSections = [
+  { id: 'general', label: 'General', path: '/settings', icon: Settings },
+  { id: 'notifications', label: 'Notifications', path: '/settings/notifications', icon: Bell },
+  { id: 'models', label: 'Models', path: '/settings/models', icon: KeyRound },
+  { id: 'voice', label: 'Voice & audio', path: '/settings/voice', icon: Mic },
+  { id: 'memory', label: 'Memory', path: '/settings/memory', icon: Brain },
+  { id: 'privacy', label: 'Privacy & data', path: '/settings/privacy', icon: ShieldCheck },
+] as const;
 
-function regionOptions(current: string, detected: string) {
-  const names = new Intl.DisplayNames(['en'], { type: 'region' });
-  return [
-    {
-      value: 'auto',
-      label: `Automatic (${names.of(detected) ?? detected})`,
-      keywords: `location ${detected}`,
-    },
-    ...[...new Set([current, detected, ...regions])]
-      .filter((region) => region !== 'auto')
-      .map((region) => ({ value: region, label: names.of(region) ?? region, keywords: region }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'en')),
-  ];
-}
-
-function LanguageAndRegion({
-  saved,
-  onBusyChange,
-}: {
-  saved: AccountPreferences;
-  onBusyChange(busy: boolean): void;
-}) {
-  const heading = useId();
-  const regionLabel = useId();
-  const clockLabel = useId();
-  const timeZoneLabel = useId();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const request = useRef<AbortController | null>(null);
-  useEffect(() => () => request.current?.abort(), []);
-  useEffect(() => {
-    onBusyChange(saving);
-    return () => onBusyChange(false);
-  }, [saving, onBusyChange]);
-  const format = dateFormatFrom(saved);
-  const region = localeRegion(saved.locale) ?? 'auto';
-  const detected = useBrowserRegion();
-  const zones = [
-    ...new Set([
-      format.timeZone,
-      ...(Intl.supportedValuesOf?.('timeZone') ?? [
-        'Europe/Lisbon',
-        'Europe/London',
-        'America/New_York',
-      ]),
-    ]),
-  ].sort();
-  async function save(
-    change: Partial<Pick<AccountPreferences, 'locale' | 'hourCycle' | 'timeZone'>>,
-  ) {
-    if (request.current) return;
-    const controller = new AbortController();
-    request.current = controller;
-    setSaving(true);
-    setError('');
-    try {
-      await savePreferences(change, controller.signal);
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(errorMessage(cause));
-    } finally {
-      if (request.current === controller) {
-        request.current = null;
-        if (!controller.signal.aborted) setSaving(false);
-      }
-    }
-  }
-  return (
-    <section className="account-region" aria-labelledby={heading}>
-      <h2 id={heading} data-analytics-public>
-        Date and time
-      </h2>
-      <div className="account-preference-row account-picker-row">
-        <span id={regionLabel} data-analytics-public>
-          <MapPin size={16} aria-hidden="true" />
-          Region
-        </span>
-        <SearchPicker
-          value={region}
-          options={regionOptions(region, detected)}
-          labels={regionLabels}
-          labelledBy={regionLabel}
-          disabled={saving}
-          onChange={(next) => {
-            if (next !== region) void save({ locale: next === 'auto' ? null : regionLocale(next) });
-          }}
-        />
-      </div>
-      <div className="account-preference-row account-clock-row">
-        <span id={clockLabel} data-analytics-public>
-          <Clock3 size={16} aria-hidden="true" />
-          Clock
-        </span>
-        <div className="account-clock-options" role="group" aria-labelledby={clockLabel}>
-          {clockOptions.map((option) => (
-            <Button
-              key={option.value}
-              type="button"
-              size="sm"
-              variant={saved.hourCycle === option.value ? 'secondary' : 'ghost'}
-              aria-pressed={saved.hourCycle === option.value}
-              disabled={saving}
-              onClick={() => {
-                if (saved.hourCycle !== option.value) void save({ hourCycle: option.value });
-              }}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      </div>
-      <div className="account-preference-row account-picker-row account-time-zone">
-        <span id={timeZoneLabel} data-analytics-public>
-          <Globe size={16} aria-hidden="true" />
-          Time zone
-        </span>
-        <TimeZonePicker
-          value={format.timeZone}
-          zones={zones}
-          labelledBy={timeZoneLabel}
-          disabled={saving}
-          onChange={(timeZone) => {
-            if (timeZone !== saved.timeZone) void save({ timeZone });
-          }}
-        />
-      </div>
-      <p className="field-hint" aria-live="polite">
-        Example: {formatDateTime(new Date(), format, { weekday: true })}
-      </p>
-      {error && <Notice>{error}</Notice>}
-    </section>
-  );
-}
-
-function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): void }) {
-  const {
-    data,
-    loading,
-    error: loadError,
-    refresh,
-  } = usePageData<AccountPreferences>('/api/preferences');
-  const [draft, setDraft] = useState<AccountPreferences | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [regionBusy, setRegionBusy] = useState(false);
-  const [error, setError] = useState('');
-  const request = useRef<AbortController | null>(null);
-  const previous = useRef<AccountPreferences | null>(null);
-  useEffect(() => {
-    if (!data) return;
-    const baseline = previous.current;
-    setDraft((current) =>
-      !current || !baseline
-        ? data
-        : {
-            ...data,
-            ...Object.fromEntries(
-              editablePreferences
-                .filter((key) => current[key] !== baseline[key])
-                .map((key) => [key, current[key]]),
-            ),
-          },
-    );
-    previous.current = data;
-  }, [data]);
-  useEffect(() => () => request.current?.abort(), []);
-  const dirty = Boolean(
-    data && draft && editablePreferences.some((key) => draft[key] !== data[key]),
-  );
-  useEffect(() => {
-    onDirtyChange(dirty || saving || regionBusy);
-    return () => onDirtyChange(false);
-  }, [dirty, saving, regionBusy, onDirtyChange]);
-  if (!data || !draft)
-    return (
-      <>
-        {loading ? <Loading /> : <Notice>{loadError || 'Preferences could not be loaded.'}</Notice>}
-        {!loading && (
-          <Button variant="outline" onClick={() => void refresh()}>
-            Try again
-          </Button>
-        )}
-      </>
-    );
-  const current = draft;
-  const saved = data;
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
-    if (request.current) return;
-    const controller = new AbortController();
-    request.current = controller;
-    setSaving(true);
-    setError('');
-    try {
-      const result = await savePreferences(
-        Object.fromEntries(
-          editablePreferences
-            .filter((key) => current[key] !== saved[key])
-            .map((key) => [key, current[key]]),
-        ),
-        controller.signal,
-      );
-      if (!controller.signal.aborted) setDraft(result);
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(errorMessage(cause));
-    } finally {
-      if (request.current === controller) {
-        request.current = null;
-        if (!controller.signal.aborted) setSaving(false);
-      }
-    }
-  }
-  return (
-    <>
-      <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
-      <form className="account-region account-quiet-hours" onSubmit={(event) => void save(event)}>
-        <div className="account-preference-row">
-          <div className="account-preference-label">
-            <Moon size={16} aria-hidden="true" />
-            <div>
-              <strong>Quiet hours</strong>
-            </div>
-          </div>
-          <Switch
-            checked={current.quietHoursEnabled}
-            aria-label="Quiet hours"
-            disabled={saving}
-            onCheckedChange={(quietHoursEnabled) => setDraft({ ...current, quietHoursEnabled })}
-          />
-        </div>
-        {current.quietHoursEnabled && (
-          <div className="account-quiet-times">
-            <Field label="From">
-              <Input
-                type="time"
-                value={current.quietStart}
-                required
-                disabled={saving}
-                onChange={(event) => setDraft({ ...current, quietStart: event.target.value })}
-              />
-            </Field>
-            <Field label="Until">
-              <Input
-                type="time"
-                value={current.quietEnd}
-                required
-                disabled={saving}
-                onChange={(event) => setDraft({ ...current, quietEnd: event.target.value })}
-              />
-            </Field>
-          </div>
-        )}
-        {(error || loadError) && <Notice>{error || loadError}</Notice>}
-        {dirty && (
-          <div className="account-settings-actions">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={saving}
-              onClick={() => {
-                setDraft(saved);
-                setError('');
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        )}
-      </form>
-    </>
-  );
+export function isSettingsPage(path: string) {
+  return settingsSections.some((section) => section.path === path);
 }
 
 export function AccountSettings({
@@ -338,6 +59,7 @@ export function AccountSettings({
   onOpenChange,
   onReplayOnboarding,
   onTabChange,
+  onOpenSource,
 }: {
   account: AccountControls;
   open: boolean;
@@ -346,38 +68,63 @@ export function AccountSettings({
   onOpenChange(open: boolean): void;
   onReplayOnboarding?(): void;
   onTabChange?(tab: AccountTab, replace?: boolean): void;
+  onOpenSource?(messageId: string): void;
 }) {
+  const id = useId();
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
-  const tabs: AccountTab[] = ['General', 'Models', 'Memory'];
-  const selectedTab = tabs.includes(initialTab) ? initialTab : 'General';
-  const [tab, setTab] = useState<AccountTab>(selectedTab);
-  const [modelDirty, setModelDirty] = useState(false);
-  const [preferencesDirty, setPreferencesDirty] = useState(false);
+  const { drafts, register } = useSettingsDrafts();
+  const selected =
+    settingsSections.find((section) => section.label === initialTab) ?? settingsSections[0];
+  const [section, setSection] = useState<string>(selected.id);
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const [memoryDirty, setMemoryDirty] = useState(false);
-  const pending = useRef(false);
-  const heading = useRef<HTMLHeadingElement>(null);
-  pending.current =
-    modelDirty || preferencesDirty || voiceBusy || memoryDirty || native.busy || account.saving;
+  const [saving, setSaving] = useState(false);
+  const [review, setReview] = useState(false);
   const [error, setError] = useState('');
-  const close = () => {
-    if (pending.current) setError('Save or cancel your changes first.');
-    else onOpenChange(false);
-  };
-  const active = useRef(false);
-  const recordedTab = useRef<string | null>(null);
-  function recordTab(value: AccountTab) {
-    const key = `${openRequest}:${value}`;
-    if (recordedTab.current === key) return;
-    recordedTab.current = key;
-    captureAnalytics('nod_settings_viewed', {
-      tab: value
-        .toLowerCase()
-        .replace(' ', '_') as AnalyticsProperties<'nod_settings_viewed'>['tab'],
+  const [privacyError, setPrivacyError] = useState('');
+  const [removing, setRemoving] = useState(false);
+  const content = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  const reviewTitle = useRef<HTMLHeadingElement>(null);
+  const exitAction = useRef<(() => void) | null>(null);
+  const memorySourceView = useRef<{ ownerId: string; view: MemoryNavigationState } | null>(null);
+  const allowExit = useRef(false);
+  const active = useRef(true);
+  const current = useRef({ drafts, busy: false });
+  const busy =
+    saving ||
+    voiceBusy ||
+    native.busy ||
+    account.saving ||
+    removing ||
+    drafts.some((draft) => draft.busy);
+  current.current = { drafts, busy };
+  const changed = drafts.filter((draft) => draft.changes.length);
+  const changes = changed.flatMap((draft) => draft.changes);
+  const recorded = useRef('');
+  const runExit = useCallback((action: () => void) => {
+    allowExit.current = true;
+    action();
+    queueMicrotask(() => {
+      allowExit.current = false;
     });
-  }
-  const id = useId();
+  }, []);
+  const requestExit = useCallback(
+    (action: () => void) => {
+      if (current.current.busy) {
+        setError('Wait for the current change to finish.');
+        return false;
+      }
+      if (current.current.drafts.some((draft) => draft.changes.length)) {
+        exitAction.current = action;
+        setReview(true);
+        return false;
+      }
+      runExit(action);
+      return true;
+    },
+    [runExit],
+  );
   useEffect(() => {
     active.current = true;
     return () => {
@@ -385,38 +132,26 @@ export function AccountSettings({
     };
   }, []);
   useEffect(() => {
-    if (open) {
-      if (pending.current) {
-        if (selectedTab !== tab) onTabChange?.(tab, true);
-        setError('Save or cancel your changes first.');
-        return;
-      }
-      setTab(selectedTab);
-      recordTab(selectedTab);
-      setError('');
-    }
-  }, [open, selectedTab, openRequest, account.user.id]);
-  function changeTab(value: AccountTab) {
-    if (pending.current) {
-      setError('Save or cancel your changes first.');
+    if (!open) return;
+    return guardNavigation((path, proceed) => {
+      if (allowExit.current || isSettingsPage(path.split(/[?#]/, 1)[0])) return true;
+      if (!current.current.busy && !current.current.drafts.some((draft) => draft.changes.length))
+        return true;
+      requestExit(proceed);
       return false;
-    }
-    setTab(value);
-    onTabChange?.(value);
-    recordTab(value);
-    setError('');
-    return true;
-  }
+    });
+  }, [open, requestExit]);
   useEffect(() => {
-    if (open) heading.current?.focus({ preventScroll: true });
-  }, [open]);
-  useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (pending.current) event.preventDefault();
+    const unload = (event: BeforeUnloadEvent) => {
+      if (
+        open &&
+        (current.current.busy || current.current.drafts.some((draft) => draft.changes.length))
+      )
+        event.preventDefault();
     };
-    window.addEventListener('beforeunload', beforeUnload);
-    return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, []);
+    window.addEventListener('beforeunload', unload);
+    return () => window.removeEventListener('beforeunload', unload);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const escape = (event: KeyboardEvent) => {
@@ -435,289 +170,451 @@ export function AccountSettings({
         '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="combobox"][aria-expanded="true"], dialog[open]',
       );
       if (
-        [...overlays].some((overlay) => {
-          const style = getComputedStyle(overlay);
-          return (
+        [...overlays].some(
+          (overlay) =>
             !overlay.closest('[hidden], [inert]') &&
             overlay.dataset.state !== 'closed' &&
-            style.display !== 'none' &&
-            style.visibility !== 'hidden'
-          );
-        })
+            overlay.getClientRects().length &&
+            getComputedStyle(overlay).visibility !== 'hidden',
+        )
       )
         return;
       event.preventDefault();
-      close();
+      requestExit(() => onOpenChange(false));
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
-  }, [open, onOpenChange]);
-  const theme = desktop ? native.settings?.theme : account.theme;
-  const themeSaving = desktop ? native.busy || !native.settings : account.saving;
+  }, [open, onOpenChange, requestExit]);
+  function jump(target: string, smooth = false) {
+    const scroller = content.current;
+    const heading = document.getElementById(`${id}-${target}`);
+    if (!scroller || !heading) return;
+    const top =
+      heading.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      32;
+    scroller.scrollTo({
+      top: Math.max(0, top),
+      behavior:
+        smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'smooth'
+          : 'instant',
+    });
+    setSection(target);
+    heading.focus({ preventScroll: true });
+  }
+  useLayoutEffect(() => {
+    if (!open) {
+      setReview(false);
+      exitAction.current = null;
+      return;
+    }
+    setError('');
+    memorySourceView.current = null;
+    const frame = requestAnimationFrame(() => jump(selected.id));
+    return () => cancelAnimationFrame(frame);
+  }, [open, selected.id, openRequest]);
+  useEffect(() => {
+    if (!open) return;
+    const key = `${openRequest}:${section}`;
+    if (recorded.current === key) return;
+    recorded.current = key;
+    captureAnalytics('nod_settings_viewed', {
+      tab: section as AnalyticsProperties<'nod_settings_viewed'>['tab'],
+    });
+  }, [open, openRequest, section]);
+  function trackScroll() {
+    const scroller = content.current;
+    if (!scroller) return;
+    const top = scroller.getBoundingClientRect().top;
+    const reached = settingsSections.filter((candidate) => {
+      const heading = document.getElementById(`${id}-${candidate.id}`);
+      return heading && heading.getBoundingClientRect().top <= top + 108;
+    });
+    const atEnd = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 4;
+    setSection(atEnd ? 'privacy' : (reached.at(-1)?.id ?? 'general'));
+  }
+  async function saveAll(leave: boolean) {
+    if (current.current.busy) return;
+    const pending = current.current.drafts.filter((draft) => draft.changes.length);
+    setSaving(true);
+    setError('');
+    let success = true;
+    for (const draft of pending) {
+      const latest = current.current.drafts.find((entry) => entry.id === draft.id);
+      if (!latest || latest.revision !== draft.revision) {
+        if (latest?.changes.length) success = false;
+        continue;
+      }
+      try {
+        if (!(await draft.save())) success = false;
+      } catch (cause) {
+        success = false;
+        if (active.current) setError(errorMessage(cause));
+      }
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (!active.current) return;
+    setSaving(false);
+    if (!success || current.current.drafts.some((draft) => draft.changes.length)) {
+      setError('Some changes still need attention. Your edits are kept.');
+      return;
+    }
+    setReview(false);
+    if (leave && exitAction.current) {
+      const action = exitAction.current;
+      exitAction.current = null;
+      runExit(action);
+    }
+  }
+  function discardAll(leave: boolean) {
+    if (current.current.busy) return;
+    for (const draft of current.current.drafts) draft.discard();
+    setError('');
+    setReview(false);
+    if (leave && exitAction.current) {
+      const action = exitAction.current;
+      exitAction.current = null;
+      runExit(action);
+    }
+  }
+  const source = (messageId: string, view: MemoryNavigationState) =>
+    requestExit(() => {
+      memorySourceView.current = { ownerId: account.user.id, view };
+      if (onOpenSource) onOpenSource(messageId);
+      else window.dispatchEvent(new CustomEvent('nod:focus-message', { detail: { messageId } }));
+    });
   return (
-    <section
-      className="account-settings settings-page content-page secondary-page"
-      hidden={!open}
-      aria-labelledby={`${id}-heading`}
-    >
-      <header className="page-heading secondary-heading">
-        <div className="page-title-row">
-          <h1
-            className="page-title"
-            id={`${id}-heading`}
-            ref={heading}
-            tabIndex={-1}
-            data-analytics-public
-          >
-            Settings
-          </h1>
-        </div>
-        <div className="secondary-heading-actions">
-          {onReplayOnboarding && (
-            <ConnectionMenu
-              label="Settings options"
-              trigger={<Ellipsis size={20} />}
-              compact
-              disabled={pending.current}
-            >
-              {(closeMenu) => (
-                <button
-                  role="menuitem"
-                  type="button"
-                  onClick={() => {
-                    closeMenu();
-                    onReplayOnboarding();
-                  }}
-                >
-                  Replay onboarding
-                </button>
-              )}
-            </ConnectionMenu>
-          )}
-          <Button
-            className="account-settings-close"
-            variant="ghost"
-            aria-label="Close settings"
-            title="Close settings (ESC)"
-            onClick={close}
-          >
-            <X size={18} aria-hidden="true" />
-            <kbd aria-hidden="true">ESC</kbd>
-          </Button>
-        </div>
-      </header>
-      <div className="account-settings-layout">
-        <nav
-          className="account-settings-tabs"
-          role="tablist"
-          aria-label="Settings"
-          data-analytics-public
-        >
-          {tabs.map((value, index) => (
-            <button
-              key={value}
-              id={`${id}-${value}`}
-              type="button"
-              role="tab"
-              aria-selected={value === tab}
-              aria-label={value}
-              title={value}
-              aria-controls={`${id}-content`}
-              tabIndex={value === tab ? 0 : -1}
-              onClick={() => changeTab(value)}
-              onKeyDown={(event) => {
-                const next =
-                  event.key === 'ArrowRight'
-                    ? (index + 1) % tabs.length
-                    : event.key === 'ArrowLeft'
-                      ? (index - 1 + tabs.length) % tabs.length
-                      : event.key === 'Home'
-                        ? 0
-                        : event.key === 'End'
-                          ? tabs.length - 1
-                          : null;
-                if (next === null) return;
-                event.preventDefault();
-                if (changeTab(tabs[next])) document.getElementById(`${id}-${tabs[next]}`)?.focus();
-              }}
-            >
-              {value}
-            </button>
-          ))}
-        </nav>
-        <div
-          className="account-settings-pane"
-          id={`${id}-content`}
-          role="tabpanel"
-          aria-labelledby={`${id}-${tab}`}
-        >
-          <div key={tab} className="account-settings-body" tabIndex={0}>
-            {tab === 'General' && (
-              <>
-                {desktop && native.error && (
-                  <Notice>
-                    {native.error}{' '}
-                    {!native.settings && (
-                      <Button variant="ghost" size="sm" onClick={() => void native.refresh()}>
-                        Try again
+    <SettingsDraftContext.Provider value={register}>
+      <section
+        className="account-settings settings-page"
+        hidden={!open}
+        aria-labelledby={`${id}-heading`}
+      >
+        {open && (
+          <>
+            <aside className="settings-sidebar">
+              <header>
+                <h1 id={`${id}-heading`} ref={title} tabIndex={-1}>
+                  Settings
+                </h1>
+                {onReplayOnboarding && (
+                  <ActionMenu
+                    label="Settings options"
+                    trigger={
+                      <Button variant="ghost" size="icon">
+                        <Ellipsis size={18} />
                       </Button>
-                    )}
-                  </Notice>
-                )}
-                <section
-                  className="account-region account-appearance"
-                  aria-labelledby={`${id}-appearance`}
-                >
-                  <h2 id={`${id}-appearance`} data-analytics-public>
-                    Appearance
-                  </h2>
-                  <div
-                    className="account-theme-previews"
-                    role="group"
-                    aria-label="Theme"
-                    data-analytics-public
+                    }
+                    contentClassName="action-menu-compact"
                   >
-                    {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
-                      const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
-                      const label = value[0].toUpperCase() + value.slice(1);
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-label={`${label} theme`}
-                          aria-pressed={theme === value}
-                          disabled={themeSaving}
-                          onClick={() => {
-                            setError('');
-                            void (
-                              desktop ? native.save({ theme: value }) : account.onTheme(value)
-                            ).catch((cause) => {
-                              if (!desktop && active.current) setError(errorMessage(cause));
-                            });
-                          }}
-                        >
-                          <span className={`account-theme-sample ${value}`} aria-hidden="true">
-                            <i>
-                              <em />
-                              <em />
-                              <em />
-                            </i>
-                            <span>
-                              <b />
-                              <b />
-                              <b />
-                              <em />
-                            </span>
-                          </span>
-                          <span className="account-theme-label">
-                            <Icon size={16} aria-hidden="true" />
-                            {label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-                {desktop && native.settings && (
-                  <DesktopOptions
-                    settings={native.settings}
-                    busy={native.busy}
-                    onChange={native.save}
-                  />
+                    {(close) => (
+                      <ActionMenuItem
+                        onClick={() => {
+                          close();
+                          requestExit(onReplayOnboarding);
+                        }}
+                      >
+                        Replay onboarding
+                      </ActionMenuItem>
+                    )}
+                  </ActionMenu>
                 )}
-                {!desktop && <BrowserNotificationSettings ownerId={account.user.id} />}
-                {open && <VoiceSettings onBusyChange={setVoiceBusy} />}
-                <PreferencesForm onDirtyChange={setPreferencesDirty} />
-                <section className="account-region" aria-labelledby={`${id}-privacy`}>
-                  <h2 id={`${id}-privacy`} data-analytics-public>
-                    Privacy
-                  </h2>
-                  <div className="account-preference-row">
-                    <span data-analytics-public>
-                      <ChartColumn size={16} aria-hidden="true" />
-                      Share usage data
-                    </span>
-                    <Switch
-                      checked={account.usageData}
-                      disabled={account.saving}
-                      aria-label="Share usage data"
-                      aria-describedby={`${id}-usage-data`}
-                      onCheckedChange={(usageData) => {
-                        setError('');
-                        void account.onUsageData(usageData).catch((cause) => {
-                          if (active.current) setError(errorMessage(cause));
-                        });
-                      }}
+              </header>
+              <nav aria-label="Settings categories">
+                {settingsSections.map(({ id: key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="settings-nav-item"
+                    aria-current={section === key ? 'location' : undefined}
+                    onClick={() => {
+                      jump(key, true);
+                      onTabChange?.(label);
+                    }}
+                  >
+                    <Icon size={20} aria-hidden="true" />
+                    <span>{label}</span>
+                    {changed.some((draft) => draft.id.toLowerCase().startsWith(key)) && (
+                      <span className="settings-dirty-dot" aria-label="Unsaved changes" />
+                    )}
+                  </button>
+                ))}
+              </nav>
+              <Button
+                className="settings-back"
+                variant="ghost"
+                onClick={() => requestExit(() => onOpenChange(false))}
+                title="Back"
+                shortcut="Esc"
+              >
+                <ArrowLeft size={18} aria-hidden="true" />
+                Back
+              </Button>
+            </aside>
+            <div className="settings-main">
+              <div className="settings-scroll" ref={content} onScroll={trackScroll}>
+                <div className="account-settings-body">
+                  {native.error && (
+                    <Notice>
+                      {native.error}
+                      {!native.settings && (
+                        <Button variant="ghost" size="sm" onClick={() => void native.refresh()}>
+                          Try again
+                        </Button>
+                      )}
+                    </Notice>
+                  )}
+                  <section className="settings-category" aria-labelledby={`${id}-general`}>
+                    <h2 id={`${id}-general`} tabIndex={-1}>
+                      General
+                    </h2>
+                    <GeneralPreferences account={account} native={native} desktop={desktop} />
+                  </section>
+                  <section className="settings-category" aria-labelledby={`${id}-notifications`}>
+                    <h2 id={`${id}-notifications`} tabIndex={-1}>
+                      Notifications
+                    </h2>
+                    {desktop ? (
+                      <section className="account-region">
+                        <div className="account-preference-row">
+                          <span>Notifications</span>
+                          <Switch
+                            checked={native.settings?.notifications ?? false}
+                            disabled={native.busy || !native.settings}
+                            aria-label="Notifications"
+                            onCheckedChange={(notifications) =>
+                              void native.save({ notifications }).catch(() => {})
+                            }
+                          />
+                        </div>
+                        <p className="field-hint">
+                          If they don’t appear, check your computer’s notification and Focus
+                          settings.
+                        </p>
+                      </section>
+                    ) : (
+                      <BrowserNotificationSettings ownerId={account.user.id} />
+                    )}
+                    <QuietHours />
+                  </section>
+                  <section className="settings-category" aria-labelledby={`${id}-models`}>
+                    <h2 id={`${id}-models`} tabIndex={-1}>
+                      Models
+                    </h2>
+                    <ModelSettings />
+                  </section>
+                  <section className="settings-category" aria-labelledby={`${id}-voice`}>
+                    <h2 id={`${id}-voice`} tabIndex={-1}>
+                      Voice & audio
+                    </h2>
+                    <VoiceSettings onBusyChange={setVoiceBusy} />
+                  </section>
+                  <section
+                    className="settings-category settings-memory"
+                    aria-labelledby={`${id}-memory`}
+                  >
+                    <h2 id={`${id}-memory`} tabIndex={-1}>
+                      Memory
+                    </h2>
+                    <Memory
+                      onDone={() => requestExit(() => onOpenChange(false))}
+                      onOpenSource={source}
+                      initialView={
+                        memorySourceView.current?.ownerId === account.user.id
+                          ? memorySourceView.current.view
+                          : undefined
+                      }
                     />
-                  </div>
-                  <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                    Help us make Nod better by sharing how you use it. Never your messages.{' '}
-                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                      What’s shared
-                    </a>
-                  </p>
-                  {account.traces !== undefined && (
-                    <>
+                  </section>
+                  <section className="settings-category" aria-labelledby={`${id}-privacy`}>
+                    <h2 id={`${id}-privacy`} tabIndex={-1}>
+                      Privacy & data
+                    </h2>
+                    <section className="account-region">
                       <div className="account-preference-row">
-                        <span data-analytics-public>
-                          <MessageSquareText size={16} aria-hidden="true" />
-                          Share conversation traces
-                        </span>
+                        <span>Share usage data</span>
                         <Switch
-                          checked={account.traces}
+                          checked={account.usageData}
                           disabled={account.saving}
-                          aria-label="Share conversation traces"
-                          aria-describedby={`${id}-traces`}
-                          onCheckedChange={(traces) => {
-                            setError('');
-                            void account.onTraces(traces).catch((cause) => {
-                              if (active.current) setError(errorMessage(cause));
+                          aria-label="Share usage data"
+                          onCheckedChange={(usageData) => {
+                            setPrivacyError('');
+                            void account.onUsageData(usageData).catch((cause) => {
+                              if (active.current) setPrivacyError(errorMessage(cause));
                             });
                           }}
                         />
                       </div>
-                      <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                        Share anonymized conversations and activity with the Nod team at n8n to
-                        improve Nod. Kept for 14 days, never used to train AI models.
+                      <p className="field-hint">
+                        Share how you use Nod, without your messages.{' '}
+                        <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                          What’s shared <ArrowUpRight size={13} aria-hidden="true" />
+                        </a>
                       </p>
-                    </>
+                    </section>
+                    {account.traces !== undefined && (
+                      <section className="account-region">
+                        <div className="account-preference-row">
+                          <span>Share conversation traces</span>
+                          <Switch
+                            checked={account.traces}
+                            disabled={account.saving}
+                            aria-label="Share conversation traces"
+                            onCheckedChange={(traces) => {
+                              setPrivacyError('');
+                              void account.onTraces(traces).catch((cause) => {
+                                if (active.current) setPrivacyError(errorMessage(cause));
+                              });
+                            }}
+                          />
+                        </div>
+                        <p className="field-hint">
+                          Help improve replies.{' '}
+                          <a
+                            href="https://nod-docs.pages.dev/trust/conversation-traces/"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            What this includes <ArrowUpRight size={13} aria-hidden="true" />
+                          </a>
+                        </p>
+                        <p className="field-hint">
+                          Kept for 14 days. Never used to train AI models.
+                        </p>
+                      </section>
+                    )}
+                    {desktopRuntimeAvailable() && (
+                      <section className="account-region">
+                        <div className="account-preference-row">
+                          <span>Remove all data</span>
+                          <Button
+                            variant="destructive"
+                            disabled={busy}
+                            onClick={() =>
+                              requestExit(() => {
+                                setRemoving(true);
+                                setPrivacyError('');
+                                void removeDesktopData()
+                                  .catch((cause) => {
+                                    if (active.current) setPrivacyError(errorMessage(cause));
+                                  })
+                                  .finally(() => {
+                                    if (active.current) setRemoving(false);
+                                  });
+                              })
+                            }
+                          >
+                            Remove all data
+                          </Button>
+                        </div>
+                        <p className="field-hint">
+                          Erase the data on this computer and start setup again.
+                        </p>
+                      </section>
+                    )}
+                    {privacyError && <Notice>{privacyError}</Notice>}
+                  </section>
+                </div>
+              </div>
+              {(changes.length > 0 || error) && (
+                <footer className="settings-save-bar">
+                  <div>
+                    {error ? (
+                      <p className="settings-save-error" role="alert">
+                        {error}
+                      </p>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          exitAction.current = null;
+                          setReview(true);
+                        }}
+                      >
+                        {changes.length} unsaved {changes.length === 1 ? 'change' : 'changes'}
+                      </Button>
+                    )}
+                  </div>
+                  {changes.length > 0 && (
+                    <div className="settings-save-actions">
+                      <Button variant="ghost" disabled={busy} onClick={() => discardAll(false)}>
+                        Discard
+                      </Button>
+                      <Button disabled={busy} onClick={() => void saveAll(false)}>
+                        {saving ? 'Saving…' : 'Save changes'}
+                      </Button>
+                    </div>
                   )}
-                  {desktopRuntimeAvailable() && (
-                    <Button
-                      className="account-remove-data"
-                      variant="destructive"
-                      size="sm"
-                      disabled={pending.current}
-                      onClick={() => {
-                        setError('');
-                        void removeDesktopData().catch((cause) => {
-                          if (active.current) setError(errorMessage(cause));
-                        });
-                      }}
-                    >
-                      Remove all data
-                    </Button>
-                  )}
-                </section>
-              </>
-            )}
-            {tab === 'Memory' && (
-              <Memory
-                onDirtyChange={setMemoryDirty}
-                onDone={() => {
-                  close();
-                }}
-              />
-            )}
-            {tab === 'Models' && (
-              <>
-                <ModelSettings onDirtyChange={setModelDirty} />
-              </>
-            )}
-            {error && <Notice>{error}</Notice>}
+                </footer>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+      <Dialog
+        open={open && review}
+        onOpenChange={(next) => {
+          if (!saving) {
+            setReview(next);
+            if (!next) exitAction.current = null;
+          }
+        }}
+      >
+        <DialogContent
+          className="settings-review-dialog"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            reviewTitle.current?.focus();
+          }}
+        >
+          <DialogTitle ref={reviewTitle} tabIndex={-1}>
+            {exitAction.current ? 'Save your changes?' : 'Unsaved changes'}
+          </DialogTitle>
+          <DialogDescription>
+            {exitAction.current
+              ? 'Review your edits before leaving Settings.'
+              : 'These changes haven’t been saved.'}
+          </DialogDescription>
+          <dl className="settings-change-list" data-analytics-private>
+            {changes.map((change, index) => (
+              <div key={`${change.label}-${index}`}>
+                <dt>{change.label}</dt>
+                <dd>
+                  <span>{change.before || 'Not set'}</span>
+                  <ArrowUpRight size={14} aria-hidden="true" />
+                  <strong>{change.after || 'Not set'}</strong>
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {error && <Notice>{error}</Notice>}
+          <div className="dialog-actions">
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                setReview(false);
+                exitAction.current = null;
+              }}
+            >
+              Keep editing
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => discardAll(Boolean(exitAction.current))}
+            >
+              Discard
+            </Button>
+            <Button disabled={busy} onClick={() => void saveAll(Boolean(exitAction.current))}>
+              {saving ? 'Saving…' : exitAction.current ? 'Save and continue' : 'Save changes'}
+            </Button>
           </div>
-        </div>
-      </div>
-    </section>
+        </DialogContent>
+      </Dialog>
+    </SettingsDraftContext.Provider>
   );
 }

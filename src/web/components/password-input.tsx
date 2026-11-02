@@ -6,7 +6,7 @@ import {
   useState,
   type InputHTMLAttributes,
 } from 'react';
-import { Eye, EyeOff } from './icons';
+import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export const PasswordInput = forwardRef<
@@ -45,7 +45,7 @@ export const PasswordInput = forwardRef<
       />
       <button
         type="button"
-        className="password-input-toggle"
+        className="button button-ghost button-icon password-input-toggle"
         disabled={disabled}
         aria-label={`${visible ? 'Hide' : 'Show'} ${label}`}
         aria-pressed={visible}

@@ -4,6 +4,7 @@ import type { FeedbackReport } from '../../shared/feedback';
 import { parseFeedbackActivity } from '../../shared/feedback-activity';
 import { integrationMetadata } from '../../shared/integrations';
 import { Button, Checkbox } from './ui';
+import { Tabs } from './tabs';
 
 type ReportRecord = Record<string, unknown>;
 
@@ -297,45 +298,16 @@ export function FeedbackDiagnostics({
         <div id={previewId} className="feedback-diagnostics-preview">
           {data ? (
             <>
-              <div
+              <Tabs
+                id={previewId}
+                panelId={`${previewId}-content`}
                 className="feedback-diagnostics-tabs"
-                role="tablist"
-                aria-label="Report sections"
-                onKeyDown={(event) => {
-                  const index = reportTabs.indexOf(tab);
-                  const next =
-                    event.key === 'ArrowRight'
-                      ? (index + 1) % reportTabs.length
-                      : event.key === 'ArrowLeft'
-                        ? (index + reportTabs.length - 1) % reportTabs.length
-                        : event.key === 'Home'
-                          ? 0
-                          : event.key === 'End'
-                            ? reportTabs.length - 1
-                            : null;
-                  if (next === null) return;
-                  event.preventDefault();
-                  setTab(reportTabs[next]);
-                  event.currentTarget
-                    .querySelectorAll<HTMLButtonElement>('[role="tab"]')
-                    [next]?.focus();
-                }}
-              >
-                {reportTabs.map((name) => (
-                  <button
-                    type="button"
-                    role="tab"
-                    id={`${previewId}-${name}`}
-                    aria-controls={`${previewId}-content`}
-                    aria-selected={tab === name}
-                    tabIndex={tab === name ? 0 : -1}
-                    key={name}
-                    onClick={() => setTab(name)}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
+                variant="underline"
+                label="Report sections"
+                value={tab}
+                items={reportTabs.map((value) => ({ value, label: value }))}
+                onValueChange={setTab}
+              />
               {(unavailable || coverage?.redaction === 'unavailable') && (
                 <p className="feedback-diagnostics-snapshot">
                   {coverage?.redaction === 'unavailable'

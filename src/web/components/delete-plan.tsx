@@ -74,7 +74,7 @@ export function DeletePlan({ id, title }: { id: string; title: string }) {
         <DialogTitle>Delete schedule?</DialogTitle>
         <DialogDescription>
           {title}
-          <span>Future runs will stop. Past runs stay in Previous.</span>
+          <span>Future runs will stop. Past activity stays in Usage.</span>
         </DialogDescription>
         {error && <Notice>{error}</Notice>}
         <div className="delete-plan-actions">

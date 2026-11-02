@@ -22,6 +22,7 @@ import {
   Repeat as LucideRepeat,
   Route as LucideRoute,
   Scan as LucideScan,
+  Users as LucideUsers,
   Utensils as LucideUtensils,
   Webhook as LucideWebhook,
   type LucideIcon,
@@ -197,5 +198,6 @@ export const Presentation = lucide(LucidePresentation);
 export const Repeat = lucide(LucideRepeat);
 export const Route = lucide(LucideRoute);
 export const Scan = lucide(LucideScan);
+export const Users = lucide(LucideUsers);
 export const Utensils = lucide(LucideUtensils);
 export const Webhook = lucide(LucideWebhook);

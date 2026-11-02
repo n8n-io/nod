@@ -12,8 +12,10 @@ import type {
 } from '../shared/contracts.ts';
 import type { enqueueTurn } from './thread.ts';
 import { activeThreadSql } from './history.ts';
+import { supersededSql } from './turn-chain.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import { logFailure } from './failure-log.ts';
 
 const queue = 'scheduled-task';
 const timingSchema = z.object({
@@ -54,6 +56,7 @@ const historySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).default(20),
     cursor: z.string().min(1).max(500).optional(),
+    scheduleId: z.uuid().optional(),
   })
   .strict();
 const columns =
@@ -260,6 +263,31 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       )
         return false;
       job.signal.throwIfAborted();
+      if (row.kind === 'once') {
+        await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
+          row.id,
+          ownerId,
+        ]);
+        await enqueue(client, { ...row, enabled: false }, null);
+      } else {
+        await enqueue(
+          client,
+          row,
+          nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
+        );
+      }
+      if (
+        row.kind === 'recurring' &&
+        (
+          await client.query(
+            `SELECT 1 FROM schedule_runs r JOIN turns u ON u.owner_id=r.owner_id AND u.session_id=r.turn_id
+             WHERE r.owner_id=$1 AND r.schedule_id=$2 AND (u.status IN ('queued','running')
+               OR (u.status='waiting' AND NOT ${supersededSql('u', 'newer.started_at>=u.started_at')})) LIMIT 1`,
+            [ownerId, row.id],
+          )
+        ).rowCount
+      )
+        return true;
       const turnId = await enqueueTurn(
         `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
         {
@@ -289,19 +317,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
         ],
       );
-      if (row.kind === 'once') {
-        await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
-          row.id,
-          ownerId,
-        ]);
-        await enqueue(client, { ...row, enabled: false }, null);
-      } else {
-        await enqueue(
-          client,
-          row,
-          nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
-        );
-      }
       job.signal.throwIfAborted();
       return true;
     });
@@ -372,7 +387,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     }
   }
 
-  async function history(raw: unknown = {}, scheduleId?: string) {
+  async function history(raw: unknown = {}, includeCosts = true) {
     const input = historySchema.parse(raw);
     let cursor: z.infer<typeof cursorSchema> | null = null;
     if (input.cursor) {
@@ -402,7 +417,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
          ORDER BY r.created_at DESC,r.id DESC LIMIT $5`,
         [
           ownerId,
-          scheduleId ?? null,
+          input.scheduleId ?? null,
           cursor?.createdAt ?? null,
           cursor?.id ?? null,
           input.limit + 1,
@@ -411,8 +426,17 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     ).rows;
     const page = rows.slice(0, input.limit);
     const last = page.at(-1);
+    const costs = includeCosts
+      ? await dependencies.sessionCosts?.(page.map((run) => run.turnId)).catch((cause) => {
+          logFailure('schedule_costs_unavailable', cause);
+          return undefined;
+        })
+      : undefined;
     return {
-      runs: page.map(runValue),
+      runs: page.map((row) => ({
+        ...runValue(row),
+        ...(costs ? { costUsd: costs[row.turnId] ?? null } : {}),
+      })),
       nextCursor:
         rows.length > input.limit && last
           ? Buffer.from(JSON.stringify({ createdAt: last.cursorAt, id: last.id })).toString(
@@ -492,7 +516,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     for (const row of recurring) {
       const priced = runs.flatMap((run) => {
         const cost = run.schedule_id === row.id ? costs[run.turn_id] : undefined;
-        return typeof cost === 'number' ? [cost] : [];
+        return typeof cost === 'number' && cost > 0 ? [cost] : [];
       });
       if (!priced.length) continue;
       const upcoming = scheduler.previewSchedule(row.cron!, { tz: row.timeZone, count: 200, from });
@@ -518,7 +542,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       enabled: row.enabled,
       revision: row.revision,
       nextRun: row.nextRun?.toISOString() ?? null,
-      lastRun: (await history({ limit: 1 }, row.id)).runs[0] ?? null,
+      lastRun: (await history({ limit: 1, scheduleId: row.id }, false)).runs[0] ?? null,
       baselineObservation: row.baselineObservation,
       monthlyUsd: (monthly ?? (await monthlyCosts([row]))).get(row.id) ?? null,
     };

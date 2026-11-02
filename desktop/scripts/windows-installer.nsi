@@ -59,8 +59,46 @@ Function .onVerifyInstDir
   Call CheckInstallDirectory
 FunctionEnd
 
+!macro CLOSE_NOD UN
+Function ${UN}CloseNod
+  IfFileExists "$INSTDIR\nod.exe" 0 nod_closed
+  StrCpy $1 0
+  nod_check:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\nod.exe" a
+    IfErrors nod_running
+    FileClose $0
+    Goto nod_closed
+  nod_running:
+    IntCmp $1 0 0 nod_wait nod_wait
+    MessageBox MB_OKCANCEL|MB_ICONINFORMATION "Nod is still running. Select OK to quit Nod and continue." /SD IDOK IDOK nod_quit
+    SetErrorLevel 1
+    Abort
+  nod_quit:
+    DetailPrint "Waiting for Nod to quit..."
+    Exec '"$INSTDIR\nod.exe" --quit'
+  nod_wait:
+    IntOp $1 $1 + 1
+    IntCmp $1 240 nod_stuck 0 nod_stuck
+    Sleep 500
+    Goto nod_check
+  nod_stuck:
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Nod is still running. Select its icon at the right of the taskbar, choose Quit Nod, then select Retry." /SD IDCANCEL IDRETRY nod_retry
+    SetErrorLevel 1
+    Abort
+  nod_retry:
+    StrCpy $1 1
+    Goto nod_check
+  nod_closed:
+  ClearErrors
+FunctionEnd
+!macroend
+!insertmacro CLOSE_NOD ""
+!insertmacro CLOSE_NOD "un."
+
 Section "nod"
   Call CheckInstallDirectory
+  Call CloseNod
   SetShellVarContext current
   SetOutPath "$INSTDIR"
   FileOpen $0 "$INSTDIR\.nod-installation" w
@@ -94,6 +132,7 @@ Section "nod"
 SectionEnd
 
 Section "Uninstall"
+  Call un.CloseNod
   SetShellVarContext current
   Delete "$DESKTOP\Nod.lnk"
   Delete "$SMPROGRAMS\Nod\Nod.lnk"

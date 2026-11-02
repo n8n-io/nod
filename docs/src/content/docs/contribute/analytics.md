@@ -16,7 +16,7 @@ What Nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 - **Bounded values only.** Use enums, booleans, non-negative integers, durations in milliseconds and normalized public domains from `analyticsDomain`. A free string is a leak waiting to happen.
 - **Describe kinds, not instances.** Send `tool: 'browser'`, not the page Nod opened. Send `provider: 'compatible'` and `model: 'custom'`, not the name of a server the owner runs.
 - **Count actual changes.** Fire after the change commits or the server answers 2xx, not when a button is clicked "to save".
-- **Name events `nod_<noun>_<past verb>`**, such as `nod_tool_used`. Properties are `snake_case`. Reuse existing property names (`source`, `channel`, `outcome`, `operation`, `duration_ms`) with the same meaning.
+- **Use product-neutral event names `<noun>_<past verb>`**, such as `answer_choices_viewed`. Properties are `snake_case`. Reuse existing property names (`source`, `channel`, `outcome`, `operation`, `duration_ms`) with the same meaning.
 
 ## Add a server event
 
@@ -28,10 +28,13 @@ What Nod sends and when is listed in [Analytics and recordings](/deploy/analytic
 ## Add a UI event
 
 1. Add the event to the `AnalyticsEvents` type and to the `eventProperties` allowlist in `src/web/lib/analytics.ts`. `sanitizeEvent` strips any property or value that isn't in the allowlist. For a list of enum values, allow `{ items: [...] }`; `sanitizeEvent` keeps only allowed, unique items.
-2. Call `captureAnalytics(event, properties)`. In an async callback that can outlive the session, take `const capture = analyticsForCurrentSession()` first and call `capture` later.
+2. Call `captureAnalytics(event, properties)`. Before asynchronous work, take `const capture = analyticsForCurrentSession()` and call it after success. It drops callbacks from a previous account or sharing period.
 3. Don't name a property `surface` or `route`. `sanitizeEvent` sets those itself.
-4. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in the introduction, before connecting a model. The welcome screen and introduction aren't reported later.
-5. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
+4. Use `observeAnalyticsView` for answer-choice impressions. It checks viewport intersection, document visibility, and the account, then deduplicates within the sharing period. Its key stays on the client.
+5. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in the introduction, before connecting a model. The welcome screen and introduction aren't reported later.
+6. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
+
+Answer-choice-specific properties are limited to `multiple`, `option_count`, and, after an accepted selection, `selected_count`. Counts must be integers from one to six. Missing or invalid required values drop the whole event. Never include question or option IDs or text. Custom composer answers and failed, rejected, or unavailable submissions aren't selections. `chat_message_sent` includes `input` as `text` or `voice`; selected choices use `source: answer_choice` and `input: text`.
 
 ## Count observed work
 

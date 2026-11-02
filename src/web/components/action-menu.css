@@ -1,0 +1,77 @@
+.action-menu-root {
+  display: inline-flex;
+  min-width: 0;
+  flex: none;
+}
+.action-menu-root[data-match-trigger] {
+  flex: 1;
+  width: 100%;
+}
+.action-menu-surface {
+  z-index: 90;
+  width: 268px;
+  padding: 6px;
+  border-radius: 16px;
+  max-width: min(calc(100vw - 24px), var(--radix-popover-content-available-width, 100vw));
+  max-height: min(360px, var(--radix-popover-content-available-height, calc(100dvh - 24px)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-app-region: no-drag;
+}
+.action-menu-surface[data-match-trigger] {
+  width: max(220px, var(--radix-popover-trigger-width, 220px));
+}
+.action-menu-compact {
+  width: 194px;
+}
+.action-menu-surface > [role^='menuitem'],
+.action-menu-item {
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.action-menu-item > span {
+  min-width: 0;
+}
+.action-menu-item > svg,
+.action-menu-item > img {
+  flex: none;
+}
+.action-menu-item > svg {
+  color: var(--muted-foreground);
+}
+.action-menu-item small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.action-menu-surface > [role^='menuitem']:focus-visible,
+.action-menu-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.action-menu-item[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.action-menu-item[aria-checked='true'] > svg {
+  color: var(--accent);
+}
+.action-menu-item[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.action-menu-item[data-destructive] {
+  color: var(--destructive);
+}
+.action-menu-item[data-destructive] > svg {
+  color: inherit;
+}
+@media (max-width: 640px), (any-pointer: coarse) {
+  .action-menu-surface > [role^='menuitem'],
+  .action-menu-item {
+    min-height: 44px;
+  }
+}

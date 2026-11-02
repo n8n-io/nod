@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentProps } from 'react';
 import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact, Message } from '../../shared/contracts';
+import { presentationSchema } from '../../shared/presentation';
 import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
 import { FileGlyph } from './attachment-glyph';
 import { AudioPlayer } from './audio-player';
@@ -20,6 +21,61 @@ import {
 } from './attachment-pdf';
 
 type LoadPdf = typeof loadPreviewPdf;
+const AttachmentData = lazy(() => import('./attachment-data'));
+type DataKind = ComponentProps<typeof AttachmentData>['kind'];
+const ignoreDetail = () => {};
+const thumbnailKinds = new Set([
+  'markdown',
+  'text',
+  'csv',
+  'spreadsheet',
+  'document',
+  'presentation',
+  'html',
+  'archive',
+  'n8n-workflow',
+]);
+
+function DataThumbnail({ item, kind }: { item: ImagePreview; kind: DataKind }) {
+  const element = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const target = element.current;
+    if (!target) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="attachment-card-preview is-data" ref={element} aria-hidden="true" inert>
+      {visible && (
+        <div className="attachment-card-preview-content">
+          <Suspense fallback={null}>
+            <AttachmentData
+              item={item}
+              kind={kind}
+              mode="preview"
+              stage="#f1f1f1"
+              thumbnail
+              onDetail={ignoreDetail}
+            />
+          </Suspense>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CardDetails({ name, mimeType, meta }: { name: string; mimeType: string; meta: string }) {
   return (
@@ -124,8 +180,10 @@ function DocumentCard({
   loadDocument: LoadPdf;
 }) {
   const mimeType = item.mimeType ?? '';
+  const kind = attachmentKind(mimeType, item.name);
   const [pages, setPages] = useState<number | null>(null);
-  const [thumbnail, setThumbnail] = useState(attachmentKind(mimeType, item.name) === 'pdf');
+  const [thumbnail, setThumbnail] = useState(kind === 'pdf');
+  const dataThumbnail = thumbnailKinds.has(kind ?? '');
   const meta = [
     fileType(item.name),
     pages ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : '',
@@ -138,22 +196,23 @@ function DocumentCard({
       draggable
       onDragStart={(event) => fileDrag(event, item)}
       onPointerEnter={() => prepareFile(item)}
-      className={`attachment-card is-${attachmentKind(mimeType, item.name) ?? 'file'}${selected ? ' is-selected' : ''}`}
+      className={`attachment-card is-${kind ?? 'file'}${thumbnail || dataThumbnail ? ' has-preview' : ''}${selected ? ' is-selected' : ''}`}
     >
+      {thumbnail && (
+        <PdfThumbnail
+          url={item.url}
+          loadDocument={loadDocument}
+          onPages={setPages}
+          onThumbnail={setThumbnail}
+        />
+      )}
+      {dataThumbnail && <DataThumbnail item={item} kind={kind as DataKind} />}
       <button
         type="button"
         className="attachment-card-open"
         aria-current={selected || undefined}
         onClick={(event) => onOpen({ element: event.currentTarget, keyboard: event.detail === 0 })}
       >
-        {thumbnail && (
-          <PdfThumbnail
-            url={item.url}
-            loadDocument={loadDocument}
-            onPages={setPages}
-            onThumbnail={setThumbnail}
-          />
-        )}
         <CardDetails name={item.name} mimeType={mimeType} meta={meta} />
       </button>
       <FileActions item={item} />
@@ -162,7 +221,7 @@ function DocumentCard({
 }
 
 function messageFiles(attachments: Artifact[]) {
-  const owned = attachments
+  const owned = [...new Map(attachments.map((artifact) => [artifact.id, artifact])).values()]
     .filter((artifact) => ownedArtifactUrl(artifact.url))
     .map((artifact): ImagePreview => ({ ...artifact, downloadUrl: artifact.url }));
   const animated = owned.some(
@@ -176,21 +235,36 @@ function messageFiles(attachments: Artifact[]) {
       (item.source === 'sticker' &&
         item.name === 'sticker-preview.jpg' &&
         item.mimeType === 'image/jpeg'));
-  const visual = owned.filter(
-    (item) =>
-      !preview(item) &&
-      ['image', 'video', 'sticker'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
+  const all = owned.filter((item) => !preview(item));
+  const visual = all.filter((item) =>
+    ['image', 'video', 'sticker'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
   );
   return {
+    all,
     visual,
-    rest: owned.filter((item) => !preview(item) && !visual.includes(item)),
+    rest: all.filter((item) => !visual.includes(item)),
   };
 }
 
-export function conversationFiles(messages: Pick<Message, 'attachments'>[]) {
+export function conversationFiles(
+  messages: (Pick<Message, 'attachments'> & Partial<Pick<Message, 'id' | 'presentation'>>)[],
+) {
   const files = messages.flatMap((message) => {
-    const { visual, rest } = messageFiles(message.attachments);
-    return [...visual, ...rest];
+    const { all } = messageFiles(message.attachments);
+    const parsed = presentationSchema.safeParse(message.presentation);
+    const presentation: ImagePreview[] =
+      message.id && parsed.success && parsed.data.type !== 'image' && parsed.data.type !== 'apps'
+        ? [
+            {
+              id: `presentation:${message.id}`,
+              url: '',
+              name: parsed.data.title,
+              size: 0,
+              presentation: parsed.data,
+            },
+          ]
+        : [];
+    return [...presentation, ...all];
   });
   return [...new Map(files.map((file) => [file.id, file])).values()];
 }
