@@ -321,6 +321,7 @@ test('decision canaries and scored attempts share the supported cases for each a
     branch: {
       run: {},
       answer: {},
+      readOnly: {},
       valid: { question: { name: 'valid', choices: [{ value: true, description: 'Accurate' }] } },
     },
   };
@@ -332,8 +333,8 @@ test('decision canaries and scored attempts share the supported cases for each a
   );
   assert.deepEqual(supportedDecisionCases([cases[0]!], 'main-llm', policies), []);
   assert.deepEqual(supportedDecisionCases(cases, 'branch-llm', policies), cases);
-  assert.deepEqual(supportedDecisionCases(cases, 'gpt-decisions', policies), [cases[0]]);
-  assert.deepEqual(supportedDecisionCases(cases.slice(1), 'gpt-decisions', policies), []);
+  assert.deepEqual(supportedDecisionCases(cases, 'gpt-decisions', policies), [cases[0], cases[1]]);
+  assert.deepEqual(supportedDecisionCases(cases.slice(1), 'gpt-decisions', policies), [cases[1]]);
 });
 
 const decisionTermsInput = {

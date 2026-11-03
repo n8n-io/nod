@@ -1773,6 +1773,86 @@ test('decision routing uses the selected connection and never sends subscription
   });
 });
 
+test('trust mode selects Jev before OpenAI and never changes provider after a failure', async (t) => {
+  const requests: Array<{ url: string; model: string; key: string | null }> = [];
+  let fail = false;
+  t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    requests.push({
+      url: String(url),
+      model: body.model,
+      key: new Headers(init?.headers).get('authorization'),
+    });
+    if (fail) return new Response('', { status: 503 });
+    return Response.json({
+      answers: String(url).includes('api.openai.com')
+        ? [{ type: 'choice', name: 'answer', choice: false }]
+        : { answer: { type: 'choice', choice: 'false' } },
+      usage: { input_tokens: 1 },
+    });
+  });
+  const { createDefaultAdapters } = await import('../src/server/composition.ts');
+  const adapters = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  assert.equal(adapters.trustModel, 'decision');
+  const keys = new Map([
+    ['openai', 'fixture-openai'],
+    ['openrouter', 'fixture-router'],
+  ]);
+  adapters.models!.hasApiKey = (provider) => keys.has(provider);
+  adapters.models!.apiKey = async (provider) => keys.get(provider);
+  adapters.models!.resolve = async () =>
+    assert.fail('Trust routing must not read subscription credentials.');
+  const check = (target = adapters) =>
+    target.trustDecisions!.check({
+      instructions: 'Apply policy.',
+      input: {},
+      question: { name: 'answer', choices: [{ value: false, description: 'Ask.' }] },
+    });
+  assert.deepEqual(await check(), { answer: false });
+  assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
+  fail = true;
+  const before = requests.length;
+  await assert.rejects(check());
+  assert.equal(requests.length, before + 1);
+  assert.equal(requests.at(-1)?.key, 'Bearer fixture-router');
+  fail = false;
+  keys.delete('openrouter');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  keys.clear();
+  const count = requests.length;
+  assert.equal(await check(), undefined);
+  assert.equal(requests.length, count);
+  const direct = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
+    TYPESAFE_API_KEY: 'fixture-typesafe',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  direct.models!.hasApiKey = () => false;
+  await check(direct);
+  assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
+  const hybrid = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'hybrid',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  hybrid.models!.hasApiKey = (provider) => provider === 'openrouter';
+  hybrid.models!.apiKey = async () => 'fixture-router';
+  await check(hybrid);
+  assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
+  direct.models!.hasApiKey = (provider) => provider === 'openrouter';
+  direct.models!.apiKey = async () => 'fixture-router';
+  await check(direct);
+  assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
+  assert.equal(createDefaultAdapters({ NOD_FEEDBACK_ENABLED: 'false' }).trustModel, 'llm');
+  for (const mode of ['selected', 'small', 'unknown'])
+    assert.throws(() =>
+      createDefaultAdapters({ NOD_TRUST_MODEL: mode, NOD_FEEDBACK_ENABLED: 'false' }),
+    );
+});
+
 test('codemode heldout output preserves UTF-8 bytes and fails closed through the guard', async (t) => {
   const expected =
     Array.from(

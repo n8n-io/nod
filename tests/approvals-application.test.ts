@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
+import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { AgentToolResult } from '../src/ports/agent.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -69,12 +70,12 @@ test(
     let confirmationValid = true;
     let beforeConfirmation = async () => {};
     let decisionsEnabled = true;
-    let decisionCost: number | undefined;
+    let replyCost: number | undefined;
     let checkCost: number | undefined;
-    let refusedDecision = '';
     const connectionLabels: unknown[] = [];
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
+    const smallReplies: object[] = [];
     const executedApps: string[] = [];
     const uploads: string[] = [];
     const workspaceFiles = new Map<string, Uint8Array>();
@@ -115,6 +116,62 @@ test(
     const closingUsageId = randomUUID();
     let recordClosingUsage = false;
     let reportClosingUsage = () => {};
+    const fixtureCurator: MemoryCurator = {
+      id: 'fixture',
+      configured: true,
+      curate: async ({ task, input }, _signal, report) => {
+        if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
+          return connectionLabels.shift();
+        if ('purpose' in input && input.purpose === 'confirmation') {
+          await beforeConfirmation();
+          return { text: confirmationText };
+        }
+        if ('purpose' in input && input.purpose === 'confirmation_review') {
+          fallbackChecks.push(input);
+          return { valid: confirmationValid };
+        }
+        if (task === 'review' && !('purpose' in input) && !('reply' in input))
+          fallbackChecks.push(input);
+        if (task === 'review' && 'reply' in input) {
+          smallReplies.push(input);
+          report?.({
+            id: randomUUID(),
+            model: 'fixture-small',
+            inputTokens: 1000,
+            costUsd: replyCost ?? 0.0001,
+          });
+        }
+        if (task === 'review' && 'action' in input && 'schema' in Object(input.action))
+          return { readOnly: readOnlyActions.has(String(Object(input.action).name)) };
+        if (task === 'review' && 'action' in input && checkCost !== undefined)
+          report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
+        return task === 'review' && 'reply' in input
+          ? {
+              answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
+            }
+          : task === 'review'
+            ? (() => {
+                const words = input as {
+                  userMessages?: Array<{ text: string }>;
+                  action?: { name?: string; arguments?: { recipient_email?: unknown } };
+                };
+                const run =
+                  (allowMethodBrowser && words.action?.name === 'NOD_browser') ||
+                  asked.has(words.userMessages?.at(-1)?.text ?? '') ||
+                  cleared.has(String(words.action?.arguments?.recipient_email));
+                return run
+                  ? {
+                      run,
+                      because:
+                        words.action?.name === 'GMAIL_FETCH_EMAILS'
+                          ? 'read'
+                          : (words.userMessages?.at(-1)?.text ?? 'read'),
+                    }
+                  : { run };
+              })()
+            : undefined;
+      },
+    };
     const application = await createApplication(
       {
         models,
@@ -345,63 +402,22 @@ test(
             const name = body.questions[0].name as string;
             const input = JSON.parse(body.input);
             decisionInputs.push({ name, input });
-            if (name === refusedDecision)
-              return Response.json({
-                answers: [{ name, type: 'refusal' }],
-                usage: { input_tokens: 1000 },
-              });
+            assert.notEqual(name, 'answer');
             const choice =
               ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)] ?? 'other';
             return Response.json({
               answers: [{ name, type: 'choice', choice }],
-              usage: { input_tokens: 1000, cost: decisionCost },
+              usage: { input_tokens: 1000, cost: replyCost },
             });
           },
         }),
-        onboardingCurator: {
-          id: 'fixture',
-          configured: true,
-          curate: async ({ task, input }, _signal, report) => {
-            if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
-              return connectionLabels.shift();
-            if ('purpose' in input && input.purpose === 'confirmation') {
-              await beforeConfirmation();
-              return { text: confirmationText };
-            }
-            if ('purpose' in input && input.purpose === 'confirmation_review') {
-              fallbackChecks.push(input);
-              return { valid: confirmationValid };
-            }
-            if (task === 'review' && !('purpose' in input)) fallbackChecks.push(input);
-            if (task === 'review' && 'action' in input && 'schema' in Object(input.action))
-              return { readOnly: readOnlyActions.has(String(Object(input.action).name)) };
-            if (task === 'review' && 'action' in input && checkCost !== undefined)
-              report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
-            return task === 'review' && 'reply' in input
-              ? {
-                  answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
-                }
-              : task === 'review'
-                ? (() => {
-                    const words = input as {
-                      userMessages?: Array<{ text: string }>;
-                      action?: { name?: string; arguments?: { recipient_email?: unknown } };
-                    };
-                    const run =
-                      (allowMethodBrowser && words.action?.name === 'NOD_browser') ||
-                      asked.has(words.userMessages?.at(-1)?.text ?? '') ||
-                      cleared.has(String(words.action?.arguments?.recipient_email));
-                    return run
-                      ? {
-                          run,
-                          because:
-                            words.action?.name === 'GMAIL_FETCH_EMAILS'
-                              ? 'read'
-                              : (words.userMessages?.at(-1)?.text ?? 'read'),
-                        }
-                      : { run };
-                  })()
-                : undefined;
+        onboardingCurator: fixtureCurator,
+        trustCurator: {
+          ...fixtureCurator,
+          id: 'fixture-small',
+          curate: async (request, signal, report) => {
+            assert.equal('purpose' in request.input, false);
+            return fixtureCurator.curate(request, signal, report);
           },
         },
       },
@@ -811,9 +827,9 @@ test(
         async () => {
           const previous = await application.triage.getPreferences();
           const previousCheckCost = checkCost;
-          const previousDecisionCost = decisionCost;
+          const previousDecisionCost = replyCost;
           checkCost = 0;
-          decisionCost = 0;
+          replyCost = 0;
           const prompt = 'Synthetic source read check ' + randomUUID();
           plans.set(prompt, {
             tool: 'read_source',
@@ -844,7 +860,7 @@ test(
             assert.equal(sourceReads, 0);
           } finally {
             checkCost = previousCheckCost;
-            decisionCost = previousDecisionCost;
+            replyCost = previousDecisionCost;
             await application.triage.updatePreferences(previous);
           }
         },
@@ -1341,7 +1357,7 @@ test(
       );
 
       await t.test(
-        'decision checks keep separate evidence, record usage once, and preserve the LLM path',
+        'the small LLM checks actions and replies while the selected model writes confirmations',
         async () => {
           const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
           assert.equal(reset.statusCode, 200, reset.body);
@@ -1378,7 +1394,8 @@ test(
           await waitFor(resumed, 'succeeded');
           assert.equal((await approvalsFor(turn))[0].status, 'completed');
           assert.equal(integrationFixture.writes.length, writes + 1);
-          assert.deepEqual(decisionInputs.at(-1), { name: 'answer', input: { reply: 'Yes' } });
+          assert.deepEqual(decisionInputs.slice(before), []);
+          assert.deepEqual(smallReplies.at(-1), { reply: 'Yes' });
           assert.equal(fallbackChecks.length, fallback + 2);
           const rows = (
             await pool.query(
@@ -1387,13 +1404,10 @@ test(
             )
           ).rows;
           assert.equal(rows.length, 1);
-          assert.equal(
-            rows.find((row) => row.details.operation === 'approval_reply').turn_id,
-            null,
-          );
+          assert.equal(rows.find((row) => row.details.model === 'fixture-small').turn_id, null);
           assert.deepEqual(
             rows.map((row) => row.details.operation),
-            ['approval_reply'],
+            ['review'],
           );
           assert.ok(
             rows.every(
@@ -1432,7 +1446,7 @@ test(
             await waitFor(declined.json().turnId, 'succeeded');
             assert.equal((await approvalsFor(held))[0].status, 'declined');
             assert.equal(decisionInputs.length, count);
-            assert.equal(fallbackChecks.length, fallback + 5);
+            assert.equal(fallbackChecks.length, fallback + 4);
           } finally {
             decisionsEnabled = true;
           }

@@ -207,6 +207,9 @@ export interface ApplicationAdapters {
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
+  trustModel?: 'llm' | 'decision' | 'hybrid';
+  trustDecisions?: DecisionModel;
+  trustCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
@@ -399,6 +402,27 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
+  const trustModel = z.enum(['llm', 'decision', 'hybrid']).parse(env.NOD_TRUST_MODEL ?? 'llm');
+  const trustDecisions = createDecisionModel({
+    configured: () =>
+      Boolean(env.TYPESAFE_API_KEY?.trim()) ||
+      models.hasApiKey('openrouter') ||
+      models.hasApiKey('openai'),
+    resolve: async () => {
+      if (env.TYPESAFE_API_KEY?.trim())
+        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim(), model: 'jev-1.14.0' };
+      for (const provider of ['openrouter', 'openai'] as const) {
+        if (!models.hasApiKey(provider)) continue;
+        const key = await models.apiKey(provider);
+        if (!key) throw new Error('The trust model connection is unavailable.');
+        return {
+          provider,
+          key,
+          ...(provider === 'openrouter' ? { model: 'typesafe/jev-1.14' } : {}),
+        };
+      }
+    },
+  });
   const integrationBrowser = createIntegrationBrowser(
     desktopMode ? undefined : { origin: publicOrigin },
   );
@@ -524,6 +548,13 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    trustCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      resolve: () => models.resolveClassification(true),
+      configured: () => models.hasClassificationModel(true),
+    }),
     classificationCurator: createPiMemoryCurator({
       get provider() {
         return models.current.provider;
@@ -541,6 +572,8 @@ export function createDefaultAdapters(
     }),
     onboardingCurator: selectedCurator,
     decisions,
+    trustModel,
+    trustDecisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(),
       managed: managedChannelEnvironment(env),
@@ -1438,10 +1471,29 @@ async function initializeApplication(
       return { question: result[appConfirmation] };
     return { reason: 'allowed', basis: { kind: 'approved' } };
   }
+  const trustCurator = adapters.trustCurator
+    ? ledger.curator(adapters.trustCurator)
+    : adapters.classificationCurator
+      ? ledger.curator(adapters.classificationCurator)
+      : curator;
   const trust = createTrust({
     pool,
     ownerId,
-    review,
+    review: async (instructions, input, signal, question) => {
+      if (question)
+        instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
+      return trustCurator.configured
+        ? trustCurator.curate({ task: 'review', instructions, input }, signal)
+        : undefined;
+    },
+    ...(adapters.trustModel === 'decision' || adapters.trustModel === 'hybrid'
+      ? {
+          escalate: adapters.trustModel === 'hybrid',
+          decisions: adapters.trustDecisions
+            ? ledger.decisions(adapters.trustDecisions)
+            : { configured: false, check: async () => undefined },
+        }
+      : {}),
   });
   const observations = createObservationSources(
     [
@@ -1473,12 +1525,17 @@ async function initializeApplication(
         await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
         return result;
       }
-      const verdict = await trust.check(turn, 'NOD_read_source', {
-        ...bound,
-        source: source.label,
-        description: source.description,
-        operation: 'Read current records from this registered read-only source.',
-      });
+      const verdict = await trust.check(
+        turn,
+        'NOD_read_source',
+        {
+          ...bound,
+          source: source.label,
+          description: source.description,
+          operation: 'Read current records from this registered read-only source.',
+        },
+        signal,
+      );
       if (verdict.confirm)
         throw Object.assign(
           new Error(
@@ -1610,7 +1667,7 @@ async function initializeApplication(
       },
       browserStep: async (turn, request, signal) => {
         const args = browserStepArgs(request);
-        const verdict = await trust.check(turn, 'NOD_browser', args);
+        const verdict = await trust.check(turn, 'NOD_browser', args, signal);
         if (!verdict.confirm) return 'run';
         if (
           request.step.action === 'click' &&
@@ -1931,7 +1988,7 @@ async function initializeApplication(
           const result = await integrations.execute(ownerId, action, args, turn, options.signal);
           return result;
         }
-        const verdict = await trust.check(turn, action, args);
+        const verdict = await trust.check(turn, action, args, options.signal);
         await options.admit?.(verdict.confirm);
         const prepared = hasWorkspaceFiles(args)
           ? await withTurnLock(turn.turnId, (client) =>
