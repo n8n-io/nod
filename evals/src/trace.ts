@@ -421,6 +421,7 @@ export async function collect(options: {
   const shown = messages.filter(
     (m) => m.role === 'assistant' && (m.text.trim() || m.presentation || m.attachments),
   );
+  const ownerFiles = messages.flatMap((m) => (m.role === 'user' ? (m.attachments ?? []) : []));
   const files = await session.workspace.list();
   const filePath = (path: string) => path.replace(/^\/workspace\//, '');
   const sharedPaths = new Set(
@@ -531,6 +532,7 @@ export async function collect(options: {
           (message) =>
             `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}${message.presentation ? `, with this native visual: ${clip(JSON.stringify(message.presentation), 8000)}` : ''}${message.attachments ? `, with attached files: ${JSON.stringify(message.attachments)}` : ''}`,
         ),
+        ...(ownerFiles.length ? [`Files the owner attached: ${JSON.stringify(ownerFiles)}`] : []),
         `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'

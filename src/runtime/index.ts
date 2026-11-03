@@ -248,7 +248,6 @@ export function createAgentRuntime(dependencies: {
     let lastNote = '';
     let reported = false;
     let finalDelivered = false;
-    let finalText = '';
     let requestRevision = 0;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
@@ -568,10 +567,8 @@ export function createAgentRuntime(dependencies: {
               delivery.delivered &&
               delivery.presentation !== 'omitted' &&
               revision === requestRevision
-            ) {
+            )
               finalDelivered = true;
-              finalText = String((params as { text?: unknown }).text ?? '').trim();
-            }
           }
           if (
             !factlessTools.has(name) &&
@@ -1253,7 +1250,7 @@ export function createAgentRuntime(dependencies: {
       const answer =
         context.taskContext && status === 'succeeded'
           ? finalDelivered
-            ? finalText || context.taskContext.title
+            ? lastReply || context.taskContext.title
             : taskResult.trim()
           : '';
       waitingForUser = status !== 'succeeded';
