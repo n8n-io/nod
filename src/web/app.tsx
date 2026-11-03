@@ -553,8 +553,9 @@ function AuthenticatedApp({
               await onAccountUpdate({ onboardingCompleted: true });
             if (desktopSettingsAvailable())
               await saveDesktopSettings({ onboardingCompleted: true });
+            pendingDesktopPage.current = null;
+            replaceNavigation('/');
             setFinishingOnboarding(false);
-            if (replayingOnboarding(path)) navigate('/');
           }}
         />
       ) : (
