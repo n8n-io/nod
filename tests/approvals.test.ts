@@ -998,6 +998,13 @@ test(
           );
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
           assert.equal(reviews.at(-1)?.timeZone, 'UTC');
+          await db.pool.query(
+            "UPDATE preferences SET time_zone='Europe/Madrid' WHERE owner_id=$1",
+            [ownerId],
+          );
+          await trust.check(turn, 'GMAIL_FETCH_EMAILS', {});
+          assert.equal(reviews.at(-1)?.timeZone, 'Europe/Madrid');
+          await db.pool.query('UPDATE preferences SET time_zone=NULL WHERE owner_id=$1', [ownerId]);
           await trust.check(turn, 'GMAIL_SEND_EMAIL', email('stranger@example.test'));
           assert.match(JSON.stringify(reviews.at(-1)?.action), /stranger@example\.test/);
           aligned = () => {
