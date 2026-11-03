@@ -268,7 +268,7 @@ test('a nested effect can refuse the private-read path even when the first Jev c
 });
 
 test('scheduled message dates preserve the owner local day without parsing page text', async () => {
-  const { jevMessageDate } = await import('../src/server/trust-jev-time.ts');
+  const { jevMessageDate, checkJevTimes } = await import('../src/server/trust-jev-time.ts');
   const answer = (choice: string, probability = 1) => ({ choice, probability });
   const parts = { text_year: answer('2032'), text_month: answer('2'), text_day: answer('19') };
   assert.deepEqual(jevMessageDate(parts, '2032-02-19'), {
@@ -282,6 +282,7 @@ test('scheduled message dates preserve the owner local day without parsing page 
     true,
   );
   assert.throws(() => jevMessageDate({}, '2032-02-19'));
+  assert.equal(checkJevTimes({}, { owner_zone: answer('unspecified', 0.6) }, []).uncertain, true);
   assert.equal(
     jevMessageDate(
       Object.fromEntries(

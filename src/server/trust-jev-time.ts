@@ -133,7 +133,12 @@ export function checkJevTimes(
   dates: JevDate[],
 ) {
   let mismatch = false;
-  let uncertain = false;
+  let uncertain = Object.entries(owner).some(
+    ([name, value]) =>
+      name.startsWith('owner_') &&
+      ['none', 'unspecified'].includes(String(value.choice)) &&
+      value.probability < 0.8,
+  );
   let clockVerified = false;
   let durationVerified = false;
   let dateVerified = false;
@@ -142,12 +147,6 @@ export function checkJevTimes(
   const end = selectedJevDate(first.end_field, dates);
   const duration = owner.owner_duration;
   durationVerified = duration?.choice === 'none' && duration.probability >= 0.8;
-  uncertain = Object.entries(owner).some(
-    ([name, value]) =>
-      name.startsWith('owner_') &&
-      ['none', 'unspecified'].includes(String(value.choice)) &&
-      value.probability < 0.8,
-  );
   if (duration && duration.choice !== 'none') {
     if (
       duration.choice === 'unlisted' ||
