@@ -567,8 +567,20 @@ export function createAgentRuntime(dependencies: {
               delivery.delivered &&
               delivery.presentation !== 'omitted' &&
               revision === requestRevision
-            )
+            ) {
               finalDelivered = true;
+              if (context.taskContext && context.task)
+                await context
+                  .task({
+                    action: 'finish',
+                    id: context.taskContext.id,
+                    status: 'done',
+                    result:
+                      String((params as { text?: unknown }).text ?? '').trim() ||
+                      context.taskContext.title,
+                  })
+                  .catch(() => {});
+            }
           }
           if (
             !factlessTools.has(name) &&

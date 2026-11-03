@@ -1579,6 +1579,7 @@ async function initializeApplication(
       recall: personal.recall,
       learnedSkills: learnedSkills.index,
       taskContext: tasks.context,
+      settleTask: tasks.settle,
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,

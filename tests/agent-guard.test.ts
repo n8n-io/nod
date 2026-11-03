@@ -283,6 +283,8 @@ test('final replies finish after persistence, retain staged files and speech, an
     };
     const pending: (typeof file)[] = [];
     const delivered: Array<{ text: string; files: (typeof file)[] }> = [];
+    const finished: unknown[] = [];
+    const taskId = randomUUID();
     const queued = [{ id: randomUUID(), text: 'A new request.', attachments: [] }];
     let taking = 0;
     let reviews = 0;
@@ -333,7 +335,7 @@ test('final replies finish after persistence, retain staged files and speech, an
           ? {
               background: true,
               taskContext: {
-                id: randomUUID(),
+                id: taskId,
                 title: 'Synthetic task',
                 brief: 'Find the synthetic result.',
                 doneWhen: 'The result is delivered.',
@@ -341,6 +343,10 @@ test('final replies finish after persistence, retain staged files and speech, an
               },
             }
           : {}),
+        task: async (input) => {
+          finished.push(input);
+          return {};
+        },
         publish: async () => {
           pending.push(file);
           return file;
@@ -371,6 +377,12 @@ test('final replies finish after persistence, retain staged files and speech, an
     assert.equal(taking, 0);
     assert.equal(queued.length, 1);
     assert.deepEqual(delivered, [{ text: 'The checked result is amber.', files: [file] }]);
+    assert.deepEqual(
+      finished,
+      task
+        ? [{ action: 'finish', id: taskId, status: 'done', result: 'The checked result is amber.' }]
+        : [],
+    );
   }
 });
 

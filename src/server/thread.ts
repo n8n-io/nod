@@ -169,6 +169,7 @@ export interface ThreadDependencies {
   learnedSkills?: () => Promise<RuntimeContext['learnedSkills']>;
   task?: (turn: TurnRef, input: unknown, sourceMessageId: string | null) => Promise<unknown>;
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
+  settleTask?: (turn: TurnRef, result: string) => Promise<void>;
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
@@ -1852,8 +1853,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
-    if (taskContext && result.status === 'succeeded' && result.result)
+    if (taskContext && result.status === 'succeeded' && result.result) {
       await post(result.result, shared.splice(0));
+      await dependencies.settleTask?.(ref, result.result);
+    }
     if (shared.length && (result.status === 'succeeded' || !result.message))
       await post('', shared.splice(0));
     const finalReply = result.spokenReply
