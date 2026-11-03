@@ -1134,7 +1134,14 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     }),
     bind(toolDefinitions.task, async (p) => {
       if (!context.task) throw new Error('Tasks are unavailable.');
-      return context.task(p);
+      const result = await context.task(p);
+      return p.action === 'start' && !context.taskContext && !context.background
+        ? {
+            ...(result as object),
+            message:
+              'The task now does this work in its own session and reports its result. Do not do any of it here; end the turn unless another request still needs an answer.',
+          }
+        : result;
     }),
     bind(toolDefinitions.share_file, (p) => context.publish(p.path, p.name)),
     bind(toolDefinitions.create_audio, async (p) => {
