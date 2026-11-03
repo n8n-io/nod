@@ -5890,7 +5890,10 @@ test('analytics follow visible Settings sections, Apps tabs and the Scheduled pa
         document.querySelectorAll('.settings-category > h2').forEach((heading, index) => {
           heading.getBoundingClientRect = () => ({ top: index * 100 });
         });
-        await act(async () => scroller.dispatchEvent(new Event('scroll')));
+        await act(async () => {
+          scroller.dispatchEvent(new Event('wheel'));
+          scroller.dispatchEvent(new Event('scroll'));
+        });
         assert.equal(settings().at(-1), 'notifications');
         const beforeDisabled = sent.length;
         consent(false);
