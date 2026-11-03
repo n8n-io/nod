@@ -1247,12 +1247,19 @@ export function createAgentRuntime(dependencies: {
           ? taskResult
           : undefined;
       const spokenReply = result?.trim() || lastReply;
+      const answer =
+        context.taskContext && status === 'succeeded'
+          ? finalDelivered
+            ? lastReply || context.taskContext.title
+            : taskResult.trim()
+          : '';
       waitingForUser = status !== 'succeeded';
       completed = true;
       return {
         status,
         ...(result ? { result } : {}),
         ...(spokenReply ? { spokenReply } : {}),
+        ...(answer ? { completed: answer } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
         ...(answerChoices ? { answerChoices } : {}),

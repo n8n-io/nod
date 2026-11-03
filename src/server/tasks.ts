@@ -527,6 +527,31 @@ export function createTasks(options: {
     refresh();
   }
 
+  async function settle(turn: TurnRef, result: string) {
+    const capture = snapshotAnalytics(options.analytics);
+    await transaction(async (client) => {
+      await lockThread(client);
+      await withTurnLock(
+        turn.turnId,
+        async () => {
+          const settled = await client.query(
+            `UPDATE tasks t SET state='done',result=$3,closed_at=now(),updated_at=now()
+             FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND t.id=u.task_id AND t.owner_id=u.owner_id
+               AND t.state='open' AND t.applied_revision=t.revision AND t.waiting_for='[]'::jsonb
+               AND (t.next_check IS NULL OR t.next_check<=now())`,
+            [turn.turnId, ownerId, result],
+          );
+          if (settled.rowCount)
+            afterCommit(client, () =>
+              capture?.({ event: 'task_finished', properties: { status: 'done', actor: 'agent' } }),
+            );
+        },
+        client,
+      );
+    }, pool);
+    refresh();
+  }
+
   async function context(turn: TurnRef) {
     const row = (
       await pool.query(
@@ -762,6 +787,7 @@ export function createTasks(options: {
     initialize,
     execute,
     inherit,
+    settle,
     context,
     resolveReply,
     chatCommand,

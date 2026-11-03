@@ -35,7 +35,7 @@ Explicit replies go to the selected task before the coordinator runs. The task's
 | Session | The saved Pi history and execution context for that work. | Across turns, questions and owner updates.              |
 | Turn    | One execution started by a message, dispatch or resume.   | Until it succeeds, waits, fails or is cancelled.        |
 
-A task can need several turns in the same session. A successful turn does not mean the task is complete. The task calls `finish` after it checks its completion condition.
+A task can need several turns in the same session. A successful turn does not mean the task is complete. The task calls `finish` after it checks its completion condition. A turn that ends with its final answer, as final text or with `send_message` intent `final`, also closes the task as done when nothing else is planned: no wait, later check or queued owner update. The result is that answer.
 
 Each session runs one turn at a time. Different sessions run in parallel. There is no task limit of three. Browser capacity is a separate resource limit; a task that does not browse does not open a browser.
 

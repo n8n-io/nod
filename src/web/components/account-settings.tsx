@@ -84,6 +84,7 @@ export function AccountSettings({
   const [privacyError, setPrivacyError] = useState('');
   const [removing, setRemoving] = useState(false);
   const content = useRef<HTMLDivElement>(null);
+  const jumped = useRef<{ target: string; top: number } | null>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const reviewTitle = useRef<HTMLHeadingElement>(null);
   const exitAction = useRef<(() => void) | null>(null);
@@ -185,24 +186,30 @@ export function AccountSettings({
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [open, onOpenChange, requestExit]);
-  function jump(target: string, smooth = false) {
+  function jump(target: string, smooth = false, focus = true) {
     const scroller = content.current;
     const heading = document.getElementById(`${id}-${target}`);
     if (!scroller || !heading) return;
-    const top =
-      heading.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop -
-      32;
+    const top = Math.max(
+      0,
+      Math.min(
+        heading.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top +
+          scroller.scrollTop -
+          32,
+        scroller.scrollHeight - scroller.clientHeight,
+      ),
+    );
+    jumped.current = { target, top };
     scroller.scrollTo({
-      top: Math.max(0, top),
+      top,
       behavior:
         smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
           ? 'smooth'
           : 'instant',
     });
     setSection(target);
-    heading.focus({ preventScroll: true });
+    if (focus) heading.focus({ preventScroll: true });
   }
   useLayoutEffect(() => {
     if (!open) {
@@ -216,6 +223,28 @@ export function AccountSettings({
     return () => cancelAnimationFrame(frame);
   }, [open, selected.id, openRequest]);
   useEffect(() => {
+    const scroller = content.current;
+    if (!open || !scroller) return;
+    const release = () => {
+      jumped.current = null;
+    };
+    const resized =
+      typeof ResizeObserver === 'undefined'
+        ? undefined
+        : new ResizeObserver(() => {
+            if (jumped.current) jump(jumped.current.target, false, false);
+          });
+    for (const child of scroller.children) resized?.observe(child);
+    const settings = scroller.closest('.account-settings') ?? scroller;
+    const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    for (const name of events)
+      settings.addEventListener(name, release, { passive: true, capture: true });
+    return () => {
+      resized?.disconnect();
+      for (const name of events) settings.removeEventListener(name, release, { capture: true });
+    };
+  }, [open]);
+  useEffect(() => {
     if (!open) return;
     const key = `${openRequest}:${section}`;
     if (recorded.current === key) return;
@@ -227,6 +256,8 @@ export function AccountSettings({
   function trackScroll() {
     const scroller = content.current;
     if (!scroller) return;
+    if (jumped.current && Math.abs(scroller.scrollTop - jumped.current.top) < 2)
+      return setSection(jumped.current.target);
     const top = scroller.getBoundingClientRect().top;
     const reached = settingsSections.filter((candidate) => {
       const heading = document.getElementById(`${id}-${candidate.id}`);

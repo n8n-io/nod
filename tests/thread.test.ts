@@ -882,6 +882,25 @@ test(
           assert.equal((await request('POST', '/api/thread/stop')).statusCode, 200);
           assert.deepEqual(outcomes().at(-1), { status: 'cancelled', actor: 'owner' });
           assert.equal(outcomes().length, 6);
+          const answered = await fixture();
+          const waiting = await fixture();
+          const updated = await fixture();
+          await db.pool.query(
+            `UPDATE tasks SET waiting_for='[{"what":"Synthetic reply"}]'::jsonb WHERE id=$1`,
+            [waiting.id],
+          );
+          await db.pool.query('UPDATE tasks SET revision=revision+1 WHERE id=$1', [updated.id]);
+          for (const task of [answered, waiting, updated])
+            await tasks.settle(task.ref, 'Synthetic delivered answer');
+          const settled = async (id: string) =>
+            (await db.pool.query('SELECT state,result FROM tasks WHERE id=$1', [id])).rows[0];
+          assert.deepEqual(await settled(answered.id), {
+            state: 'done',
+            result: 'Synthetic delivered answer',
+          });
+          assert.equal((await settled(waiting.id)).state, 'open');
+          assert.equal((await settled(updated.id)).state, 'open');
+          assert.equal(outcomes().length, 7);
           const emitted = JSON.stringify(
             analyticsEvents.slice(before).filter(({ event }) => event === 'task_finished'),
           );

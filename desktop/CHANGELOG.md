@@ -2,6 +2,48 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.5.0 - 2026-11-02
+
+### Features
+
+- **analytics:** Show a Nod-styled NPS survey after 3 days of use. [#597](https://github.com/n8n-io/nod/pull/597) (0fd30e8)
+- **analytics:** Measure activation, retention and pre-mortem signals. [#577](https://github.com/n8n-io/nod/pull/577) (a569791)
+- **ui:** Unify chat, native answers, and Settings. [#578](https://github.com/n8n-io/nod/pull/578) (05fb1c9)
+
+### Fixes
+
+- **onboarding:** Keep setup usable while services start. [#595](https://github.com/n8n-io/nod/pull/595) (c783116)
+- **desktop:** Quit a running Nod before reinstalling on Windows. [#594](https://github.com/n8n-io/nod/pull/594) (0ab4fdd)
+- **schedules:** Stop recurring runs from asking the same question again. [#593](https://github.com/n8n-io/nod/pull/593) (d5df72e)
+- **usage:** Explain costs for every kind of model pricing. [#592](https://github.com/n8n-io/nod/pull/592) (6971c7c)
+- **security:** Prepare Nod for public source access. [#581](https://github.com/n8n-io/nod/pull/581) (b2dcc73)
+- **security:** Close nine audited boundary gaps and start tasks for substantial work. [#579](https://github.com/n8n-io/nod/pull/579) (b8e836b)
+- **apps:** Use the server origin for hosted sign-in. [#576](https://github.com/n8n-io/nod/pull/576) (e6090e0)
+
+### Performance
+
+- Cut agent round trips and show live status sooner. [#580](https://github.com/n8n-io/nod/pull/580) (8fb9319)
+
+<details>
+<summary>Maintenance (4 changes)</summary>
+
+- **deps-dev:** Bump vite from 8.3.4 to 8.3.5. [#587](https://github.com/n8n-io/nod/pull/587) (0316c5a)
+- **deps:** Bump posthog-node from 5.57.0 to 5.60.1. [#586](https://github.com/n8n-io/nod/pull/586) (662c0d2)
+- **deps:** Bump the docs group across 1 directory with 5 updates. [#584](https://github.com/n8n-io/nod/pull/584) (96125c7)
+- **deps-dev:** Bump the tiptap group across 1 directory with 9 updates. [#582](https://github.com/n8n-io/nod/pull/582) (1509caf)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.4.2...0fd30e8ab0fd565e8f462d21dc48a24c58694a13)
+
+<details>
+<summary>Build details</summary>
+
+Source: `0fd30e8ab0fd565e8f462d21dc48a24c58694a13`
+Previous release: `nod-v0.4.2`
+
+</details>
+
 ## 0.4.2 - 2026-10-30
 
 ### Features

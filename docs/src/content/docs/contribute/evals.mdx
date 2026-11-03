@@ -40,7 +40,7 @@ flowchart TD
 
 Web search and page fetch (`web_search` and `fetch_content`) run on the server. A fetch to a named fixture host uses the local test server. Other requests can reach the public web.
 
-Checks grade the end state: the fake world, the workspace files and the trace. Ground truth includes every visible assistant message in full, so a long background trace cannot hide a delivered answer from the judge. Action trust checks and confirmation-fact checks use the selected chat model at its lowest reasoning effort, as in production. Decision models can classify approval replies and emails that give account access; they do not decide whether an action is allowed. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
+Checks grade the end state: the fake world, the workspace files and the trace. Ground truth includes every visible assistant message in full, with any native visual such as a chart or card, so a long background trace cannot hide a delivered answer from the judge. Action trust checks and confirmation-fact checks use the selected chat model at its lowest reasoning effort, as in production. Decision models can classify approval replies and emails that give account access; they do not decide whether an action is allowed. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
 
 :::caution[The fakes are the main fidelity risk]
 The fake apps are hand-written approximations of Composio's responses, not recordings. Check a result against a real account before you trust it for a connector.
@@ -58,7 +58,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 93 controlled cases, three attempts each.
+3. Run all 94 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -76,7 +76,7 @@ The release suite adds 235 cases: 188 of everyday work across every connected ap
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 328 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 329 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -269,7 +269,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 332 cases: 93 controlled cases, 235 release cases, three live web cases and the harness canary.
+The suite has 333 cases: 94 controlled cases, 235 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -307,6 +307,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                      | vault, browser, approvals                | scored                 |
 | `login-authenticator-key`               | Sign in with a saved authenticator key and read last month’s payouts              | vault, browser, approvals                | known gap              |
 | `memory-across-reset`                   | Remember what I told you and never ask twice                                      | memory, progress                         | scored                 |
+| `memory-explicit-request-reply`         | Answer when asked to remember a preference                                        | memory                                   | calibrating            |
 | `memory-remember-earlier-details`       | Remember the address and number I gave you two messages ago                       | memory                                   | calibrating            |
 | `memory-routine-silent`                 | Remember a routine without a memory-save question                                 | memory, browser, progress                | calibrating            |
 | `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                       | memory, browser, progress                | calibrating            |
