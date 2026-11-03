@@ -409,6 +409,7 @@ export async function collect(options: {
   const replies = messages
     .filter((m) => m.role === 'assistant' && m.text.trim())
     .map((m) => m.text);
+  const shown = messages.filter((m) => m.role === 'assistant' && (m.text.trim() || m.presentation));
   const files = await session.workspace.list();
   const filePath = (path: string) => path.replace(/^\/workspace\//, '');
   const sharedPaths = new Set(
@@ -478,7 +479,7 @@ export async function collect(options: {
       const build = (outputCap: number) => {
         return [
           ...messages
-            .filter((m) => m.text.trim())
+            .filter((m) => m.text.trim() || m.presentation)
             .map((m) => ({
               at: m.at,
               text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
@@ -514,13 +515,11 @@ export async function collect(options: {
       );
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
-        `Assistant messages shown to the user: ${replies.length}.`,
-        ...messages
-          .filter((message) => message.role === 'assistant' && message.text.trim())
-          .map(
-            (message) =>
-              `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}`,
-          ),
+        `Assistant messages shown to the user: ${shown.length}.`,
+        ...shown.map(
+          (message) =>
+            `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}${message.presentation ? `, with this native visual: ${clip(JSON.stringify(message.presentation), 8000)}` : ''}`,
+        ),
         `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'
