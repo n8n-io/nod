@@ -663,6 +663,134 @@ test('verified relative dates can correct a time score only when every required 
   }
 });
 
+test('relative days use the configured zone and refuse a missing or unlisted zone', async () => {
+  const { checkJevTrust } = await import('../src/server/trust-jev.ts');
+  const { jevPolicy } = await import('../src/server/trust-jev-policy.ts');
+  const model = {
+    provider: 'openrouter',
+    requested: 'typesafe/jev-1.14',
+    served: 'typesafe/jev-1.14-20261014',
+  };
+  const choice = (choice: string) => ({ choice, probability: 1 });
+  const raw = {
+    ...choice('message:0'),
+    model,
+    additional: {
+      ...Object.fromEntries(
+        Object.keys(jevPolicy.features).map((name) => [
+          name,
+          { choice: ['direct_request', 'needed_step'].includes(name), probability: 0.99 },
+        ]),
+      ),
+      effect: choice('event'),
+      date_field: choice('date:0'),
+    },
+  };
+  for (const [timeZone, zone, start, expected] of [
+    [undefined, 'unspecified', '2028-03-01T14:00:00Z', false],
+    ['Europe/Madrid', 'unspecified', '2028-03-01T14:00:00Z', true],
+    ['Europe/Madrid', 'unspecified', '2028-03-02T14:00:00Z', false],
+    ['Europe/Madrid', 'unlisted', '2028-03-01T14:00:00Z', false],
+  ] as const) {
+    const result = await checkJevTrust(
+      {
+        check: async () => ({
+          choice: true,
+          probability: 0.99,
+          model,
+          additional: {
+            owner_method: {
+              ...choice('any'),
+              probabilities: { any: 1, app: 0, browser: 0, unclear: 0 },
+            },
+            relative_day: choice('tomorrow'),
+            owner_zone: choice(zone),
+            owner_clock: choice('15:00'),
+            owner_duration: choice('none'),
+            owner_month: choice('none'),
+            owner_day: choice('none'),
+            owner_weekday: choice('none'),
+            owner_time_bounds: { choice: false, probability: 1 },
+          },
+        }),
+      },
+      {
+        timeZone,
+        userMessages: [
+          { at: '2028-02-28T23:30:00Z', text: 'Create a calendar event tomorrow at 15:00.' },
+        ],
+        action: { name: 'GOOGLECALENDAR_CREATE_EVENT', arguments: { start } },
+      },
+      raw,
+      { provider: model.provider, model: model.requested },
+    );
+    assert.equal(result?.run, expected);
+  }
+});
+
+test('an uncertain effect needs a strong separate check before it can become private work', async () => {
+  const { checkJevTrust } = await import('../src/server/trust-jev.ts');
+  const { jevPolicy } = await import('../src/server/trust-jev-policy.ts');
+  const model = {
+    provider: 'openrouter',
+    requested: 'typesafe/jev-1.14',
+    served: 'typesafe/jev-1.14-20261014',
+  };
+  for (const [effectConfidence, privateConfidence, expected] of [
+    [0.53, 0.99, true],
+    [0.53, 0.7, false],
+    [0.99, 0.99, false],
+  ] as const) {
+    const raw = {
+      choice: 'ask',
+      probability: 0.51,
+      model,
+      additional: {
+        ...Object.fromEntries(
+          Object.keys(jevPolicy.features).map((name) => [
+            name,
+            { choice: name === 'private_preparation', probability: 0.99 },
+          ]),
+        ),
+        effect: { choice: 'update', probability: effectConfidence },
+      },
+    };
+    let privateChecks = 0;
+    const result = await checkJevTrust(
+      {
+        check: async (request) => {
+          if (request.question.name === 'private') {
+            privateChecks++;
+            return { choice: true, probability: privateConfidence, model };
+          }
+          return {
+            choice: false,
+            probability: 1,
+            model,
+            additional: {
+              owner_method: {
+                choice: 'any',
+                probability: 1,
+                probabilities: { any: 1, app: 0, browser: 0, unclear: 0 },
+              },
+            },
+          };
+        },
+      },
+      {
+        action: {
+          name: 'GMAIL_CREATE_EMAIL_DRAFT',
+          arguments: { body: 'Synthetic private draft.' },
+        },
+      },
+      raw,
+      { provider: model.provider, model: model.requested },
+    );
+    assert.equal(result?.run, expected);
+    assert.equal(privateChecks, effectConfidence < 0.8 ? 1 : 0);
+  }
+});
+
 test('every checker must quote owner words for Nod settings, sign-in and uploads', () => {
   const words = {
     userMessages: [{ at: '2033-06-20T18:30:00Z', text: 'Perform the synthetic action now.' }],

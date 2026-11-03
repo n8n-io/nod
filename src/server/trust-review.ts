@@ -133,6 +133,11 @@ export function createTrustReview(options: {
       { run?: boolean; because?: string; rule?: boolean } | undefined;
     if (source?.rule || (details?.choice === 'rule' && (input as TrustWords).userRules))
       return { run: false, rule: true, decision: answer };
+    if (!prepared) {
+      const scope = details?.additional?.scope as { choice?: unknown } | undefined;
+      if (probability(scope) === undefined || scope?.choice !== true)
+        return { run: false, decision: answer };
+    }
     if (
       details?.model?.requested === 'perplexity/pplx-decider-v1.2' &&
       details.model.served !== 'perplexity/pplx-decider-v1.2-20261016'

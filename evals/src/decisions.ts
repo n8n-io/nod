@@ -26,7 +26,10 @@ interface Case {
   expected: string | boolean;
 }
 
-const words = (text: string) => ({ userMessages: [{ at: '2026-10-16T09:00:00.000Z', text }] });
+const words = (text: string) => ({
+  timeZone: 'Europe/Madrid',
+  userMessages: [{ at: '2026-10-16T09:00:00.000Z', text }],
+});
 const action = (
   id: string,
   text: string | undefined,
@@ -38,7 +41,12 @@ const action = (
   id,
   kind: 'run',
   holdout: id.startsWith('holdout-'),
-  input: { ...(text ? words(text) : {}), ...extra, action: { name, arguments: args } },
+  input: {
+    timeZone: 'UTC',
+    ...(text ? words(text) : {}),
+    ...extra,
+    action: { name, arguments: args },
+  },
   expected,
 });
 const send = {

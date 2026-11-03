@@ -12,6 +12,15 @@ const normalize = (value: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, ' ');
 const dateText = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
 
+export function trustTimeZone(value?: string) {
+  if (!value) return undefined;
+  try {
+    return new Intl.DateTimeFormat('en', { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 function calendar(text: string) {
   const value = new Date(`${text}T12:00:00Z`);
   const end = new Date(value);
@@ -67,14 +76,8 @@ export function trustFacts(input: TrustInput) {
   ].filter((x): x is string => Boolean(x));
   const words = ` ${normalize(texts.join(' '))} `;
   const selected = new Set(['UTC']);
-  let timeZone: string | undefined;
-  if (input.timeZone) {
-    try {
-      timeZone = new Intl.DateTimeFormat('en', { timeZone: input.timeZone }).resolvedOptions()
-        .timeZone;
-      selected.add(timeZone);
-    } catch {}
-  }
+  const timeZone = trustTimeZone(input.timeZone);
+  if (timeZone) selected.add(timeZone);
   for (const zone of zones) {
     const city = normalize(zone.split('/').at(-1)!);
     if (city.length >= 4 && words.includes(` ${city} `)) selected.add(zone);

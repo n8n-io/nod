@@ -932,7 +932,7 @@ test(
                     ...Object.fromEntries(
                       (additionalQuestions ?? [])
                         .filter(({ name }) => !['permission', 'preparation'].includes(name))
-                        .map(({ name }) => [name, { choice: false, probability: 1 }]),
+                        .map(({ name }) => [name, { choice: name === 'scope', probability: 1 }]),
                     ),
                     permission: {
                       permission: (answer as { trust?: unknown }).trust !== 'ask',
@@ -987,13 +987,17 @@ test(
           assert.deepEqual(
             Object.keys(reviews.at(-1)!).filter(
               (key) =>
-                !['userMessages', 'assistantMessageBeforeLatestUserMessage', 'action'].includes(
-                  key,
-                ),
+                ![
+                  'userMessages',
+                  'assistantMessageBeforeLatestUserMessage',
+                  'action',
+                  'timeZone',
+                ].includes(key),
             ),
             [],
           );
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
+          assert.equal(reviews.at(-1)?.timeZone, 'UTC');
           await trust.check(turn, 'GMAIL_SEND_EMAIL', email('stranger@example.test'));
           assert.match(JSON.stringify(reviews.at(-1)?.action), /stranger@example\.test/);
           aligned = () => {

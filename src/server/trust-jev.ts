@@ -6,7 +6,7 @@ import type {
   DecisionSelection,
 } from '../ports/decisions.ts';
 import { trustDecision, type TrustWords } from './trust-basis.ts';
-import { trustFacts } from './trust-facts.ts';
+import { trustFacts, trustTimeZone } from './trust-facts.ts';
 import { jevPolicy } from './trust-jev-policy.ts';
 import model from './trust-jev-model.json' with { type: 'json' };
 import { jevEffectsRequest } from './trust-jev-effects.ts';
@@ -250,12 +250,16 @@ export async function checkJevTrust(
   if (upload) kind = 'update';
   let read = false;
   const distribution = first.additional.effect.probabilities;
+  const uncertainPrivate =
+    first.additional.effect.probability < 0.8 &&
+    Math.max(scores.read_effect, scores.private_preparation) >= 0.8;
   const readCandidate =
     !ownSettings &&
     !signIn &&
     !upload &&
     (effect === 'read' ||
       effect === 'prepare' ||
+      uncertainPrivate ||
       (effect === 'unknown' &&
         distribution &&
         distribution.read + distribution.prepare >= 0.5 &&
@@ -263,7 +267,10 @@ export async function checkJevTrust(
   if (readCandidate) {
     const certainty = await checkJevEffects(decisions, action!, selection, signal);
     if (certainty === undefined) return undefined;
-    read = certainty > 0.5 && scores.unclear_read_step < 0.5;
+    read =
+      certainty >
+        (uncertainPrivate && !['read', 'prepare', 'unknown'].includes(effect) ? 0.8 : 0.5) &&
+      scores.unclear_read_step < 0.5;
     if (read) kind = effect === 'read' ? 'read' : 'prepare';
     else if (kind === 'read' || kind === 'prepare') kind = 'unknown';
   }
@@ -373,13 +380,18 @@ export async function checkJevTrust(
               value: 'unspecified',
               description: 'The owner source and accepted proposal specify no listed time zone.',
             },
+            {
+              value: 'unlisted',
+              description:
+                'The owner names a time zone or city that none of the listed zones represents.',
+            },
             ...zones.map((value) => ({
               value,
               description: `The owner source specifies ${value} through its zone name or city.`,
             })),
           ],
           instructions:
-            'Select the time zone the selected owner source names for its requested date or time. The owner can name a city. Ignore the UTC offset on the message timestamp; it does not choose an owner time zone. Use unspecified if no listed zone is stated.',
+            'Select the time zone the selected owner source names for its requested date or time. The owner can name a city. Ignore the UTC offset on the message timestamp; it does not choose an owner time zone. Use unspecified when the owner names no zone. Use unlisted when the named zone is not represented by any listed zone.',
         },
       );
     }
@@ -430,9 +442,17 @@ export async function checkJevTrust(
       throw new Error('The trust method probabilities are incomplete.');
     methodMismatch = conflict >= 0.8;
     methodUncertain = conflict >= 0.2 && !methodMismatch;
+    const timeAnswers = { ...owner.additional };
+    const configuredZone = trustTimeZone(input.timeZone);
+    if (timeAnswers.owner_zone?.choice === 'unspecified' && configuredZone)
+      timeAnswers.owner_zone = {
+        choice: configuredZone,
+        probability: timeAnswers.owner_zone.probability,
+      };
+    times.uncertain ||= timeAnswers.owner_zone?.choice === 'unlisted';
     if (dates.length || input.scheduledFor) {
       const day = owner.additional.relative_day;
-      const zone = owner.additional.owner_zone;
+      const zone = timeAnswers.owner_zone;
       if (!day || !zone) throw new Error('The trust date check is incomplete.');
       const dateField = first.additional.date_field;
       if (!dateField && dates.length) throw new Error('The trust date field is missing.');
@@ -453,7 +473,6 @@ export async function checkJevTrust(
       times.uncertain ||=
         day.probability < 0.8 ||
         (relative &&
-          zone.choice !== 'unspecified' &&
           (!before ||
             (!after && !first.additional.text_day) ||
             zone.probability < 0.8 ||
@@ -485,7 +504,7 @@ export async function checkJevTrust(
         }
       }
     }
-    const checkedTimes = checkJevTimes(first.additional, owner.additional, dates);
+    const checkedTimes = checkJevTimes(first.additional, timeAnswers, dates);
     times = { ...checkedTimes, uncertain: times.uncertain || checkedTimes.uncertain };
   }
   const bounds = owner?.additional.owner_time_bounds;

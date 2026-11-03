@@ -46,7 +46,14 @@ test('decision trust never calls an LLM for uncertainty, missing results or fail
               .filter((name) => !['trust', 'preparation', 'permission'].includes(name))
               .map((name) => [
                 name,
-                { type: 'choice', choice: 'false', probabilities: { true: 0, false: 1 } },
+                {
+                  type: 'choice',
+                  choice: String(name === 'scope'),
+                  probabilities: {
+                    true: Number(name === 'scope'),
+                    false: Number(name !== 'scope'),
+                  },
+                },
               ]),
           ),
           trust: {
@@ -338,6 +345,8 @@ test('pure decision checks bind the evaluated model, preserve target checks and 
     probabilities = { [veto]: 0.99 };
     assert.equal(await allowed(), undefined);
   }
+  probabilities = { scope: 0.01 };
+  assert.equal(await allowed(), undefined);
   probabilities = { permission: 0.995, preparation: 0.995, scope: 0.97, bans: 0.2 };
   source = 'read';
   assert.equal((await allowed())?.kind, 'read');
@@ -2434,26 +2443,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await t.test('free OpenRouter selection never incurs paid classification', async () => {
       const owner = await f.create('fixture-classification-openrouter-free', {
         ...f.backend,
-        catalog: async () =>
-          original.map((definition) => {
-            const id =
-              definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
-            return {
-              choice: {
-                ...definition.choice,
-                id,
-                ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
-              },
-              spec: {
-                ...definition.spec,
-                provider: 'openrouter',
-                id,
-                ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
-              },
-            };
-          }),
+        catalog: async (provider) =>
+          provider === 'openai'
+            ? original
+            : original.map((definition) => {
+                const id =
+                  definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
+                return {
+                  choice: {
+                    ...definition.choice,
+                    id,
+                    ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
+                  },
+                  spec: {
+                    ...definition.spec,
+                    provider: 'openrouter',
+                    id,
+                    ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
+                  },
+                };
+              }),
       });
       const connectionId = await owner.addKey('openrouter', 'fixture-classification-free-key');
+      await owner.addKey('openai', 'fixture-classification-paid-alternative');
       await owner.select({ connectionId, modelId: 'openrouter/free', effort: 'off' });
       assert.equal(owner.hasClassificationModel(), false);
       assert.equal(await owner.resolveClassification(), undefined);

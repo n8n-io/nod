@@ -114,8 +114,8 @@ export function createTrust(options: {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const context = async () => {
       const preferences = (
-        await pool.query<{ notification_rule: string; rules: string }>(
-          'SELECT notification_rule,rules FROM preferences WHERE owner_id=$1',
+        await pool.query<{ notification_rule: string; rules: string; time_zone: string | null }>(
+          'SELECT notification_rule,rules,time_zone FROM preferences WHERE owner_id=$1',
           [ownerId],
         )
       ).rows[0];
@@ -127,6 +127,7 @@ export function createTrust(options: {
           ? await conversation(turn.threadId, origin.messageIds, origin.taskId, since)
           : undefined;
       const words: TrustWords = {
+        timeZone: preferences?.time_zone ?? 'UTC',
         ...said?.words,
         ...(origin.source === 'schedule' && instruction
           ? {
