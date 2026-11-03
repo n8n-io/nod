@@ -100,10 +100,9 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       });
       const review = createTrustReview({
         decisions,
-        escalate: true,
         review: async () => {
           llmCalls++;
-          assert.fail('A failure must not start the LLM stage.');
+          assert.fail('Decision checks must not call an LLM.');
         },
       });
       const check = () => review('Apply the owner policy.', input, controller.signal);
@@ -116,28 +115,7 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       wrongMethod = 1;
       assert.equal(trustBasis(await check(), words, ['owner-message']), undefined);
       wrongMethod = 0.4;
-      const pure = createTrustReview({
-        decisions,
-        review: async () => assert.fail('Pure mode must not use an LLM.'),
-      });
-      assert.equal(
-        trustBasis(await pure('Apply the owner policy.', input), words, ['owner-message']),
-        undefined,
-      );
-      let smallCalls = 0;
-      const hybrid = createTrustReview({
-        decisions,
-        escalate: true,
-        review: async () => {
-          smallCalls++;
-          return { run: true, because: words.userMessages[0].text };
-        },
-      });
-      assert.equal(
-        trustBasis(await hybrid('Apply the owner policy.', input), words, ['owner-message'])?.kind,
-        'message',
-      );
-      assert.equal(smallCalls, 1);
+      assert.equal(trustBasis(await check(), words, ['owner-message']), undefined);
       wrongMethod = 0;
       for (failure of ['http', 'version', 'probability', 'connection', 'stop'] as const) {
         requests = 0;
@@ -276,7 +254,6 @@ test('a nested effect can refuse the private-read path even when the first Jev c
   });
   const review = createTrustReview({
     decisions,
-    escalate: true,
     review: async () => assert.fail('An effect denial or failure must not start an LLM.'),
   });
   assert.equal(
@@ -309,6 +286,8 @@ test('scheduled message dates preserve the owner local day without parsing page 
 
 test('strict Jev reads need a separate effect check and never treat a private draft as a read', async () => {
   let calls = 0;
+  let certainty = 0.9;
+  let effect = 0.01;
   let failure: 'http' | 'refusal' | undefined;
   const decisions = createDecisionModel({
     resolve: async () => ({
@@ -332,16 +311,17 @@ test('strict Jev reads need a separate effect check and never treat a private dr
               readOnly: {
                 type: 'choice',
                 choice: 'true',
-                probabilities: { true: 0.9, false: 0.1 },
+                probabilities: { true: certainty, false: 1 - certainty },
               },
             }
-          : { private: failure === 'refusal' ? { type: 'refusal' } : { type: 'noul', noul: 0.01 } },
+          : {
+              private: failure === 'refusal' ? { type: 'refusal' } : { type: 'noul', noul: effect },
+            },
       });
     },
   });
   const review = createTrustReview({
     decisions,
-    escalate: true,
     review: async () => assert.fail('A refusal or failure must not start an LLM.'),
   });
   const question = {
@@ -363,6 +343,20 @@ test('strict Jev reads need a separate effect check and never treat a private dr
     readOnly: false,
   });
   assert.equal(calls, 2);
+  certainty = 0.6;
+  calls = 0;
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
+    readOnly: false,
+  });
+  assert.equal(calls, 1);
+  certainty = 0.9;
+  effect = 0.4;
+  calls = 0;
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
+    readOnly: false,
+  });
+  assert.equal(calls, 2);
+  effect = 0.01;
   failure = 'refusal';
   assert.equal(
     await review('Only existing reads can pass.', input, undefined, question),

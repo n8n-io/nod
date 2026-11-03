@@ -1834,20 +1834,20 @@ test('trust mode selects Jev before OpenAI and never changes provider after a fa
   direct.models!.hasApiKey = () => false;
   await check(direct);
   assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
-  const hybrid = createDefaultAdapters({
-    NOD_TRUST_MODEL: 'hybrid',
+  const router = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
     NOD_FEEDBACK_ENABLED: 'false',
   });
-  hybrid.models!.hasApiKey = (provider) => provider === 'openrouter';
-  hybrid.models!.apiKey = async () => 'fixture-router';
-  await check(hybrid);
+  router.models!.hasApiKey = (provider) => provider === 'openrouter';
+  router.models!.apiKey = async () => 'fixture-router';
+  await check(router);
   assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
   direct.models!.hasApiKey = (provider) => provider === 'openrouter';
   direct.models!.apiKey = async () => 'fixture-router';
   await check(direct);
   assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
   assert.equal(createDefaultAdapters({ NOD_FEEDBACK_ENABLED: 'false' }).trustModel, 'llm');
-  for (const mode of ['selected', 'small', 'unknown'])
+  for (const mode of ['hybrid', 'selected', 'small', 'unknown'])
     assert.throws(() =>
       createDefaultAdapters({ NOD_TRUST_MODEL: mode, NOD_FEEDBACK_ENABLED: 'false' }),
     );

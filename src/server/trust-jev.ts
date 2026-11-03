@@ -241,7 +241,6 @@ export async function checkJevTrust(
   if (action?.name === 'NOD_browser' && scores.unclear_read_step >= 0.5) kind = 'unknown';
   if (upload) kind = 'update';
   let read = false;
-  let privateUncertain = false;
   const distribution = first.additional.effect.probabilities;
   const readCandidate =
     !ownSettings &&
@@ -255,9 +254,8 @@ export async function checkJevTrust(
         Math.max(scores.read_effect, scores.private_preparation) >= 0.5));
   if (readCandidate) {
     const certainty = await checkJevEffects(decisions, action!, selection, signal);
-    if (certainty === undefined) return { result: undefined, uncertain: false };
+    if (certainty === undefined) return undefined;
     read = certainty > 0.5 && scores.unclear_read_step < 0.5;
-    privateUncertain = certainty > 0.2 && certainty < 0.8;
     if (read) kind = effect === 'read' ? 'read' : 'prepare';
     else if (kind === 'read' || kind === 'prepare') kind = 'unknown';
   }
@@ -421,7 +419,7 @@ export async function checkJevTrust(
     );
     signal?.throwIfAborted();
     if (result && typeof result === 'object' && (result as { refused?: unknown }).refused)
-      return { result: undefined, uncertain: false };
+      return undefined;
     owner = checkJevModel(result, selection);
     if (typeof owner.choice !== 'boolean')
       throw new Error('The trust permission check is incomplete.');
@@ -536,16 +534,7 @@ export async function checkJevTrust(
     (name) => scores[name] < 0.5,
   );
   const run = !hard && (read ? privateAllowed : score >= model.threshold && Boolean(quote));
-  return {
-    result: run
-      ? { run: true, because: read ? 'read' : quote }
-      : { run: false, ...(source?.rule ? { rule: true } : {}) },
-    uncertain:
-      !prohibited &&
-      (privateUncertain ||
-        times.uncertain ||
-        methodUncertain ||
-        (!hard && score > model.lower && score < model.upper) ||
-        (!read && grant > 0.1 && grant < 0.9)),
-  };
+  return run
+    ? { run: true, because: read ? 'read' : quote }
+    : { run: false, ...(source?.rule ? { rule: true } : {}) };
 }

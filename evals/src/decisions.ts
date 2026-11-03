@@ -2488,8 +2488,8 @@ export async function runDecisionEval(options: {
   const availableArms = [
     'main-llm',
     'branch-llm',
-    ...(environment.OPENAI_API_KEY ? ['gpt-decisions', 'gpt-hybrid'] : []),
-    ...(environment.OPENROUTER_API_KEY ? ['jev-openrouter', 'hybrid'] : []),
+    ...(environment.OPENAI_API_KEY ? ['gpt-decisions'] : []),
+    ...(environment.OPENROUTER_API_KEY ? ['jev-openrouter'] : []),
   ];
   const arms = [...new Set(options.arms ?? availableArms)];
   if (!arms.length || arms.some((arm) => !availableArms.includes(arm)))
@@ -2501,7 +2501,7 @@ export async function runDecisionEval(options: {
   await mkdir(join(options.root, 'decisions'), { recursive: true });
   await mkdir(directory);
   const manifest = {
-    version: 11,
+    version: 12,
     baseline,
     candidate,
     dirty: git('status', '--porcelain', '--', 'src', 'evals').trim().length > 0,
@@ -2560,7 +2560,6 @@ export async function runDecisionEval(options: {
     };
     let httpStatus: number | undefined;
     const selected = (arm === 'main-llm' ? policies.main[item.kind] : policies.branch[item.kind])!;
-    const hybrid = arm === 'hybrid' || arm === 'gpt-hybrid';
     const rules = arm === 'main-llm' ? policies.main.rules : policies.branch.rules;
     let instructions =
       item.kind === 'run' && rules && ruled(item.input)
@@ -2578,7 +2577,7 @@ export async function runDecisionEval(options: {
           ? [true, false]
           : selected.question!.choices.map(({ value }) => value),
       authorization:
-        arm.endsWith('-llm') || hybrid || item.kind === 'run'
+        arm.endsWith('-llm') || item.kind === 'run'
           ? authorization[arm === 'main-llm' ? 'main' : 'branch']
           : { mode: 'raw' },
       report,
@@ -2588,7 +2587,7 @@ export async function runDecisionEval(options: {
           return curators[
             arm === 'main-llm' ? 'main' : item.kind === 'valid' ? 'confirmation' : 'branch'
           ].curate({ task: 'review', instructions, input }, undefined, report);
-        const provider = arm === 'gpt-decisions' || arm === 'gpt-hybrid' ? 'openai' : 'openrouter';
+        const provider = arm === 'gpt-decisions' ? 'openai' : 'openrouter';
         const checker = createDecisionModel({
           resolve: async () => ({
             provider,
@@ -2617,11 +2616,8 @@ export async function runDecisionEval(options: {
         });
         const review = createTrustReview({
           decisions: { check: (request, signal) => checker.check(request, signal, report) },
-          escalate: hybrid,
-          review: (instructions, input, signal, question) => {
-            if (question)
-              instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
-            return curators.branch.curate({ task: 'review', instructions, input }, signal, report);
+          review: async () => {
+            throw new Error('Decision checks must not call an LLM.');
           },
         });
         return review(

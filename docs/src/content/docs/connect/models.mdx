@@ -239,15 +239,14 @@ Nod can use a decision model to check action permission, read confirmation repli
 
 Set `NOD_TRUST_MODEL` in the server configuration, then [apply the change](/deploy/configuration/#how-settings-work).
 
-| Value      | Action permission, strict app reads, and confirmation replies                                        |
-| ---------- | ---------------------------------------------------------------------------------------------------- |
-| `llm`      | A small LLM. This is the default.                                                                    |
-| `decision` | A pure decision model, with no LLM fallback.                                                         |
-| `hybrid`   | A decision model, then the small LLM for a valid uncertain result. Errors never start the LLM stage. |
+| Value      | Action permission, strict app reads, and confirmation replies |
+| ---------- | ------------------------------------------------------------- |
+| `llm`      | A small LLM. This is the default.                             |
+| `decision` | A pure decision model, with no LLM fallback.                  |
 
 The small LLM comes from your selected connection when it offers a known small model. Otherwise, Nod chooses a known small model from another connected service. It chooses before making a request. If no small model is available, the check cannot authorize an action. It never replaces the small checker with your larger chat model.
 
-Decision mode uses Jev 1.14. Nod selects direct TypeSafe with `TYPESAFE_API_KEY`, then Jev through OpenRouter, then OpenAI Decisions with an OpenAI API key. These keys can come from a connection other than your chat model. ChatGPT subscription credentials never go to a decision service. A failed request never changes provider.
+Decision mode prefers Jev 1.14. Nod selects direct TypeSafe with `TYPESAFE_API_KEY`, then Jev through OpenRouter, then OpenAI Decisions with an OpenAI API key. These keys can come from a connection other than your chat model. ChatGPT subscription credentials never go to a decision service. A failed request never changes provider.
 
 ```sh title=".env"
 NOD_TRUST_MODEL=decision

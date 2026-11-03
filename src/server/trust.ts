@@ -34,7 +34,6 @@ export function createTrust(options: {
   ownerId: string;
   review: ModelReview;
   decisions?: DecisionModel;
-  escalate?: boolean;
 }) {
   const { pool, ownerId } = options;
   const review = createTrustReview(options);

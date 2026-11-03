@@ -207,7 +207,7 @@ export interface ApplicationAdapters {
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
-  trustModel?: 'llm' | 'decision' | 'hybrid';
+  trustModel?: 'llm' | 'decision';
   trustDecisions?: DecisionModel;
   trustCurator?: MemoryCurator;
   messaging?: MessagingTransport;
@@ -402,7 +402,7 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
-  const trustModel = z.enum(['llm', 'decision', 'hybrid']).parse(env.NOD_TRUST_MODEL ?? 'llm');
+  const trustModel = z.enum(['llm', 'decision']).parse(env.NOD_TRUST_MODEL ?? 'llm');
   const trustDecisions = createDecisionModel({
     configured: () =>
       Boolean(env.TYPESAFE_API_KEY?.trim()) ||
@@ -1486,9 +1486,8 @@ async function initializeApplication(
         ? trustCurator.curate({ task: 'review', instructions, input }, signal)
         : undefined;
     },
-    ...(adapters.trustModel === 'decision' || adapters.trustModel === 'hybrid'
+    ...(adapters.trustModel === 'decision'
       ? {
-          escalate: adapters.trustModel === 'hybrid',
           decisions: adapters.trustDecisions
             ? ledger.decisions(adapters.trustDecisions)
             : { configured: false, check: async () => undefined },

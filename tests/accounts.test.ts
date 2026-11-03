@@ -29,17 +29,26 @@ import { createTrust } from '../src/server/trust.ts';
 import { createTrustReview } from '../src/server/trust-review.ts';
 import { trustFacts } from '../src/server/trust-facts.ts';
 
-test('hybrid trust uses an LLM only for a valid uncertain result and never after failure', async () => {
+test('decision trust never calls an LLM for uncertainty, missing results or failure', async () => {
   let calls = 0;
   let choice = 'message:0';
   let probability = 0.995;
   let fail = false;
   const decisions = createDecisionModel({
     resolve: async () => ({ provider: 'openrouter', key: 'synthetic-decision-key' }),
-    fetch: async () => {
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body));
       if (fail) return new Response('', { status: 503 });
       return Response.json({
         answers: {
+          ...Object.fromEntries(
+            Object.keys(request.questions)
+              .filter((name) => !['trust', 'preparation', 'permission'].includes(name))
+              .map((name) => [
+                name,
+                { type: 'choice', choice: 'false', probabilities: { true: 0, false: 1 } },
+              ]),
+          ),
           trust: {
             type: 'choice',
             choice,
@@ -71,29 +80,24 @@ test('hybrid trust uses an LLM only for a valid uncertain result and never after
   const instructions = 'Apply the unchanged permission policy.';
   const review = createTrustReview({
     decisions,
-    escalate: true,
-    review: async (policy, data, _signal, question) => {
+    review: async () => {
       calls++;
-      assert.equal(policy, instructions);
-      assert.equal(data, input);
-      assert.equal(question, undefined);
-      return { run: true, because: words.userMessages[0]!.text };
+      assert.fail('Decision checks must not call an LLM.');
     },
   });
   assert.equal(trustBasis(await review(instructions, input), words, ['message'])?.kind, 'message');
   assert.equal(calls, 0);
   probability = 0.8;
-  assert.equal(trustBasis(await review(instructions, input), words, ['message'])?.kind, 'message');
-  assert.equal(calls, 1);
+  assert.equal(trustBasis(await review(instructions, input), words, ['message']), undefined);
+  assert.equal(calls, 0);
   choice = 'ask';
   probability = 0.995;
   assert.equal(trustBasis(await review(instructions, input), words, ['message']), undefined);
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
   fail = true;
   await assert.rejects(review(instructions, input));
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
   const unavailable = createTrustReview({
-    escalate: true,
     decisions: {
       configured: false,
       check: async () => assert.fail('Do not send an unavailable request.'),
@@ -111,7 +115,6 @@ test('hybrid trust uses an LLM only for a valid uncertain result and never after
     },
   ]) {
     const missing = createTrustReview({
-      escalate: true,
       decisions: { check: async () => output },
       review: async () => assert.fail('Missing results must not select another model.'),
     });
@@ -119,7 +122,6 @@ test('hybrid trust uses an LLM only for a valid uncertain result and never after
   }
   const unscored = createTrustReview({
     decisions: { check: async () => ({ answer: 'yes' }) },
-    escalate: true,
     review: async () => assert.fail('An answer without confidence must not start another model.'),
   });
   assert.equal(
@@ -134,7 +136,7 @@ test('hybrid trust uses an LLM only for a valid uncertain result and never after
     undefined,
   );
   await assert.rejects(review(instructions, input, AbortSignal.abort()));
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
 });
 
 test('uncertain effects cannot authorize a change through confident permission', async () => {
@@ -162,11 +164,6 @@ test('uncertain effects cannot authorize a change through confident permission',
     false,
   );
   assert.equal(calls, 0);
-  assert.deepEqual(
-    await createTrustReview({ decisions, review, escalate: true })('Original policy', input),
-    { run: false },
-  );
-  assert.equal(calls, 1);
 });
 
 test('batched trust validates all answers, records one request, and refuses conflicts', async (t) => {
@@ -562,7 +559,6 @@ test('native decision probabilities validate the wire type and retain refusal an
       refused = true;
       const review = createTrustReview({
         decisions: model,
-        escalate: true,
         review: async () => assert.fail('A refusal must not start an LLM request.'),
       });
       assert.equal(await review('', {}, undefined, question), undefined);
