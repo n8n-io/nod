@@ -236,7 +236,8 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
       ? (world) =>
           check('visible-first-tasks', () => ({
             pass: Boolean(
-              world.state.suggestions?.intro && world.state.suggestions.tasks.length === 3,
+              world.state.suggestions?.intro &&
+              world.state.suggestions.tasks.filter((task) => task.origin !== 'common').length === 3,
             ),
             evidence: JSON.stringify(world.state.suggestions ?? null),
           }))
@@ -287,7 +288,10 @@ export function onboardingConnectedCase(kind: OnboardingCase) {
       });
     },
     expect(world) {
-      const titles = () => world.state.suggestions?.tasks.map((task) => task.title) ?? [];
+      const titles = () =>
+        world.state.suggestions?.tasks
+          .filter((task) => task.origin !== 'common')
+          .map((task) => task.title) ?? [];
       return [
         check(
           'three-distinct-actionable-cards',

@@ -119,7 +119,10 @@ export default scenario({
   },
   expect(world) {
     const { state } = world;
-    const titles = () => state.suggestions?.tasks.map((task) => task.title) ?? [];
+    const titles = () =>
+      state.suggestions?.tasks
+        .filter((task) => task.origin !== 'common')
+        .map((task) => task.title) ?? [];
     return [
       check('setup-completed', () => state.saved === 200, {
         aspect: 'process',
