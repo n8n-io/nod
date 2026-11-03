@@ -369,6 +369,12 @@ test('date and amount facts preserve zone aliases and complete grouped amounts',
   assert.equal(facts.serverDateFacts.scheduleContext?.timeZone, 'America/New_York');
   assert.equal(facts.serverDateFacts.scheduleContext?.calendar.date, '2032-02-18');
   assert.equal((facts.serverNumberFacts.sums[0] as { sum: number }).sum, 1020.5);
+  for (const amount of ['USD 1e3', 'USD 1000EUR2000', 'USD 900719925474099.99'])
+    assert.deepEqual(
+      trustFacts({ action: { name: 'PAY', arguments: { costs: [amount, 'USD 20.50'] } } })
+        .serverNumberFacts.sums,
+      [],
+    );
   assert.deepEqual(
     trustFacts({ action: { name: 'PAY', arguments: { costs: ['USD 1,00.00', 'USD 20.50'] } } })
       .serverNumberFacts.sums,
@@ -594,39 +600,54 @@ test('verified relative dates can correct a time score only when every required 
       date_field: choice('date:0'),
     },
   };
-  for (const [start, extras, certainty, expected] of [
-    ['2028-03-01T14:00:00Z', {}, 1, true],
-    ['2028-02-29T14:00:00Z', {}, 1, false],
-    ['2028-03-01T14:00:00Z', {}, 0.6, false],
+  for (const [start, extras, certainty, bounds, rules, expected] of [
+    ['2028-03-01T14:00:00Z', {}, 1, false, '', true],
+    ['2028-03-01T14:00:00Z', {}, 1, false, 'Never schedule after 14:00.', false],
+    ['2028-02-29T14:00:00Z', {}, 1, false, '', false],
+    ['2028-03-01T14:00:00Z', {}, 0.6, false, '', false],
+    ['2028-03-01T14:00:00Z', {}, 1, true, '', false],
+    ['2028-03-01T14:00:00Z', { other: '2028-03-02T14:00:00Z' }, 1, false, '', false],
     [
       '2028-03-01T14:00:00Z',
       { other: '2028-03-02T14:00:00Z', another: '2028-03-03T14:00:00Z' },
       1,
       false,
+      '',
+      false,
     ],
   ] as const) {
     const result = await checkJevTrust(
       {
-        check: async () => ({
-          choice: true,
-          probability: 0.99,
-          model,
-          additional: {
-            owner_method: {
-              ...choice('any'),
-              probabilities: { any: 1, app: 0, browser: 0, unclear: 0 },
+        check: async (request) => {
+          assert.equal('action' in request.input, false);
+          if (request.question.name === 'owner_time_bounds') {
+            assert.equal((request.input as { userRules?: string }).userRules, rules || undefined);
+            return { choice: Boolean(rules), probability: 1, model };
+          }
+          assert.equal('userRules' in request.input, false);
+          return {
+            choice: true,
+            probability: 0.99,
+            model,
+            additional: {
+              owner_method: {
+                ...choice('any'),
+                probabilities: { any: 1, app: 0, browser: 0, unclear: 0 },
+              },
+              relative_day: choice('tomorrow'),
+              owner_zone: choice('Europe/Madrid'),
+              owner_clock: choice('15:00'),
+              owner_time_bounds: { choice: bounds, probability: 1 },
+              owner_duration: choice('none', certainty),
+              owner_month: choice('none'),
+              owner_day: choice('none'),
+              owner_weekday: choice('none'),
             },
-            relative_day: choice('tomorrow'),
-            owner_zone: choice('Europe/Madrid'),
-            owner_clock: choice('15:00'),
-            owner_duration: choice('none', certainty),
-            owner_month: choice('none'),
-            owner_day: choice('none'),
-            owner_weekday: choice('none'),
-          },
-        }),
+          };
+        },
       },
       {
+        ...(rules ? { userRules: rules } : {}),
         userMessages: [
           {
             at: '2028-02-28T23:30:00Z',

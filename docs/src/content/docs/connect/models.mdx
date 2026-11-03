@@ -264,6 +264,8 @@ The server adds calendar facts for month ends, leap days, time zones, and local 
 
 A time zone in your words controls conversion. Without one, code compares the date and clock in the supplied value as written.
 
+Before code corrects a time comparison, Jev checks all your instructions for other time conditions. A deadline warning still blocks the action.
+
 A decision request must return every requested answer in a valid form. Missing answers, invalid probabilities and failures cannot authorize an action. A request that exceeds the provider limit fails the check. Nod never cuts your instructions to fit.
 
 Strict app reads and confirmation replies use their own checks. A Jev strict read needs both its read-only check and a separate effect check. Both must reach the Jev threshold of 0.8. The effect check rejects private drafts and each nested write. Other decision models use a read threshold of 0.99. These thresholds are model settings, not measured error rates. An uncertain strict read is skipped. An uncertain reply stays undecided. The reply check sees only your reply, never the action, question or conversation.

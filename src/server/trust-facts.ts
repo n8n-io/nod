@@ -152,20 +152,32 @@ export function trustFacts(input: TrustInput) {
     if (Array.isArray(value) && value.length >= 2 && value.length <= 16) {
       const entries = value.map((item) =>
         typeof item === 'string'
-          ? [...item.matchAll(/\b(USD|EUR|GBP)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(?![\d.,])/g)]
+          ? [
+              ...item.matchAll(
+                /\b(USD|EUR|GBP)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?\b(?![\d.,])/g,
+              ),
+            ]
           : [],
       );
       if (entries.every((matches) => matches.length === 1)) {
-        const amounts = entries.map(([match]) => ({
-          currency: match[1],
-          amount: Number((match[2] + (match[3] ?? '')).replaceAll(',', '')),
-        }));
-        if (amounts.every((item) => item.currency === amounts[0].currency))
+        const amounts = entries.map(([match]) => {
+          const cents = Number(
+            match[2].replaceAll(',', '') + (match[3]?.slice(1) ?? '').padEnd(2, '0'),
+          );
+          return { currency: match[1], amount: cents / 100, cents };
+        });
+        const total = amounts.reduce((sum, item) => sum + item.cents, 0);
+        if (
+          amounts.every(
+            (item) => item.currency === amounts[0].currency && Number.isSafeInteger(item.cents),
+          ) &&
+          Number.isSafeInteger(total)
+        )
           sums.push({
             field: path,
             currency: amounts[0].currency,
             amounts: amounts.map((item) => item.amount),
-            sum: amounts.reduce((sum, item) => sum + Math.round(item.amount * 100), 0) / 100,
+            sum: total / 100,
           });
       }
     }

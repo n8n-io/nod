@@ -17,6 +17,9 @@ export interface JevDate {
   }>;
 }
 
+export const jevTimeBounds =
+  'Do the owner words impose a time condition beyond an exact start day, clock, weekday and elapsed event length? Include windows, before or after bounds, deadlines, explicit end dates, relative moves and multiple starts. Tomorrow and an exact start clock alone are not extra conditions.';
+
 export function selectedJevDate(answer: JevChoice | undefined, dates: JevDate[]) {
   const match = typeof answer?.choice === 'string' && /^date:(0|[1-9]\d*)$/.exec(answer.choice);
   return match ? dates[Number(match[1])] : undefined;
@@ -42,16 +45,28 @@ export function jevTimeQuestions(text: string, dates: JevDate[], kind: string): 
   ];
   const questions: DecisionQuestion[] = [];
   if (clocks.length)
-    questions.push({
-      name: 'owner_clock',
-      minProbability: 0,
-      instructions:
-        'Select the exact local start clock time chosen by the owner. Use none for bounds, windows, relative moves or no exact start.',
-      choices: [
-        { value: 'none', description: 'No exact start clock time.' },
-        ...clocks.map((value) => ({ value, description: value })),
-      ],
-    });
+    questions.push(
+      {
+        name: 'owner_clock',
+        minProbability: 0,
+        instructions:
+          'Select the exact local start clock time chosen by the owner. Use none for bounds, windows, relative moves or no exact start.',
+        choices: [
+          { value: 'none', description: 'No exact start clock time.' },
+          ...clocks.map((value) => ({ value, description: value })),
+        ],
+      },
+      {
+        name: 'owner_time_bounds',
+        format: 'predicate',
+        minProbability: 0,
+        instructions: jevTimeBounds,
+        choices: [
+          { value: true, description: 'There is another time condition.' },
+          { value: false, description: 'There is no other time condition.' },
+        ],
+      },
+    );
   if (dates.some((date) => date.kind === 'instant')) {
     const values = new Set([5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 240]);
     for (const match of text.matchAll(/\d+(?:[.,]\d+)?/g)) {

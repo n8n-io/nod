@@ -16,6 +16,7 @@ import {
   jevMessageDateQuestions,
   jevMessageDate,
   selectedJevDate,
+  jevTimeBounds,
   type JevDate,
 } from './trust-jev-time.ts';
 
@@ -174,14 +175,12 @@ export function jevScore(values: number[]) {
   return Math.fround(1 / (1 + Math.exp(-margin)));
 }
 
-export async function checkJevEffects(
+async function requestJev(
   decisions: DecisionModel,
-  action: object,
+  request: DecisionRequest,
   selection: DecisionSelection,
   signal?: AbortSignal,
-  strict = false,
 ) {
-  const request = jevEffectsRequest(action, strict);
   signal?.throwIfAborted();
   const raw = await decisions.check(
     {
@@ -196,7 +195,19 @@ export async function checkJevEffects(
   );
   signal?.throwIfAborted();
   if (raw && typeof raw === 'object' && (raw as { refused?: unknown }).refused) return undefined;
-  const effects = checkJevModel(raw, selection);
+  return checkJevModel(raw, selection);
+}
+
+export async function checkJevEffects(
+  decisions: DecisionModel,
+  action: object,
+  selection: DecisionSelection,
+  signal?: AbortSignal,
+  strict = false,
+) {
+  const request = jevEffectsRequest(action, strict);
+  const effects = await requestJev(decisions, request, selection, signal);
+  if (!effects) return undefined;
   const answers = [
     effects,
     ...(request.additionalQuestions ?? []).map(({ name }) => effects.additional[name]),
@@ -404,22 +415,8 @@ export async function checkJevTrust(
         ],
       },
     };
-    signal?.throwIfAborted();
-    const result = await decisions.check(
-      {
-        ...request,
-        forModel: (next) => {
-          if (next.provider !== selection.provider || next.model !== selection.model)
-            throw new Error('The trust decision connection changed.');
-          return request;
-        },
-      },
-      signal,
-    );
-    signal?.throwIfAborted();
-    if (result && typeof result === 'object' && (result as { refused?: unknown }).refused)
-      return undefined;
-    owner = checkJevModel(result, selection);
+    owner = await requestJev(decisions, request, selection, signal);
+    if (!owner) return undefined;
     if (typeof owner.choice !== 'boolean')
       throw new Error('The trust permission check is incomplete.');
     grant = owner.choice ? owner.probability : 1 - owner.probability;
@@ -491,8 +488,41 @@ export async function checkJevTrust(
     const checkedTimes = checkJevTimes(first.additional, owner.additional, dates);
     times = { ...checkedTimes, uncertain: times.uncertain || checkedTimes.uncertain };
   }
-  if (dateVerified && times.clockVerified && times.durationVerified && dates.length <= 2)
-    scores.instant_conflict = 0;
+  const bounds = owner?.additional.owner_time_bounds;
+  const timeCandidate =
+    dateVerified &&
+    times.clockVerified &&
+    times.durationVerified &&
+    bounds?.choice === false &&
+    bounds.probability >= 0.8 &&
+    (dates.length === 1 ||
+      (dates.length === 2 && owner?.additional.owner_duration?.choice !== 'none'));
+  let verifiedTime = false;
+  if (timeCandidate && scores.instant_conflict >= 0.5) {
+    const checked = await requestJev(
+      decisions,
+      {
+        instructions: '',
+        includeModel: true,
+        input: {
+          serverPolicy: jevPolicy.ownerPolicy,
+          userMessages: input.userMessages,
+          assistantMessageBeforeLatestUserMessage: input.assistantMessageBeforeLatestUserMessage,
+          scheduledTaskInstruction: input.scheduledTaskInstruction,
+          scheduledFor: input.scheduledFor,
+          timeZone: input.timeZone,
+          standingInstruction: input.standingInstruction,
+          userRules: input.userRules,
+        },
+        question: predicate('owner_time_bounds', jevTimeBounds),
+      },
+      selection,
+      signal,
+    );
+    if (!checked) return undefined;
+    verifiedTime = checked.choice === false && checked.probability >= 0.8;
+  }
+  if (verifiedTime) scores.instant_conflict = 0;
   dateVerified ||= times.dateVerified;
   if (kind === 'sign_in') scores.needed_step = Math.max(scores.needed_step, scores.needs_sign_in);
   const material = [
@@ -511,8 +541,8 @@ export async function checkJevTrust(
     scores.ask_first >= 0.99 ||
     scores.method_conflict >= 0.95 ||
     methodMismatch ||
-    ((dates.length > 2 || !dateVerified || !times.clockVerified || !times.durationVerified) &&
-      (scores.instant_conflict >= timeLimit || scores.deadline_conflict >= timeLimit)) ||
+    (!verifiedTime && scores.instant_conflict >= timeLimit) ||
+    scores.deadline_conflict >= timeLimit ||
     dateMismatch ||
     times.mismatch;
   const hard = prohibited || times.uncertain || methodUncertain || (!read && grant <= 0.1);

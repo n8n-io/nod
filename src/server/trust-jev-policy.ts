@@ -99,7 +99,7 @@ export const jevPolicy = {
     },
     deadline_conflict: {
       instructions:
-        'Does a proposed message change, omit or make stricter an owner temporal bound? Before excludes its endpoint; by or through includes it. Repeating end-of-month wording and then excluding the last day changes the terms. Choosing within an allowed window is different from adding a stricter deadline.',
+        'Does text in a message that this action sends or publishes change, omit or make stricter an owner temporal bound? Return false for calendar event fields and other timestamp arguments; instant_conflict checks those. Before excludes its endpoint; by or through includes it. Repeating end-of-month wording and then excluding the last day changes the terms. Choosing within an allowed window is different from adding a stricter deadline.',
       direction: -1,
     },
     condition_conflict: {
