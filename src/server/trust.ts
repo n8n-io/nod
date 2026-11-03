@@ -207,7 +207,6 @@ export function createTrust(options: {
     };
     const result = await review(readInstructions, input, signal, {
       name: 'readOnly',
-      minProbability: 0.99,
       uncertainValue: false,
       choices: [
         {

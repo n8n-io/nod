@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDecisionModel } from '../src/providers/decisions.ts';
 import { createTrustReview } from '../src/server/trust-review.ts';
-import { trustBasis } from '../src/server/trust-basis.ts';
+import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
 
 test('Jev keeps action data out of the owner proof and blocks failures without an LLM', async (t) => {
   for (const provider of ['openrouter', 'typesafe'] as const)
@@ -282,11 +282,102 @@ test('scheduled message dates preserve the owner local day without parsing page 
     true,
   );
   assert.throws(() => jevMessageDate({}, '2032-02-19'));
+  assert.equal(
+    jevMessageDate(
+      Object.fromEntries(
+        ['year', 'month', 'day'].map((part) => [`text_${part}`, answer('none', 0.6)]),
+      ),
+      '2032-02-19',
+    ).uncertain,
+    true,
+  );
+});
+
+test('decision evidence keeps the selected message when owner replies repeat', () => {
+  const words = {
+    userMessages: [
+      { at: '2032-02-17T12:00:00Z', text: 'Yes' },
+      { at: '2032-02-17T13:00:00Z', text: 'Yes' },
+    ],
+  };
+  const answer = trustDecision(words).result({ trust: 'message:1' });
+  assert.deepEqual(trustBasis(answer, words, ['first', 'second']), {
+    kind: 'message',
+    messageId: 'second',
+    quote: 'Yes',
+  });
+  assert.equal(
+    trustBasis({ run: true, because: 'Yes', source: 'message:2' }, words, ['first', 'second']),
+    undefined,
+  );
+});
+
+test('date checks include calendar dates, implicit years, clock suffixes and uncertain absence', async () => {
+  const { trustFacts } = await import('../src/server/trust-facts.ts');
+  const { jevRequest } = await import('../src/server/trust-jev.ts');
+  const { checkJevTimes, jevTimeQuestions } = await import('../src/server/trust-jev-time.ts');
+  const input = {
+    userMessages: [{ at: '2032-02-17T12:00:00Z', text: 'Book the all-day event on February 19.' }],
+    action: { name: 'CREATE_EVENT', arguments: { start: '2032-02-20' } },
+  };
+  const dates = trustFacts(input).serverDateFacts
+    .arguments as import('../src/server/trust-jev-time.ts').JevDate[];
+  assert.ok(
+    jevRequest(input).additionalQuestions?.some((question) => question.name === 'date_field'),
+  );
+  const questions = jevTimeQuestions('February 19 at 9 a.m. or 9pm', dates, 'event');
+  assert.ok(questions.some((question) => question.name === 'owner_month'));
+  assert.ok(questions.some((question) => question.name === 'owner_day'));
+  assert.equal(
+    questions.some((question) => question.name === 'owner_year'),
+    false,
+  );
+  assert.deepEqual(
+    questions
+      .find((question) => question.name === 'owner_clock')
+      ?.choices.map((choice) => choice.value),
+    ['none', '09:00', '21:00'],
+  );
+  const answer = (choice: string, probability = 1) => ({ choice, probability });
+  const first = { date_field: answer('date:0') };
+  const owner = { owner_month: answer('2'), owner_day: answer('19') };
+  assert.equal(checkJevTimes(first, owner, dates).mismatch, true);
+  assert.equal(
+    checkJevTimes(first, { ...owner, owner_day: answer('20') }, dates).dateVerified,
+    true,
+  );
+  assert.equal(
+    checkJevTimes(first, { owner_month: answer('none', 0.6), owner_day: answer('none') }, dates)
+      .uncertain,
+    true,
+  );
+  assert.equal(
+    checkJevTimes(first, { owner_clock: answer('09:00'), owner_zone: answer('unspecified') }, dates)
+      .uncertain,
+    true,
+  );
+});
+
+test('date and amount facts preserve zone aliases and complete grouped amounts', async () => {
+  const { trustFacts } = await import('../src/server/trust-facts.ts');
+  const facts = trustFacts({
+    timeZone: 'US/Eastern',
+    scheduledFor: '2032-02-19T02:00:00Z',
+    action: { name: 'PAY', arguments: { costs: ['USD 1,000.00', 'USD 20.50'] } },
+  });
+  assert.equal(facts.serverDateFacts.scheduleContext?.timeZone, 'America/New_York');
+  assert.equal(facts.serverDateFacts.scheduleContext?.calendar.date, '2032-02-18');
+  assert.equal((facts.serverNumberFacts.sums[0] as { sum: number }).sum, 1020.5);
+  assert.deepEqual(
+    trustFacts({ action: { name: 'PAY', arguments: { costs: ['USD 1,00.00', 'USD 20.50'] } } })
+      .serverNumberFacts.sums,
+    [],
+  );
 });
 
 test('strict Jev reads need a separate effect check and never treat a private draft as a read', async () => {
   let calls = 0;
-  let certainty = 0.9;
+  let certainty = 0.995;
   let effect = 0.01;
   let failure: 'http' | 'refusal' | undefined;
   const decisions = createDecisionModel({
@@ -343,19 +434,38 @@ test('strict Jev reads need a separate effect check and never treat a private dr
     readOnly: false,
   });
   assert.equal(calls, 2);
-  certainty = 0.6;
+  certainty = 0.9;
   calls = 0;
   assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
     readOnly: false,
   });
   assert.equal(calls, 1);
-  certainty = 0.9;
+  certainty = 0.995;
   effect = 0.4;
   calls = 0;
   assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
     readOnly: false,
   });
   assert.equal(calls, 2);
+  effect = 0.99;
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
+    readOnly: true,
+  });
+  effect = 0.98;
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, question), {
+    readOnly: false,
+  });
+  certainty = 0.9;
+  effect = 0.9;
+  const calibrated = { ...question, minProbability: undefined };
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, calibrated), {
+    readOnly: true,
+  });
+  effect = 0.79;
+  assert.deepEqual(await review('Only existing reads can pass.', input, undefined, calibrated), {
+    readOnly: false,
+  });
+  certainty = 0.995;
   effect = 0.01;
   failure = 'refusal';
   assert.equal(
@@ -417,6 +527,118 @@ test('a browser uncertainty score cannot change the permission question for Nod 
     { provider: model.provider, model: model.requested },
   );
   assert.equal(checks, 1);
+});
+
+test('a selected owner rule and an unknown app effect cannot pass the Jev classifier', async () => {
+  const { checkJevTrust } = await import('../src/server/trust-jev.ts');
+  const { jevPolicy } = await import('../src/server/trust-jev-policy.ts');
+  const selection = { provider: 'openrouter', model: 'typesafe/jev-1.14' };
+  for (const rule of [true, false]) {
+    const raw = {
+      choice: rule ? 'rule' : 'message:0',
+      probability: 0.6,
+      model: {
+        provider: selection.provider,
+        requested: selection.model,
+        served: 'typesafe/jev-1.14-20261014',
+      },
+      additional: {
+        ...Object.fromEntries(
+          Object.keys(jevPolicy.features).map((name) => [
+            name,
+            { choice: ['direct_request', 'needed_step'].includes(name), probability: 0.99 },
+          ]),
+        ),
+        effect: { choice: rule ? 'send' : 'unknown', probability: 1 },
+      },
+    };
+    const result = await checkJevTrust(
+      { check: async () => assert.fail('A veto must stop before another decision request.') },
+      {
+        userMessages: [{ at: '2032-02-17T12:00:00Z', text: 'Run the synthetic fixture action.' }],
+        ...(rule ? { userRules: 'Ask before sending email.' } : {}),
+        action: { name: 'SYNTHETIC_OPAQUE_ACTION', arguments: {} },
+      },
+      raw,
+      selection,
+    );
+    assert.equal(result?.run, false);
+    assert.equal(result && 'rule' in result ? result.rule : false, rule);
+  }
+});
+
+test('verified relative dates can correct a time score only when every required time check passes', async () => {
+  const { checkJevTrust } = await import('../src/server/trust-jev.ts');
+  const { jevPolicy } = await import('../src/server/trust-jev-policy.ts');
+  const model = {
+    provider: 'openrouter',
+    requested: 'typesafe/jev-1.14',
+    served: 'typesafe/jev-1.14-20261014',
+  };
+  const choice = (value: string, probability = 1) => ({ choice: value, probability });
+  const raw = {
+    ...choice('message:0'),
+    model,
+    additional: {
+      ...Object.fromEntries(
+        Object.keys(jevPolicy.features).map((name) => [
+          name,
+          {
+            choice: ['direct_request', 'needed_step', 'instant_conflict'].includes(name),
+            probability: 0.99,
+          },
+        ]),
+      ),
+      effect: choice('event'),
+      date_field: choice('date:0'),
+    },
+  };
+  for (const [start, extras, certainty, expected] of [
+    ['2028-03-01T14:00:00Z', {}, 1, true],
+    ['2028-02-29T14:00:00Z', {}, 1, false],
+    ['2028-03-01T14:00:00Z', {}, 0.6, false],
+    [
+      '2028-03-01T14:00:00Z',
+      { other: '2028-03-02T14:00:00Z', another: '2028-03-03T14:00:00Z' },
+      1,
+      false,
+    ],
+  ] as const) {
+    const result = await checkJevTrust(
+      {
+        check: async () => ({
+          choice: true,
+          probability: 0.99,
+          model,
+          additional: {
+            owner_method: {
+              ...choice('any'),
+              probabilities: { any: 1, app: 0, browser: 0, unclear: 0 },
+            },
+            relative_day: choice('tomorrow'),
+            owner_zone: choice('Europe/Madrid'),
+            owner_clock: choice('15:00'),
+            owner_duration: choice('none', certainty),
+            owner_month: choice('none'),
+            owner_day: choice('none'),
+            owner_weekday: choice('none'),
+          },
+        }),
+      },
+      {
+        userMessages: [
+          {
+            at: '2028-02-28T23:30:00Z',
+            text: 'Create a calendar event tomorrow at 15:00 Madrid time.',
+          },
+        ],
+        action: { name: 'GOOGLECALENDAR_CREATE_EVENT', arguments: { start, ...extras } },
+      },
+      raw,
+      { provider: model.provider, model: model.requested },
+    );
+    assert.equal(result?.run, expected);
+  }
 });
 
 test('every checker must quote owner words for Nod settings, sign-in and uploads', () => {

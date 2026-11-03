@@ -2527,7 +2527,7 @@ export async function runDecisionEval(options: {
     jevEffectsSource: await readFile(join(repository, 'src/server/trust-jev-effects.ts'), 'utf8'),
     jevTimeSource: await readFile(join(repository, 'src/server/trust-jev-time.ts'), 'utf8'),
     jevPolicy: await readFile(join(repository, 'src/server/trust-jev-policy.ts'), 'utf8'),
-    jevModel: await readFile(join(repository, 'src/server/trust-jev-model.ts'), 'utf8'),
+    jevModel: await readFile(join(repository, 'src/server/trust-jev-model.json'), 'utf8'),
     providerSource: await readFile(join(repository, 'src/providers/decisions.ts'), 'utf8'),
     evidenceSource: basis,
     harnessHash: createHash('sha256')

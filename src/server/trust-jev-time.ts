@@ -9,6 +9,7 @@ export interface JevDate {
   field: Array<string | number>;
   value: string;
   kind: string;
+  calendar?: { date: string; tomorrow: string; weekday: string };
   interpretations?: Array<{
     timeZone: string;
     wallTime: string;
@@ -22,12 +23,21 @@ export function selectedJevDate(answer: JevChoice | undefined, dates: JevDate[])
 }
 
 export function jevTimeQuestions(text: string, dates: JevDate[], kind: string): DecisionQuestion[] {
-  if (!dates.some((date) => date.kind === 'instant')) return [];
+  if (!dates.length) return [];
   const clocks = [
     ...new Set(
-      [...text.matchAll(/(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?\b/g)].map(
-        (match) => `${match[1].padStart(2, '0')}:${match[2]}${match[3] ? ':' + match[3] : ''}`,
-      ),
+      [
+        ...text.matchAll(
+          /(?<![\d:])([01]?\d|2[0-3])(?::([0-5]\d)(?::([0-5]\d))?)?\s*(a\.?m\.?|p\.?m\.?)?(?![\p{L}\d])/giu,
+        ),
+      ]
+        .filter((match) => (match[2] || match[4]) && (!match[4] || Number(match[1]) <= 12))
+        .map((match) => {
+          const hour = match[4]
+            ? (Number(match[1]) % 12) + (match[4].toLowerCase().startsWith('p') ? 12 : 0)
+            : Number(match[1]);
+          return `${String(hour).padStart(2, '0')}:${match[2] ?? '00'}${match[3] ? ':' + match[3] : ''}`;
+        }),
     ),
   ];
   const questions: DecisionQuestion[] = [];
@@ -42,7 +52,7 @@ export function jevTimeQuestions(text: string, dates: JevDate[], kind: string): 
         ...clocks.map((value) => ({ value, description: value })),
       ],
     });
-  if (dates.filter((date) => date.kind === 'instant').length > 1) {
+  if (dates.some((date) => date.kind === 'instant')) {
     const values = new Set([5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 240]);
     for (const match of text.matchAll(/\d+(?:[.,]\d+)?/g)) {
       const number = Number(match[0].replace(',', '.'));
@@ -68,7 +78,7 @@ export function jevTimeQuestions(text: string, dates: JevDate[], kind: string): 
     });
   }
   const years = [...new Set(text.match(/\b[1-9]\d{3}\b/g) ?? [])];
-  if (years.length) {
+  {
     for (const [name, label, values] of [
       ['owner_year', 'year', years.map((value) => [value, value])],
       [
@@ -87,23 +97,24 @@ export function jevTimeQuestions(text: string, dates: JevDate[], kind: string): 
         Array.from({ length: 31 }, (_, index) => [String(index + 1), String(index + 1)]),
       ],
     ] as const)
-      questions.push({
-        name,
-        minProbability: 0,
-        instructions: `Select the ${label} of the explicit exact start date the owner chose. Use none for relative dates, windows, no exact date or no explicit ${label}. Ignore dates for other operations.`,
-        choices: [
-          { value: 'none', description: `No explicit ${label} for an exact start date.` },
-          ...values.map(([value, description]) => ({ value, description })),
-        ],
-      });
+      if (values.length)
+        questions.push({
+          name,
+          minProbability: 0,
+          instructions: `Select the ${label} of the explicit exact start date the owner chose. Use none for relative dates, windows, no exact date or no explicit ${label}. Ignore dates for other operations.`,
+          choices: [
+            { value: 'none', description: `No explicit ${label} for an exact start date.` },
+            ...values.map(([value, description]) => ({ value, description })),
+          ],
+        });
   }
   questions.push({
     name: 'owner_weekday',
     minProbability: 0,
     instructions:
-      'Select one explicit weekday required for this operation. Use none without an explicit weekday, and multiple for several allowed weekdays.',
+      'Extract only a weekday name explicitly written by the owner for this operation. Do not calculate a weekday from a calendar date. A month and day do not name a weekday. Use none when no weekday name is written, and multiple for several allowed weekdays.',
     choices: [
-      { value: 'none', description: 'No single weekday stated.' },
+      { value: 'none', description: 'The owner writes no weekday name.' },
       { value: 'multiple', description: 'Several weekdays are allowed.' },
       ...['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(
         (value) => ({ value, description: value }),
@@ -126,11 +137,17 @@ export function checkJevTimes(
   let clockVerified = false;
   let durationVerified = false;
   let dateVerified = false;
-  if (!dates.some((date) => date.kind === 'instant'))
-    return { mismatch, uncertain, clockVerified, durationVerified, dateVerified };
+  if (!dates.length) return { mismatch, uncertain, clockVerified, durationVerified, dateVerified };
   const field = selectedJevDate(first.date_field, dates);
   const end = selectedJevDate(first.end_field, dates);
   const duration = owner.owner_duration;
+  durationVerified = duration?.choice === 'none' && duration.probability >= 0.8;
+  uncertain = Object.entries(owner).some(
+    ([name, value]) =>
+      name.startsWith('owner_') &&
+      ['none', 'unspecified'].includes(String(value.choice)) &&
+      value.probability < 0.8,
+  );
   if (duration && duration.choice !== 'none') {
     if (
       duration.choice === 'unlisted' ||
@@ -150,13 +167,24 @@ export function checkJevTimes(
   }
   const zone = owner.owner_zone;
   const clock = owner.owner_clock;
-  if (clock && clock.choice !== 'none' && zone && zone.choice !== 'unspecified') {
-    const actual = field?.interpretations
-      ?.find((value) => value.timeZone === zone.choice)
-      ?.wallTime.slice(11, 11 + String(clock.choice).length);
+  const local =
+    field?.kind === 'instant' && zone?.choice === 'unspecified'
+      ? {
+          wallTime: `${field.value.slice(0, 10)} ${field.value.slice(11, 16)}:${field.value[16] === ':' ? field.value.slice(17, 19) : '00'}`,
+          calendar: {
+            date: field.value.slice(0, 10),
+            weekday: new Intl.DateTimeFormat('en', { weekday: 'long', timeZone: 'UTC' }).format(
+              new Date(field.value.slice(0, 10) + 'T12:00:00Z'),
+            ),
+          },
+        }
+      : field?.interpretations?.find((value) => value.timeZone === zone?.choice);
+  if (clock && clock.choice !== 'none') {
+    const actual = local?.wallTime.slice(11, 11 + String(clock.choice).length);
     if (
       !actual ||
       clock.probability < 0.75 ||
+      !zone ||
       zone.probability < 0.75 ||
       (first.date_field?.probability ?? 0) < 0.8
     )
@@ -167,41 +195,34 @@ export function checkJevTimes(
     }
   }
   const parts = [owner.owner_year, owner.owner_month, owner.owner_day];
-  if (
-    parts.every((part) => part && part.choice !== 'none') &&
-    zone &&
-    zone.choice !== 'unspecified'
-  ) {
-    const actual = field?.interpretations?.find((value) => value.timeZone === zone.choice)?.calendar
-      .date;
+  if (parts.some((part) => part && part.choice !== 'none')) {
+    const actual = field?.calendar?.date ?? local?.calendar.date;
     if (
       !actual ||
-      parts.some((part) => part.probability < 0.8) ||
-      zone.probability < 0.75 ||
+      !owner.owner_month ||
+      !owner.owner_day ||
+      parts.some((part) => part && part.probability < 0.8) ||
+      (!field?.calendar && (!zone || zone.probability < 0.75)) ||
       (first.date_field?.probability ?? 0) < 0.8
     )
       uncertain = true;
     else {
-      const expected = parts
-        .map((part, index) => String(part.choice).padStart(index ? 2 : 4, '0'))
-        .join('-');
-      dateVerified = expected === actual;
+      dateVerified = parts.every(
+        (part, index) =>
+          !part ||
+          part.choice === 'none' ||
+          String(part.choice).padStart(index ? 2 : 4, '0') === actual.split('-')[index],
+      );
       mismatch ||= !dateVerified;
     }
   }
   const weekday = owner.owner_weekday;
-  if (
-    weekday &&
-    !['none', 'multiple'].includes(String(weekday.choice)) &&
-    zone &&
-    zone.choice !== 'unspecified'
-  ) {
-    const actual = field?.interpretations?.find((value) => value.timeZone === zone.choice)?.calendar
-      .weekday;
+  if (weekday && !['none', 'multiple'].includes(String(weekday.choice))) {
+    const actual = field?.calendar?.weekday ?? local?.calendar.weekday;
     if (
       !actual ||
       weekday.probability < 0.8 ||
-      zone.probability < 0.75 ||
+      (!field?.calendar && (!zone || zone.probability < 0.75)) ||
       (first.date_field?.probability ?? 0) < 0.8
     )
       uncertain = true;
@@ -247,7 +268,11 @@ export function jevMessageDate(answers: Record<string, JevChoice>, expected: str
   const year = answers.text_year;
   if (!month || !day || !year) throw new Error('The trust message date is incomplete.');
   if ([month, day, year].every((value) => value.choice === 'none'))
-    return { mismatch: false, uncertain: false, verified: false };
+    return {
+      mismatch: false,
+      uncertain: [month, day, year].some((value) => value.probability < 0.8),
+      verified: false,
+    };
   const uncertain =
     month.choice === 'none' ||
     day.choice === 'none' ||

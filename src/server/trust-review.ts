@@ -19,104 +19,6 @@ function probability(answer: unknown) {
     : undefined;
 }
 
-function dimensionResult(answer: unknown, input: object, gate: ReturnType<typeof trustDecision>) {
-  if (!answer || typeof answer !== 'object') return;
-  const details = answer as {
-    trust?: unknown;
-    model?: { provider?: string; requested?: string; served?: string };
-    additional?: Record<string, unknown>;
-  };
-  const model = details.model;
-  if (
-    model?.provider !== 'openrouter' ||
-    !['perplexity/pplx-decider-v1.2', 'perplexity/pplx-decider-v1.2-20261016'].includes(
-      model.requested ?? '',
-    )
-  )
-    return;
-  if (model.served !== 'perplexity/pplx-decider-v1.2-20261016')
-    return { run: false, decision: answer };
-  const positive = (name: string) => {
-    const result = details.additional?.[name];
-    const certainty = probability(result);
-    const choice =
-      result && typeof result === 'object' ? (result as { choice?: unknown }).choice : undefined;
-    return certainty === undefined || typeof choice !== 'boolean'
-      ? NaN
-      : choice
-        ? certainty
-        : 1 - certainty;
-  };
-  const scores = {
-    permission: positive('permission'),
-    preparation: positive('preparation'),
-    scope: positive('scope'),
-    bans: positive('bans'),
-    time: positive('time'),
-    numbers: positive('numbers'),
-    conditions: positive('conditions'),
-    constraints: positive('constraints'),
-    targets: positive('targets'),
-    costs: positive('costs'),
-  };
-  const evidence = probability(answer);
-  if (Object.values(scores).some((x) => !Number.isFinite(x)) || evidence === undefined)
-    return { run: false, decision: answer };
-  const {
-    permission,
-    preparation,
-    scope,
-    bans,
-    time,
-    numbers,
-    conditions,
-    constraints,
-    targets,
-    costs,
-  } = scores;
-  const source = gate.result({ trust: details.trust }) as
-    { run?: boolean; because?: string; rule?: boolean } | undefined;
-  const action = (
-    input as {
-      action?: { name?: string; arguments?: { step?: string; command?: { action?: string } } };
-    }
-  ).action;
-  const ownSettings = [
-    'NOD_schedule_create',
-    'NOD_schedule_update',
-    'NOD_schedule_cancel',
-    'NOD_limits_update',
-    'NOD_notification_preferences_update',
-    'NOD_memory_forget',
-    'NOD_memory_control',
-    'NOD_model_select',
-  ].includes(action?.name ?? '');
-  const neverRead =
-    ownSettings ||
-    ['NOD_sign_in', 'NOD_browser_session', 'NOD_vault_allow'].includes(action?.name ?? '') ||
-    (action?.name === 'NOD_browser' &&
-      (action.arguments?.step === 'upload' || action.arguments?.command?.action === 'upload'));
-  const denied =
-    (source?.rule && evidence >= 0.99) || 1 - permission >= 0.99 || bans >= 0.95 || costs >= 0.5;
-  const prepared = !neverRead && preparation >= 0.8;
-  const dimension = Math.max(time, numbers, conditions);
-  const quoted =
-    source?.run &&
-    source.because !== 'read' &&
-    !(ownSettings && ['standing', 'rules'].includes(String(details.trust)));
-  const allowed =
-    quoted &&
-    1 - scope < 0.99 &&
-    Math.max(dimension, constraints, targets) < 0.95 &&
-    (permission >= 0.95 ||
-      (permission >= 0.85 && scope >= 0.99 && 1 - dimension >= 0.9 && 1 - bans >= 0.95));
-  if (denied || (!prepared && !allowed))
-    return { run: false, ...(source?.rule ? { rule: true } : {}), decision: answer };
-  return prepared
-    ? { run: true, because: 'read', decision: answer }
-    : { ...source, decision: answer };
-}
-
 export function createTrustReview(options: {
   review: ModelReview;
   decisions?: DecisionModel;
@@ -139,7 +41,11 @@ export function createTrustReview(options: {
     const request: DecisionRequest = {
       instructions: gate ? '' : instructions,
       input: gate ? trustFacts(input as Parameters<typeof trustFacts>[0]) : input,
-      question: gate?.question ?? question!,
+      question:
+        gate?.question ??
+        (question?.name === 'readOnly'
+          ? { ...question, minProbability: question.minProbability ?? 0.99 }
+          : question!),
       ...(gate ? { includeModel: true, additionalQuestions: trustDimensions(policy) } : {}),
     };
     const answer = await options.decisions.check(
@@ -150,7 +56,14 @@ export function createTrustReview(options: {
           jev = selection;
           return gate
             ? jevRequest(input as Parameters<typeof jevRequest>[0])
-            : { ...request, includeModel: true };
+            : {
+                ...request,
+                includeModel: true,
+                question:
+                  question?.name === 'readOnly'
+                    ? { ...request.question, minProbability: question.minProbability ?? 0.8 }
+                    : request.question,
+              };
         },
       },
       signal,
@@ -173,7 +86,7 @@ export function createTrustReview(options: {
           if (typeof checked.choice !== 'boolean')
             throw new Error('The trust read check is incomplete.');
           const positive = checked.choice ? checked.probability : 1 - checked.probability;
-          if (positive < 0.8) return { readOnly: false };
+          if (positive < (question.minProbability ?? 0.8)) return { readOnly: false };
           const effects = await checkJevEffects(
             options.decisions,
             (input as { action: object }).action,
@@ -182,23 +95,23 @@ export function createTrustReview(options: {
             true,
           );
           if (effects === undefined) return undefined;
-          return { readOnly: effects > 0.5 };
+          return { readOnly: effects >= (question.minProbability ?? 0.8) };
         }
       }
       const certainty = probability(answer);
       if (certainty === undefined) return undefined;
       return answer;
     }
-    const result = dimensionResult(answer, input, gate);
-    if (result) return result;
     const details =
       answer && typeof answer === 'object'
         ? (answer as {
             trust?: unknown;
+            choice?: unknown;
+            model?: { requested?: string; served?: string };
             additional?: {
               permission?: { permission?: unknown; choice?: unknown };
               preparation?: { preparation?: unknown };
-            };
+            } & Record<string, unknown>;
           })
         : undefined;
     const permission = details?.additional?.permission;
@@ -218,9 +131,29 @@ export function createTrustReview(options: {
     const prepared = preparation.preparation === true && preparationCertainty >= 0.99;
     const source = gate.result({ trust: details?.trust }) as
       { run?: boolean; because?: string; rule?: boolean } | undefined;
-    const conflict =
-      (prepared && permission.choice === false) ||
-      (source?.rule === true && evidenceCertainty >= 0.99 && (prepared || permission.permission));
+    if (source?.rule || (details?.choice === 'rule' && (input as TrustWords).userRules))
+      return { run: false, rule: true, decision: answer };
+    if (
+      details?.model?.requested === 'perplexity/pplx-decider-v1.2' &&
+      details.model.served !== 'perplexity/pplx-decider-v1.2-20261016'
+    )
+      return { run: false, decision: answer };
+    for (const name of [
+      'constraints',
+      'time',
+      'numbers',
+      'conditions',
+      'targets',
+      'bans',
+      'costs',
+    ]) {
+      const value = details?.additional?.[name] as { choice?: unknown } | undefined;
+      const certainty = probability(value);
+      if (certainty === undefined || typeof value?.choice !== 'boolean') return undefined;
+      if ((value.choice ? certainty : 1 - certainty) >= 0.5)
+        return { run: false, decision: answer };
+    }
+    const conflict = prepared && permission.choice === false;
     const uncertain =
       conflict ||
       (!prepared &&

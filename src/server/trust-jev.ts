@@ -8,7 +8,7 @@ import type {
 import { trustDecision, type TrustWords } from './trust-basis.ts';
 import { trustFacts } from './trust-facts.ts';
 import { jevPolicy } from './trust-jev-policy.ts';
-import { jevModel as model } from './trust-jev-model.ts';
+import model from './trust-jev-model.json' with { type: 'json' };
 import { jevEffectsRequest } from './trust-jev-effects.ts';
 import {
   checkJevTimes,
@@ -51,7 +51,10 @@ const grants = {
   unknown: 'owner_commitment',
 } as const;
 type Input = TrustWords & {
-  action?: { name: string; arguments?: { step?: string; command?: { action?: string } } };
+  action?: {
+    name: string;
+    arguments?: Record<string, unknown> & { step?: string; command?: { action?: string } };
+  };
 };
 const predicate = (name: string, instructions: string): DecisionQuestion => ({
   name,
@@ -103,28 +106,22 @@ export function jevRequest(input: Input): DecisionRequest {
       description,
     })),
   });
-  if (dates.some((date) => date.kind === 'instant'))
+  if (dates.length)
     additionalQuestions.push({
       name: 'date_field',
       minProbability: 0,
       choices: [
         {
           value: 'none',
-          description: 'No proposed instant must preserve an explicit owner local-day requirement.',
+          description: 'No proposed date must preserve an explicit owner date or time requirement.',
         },
-        ...dates.flatMap((date, index) =>
-          date.kind === 'instant'
-            ? [
-                {
-                  value: `date:${index}`,
-                  description: `The primary proposed date to check is ${JSON.stringify(date.field)}.`,
-                },
-              ]
-            : [],
-        ),
+        ...dates.map((date, index) => ({
+          value: `date:${index}`,
+          description: `The primary proposed date to check is ${JSON.stringify(date.field)}.`,
+        })),
       ],
       instructions:
-        'Select the primary instant constrained by an explicit owner date, time or event length. For an event select its start, not its end or a record timestamp. Use none without such a constraint.',
+        'Select the primary date or instant constrained by an explicit owner date, time or event length. For an event select its start, not its end or a record timestamp. Use none without such a constraint.',
     });
   if (dates.filter((date) => date.kind === 'instant').length > 1)
     additionalQuestions.push({
@@ -141,7 +138,7 @@ export function jevRequest(input: Input): DecisionRequest {
       instructions:
         'Select the end instant of the primary event or booking. Ignore record timestamps. Use none if no end instant is supplied.',
     });
-  if (input.scheduledFor && !dates.some((date) => date.kind === 'instant'))
+  if (input.scheduledFor && !dates.length)
     additionalQuestions.push(
       ...jevMessageDateQuestions(JSON.stringify(input.action?.arguments ?? {}), input.scheduledFor),
     );
@@ -260,7 +257,9 @@ export async function checkJevTrust(
     else if (kind === 'read' || kind === 'prepare') kind = 'unknown';
   }
   const source = trustDecision(input).result({ trust: first.choice }) as
-    { run?: boolean; because?: string; rule?: boolean } | undefined;
+    { run?: boolean; because?: string; rule?: boolean; source?: string } | undefined;
+  if (source?.rule || (!read && kind === 'unknown' && action?.name !== 'NOD_browser'))
+    return { run: false, ...(source?.rule ? { rule: true } : {}) };
   const quote =
     source?.run &&
     source.because !== 'read' &&
@@ -318,7 +317,7 @@ export async function checkJevTrust(
         ],
       },
     ];
-    if (dates.some((date) => date.kind === 'instant') || input.scheduledFor) {
+    if (dates.length || input.scheduledFor) {
       const zones = [
         ...new Set(
           [...dates, ...(facts.references as JevDate[])].flatMap((date) =>
@@ -434,13 +433,12 @@ export async function checkJevTrust(
       throw new Error('The trust method probabilities are incomplete.');
     methodMismatch = conflict >= 0.8;
     methodUncertain = conflict >= 0.2 && !methodMismatch;
-    if (dates.some((date) => date.kind === 'instant') || input.scheduledFor) {
+    if (dates.length || input.scheduledFor) {
       const day = owner.additional.relative_day;
       const zone = owner.additional.owner_zone;
       if (!day || !zone) throw new Error('The trust date check is incomplete.');
       const dateField = first.additional.date_field;
-      if (!dateField && dates.some((date) => date.kind === 'instant'))
-        throw new Error('The trust date field is missing.');
+      if (!dateField && dates.length) throw new Error('The trust date field is missing.');
       const field = selectedJevDate(dateField, dates);
       const sourceChoice = String(first.choice);
       const ref = (facts.references as JevDate[]).find((date) =>
@@ -451,11 +449,22 @@ export async function checkJevTrust(
             JSON.stringify(date.field) === JSON.stringify(['scheduledFor']),
       );
       const before = ref?.interpretations?.find((date) => date.timeZone === zone.choice)?.calendar;
-      const after = field?.interpretations?.find((date) => date.timeZone === zone.choice)?.calendar;
+      const after =
+        field?.calendar ??
+        field?.interpretations?.find((date) => date.timeZone === zone.choice)?.calendar;
+      const relative = ['today', 'tomorrow', 'yesterday'].includes(String(day.choice));
+      times.uncertain ||=
+        day.probability < 0.8 ||
+        (relative &&
+          zone.choice !== 'unspecified' &&
+          (!before ||
+            (!after && !first.additional.text_day) ||
+            zone.probability < 0.8 ||
+            (dateField && dateField.probability < 0.8)));
       if (
         before &&
         (after || first.additional.text_day) &&
-        ['today', 'tomorrow', 'yesterday'].includes(String(day.choice)) &&
+        relative &&
         day.probability >= 0.8 &&
         zone.probability >= 0.8 &&
         (!dateField || dateField.probability >= 0.8)
@@ -482,6 +491,8 @@ export async function checkJevTrust(
     const checkedTimes = checkJevTimes(first.additional, owner.additional, dates);
     times = { ...checkedTimes, uncertain: times.uncertain || checkedTimes.uncertain };
   }
+  if (dateVerified && times.clockVerified && times.durationVerified && dates.length <= 2)
+    scores.instant_conflict = 0;
   dateVerified ||= times.dateVerified;
   if (kind === 'sign_in') scores.needed_step = Math.max(scores.needed_step, scores.needs_sign_in);
   const material = [
@@ -493,18 +504,17 @@ export async function checkJevTrust(
     'new_setting_grant',
     'missing_costs',
   ];
-  const timeLimit = dates.some((date) => date.kind === 'instant') || input.scheduledFor ? 0.5 : 0.9;
+  const timeLimit = dates.length || input.scheduledFor ? 0.5 : 0.9;
   const prohibited =
     (!read && material.some((name) => scores[name] >= 0.9)) ||
     scores.forbidden >= 0.9 ||
     scores.ask_first >= 0.99 ||
     scores.method_conflict >= 0.95 ||
     methodMismatch ||
-    ((!dateVerified || !times.clockVerified || !times.durationVerified) &&
+    ((dates.length > 2 || !dateVerified || !times.clockVerified || !times.durationVerified) &&
       (scores.instant_conflict >= timeLimit || scores.deadline_conflict >= timeLimit)) ||
     dateMismatch ||
-    times.mismatch ||
-    (source?.rule && first.probability >= 0.99);
+    times.mismatch;
   const hard = prohibited || times.uncertain || methodUncertain || (!read && grant <= 0.1);
   const features: Record<string, number> = {
     ...scores,
@@ -535,6 +545,6 @@ export async function checkJevTrust(
   );
   const run = !hard && (read ? privateAllowed : score >= model.threshold && Boolean(quote));
   return run
-    ? { run: true, because: read ? 'read' : quote }
+    ? { run: true, because: read ? 'read' : quote, ...(!read ? { source: source?.source } : {}) }
     : { run: false, ...(source?.rule ? { rule: true } : {}) };
 }

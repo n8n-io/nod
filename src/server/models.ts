@@ -380,6 +380,15 @@ export function createModelService(options: {
   function classificationModel(otherConnections = false) {
     const selected = selection && { ...selection };
     const current = rows.find((row) => row.id === selected?.connectionId);
+    const main = current?.models.find((model) => model.choice.id === selected?.modelId);
+    const price = main && modelPricing(main);
+    if (
+      current?.provider === 'openrouter' &&
+      price &&
+      price !== 'variable' &&
+      price.input + price.output === 0
+    )
+      return undefined;
     const candidates = [
       current,
       ...(otherConnections ? rows.filter((row) => row !== current) : []),

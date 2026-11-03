@@ -929,6 +929,11 @@ test(
                   ...(answer as object),
                   probability: 1,
                   additional: {
+                    ...Object.fromEntries(
+                      (additionalQuestions ?? [])
+                        .filter(({ name }) => !['permission', 'preparation'].includes(name))
+                        .map(({ name }) => [name, { choice: false, probability: 1 }]),
+                    ),
                     permission: {
                       permission: (answer as { trust?: unknown }).trust !== 'ask',
                       choice: (answer as { trust?: unknown }).trust !== 'ask',

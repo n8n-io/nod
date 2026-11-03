@@ -64,7 +64,7 @@ export function trustDecision(words: TrustWords) {
       if (value === 'read') return { run: true, because: 'read', ...details };
       if (value === 'rule' && words.userRules) return { run: false, rule: true, ...details };
       const quote = typeof value === 'string' ? sources.get(value) : undefined;
-      return quote ? { run: true, because: quote, ...details } : undefined;
+      return quote ? { run: true, because: quote, source: value, ...details } : undefined;
     },
   };
 }
@@ -84,7 +84,12 @@ export function trustBasis(
   messageIds: readonly string[],
 ): TrustBasis | undefined {
   if (!answer || typeof answer !== 'object') return undefined;
-  const { run, because, terms } = answer as { run?: unknown; because?: unknown; terms?: unknown };
+  const { run, because, terms, source } = answer as {
+    run?: unknown;
+    because?: unknown;
+    terms?: unknown;
+    source?: unknown;
+  };
   if (
     terms !== undefined &&
     (!Array.isArray(terms) ||
@@ -121,8 +126,24 @@ export function trustBasis(
   const needle = plain(quote);
   if (!needle) return undefined;
   const said = (text: string | undefined) => text !== undefined && plain(text).includes(needle);
-  const index = words.userMessages?.findIndex((message) => said(message.text)) ?? -1;
   const kept = quote.slice(0, 300);
+  if (source !== undefined) {
+    const match = typeof source === 'string' && /^message:(0|[1-9]\d*)$/.exec(source);
+    if (match) {
+      const index = Number(match[1]);
+      return messageIds[index] && said(words.userMessages?.[index]?.text)
+        ? { kind: 'message', messageId: messageIds[index], quote: kept }
+        : undefined;
+    }
+    if (source === 'schedule' && said(words.scheduledTaskInstruction))
+      return { kind: 'schedule', quote: kept };
+    if (!settings && source === 'standing' && said(words.standingInstruction))
+      return { kind: 'standing', quote: kept };
+    if (!settings && source === 'rules' && said(words.userRules))
+      return { kind: 'rule', quote: kept };
+    return undefined;
+  }
+  const index = words.userMessages?.findIndex((message) => said(message.text)) ?? -1;
   if (index >= 0)
     return messageIds[index]
       ? { kind: 'message', messageId: messageIds[index], quote: kept }

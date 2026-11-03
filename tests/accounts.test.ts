@@ -159,9 +159,10 @@ test('uncertain effects cannot authorize a change through confident permission',
     return { run: false };
   };
   assert.equal(
-    ((await createTrustReview({ decisions, review })('Original policy', input)) as { run: boolean })
-      .run,
-    false,
+    trustBasis(await createTrustReview({ decisions, review })('Original policy', input), input, [
+      'message',
+    ]),
+    undefined,
   );
   assert.equal(calls, 0);
 });
@@ -337,16 +338,16 @@ test('pure decision checks bind the evaluated model, preserve target checks and 
     probabilities = { [veto]: 0.99 };
     assert.equal(await allowed(), undefined);
   }
-  probabilities = { permission: 0.93, preparation: 0.9, scope: 0.97, bans: 0.2 };
+  probabilities = { permission: 0.995, preparation: 0.995, scope: 0.97, bans: 0.2 };
   source = 'read';
   assert.equal((await allowed())?.kind, 'read');
   input.action.name = 'NOD_sign_in';
   assert.equal(await allowed(), undefined);
   input.action.name = 'send_email';
   source = 'message:0';
-  probabilities = { permission: 0.93, scope: 0.995 };
+  probabilities = { permission: 0.995, scope: 0.995 };
   assert.equal((await allowed())?.kind, 'message');
-  probabilities = { permission: 0.93, scope: 0.97 };
+  probabilities = { permission: 0.93 };
   assert.equal(await allowed(), undefined);
   Object.assign(input, { standingInstruction: 'Set the monthly limit to EUR 100.' });
   source = 'standing';
@@ -2456,6 +2457,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await owner.select({ connectionId, modelId: 'openrouter/free', effort: 'off' });
       assert.equal(owner.hasClassificationModel(), false);
       assert.equal(await owner.resolveClassification(), undefined);
+      assert.equal(owner.hasClassificationModel(true), false);
+      assert.equal(await owner.resolveClassification(true), undefined);
     });
   });
 

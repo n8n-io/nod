@@ -67,7 +67,14 @@ export function trustFacts(input: TrustInput) {
   ].filter((x): x is string => Boolean(x));
   const words = ` ${normalize(texts.join(' '))} `;
   const selected = new Set(['UTC']);
-  if (input.timeZone && zones.includes(input.timeZone)) selected.add(input.timeZone);
+  let timeZone: string | undefined;
+  if (input.timeZone) {
+    try {
+      timeZone = new Intl.DateTimeFormat('en', { timeZone: input.timeZone }).resolvedOptions()
+        .timeZone;
+      selected.add(timeZone);
+    } catch {}
+  }
   for (const zone of zones) {
     const city = normalize(zone.split('/').at(-1)!);
     if (city.length >= 4 && words.includes(` ${city} `)) selected.add(zone);
@@ -145,13 +152,13 @@ export function trustFacts(input: TrustInput) {
     if (Array.isArray(value) && value.length >= 2 && value.length <= 16) {
       const entries = value.map((item) =>
         typeof item === 'string'
-          ? [...item.matchAll(/\b(USD|EUR|GBP)\s*(\d+(?:\.\d{1,2})?)\b/g)]
+          ? [...item.matchAll(/\b(USD|EUR|GBP)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(?![\d.,])/g)]
           : [],
       );
       if (entries.every((matches) => matches.length === 1)) {
         const amounts = entries.map(([match]) => ({
           currency: match[1],
-          amount: Number(match[2]),
+          amount: Number((match[2] + (match[3] ?? '')).replaceAll(',', '')),
         }));
         if (amounts.every((item) => item.currency === amounts[0].currency))
           sums.push({
@@ -188,11 +195,11 @@ export function trustFacts(input: TrustInput) {
       references: references.slice(-16),
       comparisons,
       monthEnds: months,
-      ...(scheduled && input.timeZone && zones.includes(input.timeZone)
+      ...(scheduled && timeZone
         ? {
             scheduleContext: {
               source: 'scheduledTaskInstruction',
-              ...local(new Date(scheduled.value), input.timeZone),
+              ...local(new Date(scheduled.value), timeZone),
             },
           }
         : {}),

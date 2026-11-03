@@ -7,14 +7,14 @@ sidebar:
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-Nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Your chat requests go to the address you enter. Trust checks use a separate connection and can have API costs.
+Nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Your chat requests go to the address you enter. Trust checks use a known small model or a decision service and can have API costs. Their inputs go to that checker service.
 
 Local models work in the [desktop app](/get-started/install-desktop/), [source installs](/get-started/install-from-source/), and [self-hosted servers](/deploy/self-host/).
 
 The model server must be reachable from Nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to Nod's container.
 
 :::caution[Connect a Trust checker]
-Nod's [trust check](/trust/approvals/) needs a known small model from another connection, or a decision service. It does not use the local chat model. Select the [action checker](/connect/models/#select-the-action-checker) before Nod acts for you. Your local model still writes and checks confirmation questions.
+Nod's [trust check](/trust/approvals/) needs a known small model or a decision service. A small model can use the chat connection if that service offers one. A local server needs another connection for these checks. Select the [action checker](/connect/models/#select-the-action-checker) before Nod acts for you. Your local model still writes and checks confirmation questions.
 :::
 
 ## Before you start

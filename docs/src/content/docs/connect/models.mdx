@@ -246,6 +246,8 @@ Set `NOD_TRUST_MODEL` in the server configuration, then [apply the change](/depl
 
 The small LLM comes from your selected connection when it offers a known small model. Otherwise, Nod chooses a known small model from another connected service. It chooses before making a request. If no small model is available, the check cannot authorize an action. It never replaces the small checker with your larger chat model.
 
+The small checker can have API costs. A free OpenRouter selection does not start a paid small checker. If no checker is available, an action needs confirmation. Check model charges in Usage.
+
 Decision mode prefers Jev 1.14. Nod selects direct TypeSafe with `TYPESAFE_API_KEY`, then Jev through OpenRouter, then OpenAI Decisions with an OpenAI API key. These keys can come from a connection other than your chat model. ChatGPT subscription credentials never go to a decision service. A failed request never changes provider.
 
 ```sh title=".env"
@@ -260,9 +262,11 @@ Jev classifies the full action, then checks the selected owner words in a separa
 
 The server adds calendar facts for month ends, leap days, time zones, and local scheduled-run times. Jev selects the relevant time fields and owner constraints. It also reads calendar dates inside scheduled messages. Code compares explicit clocks, weekdays and elapsed event lengths. These facts grant no permission. The original input stays unchanged. An action that changes Nod settings, signs in, opens a saved session, or uploads a file cannot use the private-preparation path.
 
+A time zone in your words controls conversion. Without one, code compares the date and clock in the supplied value as written.
+
 A decision request must return every requested answer in a valid form. Missing answers, invalid probabilities and failures cannot authorize an action. A request that exceeds the provider limit fails the check. Nod never cuts your instructions to fit.
 
-Strict app reads and confirmation replies use their own checks. A Jev strict read needs both its read-only check and a separate effect check. The effect check rejects private drafts and each nested write. An uncertain strict read is skipped. An uncertain reply stays undecided. The reply check sees only your reply, never the action, question or conversation.
+Strict app reads and confirmation replies use their own checks. A Jev strict read needs both its read-only check and a separate effect check. Both must reach the Jev threshold of 0.8. The effect check rejects private drafts and each nested write. Other decision models use a read threshold of 0.99. These thresholds are model settings, not measured error rates. An uncertain strict read is skipped. An uncertain reply stays undecided. The reply check sees only your reply, never the action, question or conversation.
 
 :::caution[Measured limits]
 These checks decide action permission. They are not a general content safety filter. A model probability does not prove safety. Use the [decision evaluations](/contribute/evals/#compare-decision-checks) to measure changes.
