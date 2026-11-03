@@ -535,7 +535,7 @@ export function createTasks(options: {
         turn.turnId,
         async () => {
           const settled = await client.query(
-            `UPDATE tasks t SET state='done',result=CASE WHEN t.result='' THEN $3 ELSE t.result END,closed_at=now(),updated_at=now()
+            `UPDATE tasks t SET state='done',result=$3,closed_at=now(),updated_at=now()
              FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND t.id=u.task_id AND t.owner_id=u.owner_id
                AND t.state='open' AND t.applied_revision=t.revision AND t.waiting_for='[]'::jsonb
                AND (t.next_check IS NULL OR t.next_check<=now())`,

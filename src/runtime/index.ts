@@ -248,6 +248,7 @@ export function createAgentRuntime(dependencies: {
     let lastNote = '';
     let reported = false;
     let finalDelivered = false;
+    let finalText = '';
     let requestRevision = 0;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
@@ -569,17 +570,7 @@ export function createAgentRuntime(dependencies: {
               revision === requestRevision
             ) {
               finalDelivered = true;
-              if (context.taskContext && context.task)
-                await context
-                  .task({
-                    action: 'finish',
-                    id: context.taskContext.id,
-                    status: 'done',
-                    result:
-                      String((params as { text?: unknown }).text ?? '').trim() ||
-                      context.taskContext.title,
-                  })
-                  .catch(() => {});
+              finalText = String((params as { text?: unknown }).text ?? '').trim();
             }
           }
           if (
@@ -1259,12 +1250,19 @@ export function createAgentRuntime(dependencies: {
           ? taskResult
           : undefined;
       const spokenReply = result?.trim() || lastReply;
+      const answer =
+        context.taskContext && status === 'succeeded'
+          ? finalDelivered
+            ? finalText || context.taskContext.title
+            : taskResult.trim()
+          : '';
       waitingForUser = status !== 'succeeded';
       completed = true;
       return {
         status,
         ...(result ? { result } : {}),
         ...(spokenReply ? { spokenReply } : {}),
+        ...(answer ? { completed: answer } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
         ...(answerChoices ? { answerChoices } : {}),

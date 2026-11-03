@@ -4,8 +4,8 @@ import { createApps } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const requests = [
-  'Please remember that I always prefer aisle seats on flights.',
-  'Remember that my favourite colour is green.',
+  { text: 'Please remember that I always prefer aisle seats on flights.', saved: /\baisle\b/i },
+  { text: 'Remember that my favourite colour is green.', saved: /\bgreen\b/i },
 ];
 
 export default scenario({
@@ -23,12 +23,12 @@ export default scenario({
   async play(session, world) {
     await session.say('What is 17 times 23? Reply with just the number.');
     for (const request of requests) {
-      await session.say(request);
+      await session.say(request.text);
       const { messages } = (await session.api('GET', '/api/state')).body as {
         messages: Array<{ role: string; text?: string }>;
       };
       const asked = messages.findLastIndex(
-        (message) => message.role === 'user' && message.text === request,
+        (message) => message.role === 'user' && message.text === request.text,
       );
       world.state.replies.push(
         messages
@@ -48,7 +48,8 @@ export default scenario({
         'each-request-answered',
         () => ({
           pass:
-            world.state.replies.length === requests.length && world.state.replies.every(Boolean),
+            world.state.replies.length === requests.length &&
+            requests.every((request, index) => request.saved.test(world.state.replies[index])),
           evidence: JSON.stringify(world.state.replies),
         }),
         { aspect: 'process', failure: 'incomplete' },

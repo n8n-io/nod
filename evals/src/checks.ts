@@ -30,15 +30,18 @@ export const finished = check(
     const stuck = run.interactions.filter(
       (item) => item.kind === 'unanswered' || item.kind === 'stalled',
     );
+    const delivered =
+      run.final.length > 0 ||
+      run.messages.some((message) => message.role === 'assistant' && message.presentation);
     return {
-      pass: last?.status === 'succeeded' && !stuck.length && run.final.length > 0,
+      pass: last?.status === 'succeeded' && !stuck.length && delivered,
       evidence: !last
         ? 'no turn ran'
         : last.status !== 'succeeded'
           ? `the last turn ended ${last.status}${last.error ? ` (${last.error})` : ''}`
           : stuck.length
             ? `${stuck[0].kind}: ${stuck[0].text.slice(0, 160)}`
-            : run.final
+            : delivered
               ? undefined
               : 'no answer was produced',
     };

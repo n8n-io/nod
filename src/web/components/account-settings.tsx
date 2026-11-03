@@ -186,7 +186,7 @@ export function AccountSettings({
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [open, onOpenChange, requestExit]);
-  function jump(target: string, smooth = false) {
+  function jump(target: string, smooth = false, focus = true) {
     const scroller = content.current;
     const heading = document.getElementById(`${id}-${target}`);
     if (!scroller || !heading) return;
@@ -209,7 +209,7 @@ export function AccountSettings({
           : 'instant',
     });
     setSection(target);
-    heading.focus({ preventScroll: true });
+    if (focus) heading.focus({ preventScroll: true });
   }
   useLayoutEffect(() => {
     if (!open) {
@@ -232,14 +232,16 @@ export function AccountSettings({
       typeof ResizeObserver === 'undefined'
         ? undefined
         : new ResizeObserver(() => {
-            if (jumped.current) jump(jumped.current.target);
+            if (jumped.current) jump(jumped.current.target, false, false);
           });
     for (const child of scroller.children) resized?.observe(child);
+    const settings = scroller.closest('.account-settings') ?? scroller;
     const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
-    for (const name of events) scroller.addEventListener(name, release, { passive: true });
+    for (const name of events)
+      settings.addEventListener(name, release, { passive: true, capture: true });
     return () => {
       resized?.disconnect();
-      for (const name of events) scroller.removeEventListener(name, release);
+      for (const name of events) settings.removeEventListener(name, release, { capture: true });
     };
   }, [open]);
   useEffect(() => {

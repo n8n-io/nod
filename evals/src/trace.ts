@@ -31,6 +31,7 @@ export interface ChatMessage {
   at: number;
   turnId: string | null;
   presentation?: unknown;
+  attachments?: Array<{ name: string; mimeType: string }>;
 }
 
 export interface Run {
@@ -318,7 +319,7 @@ export async function collect(options: {
   const usage = await collectUsage(stack.pool);
   const messages = (
     await stack.pool.query(
-      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
+      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation,to_jsonb(messages)->'attachments' AS attachments FROM messages ORDER BY created_at, id",
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
@@ -326,6 +327,14 @@ export async function collect(options: {
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
     ...(row.presentation ? { presentation: row.presentation } : {}),
+    ...(Array.isArray(row.attachments) && row.attachments.length
+      ? {
+          attachments: row.attachments.map((file: { name?: unknown; mimeType?: unknown }) => ({
+            name: String(file.name ?? ''),
+            mimeType: String(file.mimeType ?? ''),
+          })),
+        }
+      : {}),
   }));
   const artifacts = (
     await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
@@ -409,7 +418,9 @@ export async function collect(options: {
   const replies = messages
     .filter((m) => m.role === 'assistant' && m.text.trim())
     .map((m) => m.text);
-  const shown = messages.filter((m) => m.role === 'assistant' && (m.text.trim() || m.presentation));
+  const shown = messages.filter(
+    (m) => m.role === 'assistant' && (m.text.trim() || m.presentation || m.attachments),
+  );
   const files = await session.workspace.list();
   const filePath = (path: string) => path.replace(/^\/workspace\//, '');
   const sharedPaths = new Set(
@@ -479,10 +490,10 @@ export async function collect(options: {
       const build = (outputCap: number) => {
         return [
           ...messages
-            .filter((m) => m.text.trim() || m.presentation)
+            .filter((m) => m.text.trim() || m.presentation || m.attachments)
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}${scope(m.turnId)}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}${m.attachments ? `\nATTACHMENTS: ${JSON.stringify(m.attachments)}` : ''}`,
             })),
           ...tools.flatMap((call) => [
             {
@@ -518,7 +529,7 @@ export async function collect(options: {
         `Assistant messages shown to the user: ${shown.length}.`,
         ...shown.map(
           (message) =>
-            `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}${message.presentation ? `, with this native visual: ${clip(JSON.stringify(message.presentation), 8000)}` : ''}`,
+            `Shown assistant message at ${new Date(message.at).toISOString()}: ${JSON.stringify(message.text)}${message.presentation ? `, with this native visual: ${clip(JSON.stringify(message.presentation), 8000)}` : ''}${message.attachments ? `, with attached files: ${JSON.stringify(message.attachments)}` : ''}`,
         ),
         `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${

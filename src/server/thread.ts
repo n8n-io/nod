@@ -1853,10 +1853,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
-    if (taskContext && result.status === 'succeeded' && result.result) {
+    if (taskContext && result.status === 'succeeded' && result.result)
       await post(result.result, shared.splice(0));
-      await dependencies.settleTask?.(ref, result.result);
-    }
+    if (taskContext && result.completed) await dependencies.settleTask?.(ref, result.completed);
     if (shared.length && (result.status === 'succeeded' || !result.message))
       await post('', shared.splice(0));
     const finalReply = result.spokenReply

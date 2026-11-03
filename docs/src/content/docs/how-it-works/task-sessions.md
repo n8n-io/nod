@@ -35,7 +35,7 @@ Explicit replies go to the selected task before the coordinator runs. The task's
 | Session | The saved Pi history and execution context for that work. | Across turns, questions and owner updates.              |
 | Turn    | One execution started by a message, dispatch or resume.   | Until it succeeds, waits, fails or is cancelled.        |
 
-A task can need several turns in the same session. A successful turn does not mean the task is complete. The task calls `finish` after it checks its completion condition. A turn that ends with its final answer while nothing else is planned, with no wait or later check, also closes the task as done.
+A task can need several turns in the same session. A successful turn does not mean the task is complete. The task calls `finish` after it checks its completion condition. A turn that ends with its final answer, as final text or with `send_message` intent `final`, also closes the task as done when nothing else is planned: no wait, later check or queued owner update. The result is that answer.
 
 Each session runs one turn at a time. Different sessions run in parallel. There is no task limit of three. Browser capacity is a separate resource limit; a task that does not browse does not open a browser.
 
@@ -62,7 +62,7 @@ A model-written task list in the workspace does not replace the ledger. The exis
 3. The worker opens that saved session. The task updates its steps as it works. Text the model writes between tool calls becomes the task's live status: its card and the working bubble at the bottom of the chat show it, with the website while it browses. It isn't posted, because the task's first message already says what it is doing. Its questions, files, deliberate `send_message` updates and final reply reach the conversation; if it ends without a final reply, its last such text is posted instead. A reply from the owner while the task works gets its answer as a message. Event and schedule runs stay quiet.
 4. If the task needs the owner, it asks a question and waits. Other sessions continue.
 5. A reply to the task's first message, question, file or result continues that task. An ordinary message goes to the coordinator, which can forward the exact owner message to one or more selected open tasks. A finished or stopped task reopens only when the owner replies to one of its messages. If the target is unclear, it asks.
-6. The task checks its completion condition, shares any result files and calls `task finish`. Its final reply goes directly to its message in the shared conversation. A result delivered with `send_message` intent `final` ends the turn and finishes the task as done, with that text as its result.
+6. The task checks its completion condition, shares any result files and calls `task finish`. Its final reply goes directly to its message in the shared conversation.
 
 Each owner update has a revision. The server records delivery at a model boundary. A task cannot finish while an owner update remains queued. A correction closes the old waiting turn, so an old pending approval cannot execute after that correction.
 
