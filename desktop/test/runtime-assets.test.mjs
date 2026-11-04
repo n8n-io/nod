@@ -1969,7 +1969,7 @@ test('runtime download keeps a slow connection going and resumes its saved bytes
       ),
   });
   assert.equal(await slow.done, slow.root);
-  for (const rangeHonored of [true, false]) {
+  for (const server of ['resumes', 'ignores', 'refuses']) {
     const stalled = await fixture(t);
     const archive = await readFile(stalled.archivePath);
     const half = Math.floor(archive.length / 2);
@@ -1997,16 +1997,20 @@ test('runtime download keeps a slow connection going and resumes its saved bytes
       downloadUrl,
       fetch: async (url, { headers }) => {
         ranges.push(headers.range);
-        return rangeHonored
-          ? new Response(archive.subarray(half), {
-              status: 206,
-              headers: { 'content-range': `bytes ${half}-${archive.length - 1}/${archive.length}` },
-            })
-          : new Response(archive);
+        if (server === 'resumes')
+          return new Response(archive.subarray(half), {
+            status: 206,
+            headers: { 'content-range': `bytes ${half}-${archive.length - 1}/${archive.length}` },
+          });
+        if (server === 'refuses' && headers.range) return new Response(null, { status: 416 });
+        return new Response(archive);
       },
     });
     assert.equal(await resumed.done, resumed.root);
-    assert.deepEqual(ranges, [`bytes=${half}-`]);
+    assert.deepEqual(
+      ranges,
+      server === 'refuses' ? [`bytes=${half}-`, undefined] : [`bytes=${half}-`],
+    );
     assert.deepEqual(await readdir(stalled.cacheRoot), [stalled.release.id]);
   }
 });

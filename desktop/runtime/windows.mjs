@@ -302,21 +302,22 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       () => false,
     );
     if (!present) await rm(placed, { force: true });
-    const space = await statfs(controlRoot);
-    const required =
-      manifest.guest.expandedBytes * 2 +
-      manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
-      (present ? 0 : manifest.guest.bytes) +
-      2 * 1024 ** 3;
-    if (space.bavail * space.bsize < required)
-      throw new Error(
-        'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
-      );
     const archiveName = `guest-${manifest.guest.sha256.slice(0, 12)}.tar.gz`;
     for (const name of await readdir(controlRoot))
       if (/^guest-[a-f0-9]{12}\.tar\.gz$/.test(name) && name !== archiveName)
         await rm(join(controlRoot, name), { force: true });
     const archive = present ? placed : join(controlRoot, archiveName);
+    const partial = present ? 0 : ((await stat(archive).catch(() => undefined))?.size ?? 0);
+    const space = await statfs(controlRoot);
+    const required =
+      manifest.guest.expandedBytes * 2 +
+      manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
+      (present ? 0 : Math.max(0, manifest.guest.bytes - partial)) +
+      2 * 1024 ** 3;
+    if (space.bavail * space.bsize < required)
+      throw new Error(
+        'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
+      );
     const guest = join(controlRoot, 'guest.tar');
     let downloaded = false;
     try {

@@ -5,6 +5,7 @@ import { desktopRuntimeAvailable } from '../lib/desktop';
 function useUnchanged(value: number | undefined, milliseconds: number) {
   const [unchanged, setUnchanged] = useState<number>();
   useEffect(() => {
+    setUnchanged(undefined);
     if (value === undefined) return;
     const timer = setTimeout(() => setUnchanged(value), milliseconds);
     return () => clearTimeout(timer);
@@ -51,6 +52,7 @@ export function SetupProgress({
       ? Math.max(0, Math.min(1, progress))
       : undefined;
   const waiting = useUnchanged(fraction, 5000) && fraction! < 1;
+  const line = fraction === undefined ? undefined : downloadLine(fraction, secondsLeft, waiting);
 
   useEffect(() => {
     panel.current?.focus();
@@ -76,9 +78,7 @@ export function SetupProgress({
             {description && <p>{description}</p>}
             {error && <p data-analytics-private>{error}</p>}
           </div>
-          {fraction !== undefined && (
-            <p className="setup-progress-meta">{downloadLine(fraction, secondsLeft, waiting)}</p>
-          )}
+          {line && <p className="setup-progress-meta">{line}</p>}
         </div>
         {error && details && (
           <details className="setup-progress-details" open data-analytics-private>
@@ -90,6 +90,7 @@ export function SetupProgress({
           <progress
             className="setup-progress-download"
             aria-label="Download progress"
+            aria-valuetext={line}
             max={1}
             value={fraction}
           />

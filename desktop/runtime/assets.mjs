@@ -464,49 +464,60 @@ export async function resumableDownload(
   { bytes, fetch: request = fetch, signal, save = true },
 ) {
   const metadata = save ? await lstat(path).catch(() => undefined) : undefined;
-  const saved = metadata?.isFile() && metadata.size < bytes ? metadata.size : 0;
-  let response;
-  for (let redirects = 0; redirects <= 3; redirects++) {
-    const address = new URL(url);
-    if (address.protocol !== 'https:' || address.username || address.password)
-      throw new Error('Nod received an unsafe download address.');
-    response = await request(url, {
-      signal,
-      redirect: 'manual',
-      headers: {
-        accept: 'application/octet-stream',
-        ...(saved ? { range: `bytes=${saved}-` } : {}),
-      },
-    });
-    if (![301, 302, 303, 307, 308].includes(response.status)) break;
-    await response.body?.cancel();
-    url = new URL(response.headers.get('location') || '', url).href;
-  }
-  const start =
-    response?.status === 206 &&
-    response.headers.get('content-range') === `bytes ${saved}-${bytes - 1}/${bytes}`
-      ? saved
-      : 0;
-  if (!response?.ok || !response.body || (response.status === 206 && !start)) {
-    await response?.body?.cancel();
-    if ([206, 416].includes(response?.status)) await rm(path, { force: true });
-    throw new Error('The Nod download is unavailable. Try again.');
-  }
-  if (!save) await rm(path, { force: true });
-  const file = save ? await open(path, start ? 'a' : 'w', 0o600) : undefined;
+  const start = metadata?.isFile() && metadata.size < bytes ? metadata.size : 0;
+  if (!start) await rm(path, { force: true });
   let interrupted = false;
+  async function respond(ranged) {
+    let response;
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      const address = new URL(url);
+      if (address.protocol !== 'https:' || address.username || address.password)
+        throw new Error('Nod received an unsafe download address.');
+      response = await request(url, {
+        signal,
+        redirect: 'manual',
+        headers: {
+          accept: 'application/octet-stream',
+          ...(ranged ? { range: `bytes=${start}-` } : {}),
+        },
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      await response.body?.cancel();
+      url = new URL(response.headers.get('location') || '', url).href;
+    }
+    return response;
+  }
   async function* network() {
     try {
-      yield* response.body;
+      let response = await respond(start > 0);
+      const resumed =
+        response?.status === 206 &&
+        response.headers.get('content-range') === `bytes ${start}-${bytes - 1}/${bytes}`;
+      if (start && !resumed && [206, 416].includes(response?.status)) {
+        await response.body?.cancel();
+        response = await respond(false);
+      }
+      if (!response?.ok || !response.body || (response.status === 206 && !resumed)) {
+        await response?.body?.cancel();
+        throw new Error('The Nod download is unavailable. Try again.');
+      }
+      let skip = resumed ? 0 : start;
+      for await (const chunk of response.body) {
+        const data = chunk.subarray(Math.min(skip, chunk.length));
+        skip -= chunk.length - data.length;
+        if (data.length) yield data;
+      }
     } catch (error) {
       interrupted = true;
       throw error;
     }
   }
   async function* whole() {
+    let file;
     try {
       if (start) yield* createReadStream(path, { end: start - 1, signal });
       for await (const chunk of network()) {
+        if (save) file ??= await open(path, 'a', 0o600);
         await file?.appendFile(chunk);
         yield chunk;
       }
@@ -558,8 +569,10 @@ function downloadRuntime(release, options) {
     release,
     async () => {
       alive();
+      const saved = (await lstat(partial).catch(() => undefined))?.size ?? 0;
       const save =
-        (await freeSpace(dirname(root), inspectDisk)) >= installSpace(release) + BigInt(total);
+        (await freeSpace(dirname(root), inspectDisk)) >=
+        installSpace(release) + BigInt(Math.max(0, total - saved));
       download = await resumableDownload(url, partial, {
         bytes: total,
         fetch: options.fetch,
