@@ -349,6 +349,7 @@ export function Onboarding({
       <SetupProgress
         title={failure ? 'Setup needs another try.' : title}
         progress={preparation === 'pending' ? activeRuntime?.progress : undefined}
+        secondsLeft={preparation === 'pending' ? activeRuntime?.secondsLeft : undefined}
         description={
           failure
             ? 'Your progress is saved.'

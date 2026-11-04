@@ -171,6 +171,8 @@ let status = {
 };
 const knownSecrets = new Set();
 const engineWindows = new Set();
+let downloadShown = false;
+let bounceWhenReady = false;
 const pendingRenderers = new Map();
 let appPreferences = createAppPreferencesStore(join(profileRoot, 'preferences.json'), {
   request: (path, options) => engineRequest(path, options),
@@ -231,6 +233,7 @@ const lifecycle = createDesktopLifecycle({
         stage: runtime.stage,
         message: runtime.message,
         progress: value.progress,
+        secondsLeft: value.secondsLeft,
         needsRuntimeArchive: false,
       });
     else
@@ -309,7 +312,21 @@ function update(value) {
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
   if (tray) tray.setToolTip(`Nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
+  showDownloadProgress();
   updateReadinessNotice();
+}
+
+function showDownloadProgress() {
+  const progress = status.runtime?.progress;
+  const downloading = Number.isFinite(progress);
+  if (downloading || downloadShown)
+    for (const window of [setupWindow, engineWindow])
+      if (window && !window.isDestroyed()) window.setProgressBar(downloading ? progress : -1);
+  downloadShown = downloading;
+  bounceWhenReady ||= downloading;
+  if (!bounceWhenReady || downloading || !status.engineReady) return;
+  bounceWhenReady = false;
+  if (!foregroundWindow()) app.dock?.bounce('informational');
 }
 
 function publicPreferences() {
@@ -1323,6 +1340,7 @@ async function finishEnginePreparation(pending = false) {
     stage: pending ? status.runtime.stage : 'ready',
     message: pending ? status.runtime.message : 'Nod is running on your computer.',
     progress: pending ? status.runtime.progress : undefined,
+    secondsLeft: pending ? status.runtime.secondsLeft : undefined,
     engineReady: true,
   });
   if (!welcomeTransferError) await transferWelcome().catch(() => {});
@@ -1821,6 +1839,7 @@ async function prepare(options = {}) {
       needsServerConnection: false,
       message: status.runtime.message,
       progress: status.runtime.progress,
+      secondsLeft: status.runtime.secondsLeft,
       needsRuntimeArchive: false,
     });
     return lifecycle.start({ retry: options?.retry === true });

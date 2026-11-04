@@ -1947,7 +1947,7 @@ test('runtime files become ready only after their own bytes verify, and a mismat
   assert.deepEqual(await readdir(tampered.cacheRoot), []);
 });
 
-test('runtime download keeps a slow connection going and stops only when data stops arriving', async (t) => {
+test('runtime download keeps a slow connection going and resumes its saved bytes after data stops arriving', async (t) => {
   const options = await fixture(t);
   const bytes = await readFile(options.archivePath);
   const size = Math.ceil(bytes.length / 10);
@@ -1969,15 +1969,46 @@ test('runtime download keeps a slow connection going and stops only when data st
       ),
   });
   assert.equal(await slow.done, slow.root);
-  const stalled = await fixture(t);
-  const stuck = await openRuntimeAssets({
-    ...stalled,
-    stallTimeout: 300,
-    downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
-    fetch: async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) })),
-  });
-  await assert.rejects(stuck.done, /stopped receiving data/);
-  assert.deepEqual(await readdir(stalled.cacheRoot), []);
+  for (const rangeHonored of [true, false]) {
+    const stalled = await fixture(t);
+    const archive = await readFile(stalled.archivePath);
+    const half = Math.floor(archive.length / 2);
+    const downloadUrl = 'https://runtime.example.invalid/fixture.tar.gz';
+    const stuck = await openRuntimeAssets({
+      ...stalled,
+      stallTimeout: 300,
+      downloadUrl,
+      fetch: async (url, { signal }) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(archive.subarray(0, half));
+              signal.addEventListener('abort', () => controller.error(signal.reason));
+            },
+          }),
+        ),
+    });
+    await assert.rejects(stuck.done, /stopped receiving data/);
+    const partial = `${stalled.release.id}.${stalled.release.archive.sha256.slice(0, 12)}.download`;
+    assert.deepEqual(await readdir(stalled.cacheRoot), [partial]);
+    const ranges = [];
+    const resumed = await openRuntimeAssets({
+      ...stalled,
+      downloadUrl,
+      fetch: async (url, { headers }) => {
+        ranges.push(headers.range);
+        return rangeHonored
+          ? new Response(archive.subarray(half), {
+              status: 206,
+              headers: { 'content-range': `bytes ${half}-${archive.length - 1}/${archive.length}` },
+            })
+          : new Response(archive);
+      },
+    });
+    assert.equal(await resumed.done, resumed.root);
+    assert.deepEqual(ranges, [`bytes=${half}-`]);
+    assert.deepEqual(await readdir(stalled.cacheRoot), [stalled.release.id]);
+  }
 });
 
 test('runtime download rejects corrupt bytes, cleans its download and allows a verified retry', async (t) => {

@@ -18,12 +18,14 @@ export type DesktopStatus = {
   message?: string;
   error?: string;
   progress?: number;
+  secondsLeft?: number;
   runtime?: {
     phase?: string;
     stage?: StartupStage;
     message?: string;
     error?: string;
     progress?: number;
+    secondsLeft?: number;
   };
 };
 

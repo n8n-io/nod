@@ -5,6 +5,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -192,12 +193,18 @@ async function verifyFiles(root, release, signal) {
   }
 }
 
-async function requireDiskSpace(release, directory, inspectDisk) {
+async function freeSpace(directory, inspectDisk) {
   const { bavail, bsize } = await inspectDisk(directory, { bigint: true });
-  const available = bavail > 0n ? bavail * bsize : 0n;
-  const required = BigInt(
-    release.files.reduce((total, file) => total + file.bytes, 0) + 512 * 1024 ** 2,
-  );
+  return bavail > 0n ? bavail * bsize : 0n;
+}
+
+function installSpace(release) {
+  return BigInt(release.files.reduce((total, file) => total + file.bytes, 0) + 512 * 1024 ** 2);
+}
+
+async function requireDiskSpace(release, directory, inspectDisk) {
+  const available = await freeSpace(directory, inspectDisk);
+  const required = installSpace(release);
   if (available < required)
     throw Object.assign(
       new Error(
@@ -277,7 +284,16 @@ export async function seedRuntimeCache({
 function unpackRuntime(
   release,
   source,
-  { message, failure, onStatus, onBytes = () => {}, signal, cacheRoot, inspectDisk = statfs },
+  {
+    message,
+    failure,
+    onStatus,
+    onBytes = () => {},
+    finish = async () => {},
+    signal,
+    cacheRoot,
+    inspectDisk = statfs,
+  },
 ) {
   const root = runtimeCacheRoot(release, cacheRoot);
   if (pending.has(root)) return pending.get(root);
@@ -316,6 +332,10 @@ function unpackRuntime(
             onStatus({ phase: 'installing', message, progress: received / release.archive.bytes });
           }
           callback(null, chunk);
+        },
+        flush(callback) {
+          onStatus({ phase: 'installing', message, progress: received / release.archive.bytes });
+          callback();
         },
       });
       const bounded = new Transform({
@@ -375,9 +395,11 @@ function unpackRuntime(
       await writeFile(join(root, '.ready.json'), JSON.stringify({ id: release.id }), {
         mode: 0o600,
       });
+      await finish();
       return root;
     } catch (error) {
       await rm(root, { recursive: true, force: true });
+      await finish(error);
       throw installationError(error);
     }
   })();
@@ -424,14 +446,91 @@ export async function installRuntimeArchive({
   }).done;
 }
 
+export function timeLeft(span = 45_000) {
+  const samples = [];
+  return (fetched, remaining) => {
+    const now = Date.now();
+    samples.push([now, fetched]);
+    while (samples.length > 1 && now - samples[1][0] >= span) samples.shift();
+    const [since, first] = samples[0];
+    if (now - since < 5000 || fetched <= first) return undefined;
+    return Math.round((remaining * (now - since)) / (fetched - first) / 1000);
+  };
+}
+
+export async function resumableDownload(
+  url,
+  path,
+  { bytes, fetch: request = fetch, signal, save = true },
+) {
+  const metadata = save ? await lstat(path).catch(() => undefined) : undefined;
+  const saved = metadata?.isFile() && metadata.size < bytes ? metadata.size : 0;
+  let response;
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    const address = new URL(url);
+    if (address.protocol !== 'https:' || address.username || address.password)
+      throw new Error('Nod received an unsafe download address.');
+    response = await request(url, {
+      signal,
+      redirect: 'manual',
+      headers: {
+        accept: 'application/octet-stream',
+        ...(saved ? { range: `bytes=${saved}-` } : {}),
+      },
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    await response.body?.cancel();
+    url = new URL(response.headers.get('location') || '', url).href;
+  }
+  const start =
+    response?.status === 206 &&
+    response.headers.get('content-range') === `bytes ${saved}-${bytes - 1}/${bytes}`
+      ? saved
+      : 0;
+  if (!response?.ok || !response.body || (response.status === 206 && !start)) {
+    await response?.body?.cancel();
+    if ([206, 416].includes(response?.status)) await rm(path, { force: true });
+    throw new Error('The Nod download is unavailable. Try again.');
+  }
+  if (!save) await rm(path, { force: true });
+  const file = save ? await open(path, start ? 'a' : 'w', 0o600) : undefined;
+  let interrupted = false;
+  async function* network() {
+    try {
+      yield* response.body;
+    } catch (error) {
+      interrupted = true;
+      throw error;
+    }
+  }
+  async function* whole() {
+    try {
+      if (start) yield* createReadStream(path, { end: start - 1, signal });
+      for await (const chunk of network()) {
+        await file?.appendFile(chunk);
+        yield chunk;
+      }
+    } finally {
+      await file?.close();
+    }
+  }
+  return {
+    start,
+    stream: Readable.from(whole(), { objectMode: false }),
+    interrupted: () => interrupted || Boolean(signal?.aborted),
+  };
+}
+
 function downloadRuntime(release, options) {
   const {
     onStatus = () => {},
     signal,
     cacheRoot,
-    inspectDisk,
+    inspectDisk = statfs,
     stallTimeout = 5 * 60_000,
   } = options;
+  const root = runtimeCacheRoot(release, cacheRoot);
+  if (pending.has(root)) return pending.get(root);
   const stalled = new AbortController();
   let timer;
   const alive = () => {
@@ -447,39 +546,44 @@ function downloadRuntime(release, options) {
     );
   };
   const downloadSignal = AbortSignal.any([...(signal ? [signal] : []), stalled.signal]);
-  let url = options.downloadUrl || release.url;
+  const url = options.downloadUrl || release.url;
   const address = new URL(url);
   if (address.protocol !== 'https:' || address.username || address.password)
     throw new Error('The Nod runtime download address is invalid.');
+  const partial = `${root}.${release.archive.sha256.slice(0, 12)}.download`;
+  const total = release.archive.bytes;
+  const estimate = timeLeft();
+  let download;
   const assets = unpackRuntime(
     release,
     async () => {
       alive();
-      let response;
-      for (let redirects = 0; redirects <= 3; redirects++) {
-        response = await (options.fetch || fetch)(url, {
-          signal: downloadSignal,
-          redirect: 'manual',
-          headers: { accept: 'application/octet-stream' },
-        });
-        if (![301, 302, 303, 307, 308].includes(response.status)) break;
-        const next = new URL(response.headers.get('location') || '', url);
-        await response.body?.cancel();
-        if (next.protocol !== 'https:' || next.username || next.password)
-          throw new Error('Nod received an unsafe runtime download address.');
-        url = next.href;
-      }
-      if (!response?.ok || !response.body)
-        throw new Error('The Nod runtime download is unavailable. Try again.');
-      const body = Readable.fromWeb(response.body);
-      body.once('end', () => clearTimeout(timer));
-      return body;
+      const save =
+        (await freeSpace(dirname(root), inspectDisk)) >= installSpace(release) + BigInt(total);
+      download = await resumableDownload(url, partial, {
+        bytes: total,
+        fetch: options.fetch,
+        signal: downloadSignal,
+        save,
+      });
+      download.stream.once('end', () => clearTimeout(timer));
+      return download.stream;
     },
     {
       message: 'Downloading your local computer…',
       failure: 'The Nod runtime download did not complete. Try again.',
-      onStatus,
+      onStatus: (value) => {
+        if (!download || !Number.isFinite(value.progress)) return onStatus(value);
+        const received = value.progress * total;
+        onStatus({
+          ...value,
+          secondsLeft: estimate(Math.max(0, received - download.start), total - received),
+        });
+      },
       onBytes: alive,
+      finish: async (error) => {
+        if (!error || (download && !download.interrupted())) await rm(partial, { force: true });
+      },
       signal: downloadSignal,
       cacheRoot,
       inspectDisk,
