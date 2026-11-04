@@ -20,6 +20,7 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
         action: { name: 'send_email', arguments: { to: 'qa@example.test', body } },
       };
       let requests = 0;
+      let resolutions = 0;
       let llmCalls = 0;
       let recipientConflict = false;
       let wrongMethod = 0;
@@ -27,11 +28,14 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
         'http' | 'version' | 'probability' | 'refusal' | 'connection' | 'stop' | undefined;
       let controller = new AbortController();
       const decisions = createDecisionModel({
-        resolve: async () => ({
-          provider,
-          key: 'synthetic-jev-key',
-          model: failure === 'connection' && requests === 1 ? 'jev-unknown' : requested,
-        }),
+        resolve: async () => {
+          resolutions++;
+          return {
+            provider,
+            key: 'synthetic-jev-key',
+            model: failure === 'connection' && requests === 1 ? 'jev-unknown' : requested,
+          };
+        },
         fetch: async (_url, init) => {
           requests++;
           const request = JSON.parse(String(init?.body));
@@ -108,6 +112,7 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       const check = () => review('Apply the owner policy.', input, controller.signal);
       assert.equal(trustBasis(await check(), words, ['owner-message'])?.kind, 'message');
       assert.equal(requests, 2);
+      assert.equal(resolutions, 1);
       recipientConflict = true;
       requests = 0;
       assert.equal(trustBasis(await check(), words, ['owner-message']), undefined);
@@ -117,12 +122,19 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       wrongMethod = 0.4;
       assert.equal(trustBasis(await check(), words, ['owner-message']), undefined);
       wrongMethod = 0;
-      for (failure of ['http', 'version', 'probability', 'connection', 'stop'] as const) {
+      for (failure of ['http', 'version', 'probability', 'stop'] as const) {
         requests = 0;
         controller = new AbortController();
         await assert.rejects(check());
         assert.equal(requests, 1);
       }
+      failure = 'connection';
+      requests = 0;
+      controller = new AbortController();
+      const before = resolutions;
+      assert.equal(trustBasis(await check(), words, ['owner-message'])?.kind, 'message');
+      assert.equal(requests, 2);
+      assert.equal(resolutions, before + 1);
       failure = 'refusal';
       requests = 0;
       controller = new AbortController();

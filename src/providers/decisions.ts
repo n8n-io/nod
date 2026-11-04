@@ -43,6 +43,50 @@ const answerSchema = z.union([
   z.object({ type: z.literal('refusal') }),
 ]);
 
+export function createOpenRouterDecisionCatalog() {
+  let cached: { key: string; until: number; models: Set<string> } | undefined;
+  return async (key: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (cached?.key === key && cached.until > Date.now()) return cached.models;
+    const response = await fetch(
+      'https://openrouter.ai/api/v1/models/user?output_modalities=decisions',
+      {
+        redirect: 'error',
+        headers: { authorization: `Bearer ${key}` },
+        signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]),
+      },
+    );
+    if (!response.ok) throw new Error('The decision model list is unavailable.');
+    const { data } = z
+      .object({
+        data: z.array(
+          z.object({
+            id: z.string(),
+            architecture: z.object({
+              input_modalities: z.array(z.string()),
+              output_modalities: z.array(z.string()),
+            }),
+            endpoints: z.array(z.string()),
+          }),
+        ),
+      })
+      .parse(await response.json());
+    signal?.throwIfAborted();
+    const models = new Set(
+      data
+        .filter(
+          ({ architecture, endpoints }) =>
+            architecture.input_modalities.includes('text') &&
+            architecture.output_modalities.includes('decisions') &&
+            endpoints.includes('/api/alpha/decisions'),
+        )
+        .map(({ id }) => id),
+    );
+    cached = { key, until: Date.now() + 300_000, models };
+    return models;
+  };
+}
+
 function select(
   question: DecisionQuestion,
   answer: z.infer<typeof answerSchema>,
@@ -99,7 +143,7 @@ function select(
 
 export function createDecisionModel(options: {
   configured?: () => boolean;
-  resolve(): Promise<DecisionConnection | undefined>;
+  resolve(signal?: AbortSignal): Promise<DecisionConnection | undefined>;
   fetch?: typeof fetch;
 }): DecisionModel {
   const request = options.fetch ?? fetch;
@@ -107,10 +151,21 @@ export function createDecisionModel(options: {
     get configured() {
       return options.configured?.();
     },
+    async select(signal) {
+      signal?.throwIfAborted();
+      if (options.configured?.() === false) return undefined;
+      const connection = await options.resolve(signal);
+      signal?.throwIfAborted();
+      if (options.configured?.() === false)
+        throw new Error('The decision model connection changed.');
+      return connection
+        ? createDecisionModel({ ...options, resolve: async () => connection })
+        : undefined;
+    },
     async check(plan, signal, report) {
       signal?.throwIfAborted();
       if (options.configured?.() === false) return undefined;
-      const connection = await options.resolve();
+      const connection = await options.resolve(signal);
       signal?.throwIfAborted();
       if (!connection || options.configured?.() === false) return undefined;
       const service = services[connection.provider];

@@ -33,8 +33,12 @@ export function createTrustReview(options: {
             ...(question.instructions ? { instructions: question.instructions } : {}),
           }
         : undefined;
-    if (!options.decisions) return options.review(instructions, input, signal, llmQuestion);
-    if (options.decisions.configured === false) return undefined;
+    const decisions = options.decisions?.select
+      ? await options.decisions.select(signal)
+      : options.decisions;
+    signal?.throwIfAborted();
+    if (!decisions) return options.review(instructions, input, signal, llmQuestion);
+    if (decisions.configured === false) return undefined;
     const gate = question ? undefined : trustDecision(input as TrustWords);
     const policy = instructions.replace(/^Reply with only JSON\..*\n/m, '');
     let jev: DecisionSelection | undefined;
@@ -48,7 +52,7 @@ export function createTrustReview(options: {
           : question!),
       ...(gate ? { includeModel: true, additionalQuestions: trustDimensions(policy) } : {}),
     };
-    const answer = await options.decisions.check(
+    const answer = await decisions.check(
       {
         ...request,
         forModel: (selection: DecisionSelection) => {
@@ -73,7 +77,7 @@ export function createTrustReview(options: {
       return undefined;
     if (gate && jev)
       return checkJevTrust(
-        options.decisions,
+        decisions,
         input as Parameters<typeof jevRequest>[0],
         answer,
         jev,
@@ -88,7 +92,7 @@ export function createTrustReview(options: {
           const positive = checked.choice ? checked.probability : 1 - checked.probability;
           if (positive < (question.minProbability ?? 0.8)) return { readOnly: false };
           const effects = await checkJevEffects(
-            options.decisions,
+            decisions,
             (input as { action: object }).action,
             jev,
             signal,

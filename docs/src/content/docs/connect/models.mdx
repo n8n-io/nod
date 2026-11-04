@@ -242,13 +242,21 @@ Set `NOD_TRUST_MODEL` in the server configuration, then [apply the change](/depl
 | Value      | Action permission, strict app reads, and confirmation replies |
 | ---------- | ------------------------------------------------------------- |
 | `llm`      | A small LLM. This is the default.                             |
-| `decision` | A pure decision model, with no LLM fallback.                  |
+| `decision` | The first available decision model, or a small LLM.           |
 
 The small LLM comes from your selected connection when it offers a known small model. Otherwise, Nod chooses a known small model from another connected service. It chooses before making a request. If no small model is available, the check cannot authorize an action. It never replaces the small checker with your larger chat model.
 
 The small checker can have API costs. A free OpenRouter selection does not start a paid small checker. If no checker is available, Nod cannot approve an action. Check model charges in Usage.
 
-Decision mode prefers Jev 1.14. Nod selects direct TypeSafe with `TYPESAFE_API_KEY`, then Jev through OpenRouter, then OpenAI Decisions with an OpenAI API key. These keys can come from a connection other than your chat model. ChatGPT subscription credentials never go to a decision service. A failed request never changes provider.
+Decision mode selects the first available option in this order:
+
+1. Direct TypeSafe Jev 1.14 with `TYPESAFE_API_KEY`.
+2. Jev 1.14 through OpenRouter.
+3. Perplexity Decider 1.2 through OpenRouter.
+4. OpenAI Decisions with an OpenAI API key, or through OpenRouter.
+5. The same small LLM as `llm` mode, when none of these decision models is available.
+
+These keys can come from a connection other than your chat model. ChatGPT subscription credentials never go to a decision service. Nod uses OpenRouter's decision-model list for your key, which applies your provider, privacy and access settings. This list is cached for five minutes. A failed lookup blocks the check. Nod keeps one provider for all steps of each check. A failed or uncertain decision never switches the checker to an LLM.
 
 ```sh title=".env"
 NOD_TRUST_MODEL=decision

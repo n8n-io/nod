@@ -16,7 +16,11 @@ import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
-import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
+import {
+  createDecisionModel,
+  createOpenRouterDecisionCatalog,
+  type DecisionConnection,
+} from '../src/providers/decisions.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import { createModelTraces } from '../src/server/traces.ts';
@@ -28,6 +32,128 @@ import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
 import { createTrust } from '../src/server/trust.ts';
 import { createTrustReview } from '../src/server/trust-review.ts';
 import { trustFacts } from '../src/server/trust-facts.ts';
+
+test('decision selection uses the LLM only when no decision connection is available', async () => {
+  let resolutions = 0;
+  let llm = 0;
+  let state = 'absent';
+  const decisions = createDecisionModel({
+    resolve: async () => {
+      resolutions++;
+      if (state === 'absent') return undefined;
+      if (state === 'lookup error') throw new Error('Synthetic lookup failure.');
+      return { provider: 'openai', key: 'fixture-key' };
+    },
+    fetch: async () => {
+      if (state === 'request error') return new Response('', { status: 503 });
+      return Response.json({
+        answers: [
+          {
+            name: 'answer',
+            type: 'choice',
+            choice: 'yes',
+            probabilities: [
+              { value: 'yes', probability: 1 },
+              { value: 'other', probability: 0 },
+            ],
+          },
+        ],
+        usage: { input_tokens: 1 },
+      });
+    },
+  });
+  const question: DecisionQuestion = {
+    name: 'answer',
+    minProbability: 0.99,
+    choices: [
+      { value: 'yes', description: 'Approve.' },
+      { value: 'other', description: 'No approval.' },
+    ],
+  };
+  const review = createTrustReview({
+    decisions,
+    review: async (instructions, input, signal, selected) => {
+      llm++;
+      assert.equal(instructions, 'Apply policy.');
+      assert.deepEqual(input, { reply: 'Yes.' });
+      assert.equal(signal, undefined);
+      assert.deepEqual(selected, { name: question.name, choices: question.choices });
+      return { answer: 'yes' };
+    },
+  });
+  const check = (signal?: AbortSignal) =>
+    review('Apply policy.', { reply: 'Yes.' }, signal, question);
+  assert.deepEqual(await check(), { answer: 'yes' });
+  assert.equal(llm, 1);
+  state = 'available';
+  const selected = await decisions.select!();
+  const count = resolutions;
+  state = 'lookup error';
+  assert.equal(
+    ((await selected!.check({ instructions: '', input: {}, question })) as { answer: string })
+      .answer,
+    'yes',
+  );
+  assert.equal(resolutions, count);
+  await assert.rejects(check(), /lookup failure/);
+  state = 'request error';
+  await assert.rejects(check());
+  await assert.rejects(check(AbortSignal.abort()));
+  assert.equal(llm, 1);
+});
+
+test('decision catalog filters native text decisions, expires and refuses failed lookups', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  let calls = 0;
+  let fail = false;
+  let malformed = false;
+  t.mock.method(globalThis, 'fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    assert.equal(init?.redirect, 'error');
+    if (fail) return new Response('', { status: 503 });
+    if (malformed) return Response.json({ data: null });
+    return Response.json({
+      data: [
+        {
+          id: 'typesafe/jev-1.14',
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        },
+        {
+          id: 'typesafe/jev-router',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          endpoints: ['/api/v1/chat/completions'],
+        },
+        {
+          id: 'fixture/extraction',
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/extractions'],
+        },
+        {
+          id: 'fixture/image',
+          architecture: { input_modalities: ['image'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        },
+      ],
+    });
+  });
+  const catalog = createOpenRouterDecisionCatalog();
+  assert.deepEqual([...(await catalog('fixture-key'))], ['typesafe/jev-1.14']);
+  await catalog('fixture-key');
+  assert.equal(calls, 1);
+  t.mock.timers.tick(300_000);
+  fail = true;
+  await assert.rejects(catalog('fixture-key'));
+  assert.equal(calls, 2);
+  fail = false;
+  await catalog('fixture-key');
+  await catalog('fixture-rotated-key');
+  assert.equal(calls, 4);
+  malformed = true;
+  await assert.rejects(catalog('fixture-invalid-key'));
+  await assert.rejects(catalog('fixture-rotated-key', AbortSignal.abort()));
+  assert.equal(calls, 5);
+});
 
 test('decision trust never calls an LLM for uncertainty, missing results or failure', async () => {
   let calls = 0;
@@ -810,6 +936,15 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
   assert.equal(reads, 3);
   assert.equal(resolutions, 2);
   assert.equal(requests, 1);
+  configured = true;
+  const selected = await decision.select!();
+  assert.equal(resolutions, 3);
+  const beforeWrites = writes;
+  await selected!.check(request);
+  await selected!.check(request);
+  assert.equal(resolutions, 3);
+  assert.equal(requests, 3);
+  assert.equal(writes, beforeWrites + 2);
 });
 
 test('decision requests revalidate capability and cancellation after resolving credentials', async (t) => {

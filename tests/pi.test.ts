@@ -1773,10 +1773,29 @@ test('decision routing uses the selected connection and never sends subscription
   });
 });
 
-test('trust mode selects Jev before OpenAI and never changes provider after a failure', async (t) => {
+test('trust mode selects available Jev, Decider and OpenAI before the small LLM', async (t) => {
   const requests: Array<{ url: string; model: string; key: string | null }> = [];
   let fail = false;
+  let catalog = [
+    'typesafe/jev-1.14',
+    'perplexity/pplx-decider-v1.2',
+    'openai/gpt-6-luna-decisions',
+  ];
+  let catalogFail = false;
+  let lookups = 0;
   t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url).includes('/models/user')) {
+      lookups++;
+      if (catalogFail) return new Response('', { status: 503 });
+      assert.equal(init?.redirect, 'error');
+      return Response.json({
+        data: catalog.map((id) => ({
+          id,
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        })),
+      });
+    }
     const body = JSON.parse(String(init?.body));
     requests.push({
       url: String(url),
@@ -1813,12 +1832,36 @@ test('trust mode selects Jev before OpenAI and never changes provider after a fa
     });
   assert.deepEqual(await check(), { answer: false });
   assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
+  assert.equal(lookups, 1);
+  await check();
+  assert.equal(lookups, 1);
   fail = true;
   const before = requests.length;
   await assert.rejects(check());
   assert.equal(requests.length, before + 1);
   assert.equal(requests.at(-1)?.key, 'Bearer fixture-router');
   fail = false;
+  catalog = catalog.slice(1);
+  keys.set('openrouter', 'fixture-router-rotated');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'perplexity/pplx-decider-v1.2');
+  catalog = catalog.slice(1);
+  keys.set('openrouter', 'fixture-router-no-decider');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  keys.delete('openai');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'openai/gpt-6-luna-decisions');
+  catalog = [];
+  keys.set('openrouter', 'fixture-router-no-decisions');
+  assert.equal(await adapters.trustDecisions!.select!(), undefined);
+  catalogFail = true;
+  keys.set('openrouter', 'fixture-router-list-failure');
+  keys.set('openai', 'fixture-openai');
+  const beforeLookupFailure = requests.length;
+  await assert.rejects(adapters.trustDecisions!.select!());
+  assert.equal(requests.length, beforeLookupFailure);
+  catalogFail = false;
   keys.delete('openrouter');
   await check();
   assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
@@ -1834,6 +1877,7 @@ test('trust mode selects Jev before OpenAI and never changes provider after a fa
   direct.models!.hasApiKey = () => false;
   await check(direct);
   assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
+  catalog = ['typesafe/jev-1.14'];
   const router = createDefaultAdapters({
     NOD_TRUST_MODEL: 'decision',
     NOD_FEEDBACK_ENABLED: 'false',

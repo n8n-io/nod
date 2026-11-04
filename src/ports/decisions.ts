@@ -31,6 +31,7 @@ export interface DecisionSelection {
 
 export interface DecisionModel {
   configured?: boolean;
+  select?(signal?: AbortSignal): Promise<DecisionModel | undefined>;
   check(
     request: DecisionRequest & { forModel?: (selection: DecisionSelection) => DecisionRequest },
     signal?: AbortSignal,

@@ -44,7 +44,7 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
-import { createDecisionModel } from '../providers/decisions.ts';
+import { createDecisionModel, createOpenRouterDecisionCatalog } from '../providers/decisions.ts';
 import type { SpeechProvider, LocalSpeechControls } from '../ports/speech.ts';
 import { createLocalSpeechProvider } from '../providers/local-speech/index.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
@@ -403,24 +403,31 @@ export function createDefaultAdapters(
     },
   });
   const trustModel = z.enum(['llm', 'decision']).parse(env.NOD_TRUST_MODEL ?? 'llm');
+  const decisionCatalog = createOpenRouterDecisionCatalog();
   const trustDecisions = createDecisionModel({
     configured: () =>
       Boolean(env.TYPESAFE_API_KEY?.trim()) ||
       models.hasApiKey('openrouter') ||
       models.hasApiKey('openai'),
-    resolve: async () => {
+    resolve: async (signal) => {
       if (env.TYPESAFE_API_KEY?.trim())
         return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim(), model: 'jev-1.14.0' };
-      for (const provider of ['openrouter', 'openai'] as const) {
-        if (!models.hasApiKey(provider)) continue;
-        const key = await models.apiKey(provider);
-        if (!key) throw new Error('The trust model connection is unavailable.');
-        return {
-          provider,
-          key,
-          ...(provider === 'openrouter' ? { model: 'typesafe/jev-1.14' } : {}),
-        };
+      let routerKey: string | undefined;
+      let available: Set<string> | undefined;
+      if (models.hasApiKey('openrouter')) {
+        routerKey = await models.apiKey('openrouter');
+        if (!routerKey) throw new Error('The trust model connection is unavailable.');
+        available = await decisionCatalog(routerKey, signal);
+        for (const model of ['typesafe/jev-1.14', 'perplexity/pplx-decider-v1.2'])
+          if (available.has(model)) return { provider: 'openrouter', key: routerKey, model };
       }
+      if (models.hasApiKey('openai')) {
+        const key = await models.apiKey('openai');
+        if (!key) throw new Error('The trust model connection is unavailable.');
+        return { provider: 'openai', key };
+      }
+      if (routerKey && available?.has('openai/gpt-6-luna-decisions'))
+        return { provider: 'openrouter', key: routerKey, model: 'openai/gpt-6-luna-decisions' };
     },
   });
   const integrationBrowser = createIntegrationBrowser(
@@ -1486,12 +1493,8 @@ async function initializeApplication(
         ? trustCurator.curate({ task: 'review', instructions, input }, signal)
         : undefined;
     },
-    ...(adapters.trustModel === 'decision'
-      ? {
-          decisions: adapters.trustDecisions
-            ? ledger.decisions(adapters.trustDecisions)
-            : { configured: false, check: async () => undefined },
-        }
+    ...(adapters.trustModel === 'decision' && adapters.trustDecisions
+      ? { decisions: ledger.decisions(adapters.trustDecisions) }
       : {}),
   });
   const observations = createObservationSources(
