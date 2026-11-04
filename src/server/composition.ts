@@ -207,7 +207,7 @@ export interface ApplicationAdapters {
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
-  trustModel?: 'llm' | 'decision';
+  trustModel?: 'selected' | 'llm' | 'decision';
   trustDecisions?: DecisionModel;
   trustCurator?: MemoryCurator;
   messaging?: MessagingTransport;
@@ -402,7 +402,9 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
-  const trustModel = z.enum(['llm', 'decision']).parse(env.NOD_TRUST_MODEL ?? 'llm');
+  const trustModel = z
+    .enum(['selected', 'llm', 'decision'])
+    .parse(env.NOD_TRUST_MODEL ?? 'selected');
   const decisionCatalog = createOpenRouterDecisionCatalog();
   const trustDecisions = createDecisionModel({
     configured: () =>
@@ -1478,11 +1480,14 @@ async function initializeApplication(
       return { question: result[appConfirmation] };
     return { reason: 'allowed', basis: { kind: 'approved' } };
   }
-  const trustCurator = adapters.trustCurator
-    ? ledger.curator(adapters.trustCurator)
-    : adapters.classificationCurator
-      ? ledger.curator(adapters.classificationCurator)
-      : curator;
+  const trustCurator =
+    (adapters.trustModel ?? 'selected') === 'selected'
+      ? onboardingCurator
+      : adapters.trustCurator
+        ? ledger.curator(adapters.trustCurator)
+        : adapters.classificationCurator
+          ? ledger.curator(adapters.classificationCurator)
+          : curator;
   const trust = createTrust({
     pool,
     ownerId,

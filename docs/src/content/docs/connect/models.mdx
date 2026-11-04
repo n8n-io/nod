@@ -239,12 +239,13 @@ Nod can use a decision model to check action permission, read confirmation repli
 
 Set `NOD_TRUST_MODEL` in the server configuration, then [apply the change](/deploy/configuration/#how-settings-work).
 
-| Value      | Action permission, strict app reads, and confirmation replies |
-| ---------- | ------------------------------------------------------------- |
-| `llm`      | A small LLM. This is the default.                             |
-| `decision` | The first available decision model, or a small LLM.           |
+| Value      | Action permission, strict app reads, and confirmation replies             |
+| ---------- | ------------------------------------------------------------------------- |
+| `selected` | Your selected model at its lowest reasoning setting. This is the default. |
+| `llm`      | A small LLM.                                                              |
+| `decision` | The first available decision model, or a small LLM.                       |
 
-The small LLM comes from your selected connection when it offers a known small model. Otherwise, Nod chooses a known small model from another connected service. It chooses before making a request. If no small model is available, the check cannot authorize an action. It never replaces the small checker with your larger chat model.
+For an audio model, `selected` uses the same-connection text companion shown under **Text support**. The small LLM comes from your selected connection when it offers a known small model. Otherwise, Nod chooses a known small model from another connected service. It chooses before making a request. If no small model is available, the check cannot authorize an action. It never replaces the small checker with your larger chat model.
 
 The small checker can have API costs. A free OpenRouter selection does not start a paid small checker. If no checker is available, Nod cannot approve an action. Check model charges in Usage.
 

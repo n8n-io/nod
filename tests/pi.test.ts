@@ -1890,8 +1890,8 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   direct.models!.apiKey = async () => 'fixture-router';
   await check(direct);
   assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
-  assert.equal(createDefaultAdapters({ NOD_FEEDBACK_ENABLED: 'false' }).trustModel, 'llm');
-  for (const mode of ['hybrid', 'selected', 'small', 'unknown'])
+  assert.equal(createDefaultAdapters({ NOD_FEEDBACK_ENABLED: 'false' }).trustModel, 'selected');
+  for (const mode of ['hybrid', 'small', 'unknown'])
     assert.throws(() =>
       createDefaultAdapters({ NOD_TRUST_MODEL: mode, NOD_FEEDBACK_ENABLED: 'false' }),
     );

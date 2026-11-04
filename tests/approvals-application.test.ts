@@ -412,6 +412,7 @@ test(
           },
         }),
         onboardingCurator: fixtureCurator,
+        trustModel: 'llm',
         trustCurator: {
           ...fixtureCurator,
           id: 'fixture-small',

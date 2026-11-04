@@ -39,7 +39,7 @@ Private preparation starts on its own for every connected app: it reads, prepare
 
 ## What the checker sees
 
-By default, the checker uses a small LLM. A server setting can prefer decision models, with the small LLM used when none is available. See [Select the action checker](/connect/models/#select-the-action-checker). One review covers every app action, reads included: run it, or ask you? To run something it must also name [what allows it](#because-you-said). Looking up which app tools exist reads no account data, so it runs without a check. A local chat model needs a connected small checker or a decision service for these checks.
+By default, the checker uses your selected model at its lowest reasoning setting. A server setting can choose a small LLM or prefer decision models instead. See [Select the action checker](/connect/models/#select-the-action-checker). One review covers every app action, reads included: run it, or ask you? To run something it must also name [what allows it](#because-you-said). Looking up which app tools exist reads no account data, so it runs without a check. With a [local model](/connect/local-models/), the default checker is that model, and smaller models decide less reliably.
 
 Reading your reply to a confirmation can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
 
