@@ -461,7 +461,7 @@ export function timeLeft(span = 45_000) {
 export async function resumableDownload(
   url,
   path,
-  { bytes, fetch: request = fetch, signal, save = true },
+  { bytes, fetch: request = fetch, signal, save = true, onData = () => {} },
 ) {
   const metadata = save ? await lstat(path).catch(() => undefined) : undefined;
   const start = metadata?.isFile() && metadata.size < bytes ? metadata.size : 0;
@@ -503,6 +503,7 @@ export async function resumableDownload(
       }
       let skip = resumed ? 0 : start;
       for await (const chunk of response.body) {
+        onData();
         const data = chunk.subarray(Math.min(skip, chunk.length));
         skip -= chunk.length - data.length;
         if (data.length) yield data;
@@ -578,6 +579,7 @@ function downloadRuntime(release, options) {
         fetch: options.fetch,
         signal: downloadSignal,
         save,
+        onData: alive,
       });
       download.stream.once('end', () => clearTimeout(timer));
       return download.stream;
