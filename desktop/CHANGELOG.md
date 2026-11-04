@@ -2,6 +2,33 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.5.1 - 2026-11-04
+
+### Features
+
+- **desktop:** Show runtime download progress and resume interrupted downloads. [#602](https://github.com/n8n-io/nod/pull/602) (9b4ed70)
+- **trust:** Add a decision safety gate with Jev. [commit](https://github.com/n8n-io/nod/commit/bf04eb70fcf06e44934262040f2803d2305af010) (bf04eb7)
+
+### Fixes
+
+- **trust:** Check actions with the selected model by default again. [#605](https://github.com/n8n-io/nod/pull/605) (525680c)
+- Task completion and handoff, memory replies, settings links and eval grading. [#599](https://github.com/n8n-io/nod/pull/599) (c9ce11f)
+- **web:** Always open chat after onboarding. [#600](https://github.com/n8n-io/nod/pull/600) (0a30c48)
+
+### Documentation
+
+- **desktop:** Say interrupted downloads resume in the tester help table. [#603](https://github.com/n8n-io/nod/pull/603) (8a3170a)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.5.0...525680cb9d925f19ba07f07165b152314437e28e)
+
+<details>
+<summary>Build details</summary>
+
+Source: `525680cb9d925f19ba07f07165b152314437e28e`
+Previous release: `nod-v0.5.0`
+
+</details>
+
 ## 0.5.0 - 2026-11-02
 
 ### Features
