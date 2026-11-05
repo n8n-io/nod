@@ -2057,7 +2057,11 @@ test('runtime download rejects corrupt bytes, cleans its download and allows a v
         return true;
       },
     );
-    assert.deepEqual(await readdir(damaged.cacheRoot), []);
+    assert.equal(await findRuntimeAssets(damaged), undefined);
+    await assert.rejects(stat(join(damaged.cacheRoot, damaged.release.id, '.ready.json')), {
+      code: 'ENOENT',
+    });
+    assert.ok((await readdir(damaged.cacheRoot)).every((name) => name === damaged.release.id));
   }
 });
 
