@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import {
   copyFile,
   access,
+  chmod,
   mkdtemp,
   mkdir,
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -2177,50 +2179,160 @@ finally:
   },
 );
 
+async function macRuntimePrepare(home, assets, overrides = {}) {
+  const { availablePort, execute, retainStopExecutable, waitFor } =
+    await import('../runtime/index.mjs');
+  const { guestConfiguration, protectGuest } = await import('../runtime/guest-config.mjs');
+  const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
+  return runInNewContext(
+    `${source.slice(source.indexOf('async function prepare('), source.indexOf('export async function preloadRuntimeImages('))}; prepare`,
+    {
+      process: { platform: 'darwin', arch: process.arch },
+      resolve,
+      join,
+      delimiter,
+      createHash,
+      randomBytes,
+      mkdir,
+      chmod,
+      readFile,
+      access,
+      writeFile,
+      rename,
+      homedir: () => home,
+      totalmem: () => 6 * 1024 ** 3,
+      hostCpus: () => [{}, {}],
+      guestConfiguration,
+      protectGuest,
+      availablePort,
+      retainStopExecutable,
+      fileHash: assetHash,
+      execute,
+      waitFor,
+      openRuntimeAssets: async () => ({
+        root: assets,
+        paths: [],
+        ready: async () => {},
+        done: Promise.resolve(assets),
+      }),
+      ...overrides,
+    },
+  );
+}
+
+test('Mac startup repairs existing guests before Docker and refuses failed or stopped protection', async (t) => {
+  const { protectGuest } = await import('../runtime/guest-config.mjs');
+  for (const outcome of ['ready', 'failed', 'aborted']) {
+    await t.test(outcome, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-guest-start-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const assets = join(root, 'assets');
+      const dataRoot = join(root, 'profile');
+      const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
+      const limaHome = join(root, '.nod-desktop', identity);
+      await mkdir(join(limaHome, 'nod'), { recursive: true });
+      await mkdir(join(assets, 'lima/bin'), { recursive: true });
+      await mkdir(join(dataRoot, 'desktop-runtime'), { recursive: true });
+      await writeFile(join(assets, 'lima/bin/limactl'), 'Synthetic Lima executable');
+      await writeFile(
+        join(assets, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          platform: `darwin-${process.arch}`,
+          guest: { file: 'guest.img', sha256: '1'.repeat(64) },
+          dockerGuest: { file: 'docker-guest.tar.gz', sha256: '2'.repeat(64) },
+          images: [],
+        }),
+      );
+      await writeFile(
+        join(dataRoot, 'desktop-runtime/state.json'),
+        JSON.stringify({ version: 1, limaHome, port: 54329, password: '3'.repeat(64) }),
+      );
+      await writeFile(
+        join(limaHome, 'nod/lima.yaml'),
+        JSON.stringify({
+          mounts: [{ location: assets, mountPoint: '/opt/nod-assets', writable: false }],
+        }),
+      );
+      const signal = new AbortController();
+      const calls = [];
+      const prepare = await macRuntimePrepare(root, assets, {
+        execute: async (command, args, options) => {
+          calls.push(args[0]);
+          if (args[0] === 'shell') {
+            assert.equal(calls.at(-2), 'start');
+            assert.deepEqual(Array.from(args), ['shell', 'nod', 'sudo', 'bash', '-s']);
+            assert.equal(options.input, protectGuest);
+            if (outcome === 'aborted') signal.abort(new Error('Synthetic stop'));
+            if (outcome !== 'ready')
+              throw Object.assign(new Error('Synthetic protection failure'), {
+                details: 'Synthetic parser error',
+              });
+          }
+          return '';
+        },
+        finishRuntime: async () => calls.push('database'),
+      });
+      const options = {
+        dataRoot,
+        resourcesPath: root,
+        preserveRuntimeCache: true,
+        signal: signal.signal,
+      };
+      if (outcome === 'ready') {
+        await prepare(options, () => calls.push('starting'));
+        assert.deepEqual(calls, ['starting', 'start', 'shell', 'info', 'database']);
+      } else {
+        await assert.rejects(
+          prepare(options, () => calls.push('starting')),
+          outcome === 'aborted'
+            ? /Synthetic stop/
+            : { code: 'NOD_COMPUTER_PROTECTION_FAILED', details: 'Synthetic parser error' },
+        );
+        assert.deepEqual(calls, ['starting', 'start', 'shell']);
+      }
+    });
+  }
+});
+
 test(
   'guest repair restores stacked process signals, keeps confinement and preserves PostgreSQL across a restart',
   { skip: process.platform !== 'darwin' || !process.env.NOD_TEST_GUEST_ASSETS },
   async (t) => {
-    const { homedir } = await import('node:os');
-    const { availablePort, execute } = await import('../runtime/index.mjs');
-    const { guestConfiguration, protectGuest } = await import('../runtime/guest-config.mjs');
+    const { execute } = await import('../runtime/index.mjs');
+    const { protectGuest } = await import('../runtime/guest-config.mjs');
     const assets = resolve(process.env.NOD_TEST_GUEST_ASSETS);
     const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
     const root = await realpath(await mkdtemp('/tmp/nod-guest-'));
+    const dataRoot = join(root, 'profile');
+    const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
     const lima = join(assets, 'lima/bin/limactl');
     const env = {
       PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-      HOME: homedir(),
-      LIMA_HOME: join(root, 'lima'),
+      HOME: root,
+      LIMA_HOME: join(root, '.nod-desktop', identity),
       LANG: 'en_US.UTF-8',
     };
     const run = (args, extra = {}) => execute(lima, args, { env, ...extra });
-    const shell = (input) => run(['shell', 'fixture', 'sudo', 'bash', '-s'], { input });
+    const shell = (input) => run(['shell', 'nod', 'sudo', 'bash', '-s'], { input });
     t.after(async () => {
-      await run(['delete', '--force', 'fixture']);
-      await rm(root, { recursive: true, force: true });
+      await run(['stop', '--force', 'nod']);
+      await run(['delete', '--force', 'nod']).finally(() =>
+        rm(root, { recursive: true, force: true }),
+      );
     });
-    const config = guestConfiguration({
-      assets,
-      imageDigest: manifest.guest.sha256,
-      port: await availablePort(),
-      memory: 3,
-      cpus: 2,
+    const prepare = await macRuntimePrepare(root, assets, {
+      finishRuntime: async ({ prepareImage }) => prepareImage('postgres'),
     });
-    const file = join(root, 'computer.json');
-    await writeFile(file, JSON.stringify(config));
-    await run(['create', '--name', 'fixture', '--tty=false', file], { timeout: 300_000 });
-    await run(['start', '--tty=false', 'fixture'], { timeout: 600_000 });
+    const options = { dataRoot, resourcesPath: root, preserveRuntimeCache: true };
+    await prepare(options, () => {});
     const image = manifest.images.find((image) => image.name === 'postgres');
     assert.match(image.id, /^sha256:[a-f0-9]{64}$/);
-    await shell(`/usr/local/bin/docker load --input /opt/nod-assets/images/postgres.tar.zst`);
-    await shell(protectGuest);
     const stack = `aa-exec -p 'docker-default//&unconfined' -- sh -c 'sleep 3 & child=$!; kill -TERM "$child" || exit 1; wait "$child"; test "$?" = 143'`;
-    await shell(
-      protectGuest
-        .replace('  signal (send,receive) peer="docker-default//&unconfined",\n', '')
-        .replace('  ptrace (trace,read,tracedby,readby) peer="docker-default//&unconfined",\n', ''),
-    );
+    const oldProtection = protectGuest
+      .replace('  signal (send,receive) peer="docker-default//&unconfined",\n', '')
+      .replace('  ptrace (trace,read,tracedby,readby) peer="docker-default//&unconfined",\n', '');
+    await shell(oldProtection);
     await assert.rejects(shell(stack), (error) => /Permission denied/.test(error.details));
     await shell(protectGuest);
     await shell(protectGuest);
@@ -2251,8 +2363,13 @@ $docker exec nod-database-fixture psql -U fixture -d fixture -v ON_ERROR_STOP=1 
 $docker stop --time 20 nod-database-fixture
 $docker rm nod-database-fixture
 `);
-    await run(['stop', '--tty=false', 'fixture'], { timeout: 120_000 });
-    await run(['start', '--tty=false', 'fixture'], { timeout: 600_000 });
+    await shell(oldProtection);
+    const vmConfigPath = join(env.LIMA_HOME, 'nod/lima.yaml');
+    const config = JSON.parse(await readFile(vmConfigPath, 'utf8'));
+    config.provision[0].script = config.provision[0].script.replace(protectGuest, oldProtection);
+    await writeFile(vmConfigPath, JSON.stringify(config));
+    await run(['stop', '--tty=false', 'nod'], { timeout: 120_000 });
+    await prepare(options, () => {});
     await shell(stack);
     assert.match(
       await shell(`${start}

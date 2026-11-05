@@ -96,13 +96,14 @@ Wait for a controlled frame to finish loading before checking an old control bin
 
 ## Mac guest protection
 
-This check creates a disposable Lima VM from a prepared runtime pack. It tests stacked AppArmor signals, mount restrictions, and PostgreSQL data after a restart. It does not use your Nod profile or connected accounts. The check needs 3 GiB of VM memory and removes its VM when it finishes.
+Run this check on a Mac with Docker running. It creates a disposable Lima VM from a prepared runtime pack. It tests normal startup, stacked AppArmor signals, mount restrictions, and PostgreSQL data after a restart with the old profile restored. It does not use your Nod profile or connected accounts. The check needs 3 GiB of VM memory. It stops the VM before deleting its files. If the VM cannot stop, the check keeps its control files for recovery.
 
 ```sh title="Terminal"
-NOD_TEST_GUEST_ASSETS=/absolute/path/to/runtime-assets node --test --test-name-pattern='guest repair' desktop/test/runtime-assets.test.mjs
+pnpm run desktop:prepare
+NOD_TEST_GUEST_ASSETS="$PWD/.local/desktop-runtime-assets" node --test --test-name-pattern='guest repair' desktop/test/runtime-assets.test.mjs
 ```
 
-The normal desktop tests skip this check when `NOD_TEST_GUEST_ASSETS` is absent.
+The normal desktop tests skip this check when `NOD_TEST_GUEST_ASSETS` is absent or the host is not macOS.
 
 ## Write tests that catch real regressions
 
