@@ -41,8 +41,9 @@ import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createReadinessNotice, createUnreadBadge, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createArtifactFiles } from '../main/artifact-files.mjs';
-import { createDesktopLifecycle } from '../main/lifecycle.mjs';
+import { createDesktopLifecycle, startupErrorDetails } from '../main/lifecycle.mjs';
 import { createMacEncryption } from '../main/mac-encryption.mjs';
+import { waitFor } from '../runtime/index.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 
@@ -602,6 +603,7 @@ async function runningDesktop(
     createUnreadBadge,
     isQuietTime,
     watchAssistantMessages: () => () => {},
+    startupErrorDetails,
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
         ...options,
@@ -2332,6 +2334,53 @@ test('completed backend onboarding resumes required native preferences without c
     assert.ok(recovery);
     assert.equal(new URL(recovery.url).searchParams.get('preferences'), 'required');
     assert.ok(f.windows.every((window) => !window.url?.includes('welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('startup reports nested network failures, removes secrets and waits for an explicit retry', async (t) => {
+  let attempts = 0;
+  const socket = Object.assign(new Error('Synthetic socket failure sk-syntheticPrivateKey'), {
+    code: 'ECONNRESET',
+    privateValue: 'synthetic-private-property',
+  });
+  const failure = new TypeError('fetch failed', { cause: new AggregateError([socket]) });
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    prepareRuntime: async () => {
+      if (++attempts === 1) throw new Error('The runtime download failed.', { cause: failure });
+      return { env: {} };
+    },
+  });
+  try {
+    await f.launch();
+    await f.settle();
+    await f.prepare();
+    assert.equal(f.status().phase, 'error');
+    for (const details of [f.status().details, f.status().runtime.details]) {
+      assert.match(details, /ECONNRESET/);
+      assert.match(details, /Synthetic socket failure \[redacted\]/);
+      assert.equal(details.includes('syntheticPrivateKey'), false);
+      assert.equal(details.includes('synthetic-private-property'), false);
+    }
+    const log = await waitFor(
+      async () => {
+        const value = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
+        assert.match(value, /ECONNRESET/);
+        return value;
+      },
+      { attempts: 40, interval: 25 },
+    );
+    assert.match(log, /ECONNRESET/);
+    assert.equal(log.includes('syntheticPrivateKey'), false);
+    assert.equal(log.includes('synthetic-private-property'), false);
+    assert.equal(attempts, 1);
+    assert.equal(f.children.length, 0);
+    await f.prepare({ retry: true });
+    assert.equal(attempts, 2);
+    assert.equal(f.status().phase, 'ready');
   } finally {
     await f.close();
   }

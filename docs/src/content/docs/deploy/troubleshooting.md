@@ -73,6 +73,8 @@ Retry first. Do not delete the profile, VM, database, or runtime cache by hand t
 
 On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
 
+On a Mac, **Technical details** and the startup log also show the cause of a runtime download failure. This includes a connection error inside `fetch failed` or a damaged archive error. Select **Try again** after you restore the connection. Nod resumes an interrupted download from the saved part.
+
 Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.

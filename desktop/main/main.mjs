@@ -43,7 +43,7 @@ import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { registerArtifactFileHandlers } from './artifact-file-handlers.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
-import { createDesktopLifecycle } from './lifecycle.mjs';
+import { createDesktopLifecycle, startupErrorDetails } from './lifecycle.mjs';
 import { createMacEncryption } from './mac-encryption.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 import { windowsInstallCommand } from './windows-update.mjs';
@@ -1845,7 +1845,7 @@ async function prepare(options = {}) {
     return lifecycle.start({ retry: options?.retry === true });
   })()
     .catch((error) => {
-      void writeDiagnostic(error.message).catch(() => {});
+      void writeDiagnostic(startupErrorDetails(error)).catch(() => {});
       const deferred =
         error.code === 'NOD_RESTART_DEFERRED' &&
         engine &&
@@ -1856,9 +1856,7 @@ async function prepare(options = {}) {
         phase: deferred ? 'ready' : 'error',
         message: bounded(error.message),
         error: bounded(error.message),
-        details: [error.code, error.stack || error.message, error.details]
-          .filter(Boolean)
-          .join('\n'),
+        details: startupErrorDetails(error),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
         needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',

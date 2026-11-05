@@ -325,7 +325,8 @@ function unpackRuntime(
         transform(chunk, encoding, callback) {
           received += chunk.length;
           onBytes();
-          if (received > release.archive.bytes) return callback(new Error(failure));
+          if (received > release.archive.bytes)
+            return callback(new Error('The runtime archive exceeds its expected size.'));
           archive.update(chunk);
           if (Date.now() - reported > 250) {
             reported = Date.now();
@@ -372,7 +373,8 @@ function unpackRuntime(
             createWriteStream(path, { flags: 'wx', mode: 0o600 }),
             { signal },
           ).then(async () => {
-            if (hash.digest('hex') !== file.sha256) throw new Error(failure);
+            if (hash.digest('hex') !== file.sha256)
+              throw new Error(`The runtime file failed its SHA-256 check: ${file.path}.`);
             await chmod(path, file.mode);
             files.get(file.path).resolve();
           });
@@ -390,7 +392,13 @@ function unpackRuntime(
         throw new Error(failure, { cause: error });
       }
       if (received !== release.archive.bytes || archive.digest('hex') !== release.archive.sha256)
-        throw new Error(failure);
+        throw new Error(failure, {
+          cause: new Error(
+            received !== release.archive.bytes
+              ? 'The runtime archive size does not match its release.'
+              : 'The runtime archive failed its SHA-256 check.',
+          ),
+        });
       if (invalid || expected.size) throw new Error('The runtime pack contains unexpected files.');
       await writeFile(join(root, '.ready.json'), JSON.stringify({ id: release.id }), {
         mode: 0o600,
