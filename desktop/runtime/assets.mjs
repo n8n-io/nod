@@ -443,9 +443,9 @@ function unpackRuntime(
             entry.resume();
             return;
           }
-          const path = join(root, file.path);
+          const target = join(root, file.path);
           const reused = published.has(file.path);
-          const staged = join(temporary, String(writes.length));
+          const path = reused ? target : join(temporary, String(writes.length));
           const hash = createHash('sha256');
           const write = pipeline(
             entry,
@@ -457,13 +457,13 @@ function unpackRuntime(
             }),
             reused
               ? new Writable({ write: (chunk, encoding, callback) => callback() })
-              : createWriteStream(staged, { flags: 'wx', mode: 0o600 }),
+              : createWriteStream(path, { flags: 'wx', mode: 0o600 }),
             { signal: writeSignal },
           ).then(async () => {
             if (hash.digest('hex') !== file.sha256) throw new Error(failure);
+            await chmod(path, file.mode);
             if (!reused) {
-              await chmod(staged, file.mode);
-              await rename(staged, path);
+              await rename(path, target);
               published.add(file.path);
             }
             files.get(file.path).resolve();
