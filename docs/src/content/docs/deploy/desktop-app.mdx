@@ -80,7 +80,8 @@ If the user finishes first, an animated Nod logo stays visible until the workspa
 The app download is small. Local setup downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
 
 - Nod unpacks the archive while it downloads. It uses each file only after that file matches its SHA-256 in the release, and treats the pack as installed only once the archive size and SHA-256 match too. On a Mac, the private computer starts while the container images are still downloading.
-- On a Mac, before it installs, Nod checks free space for the extracted files plus 512 MiB.
+- On a Mac, before it installs, Nod checks free space for the files it still needs to install plus 512 MiB.
+- Nod keeps each verified file in place if a later part of the pack fails or you cancel setup. An explicit retry checks and reuses those files. Unverified extracted files stay in a temporary folder, which Nod removes after the attempt ends. The whole archive must still pass its checks before the pack is ready.
 - A slow download keeps going for as long as data arrives. If no data arrives for five minutes, the download stops and you can retry.
 - If the download stops, or you quit Nod, Nod keeps the downloaded part next to the pack, and the next try asks the server for only the rest. A server that won't send part of the file sends all of it, and Nod skips the bytes it already has. Nod deletes the saved part once the pack is installed, or when the finished pack fails its check, so the next try starts over. On a Mac, Nod keeps the saved part only when there's room for the rest of the download as well as the extracted files.
 - On a Mac, Nod checks every extracted file. Verified packs live in `~/Library/Application Support/nod/runtime/<release>`. The VM mounts them read-only. After the VM starts, Nod deletes packs that no Nod VM mounts and that are more than a day old, so a downloaded update waits for its restart.

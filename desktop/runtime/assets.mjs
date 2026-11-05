@@ -16,7 +16,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { createGunzip } from 'node:zlib';
@@ -97,6 +97,14 @@ export function validateRuntimeRelease(release) {
     ].some((path) => !paths.has(path))
   )
     throw new Error('The Nod runtime file manifest is incomplete.');
+  for (const path of paths)
+    if (
+      path
+        .split('/')
+        .slice(0, -1)
+        .some((_, index, parts) => paths.has(parts.slice(0, index + 1).join('/')))
+    )
+      throw new Error('The Nod runtime file manifest has conflicting paths.');
   if (createHash('sha256').update(JSON.stringify(release.files)).digest('hex') !== release.id)
     throw new Error('The Nod runtime content identifier does not match its files.');
   if (release.url) {
@@ -137,9 +145,23 @@ export async function removeUnusedRuntimes({
   return removed;
 }
 
+function runtimeDirectories(root, release) {
+  const directories = new Set([root]);
+  for (const file of release.files) {
+    let directory = root;
+    for (const part of file.path.split('/').slice(0, -1)) {
+      directory = join(directory, part);
+      directories.add(directory);
+    }
+  }
+  return directories;
+}
+
 async function verifiedCache(release, signal, cacheRoot) {
   const root = runtimeCacheRoot(release, cacheRoot);
   try {
+    for (const directory of runtimeDirectories(root, release))
+      if (!(await lstat(directory)).isDirectory()) return undefined;
     const marker = JSON.parse(await readFile(join(root, '.ready.json'), 'utf8'));
     if (marker.id !== release.id) return undefined;
     for (const file of release.files) {
@@ -193,18 +215,54 @@ async function verifyFiles(root, release, signal) {
   }
 }
 
+async function reusableFiles(root, release, signal) {
+  const paths = new Set(release.files.map((file) => join(root, file.path)));
+  const directories = runtimeDirectories(root, release);
+  if (!(await lstat(root).catch(() => undefined))?.isDirectory())
+    await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  async function clean(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (directories.has(path) && entry.isDirectory()) await clean(path);
+      else if (!paths.has(path) || !entry.isFile())
+        await rm(path, { recursive: true, force: true });
+    }
+  }
+  await clean(root);
+  for (const directory of directories) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const reused = new Set();
+  for (const file of release.files) {
+    signal?.throwIfAborted();
+    const path = join(root, file.path);
+    const metadata = await lstat(path).catch(() => undefined);
+    if (
+      metadata?.isFile() &&
+      metadata.size === file.bytes &&
+      (metadata.mode & 0o7777) === file.mode &&
+      (await assetHash(path, signal)) === file.sha256
+    )
+      reused.add(file.path);
+    else await rm(path, { force: true });
+  }
+  return reused;
+}
+
 async function freeSpace(directory, inspectDisk) {
   const { bavail, bsize } = await inspectDisk(directory, { bigint: true });
   return bavail > 0n ? bavail * bsize : 0n;
 }
 
-function installSpace(release) {
-  return BigInt(release.files.reduce((total, file) => total + file.bytes, 0) + 512 * 1024 ** 2);
+function installSpace(release, reused = new Set()) {
+  return BigInt(
+    release.files.reduce((total, file) => total + (reused.has(file.path) ? 0 : file.bytes), 0) +
+      512 * 1024 ** 2,
+  );
 }
 
-async function requireDiskSpace(release, directory, inspectDisk) {
+async function requireDiskSpace(release, directory, inspectDisk, reused) {
   const available = await freeSpace(directory, inspectDisk);
-  const required = installSpace(release);
+  const required = installSpace(release, reused);
   if (available < required)
     throw Object.assign(
       new Error(
@@ -224,7 +282,21 @@ function installationError(error) {
   );
 }
 
-async function install(
+function install(release, populate, options) {
+  const root = runtimeCacheRoot(release, options.cacheRoot);
+  if (pending.has(root)) return pending.get(root).done;
+  const done = installFiles(release, populate, options);
+  pending.set(root, {
+    root,
+    paths: release.files.map((file) => file.path),
+    ready: () => done,
+    done,
+  });
+  done.catch(() => {}).finally(() => pending.delete(root));
+  return done;
+}
+
+async function installFiles(
   release,
   populate,
   { onStatus = () => {}, signal, cacheRoot, inspectDisk = statfs } = {},
@@ -236,17 +308,25 @@ async function install(
   try {
     signal?.throwIfAborted();
     await mkdir(dirname(root), { recursive: true, mode: 0o700 });
-    await requireDiskSpace(release, dirname(root), inspectDisk);
+    const published = await reusableFiles(root, release, signal);
+    await requireDiskSpace(release, dirname(root), inspectDisk, published);
     await mkdir(temporary, { mode: 0o700 });
-    await populate(temporary);
+    const missing = {
+      ...release,
+      files: release.files.filter((file) => !published.has(file.path)),
+    };
+    await populate(temporary, published);
     onStatus({ phase: 'verifying', message: 'Checking your local computer…' });
-    await verifyFiles(temporary, release, signal);
-    await writeFile(join(temporary, '.ready.json'), JSON.stringify({ id: release.id }), {
+    await verifyFiles(temporary, missing, signal);
+    for (const file of missing.files) {
+      signal?.throwIfAborted();
+      await rename(join(temporary, file.path), join(root, file.path));
+      published.add(file.path);
+    }
+    await writeFile(join(root, '.ready.json'), JSON.stringify({ id: release.id }), {
       mode: 0o600,
     });
     signal?.throwIfAborted();
-    await rm(root, { recursive: true, force: true });
-    await rename(temporary, root);
     return root;
   } catch (error) {
     throw installationError(error);
@@ -267,8 +347,9 @@ export async function seedRuntimeCache({
   if (!release) throw new Error('This build has no managed runtime release.');
   return install(
     release,
-    async (target) => {
+    async (target, reused) => {
       for (const file of release.files) {
+        if (reused.has(file.path)) continue;
         signal?.throwIfAborted();
         const origin = join(source, file.path);
         if (!(await lstat(origin)).isFile())
@@ -298,20 +379,23 @@ function unpackRuntime(
   const root = runtimeCacheRoot(release, cacheRoot);
   if (pending.has(root)) return pending.get(root);
   const files = new Map(release.files.map((file) => [file.path, Promise.withResolvers()]));
+  const temporary = `${root}.install-${randomBytes(6).toString('hex')}`;
   for (const file of files.values()) file.promise.catch(() => {});
   const done = (async () => {
     const existing = await verifiedCache(release, signal, cacheRoot);
     if (existing) return existing;
+    const writes = [];
+    const writing = new AbortController();
+    const writeSignal = signal ? AbortSignal.any([signal, writing.signal]) : writing.signal;
     try {
       signal?.throwIfAborted();
       await mkdir(dirname(root), { recursive: true, mode: 0o700 });
-      await rm(root, { recursive: true, force: true });
-      await requireDiskSpace(release, dirname(root), inspectDisk);
-      for (const directory of new Set(release.files.map((file) => dirname(join(root, file.path)))))
-        await mkdir(directory, { recursive: true, mode: 0o700 });
+      const published = await reusableFiles(root, release, signal);
+      for (const path of published) files.get(path).resolve();
+      await requireDiskSpace(release, dirname(root), inspectDisk, published);
+      await mkdir(temporary, { mode: 0o700 });
       onStatus({ phase: 'installing', message, progress: 0 });
       const expected = new Map(release.files.map((file) => [file.path, file]));
-      const writes = [];
       let invalid = false;
       let expanded = 0;
       let received = 0;
@@ -360,6 +444,8 @@ function unpackRuntime(
             return;
           }
           const path = join(root, file.path);
+          const reused = published.has(file.path);
+          const staged = join(temporary, String(writes.length));
           const hash = createHash('sha256');
           const write = pipeline(
             entry,
@@ -369,18 +455,24 @@ function unpackRuntime(
                 callback(null, chunk);
               },
             }),
-            createWriteStream(path, { flags: 'wx', mode: 0o600 }),
-            { signal },
+            reused
+              ? new Writable({ write: (chunk, encoding, callback) => callback() })
+              : createWriteStream(staged, { flags: 'wx', mode: 0o600 }),
+            { signal: writeSignal },
           ).then(async () => {
             if (hash.digest('hex') !== file.sha256) throw new Error(failure);
-            await chmod(path, file.mode);
+            if (!reused) {
+              await chmod(staged, file.mode);
+              await rename(staged, path);
+              published.add(file.path);
+            }
             files.get(file.path).resolve();
           });
           write.catch(() => {});
           writes.push(write);
         },
       });
-      const input = await source();
+      const input = await source(published);
       try {
         await pipeline(input, counted, createGunzip(), bounded, parser, { signal });
         await Promise.all(writes);
@@ -398,9 +490,12 @@ function unpackRuntime(
       await finish();
       return root;
     } catch (error) {
-      await rm(root, { recursive: true, force: true });
+      writing.abort(error);
+      await Promise.allSettled(writes);
       await finish(error);
       throw installationError(error);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
     }
   })();
   done.then(
@@ -568,12 +663,12 @@ function downloadRuntime(release, options) {
   let download;
   const assets = unpackRuntime(
     release,
-    async () => {
+    async (reused) => {
       alive();
       const saved = (await lstat(partial).catch(() => undefined))?.size ?? 0;
       const save =
         (await freeSpace(dirname(root), inspectDisk)) >=
-        installSpace(release) + BigInt(Math.max(0, total - saved));
+        installSpace(release, reused) + BigInt(Math.max(0, total - saved));
       download = await resumableDownload(url, partial, {
         bytes: total,
         fetch: options.fetch,

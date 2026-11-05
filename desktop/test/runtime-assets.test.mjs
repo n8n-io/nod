@@ -35,6 +35,7 @@ import {
   findRuntimeAssets,
   installRuntimeArchive,
   openRuntimeAssets,
+  seedRuntimeCache,
 } from '../runtime/assets.mjs';
 import {
   automaticRelease,
@@ -1827,7 +1828,13 @@ test('runtime extraction rejects traversal, symlinks and oversized content witho
   });
   await assert.rejects(installRuntimeArchive(options));
   assert.equal(await readFile(join(options.root, 'outside.txt'), 'utf8'), 'unchanged');
-  assert.deepEqual(await readdir(options.cacheRoot), []);
+  assert.equal(await findRuntimeAssets(options), undefined);
+  await assert.rejects(stat(join(options.cacheRoot, options.release.id, '.ready.json')), {
+    code: 'ENOENT',
+  });
+  await assert.rejects(stat(join(options.cacheRoot, options.release.id, 'outside.txt')), {
+    code: 'ENOENT',
+  });
   for (const extra of [
     async ({ source }) => {
       await symlink('/tmp/nod-outside-fixture', join(source, 'unexpected'));
@@ -1840,7 +1847,14 @@ test('runtime extraction rejects traversal, symlinks and oversized content witho
   ]) {
     const rejected = await fixture(t, extra);
     await assert.rejects(installRuntimeArchive(rejected));
-    assert.deepEqual(await readdir(rejected.cacheRoot), []);
+    assert.equal(await findRuntimeAssets(rejected), undefined);
+    await assert.rejects(stat(join(rejected.cacheRoot, rejected.release.id, '.ready.json')), {
+      code: 'ENOENT',
+    });
+    for (const name of ['unexpected', 'oversized'])
+      await assert.rejects(stat(join(rejected.cacheRoot, rejected.release.id, name)), {
+        code: 'ENOENT',
+      });
   }
 });
 
@@ -1893,7 +1907,11 @@ test('runtime installation refuses insufficient storage without removing saved c
     }),
     { code: 'RUNTIME_DISK_SPACE' },
   );
-  assert.deepEqual(await readdir(options.cacheRoot), ['previous-runtime']);
+  assert.deepEqual(
+    await readdir(options.cacheRoot),
+    [options.release.id, 'previous-runtime'].sort(),
+  );
+  assert.equal(await findRuntimeAssets(options), undefined);
   assert.equal(await readFile(join(saved, 'saved'), 'utf8'), 'preserved');
   assert.equal(await assetHash(options.archivePath), archiveHash);
   const installed = await installRuntimeArchive({
@@ -1918,7 +1936,11 @@ test('runtime download rejects an insecure redirect without fetching it or leavi
   );
   await assert.rejects(ensureRuntimeAssets(options));
   assert.equal(request.mock.callCount(), 1);
-  assert.deepEqual(await readdir(options.cacheRoot), []);
+  assert.deepEqual(await readdir(options.cacheRoot), [options.release.id]);
+  for (const file of options.release.files)
+    await assert.rejects(stat(join(options.cacheRoot, options.release.id, file.path)), {
+      code: 'ENOENT',
+    });
 });
 
 test('runtime files become ready only after their own bytes verify, and a mismatched file never does', async (t) => {
@@ -1946,7 +1968,11 @@ test('runtime files become ready only after their own bytes verify, and a mismat
   });
   await assert.rejects(rejected.ready(tampered.release.files[1].path));
   await assert.rejects(rejected.done);
-  assert.deepEqual(await readdir(tampered.cacheRoot), []);
+  assert.equal(await findRuntimeAssets(tampered), undefined);
+  await assert.rejects(stat(join(rejected.root, tampered.release.files[1].path)), {
+    code: 'ENOENT',
+  });
+  await assert.rejects(stat(join(rejected.root, '.ready.json')), { code: 'ENOENT' });
 });
 
 test('runtime download keeps a slow connection going and resumes its saved bytes after data stops arriving', async (t) => {
@@ -1995,7 +2021,10 @@ test('runtime download keeps a slow connection going and resumes its saved bytes
     });
     await assert.rejects(stuck.done, /stopped receiving data/);
     const partial = `${stalled.release.id}.${stalled.release.archive.sha256.slice(0, 12)}.download`;
-    assert.deepEqual(await readdir(stalled.cacheRoot), [partial]);
+    const saved = await readdir(stalled.cacheRoot);
+    assert.ok(saved.includes(partial));
+    assert.ok(saved.every((name) => [partial, stalled.release.id].includes(name)));
+    assert.equal(await findRuntimeAssets(stalled), undefined);
     const ranges = [];
     const resumed = await openRuntimeAssets({
       ...stalled,
@@ -2033,7 +2062,8 @@ test('runtime download rejects corrupt bytes, cleans its download and allows a v
   corrupt[30] ^= 1;
   const request = t.mock.method(globalThis, 'fetch', async () => new Response(corrupt));
   await assert.rejects(ensureRuntimeAssets(options));
-  assert.deepEqual(await readdir(options.cacheRoot), []);
+  assert.deepEqual(await readdir(options.cacheRoot), [options.release.id]);
+  assert.equal(await findRuntimeAssets(options), undefined);
   request.mock.mockImplementation(async () => new Response(bytes));
   const installed = await ensureRuntimeAssets(options);
   assert.equal(await findRuntimeAssets(options), installed);
@@ -2295,6 +2325,145 @@ test('Mac startup repairs existing guests before Docker and refuses failed or st
   }
 });
 
+test('Mac image loading keeps verified files through late pack failure and explicit retry', async (t) => {
+  for (const outcome of ['connection', 'cancelled', 'checksum']) {
+    for (const retry of ['download', 'archive', 'directory']) {
+      await t.test(`${outcome}: ${retry}`, async (t) => {
+        const options = await fixture(t);
+        const file = 'images/workspace.tar.zst';
+        const image = {
+          name: 'workspace',
+          file,
+          reference: 'nod-workspace:fixture',
+          id: `sha256:${'4'.repeat(64)}`,
+          sha256: createHash('sha256').update('Synthetic image').digest('hex'),
+        };
+        await mkdir(join(options.source, 'images'));
+        await writeFile(join(options.source, file), 'Synthetic image');
+        await writeFile(
+          join(options.source, 'manifest.json'),
+          JSON.stringify({
+            version: 1,
+            platform: `darwin-${process.arch}`,
+            guest: { file: 'guest.img', sha256: '1'.repeat(64) },
+            dockerGuest: { file: 'docker-guest.tar.gz', sha256: '2'.repeat(64) },
+            images: [image],
+          }),
+        );
+        options.release.files.push({ path: file, mode: 0o644 });
+        for (const item of options.release.files) {
+          item.bytes = (await stat(join(options.source, item.path))).size;
+          item.sha256 = await assetHash(join(options.source, item.path));
+        }
+        options.release.id = createHash('sha256')
+          .update(JSON.stringify(options.release.files))
+          .digest('hex');
+        await create(
+          {
+            cwd: options.source,
+            file: options.archivePath,
+            portable: true,
+            noMtime: true,
+            gzip: true,
+          },
+          options.release.files.map((item) => item.path),
+        );
+        options.release.archive = {
+          bytes: (await stat(options.archivePath)).size,
+          sha256: await assetHash(options.archivePath),
+        };
+        await writeFile(
+          join(options.resourcesPath, 'runtime-release.json'),
+          JSON.stringify(options.release),
+        );
+        let connection;
+        const stream = new ReadableStream({ start: (controller) => (connection = controller) });
+        const controller = new AbortController();
+        let requests = 0;
+        const assets = await openRuntimeAssets({
+          ...options,
+          release:
+            outcome === 'checksum'
+              ? {
+                  ...options.release,
+                  archive: { ...options.release.archive, sha256: 'f'.repeat(64) },
+                }
+              : options.release,
+          signal: controller.signal,
+          downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+          fetch: async (url, { signal }) => {
+            requests++;
+            signal.addEventListener('abort', () => connection.error(signal.reason), { once: true });
+            return new Response(stream);
+          },
+        });
+        connection.enqueue(await readFile(options.archivePath));
+        const interruption = new Error('Synthetic connection reset');
+        let downloadError;
+        let inode;
+        let loaded = false;
+        const prepare = await macRuntimePrepare(options.root, assets.root, {
+          openRuntimeAssets: async () => assets,
+          execute: async (command, args) => {
+            if (args[0] === 'image') {
+              if (loaded) return image.id;
+              throw new Error('Synthetic image is not installed.');
+            }
+            if (args.includes('load')) {
+              inode = (await stat(join(assets.root, file))).ino;
+              if (outcome === 'connection') connection.error(interruption);
+              else if (outcome === 'cancelled') controller.abort(interruption);
+              else connection.close();
+              await assets.done.catch((error) => (downloadError = error));
+              assert.equal(await assetHash(join(assets.root, file)), image.sha256);
+              loaded = true;
+            }
+            return '';
+          },
+          finishRuntime: async ({ prepareImage, runtimeReady }) => {
+            await prepareImage('workspace');
+            await runtimeReady;
+          },
+        });
+        await assert.rejects(
+          prepare(
+            {
+              dataRoot: join(options.root, 'profile'),
+              resourcesPath: options.root,
+              preserveRuntimeCache: true,
+            },
+            () => {},
+          ),
+          (error) => {
+            assert.equal(error, downloadError);
+            return true;
+          },
+        );
+        assert.equal(loaded, true);
+        assert.equal(requests, 1);
+        assert.equal(await findRuntimeAssets(options), undefined);
+        await assert.rejects(stat(join(assets.root, '.ready.json')), { code: 'ENOENT' });
+        options.inspectDisk = async () => ({ bavail: 512n * 1024n ** 2n, bsize: 1n });
+        if (retry === 'archive') await installRuntimeArchive(options);
+        else if (retry === 'directory') await seedRuntimeCache(options);
+        else
+          await ensureRuntimeAssets({
+            ...options,
+            downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+            fetch: async () => {
+              requests++;
+              return new Response(await readFile(options.archivePath));
+            },
+          });
+        assert.equal((await stat(join(assets.root, file))).ino, inode);
+        assert.equal(await assetHash(join(assets.root, file)), image.sha256);
+        assert.equal(await findRuntimeAssets(options), assets.root);
+        assert.equal(requests, retry === 'download' ? 2 : 1);
+      });
+    }
+  }
+});
+
 test(
   'guest repair restores stacked process signals, keeps confinement and preserves PostgreSQL across a restart',
   { skip: process.platform !== 'darwin' || !process.env.NOD_TEST_GUEST_ASSETS },
@@ -2421,6 +2590,89 @@ test('runtime cache reuse rejects same-size noncritical changes and executable-m
   await installRuntimeArchive(options);
   assert.equal((await stat(target)).mode & 0o7777, 0o755);
   assert.equal(await findRuntimeAssets(options), installed);
+});
+
+test('runtime cache repair refuses symlinks, directories and changed bytes without changing an outside target', async (t) => {
+  for (const changed of ['root', 'parent', 'file', 'directory', 'bytes']) {
+    await t.test(changed, async (t) => {
+      const options = await fixture(t);
+      const root = await installRuntimeArchive(options);
+      const file = join(root, 'lima/bin/limactl');
+      const outside = join(options.root, 'outside');
+      await mkdir(outside);
+      await writeFile(join(outside, 'keep'), 'Synthetic outside file');
+      const target = join(outside, 'target');
+      if (changed === 'root' || changed === 'parent') {
+        const path = changed === 'root' ? root : join(root, 'lima');
+        await rename(path, target);
+        await symlink(target, path, 'dir');
+      } else if (changed === 'file') {
+        await copyFile(file, target);
+        await rm(file);
+        await symlink(target, file);
+      } else if (changed === 'directory') {
+        await rm(file);
+        await mkdir(file);
+      } else {
+        const bytes = await readFile(file);
+        bytes[0] ^= 1;
+        await writeFile(file, bytes);
+      }
+      const outsideInode = (await stat(target).catch(() => undefined))?.ino;
+      assert.equal(await findRuntimeAssets(options), undefined);
+      await installRuntimeArchive(options);
+      assert.equal(await findRuntimeAssets(options), root);
+      assert.equal(await assetHash(file), options.release.files[1].sha256);
+      assert.equal(await readFile(join(outside, 'keep'), 'utf8'), 'Synthetic outside file');
+      if (outsideInode !== undefined) assert.equal((await stat(target)).ino, outsideInode);
+    });
+  }
+});
+
+test('cancelling cache revalidation keeps files published by an earlier attempt', async (t) => {
+  for (const retry of [installRuntimeArchive, seedRuntimeCache]) {
+    const options = await fixture(t);
+    const root = await installRuntimeArchive(options);
+    const file = join(root, 'manifest.json');
+    const inode = (await stat(file)).ino;
+    await rm(join(root, '.ready.json'));
+    const controller = new AbortController();
+    const check = controller.signal.throwIfAborted.bind(controller.signal);
+    const interruption = new Error('Synthetic cancelled revalidation');
+    let checks = 0;
+    t.mock.method(controller.signal, 'throwIfAborted', () => {
+      if (++checks === 3) controller.abort(interruption);
+      check();
+    });
+    await assert.rejects(
+      retry({ ...options, signal: controller.signal }),
+      (error) => error === interruption,
+    );
+    assert.equal((await stat(file)).ino, inode);
+    assert.equal(await assetHash(file), options.release.files[0].sha256);
+    assert.equal(await findRuntimeAssets(options), undefined);
+    await retry(options);
+    assert.equal((await stat(file)).ino, inode);
+    assert.equal(await findRuntimeAssets(options), root);
+  }
+});
+
+test('directory installation shares its pending runtime with a concurrent download request', async (t) => {
+  const options = await fixture(t);
+  let downloading;
+  const root = await seedRuntimeCache({
+    ...options,
+    onStatus: () => {
+      downloading = openRuntimeAssets({
+        ...options,
+        downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+        fetch: () => assert.fail('A pending directory install must not start a download.'),
+      });
+    },
+  });
+  const assets = await downloading;
+  assert.equal(await assets.done, root);
+  assert.equal(await findRuntimeAssets(options), root);
 });
 
 test('a failed runtime command names its cause from the end of its output, including WSL errors', async () => {
@@ -3727,7 +3979,11 @@ test('a different verified runtime downloads into its own cache, survives corrup
   };
   await assert.rejects(prepareRuntimeUpdate(next.release, options));
   assert.equal(await findRuntimeAssets(current), installed);
-  assert.deepEqual(await readdir(current.cacheRoot), [current.release.id]);
+  assert.deepEqual(
+    (await readdir(current.cacheRoot)).sort(),
+    [current.release.id, next.release.id].sort(),
+  );
+  assert.equal(await findRuntimeAssets({ ...options, release: next.release }), undefined);
   corrupt = false;
   const prepared = await prepareRuntimeUpdate(next.release, options);
   assert.notEqual(prepared, installed);
