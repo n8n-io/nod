@@ -94,6 +94,16 @@ The network has no internet access, and your source folders are mounted read-onl
 
 Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
 
+## Mac guest protection
+
+This check creates a disposable Lima VM from a prepared runtime pack. It tests stacked AppArmor signals, mount restrictions, and PostgreSQL data after a restart. It does not use your Nod profile or connected accounts. The check needs 3 GiB of VM memory and removes its VM when it finishes.
+
+```sh title="Terminal"
+NOD_TEST_GUEST_ASSETS=/absolute/path/to/runtime-assets node --test --test-name-pattern='guest repair' desktop/test/runtime-assets.test.mjs
+```
+
+The normal desktop tests skip this check when `NOD_TEST_GUEST_ASSETS` is absent.
+
 ## Write tests that catch real regressions
 
 Add a test only when it would catch a real regression in one of these areas. Extend the existing file for that area instead of adding a new one.

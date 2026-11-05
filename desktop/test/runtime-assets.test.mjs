@@ -2177,6 +2177,93 @@ finally:
   },
 );
 
+test(
+  'guest repair restores stacked process signals, keeps confinement and preserves PostgreSQL across a restart',
+  { skip: process.platform !== 'darwin' || !process.env.NOD_TEST_GUEST_ASSETS },
+  async (t) => {
+    const { homedir } = await import('node:os');
+    const { availablePort, execute } = await import('../runtime/index.mjs');
+    const { guestConfiguration, protectGuest } = await import('../runtime/guest-config.mjs');
+    const assets = resolve(process.env.NOD_TEST_GUEST_ASSETS);
+    const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
+    const root = await realpath(await mkdtemp('/tmp/nod-guest-'));
+    const lima = join(assets, 'lima/bin/limactl');
+    const env = {
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+      HOME: homedir(),
+      LIMA_HOME: join(root, 'lima'),
+      LANG: 'en_US.UTF-8',
+    };
+    const run = (args, extra = {}) => execute(lima, args, { env, ...extra });
+    const shell = (input) => run(['shell', 'fixture', 'sudo', 'bash', '-s'], { input });
+    t.after(async () => {
+      await run(['delete', '--force', 'fixture']);
+      await rm(root, { recursive: true, force: true });
+    });
+    const config = guestConfiguration({
+      assets,
+      imageDigest: manifest.guest.sha256,
+      port: await availablePort(),
+      memory: 3,
+      cpus: 2,
+    });
+    const file = join(root, 'computer.json');
+    await writeFile(file, JSON.stringify(config));
+    await run(['create', '--name', 'fixture', '--tty=false', file], { timeout: 300_000 });
+    await run(['start', '--tty=false', 'fixture'], { timeout: 600_000 });
+    const image = manifest.images.find((image) => image.name === 'postgres');
+    assert.match(image.id, /^sha256:[a-f0-9]{64}$/);
+    await shell(`/usr/local/bin/docker load --input /opt/nod-assets/images/postgres.tar.zst`);
+    await shell(protectGuest);
+    const stack = `aa-exec -p 'docker-default//&unconfined' -- sh -c 'sleep 3 & child=$!; kill -TERM "$child" || exit 1; wait "$child"; test "$?" = 143'`;
+    await shell(
+      protectGuest
+        .replace('  signal (send,receive) peer="docker-default//&unconfined",\n', '')
+        .replace('  ptrace (trace,read,tracedby,readby) peer="docker-default//&unconfined",\n', ''),
+    );
+    await assert.rejects(shell(stack), (error) => /Permission denied/.test(error.details));
+    await shell(protectGuest);
+    await shell(protectGuest);
+    await shell(`set -eu
+${stack}
+test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_unconfined)" = 1
+test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+mkdir -p /tmp/nod-mount
+mount -t tmpfs tmpfs /tmp/nod-mount
+umount /tmp/nod-mount
+if aa-exec -p 'docker-default//&unconfined' -- mount -t tmpfs tmpfs /tmp/nod-mount; then
+  umount /tmp/nod-mount
+  exit 1
+fi
+`);
+    const start = `set -eu
+docker=/usr/local/bin/docker
+$docker run -d --name nod-database-fixture --network none --env POSTGRES_USER=fixture --env POSTGRES_DB=fixture --env POSTGRES_PASSWORD=synthetic-fixture --volume nod-database-fixture:/var/lib/postgresql/data ${image.id} >/dev/null
+for attempt in $(seq 1 100); do
+  if $docker exec nod-database-fixture pg_isready -h 127.0.0.1 -U fixture -d fixture >/dev/null; then break; fi
+  sleep 0.2
+done
+$docker exec nod-database-fixture pg_isready -h 127.0.0.1 -U fixture -d fixture
+test "$($docker inspect --format '{{.AppArmorProfile}}' nod-database-fixture)" = docker-default
+`;
+    await shell(`${start}
+$docker exec nod-database-fixture psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c "CREATE TABLE kernel_fixture (value text PRIMARY KEY); INSERT INTO kernel_fixture VALUES ('synthetic-kernel-check');"
+$docker stop --time 20 nod-database-fixture
+$docker rm nod-database-fixture
+`);
+    await run(['stop', '--tty=false', 'fixture'], { timeout: 120_000 });
+    await run(['start', '--tty=false', 'fixture'], { timeout: 600_000 });
+    await shell(stack);
+    assert.match(
+      await shell(`${start}
+$docker exec nod-database-fixture psql -U fixture -d fixture -At -v ON_ERROR_STOP=1 -c 'SELECT value FROM kernel_fixture'
+$docker stop --time 20 nod-database-fixture
+`),
+      /synthetic-kernel-check/,
+    );
+  },
+);
+
 test('runtime cache reuse rejects same-size noncritical changes and executable-mode drift', async (t) => {
   const { chmod } = await import('node:fs/promises');
   const options = await fixture(t);

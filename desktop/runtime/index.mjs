@@ -18,7 +18,7 @@ import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
-import { guestConfiguration, protectNetworks } from './guest-config.mjs';
+import { guestConfiguration, protectGuest, protectNetworks } from './guest-config.mjs';
 import {
   assetHash,
   findRuntimeAssets,
@@ -330,6 +330,15 @@ async function prepare(options, onComputerStart) {
   status('starting', 'Starting your private computer…');
   onComputerStart();
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
+  try {
+    await runLima(['shell', vm, 'sudo', 'bash', '-s'], { input: protectGuest });
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw Object.assign(
+      new Error('Nod could not apply its container protection. Keep your app data and retry.'),
+      { code: 'NOD_COMPUTER_PROTECTION_FAILED', details: error.details || error.stack },
+    );
+  }
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   const prepareImage = async (name) => {

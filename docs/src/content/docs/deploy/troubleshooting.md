@@ -81,6 +81,14 @@ To start over, select **Remove all data…** in the **Nod** menu. Nod deletes yo
 
 Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. A device policy can block WSL installation.
 
+### PostgreSQL fails after a Mac VM kernel update
+
+Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. The PostgreSQL user-switch process then waits forever, and Nod reports `NOD_DATABASE_CONNECTION_FAILED`.
+
+Install a Nod build with the container profile repair, then quit and reopen Nod. The repair keeps AppArmor active and preserves the database volume. It also prevents further automatic kernel changes and VM restarts. A restart alone does not repair the old profile. Do not delete the VM or database to fix this failure.
+
+If setup still fails, select **Show startup log** and [send feedback](#send-feedback-with-a-diagnostic-report). This error alone does not show whether the database files are damaged.
+
 ## Models and apps
 
 ### Port 1455 is already in use

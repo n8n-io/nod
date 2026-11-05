@@ -1,3 +1,50 @@
+export const protectGuest = `#!/bin/bash
+set -euo pipefail
+cat > /etc/apt/apt.conf.d/99-nod-kernel.tmp <<'APT'
+Unattended-Upgrade::Package-Blacklist { "^linux-"; "^grub"; "^shim"; };
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+APT
+mv /etc/apt/apt.conf.d/99-nod-kernel.tmp /etc/apt/apt.conf.d/99-nod-kernel
+test "$(cat /sys/module/apparmor/parameters/enabled)" = Y
+cat > /etc/apparmor.d/nod-docker.tmp <<'PROFILE'
+abi <abi/3.0>,
+#include <tunables/global>
+profile docker-default flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  network,
+  capability,
+  file,
+  umount,
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  signal (send,receive) peer=docker-default,
+  signal (send,receive) peer="docker-default//&unconfined",
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny mount,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+  ptrace (trace,read,tracedby,readby) peer=docker-default,
+  ptrace (trace,read,tracedby,readby) peer="docker-default//&unconfined",
+}
+PROFILE
+apparmor_parser -Kr /etc/apparmor.d/nod-docker.tmp
+mv /etc/apparmor.d/nod-docker.tmp /etc/apparmor.d/nod-docker
+grep -Fxq 'docker-default (enforce)' /sys/kernel/security/apparmor/profiles
+`;
+
 export function guestConfiguration({
   assets,
   imageDigest,
@@ -29,8 +76,7 @@ export function guestConfiguration({
       {
         mode: 'dependency',
         skipDefaultDependencyResolution: true,
-        script: `#!/bin/bash
-set -euo pipefail
+        script: `${protectGuest}
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v iptables >/dev/null; then
   apt-get install -y --no-install-recommends /opt/nod-assets/guest-packages/*.deb || {
