@@ -1908,7 +1908,7 @@ test('runtime installation refuses insufficient storage without removing saved c
     { code: 'RUNTIME_DISK_SPACE' },
   );
   assert.deepEqual(
-    await readdir(options.cacheRoot),
+    (await readdir(options.cacheRoot)).sort(),
     [options.release.id, 'previous-runtime'].sort(),
   );
   assert.equal(await findRuntimeAssets(options), undefined);
