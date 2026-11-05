@@ -16,7 +16,11 @@ import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
-import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
+import {
+  createDecisionModel,
+  createOpenRouterDecisionCatalog,
+  type DecisionConnection,
+} from '../src/providers/decisions.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import { createModelTraces } from '../src/server/traces.ts';
@@ -24,6 +28,794 @@ import type { ModelTrace } from '../src/ports/traces.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
+import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
+import { createTrust } from '../src/server/trust.ts';
+import { createTrustReview } from '../src/server/trust-review.ts';
+import { trustFacts } from '../src/server/trust-facts.ts';
+
+test('decision selection uses the LLM only when no decision connection is available', async () => {
+  let resolutions = 0;
+  let llm = 0;
+  let state = 'absent';
+  const decisions = createDecisionModel({
+    resolve: async () => {
+      resolutions++;
+      if (state === 'absent') return undefined;
+      if (state === 'lookup error') throw new Error('Synthetic lookup failure.');
+      return { provider: 'openai', key: 'fixture-key' };
+    },
+    fetch: async () => {
+      if (state === 'request error') return new Response('', { status: 503 });
+      return Response.json({
+        answers: [
+          {
+            name: 'answer',
+            type: 'choice',
+            choice: 'yes',
+            probabilities: [
+              { value: 'yes', probability: 1 },
+              { value: 'other', probability: 0 },
+            ],
+          },
+        ],
+        usage: { input_tokens: 1 },
+      });
+    },
+  });
+  const question: DecisionQuestion = {
+    name: 'answer',
+    minProbability: 0.99,
+    choices: [
+      { value: 'yes', description: 'Approve.' },
+      { value: 'other', description: 'No approval.' },
+    ],
+  };
+  const review = createTrustReview({
+    decisions,
+    review: async (instructions, input, signal, selected) => {
+      llm++;
+      assert.equal(instructions, 'Apply policy.');
+      assert.deepEqual(input, { reply: 'Yes.' });
+      assert.equal(signal, undefined);
+      assert.deepEqual(selected, { name: question.name, choices: question.choices });
+      return { answer: 'yes' };
+    },
+  });
+  const check = (signal?: AbortSignal) =>
+    review('Apply policy.', { reply: 'Yes.' }, signal, question);
+  assert.deepEqual(await check(), { answer: 'yes' });
+  assert.equal(llm, 1);
+  state = 'available';
+  const selected = await decisions.select!();
+  const count = resolutions;
+  state = 'lookup error';
+  assert.equal(
+    ((await selected!.check({ instructions: '', input: {}, question })) as { answer: string })
+      .answer,
+    'yes',
+  );
+  assert.equal(resolutions, count);
+  await assert.rejects(check(), /lookup failure/);
+  state = 'request error';
+  await assert.rejects(check());
+  await assert.rejects(check(AbortSignal.abort()));
+  assert.equal(llm, 1);
+});
+
+test('decision catalog filters native text decisions, expires and refuses failed lookups', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  let calls = 0;
+  let fail = false;
+  let malformed = false;
+  t.mock.method(globalThis, 'fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    assert.equal(init?.redirect, 'error');
+    if (fail) return new Response('', { status: 503 });
+    if (malformed) return Response.json({ data: null });
+    return Response.json({
+      data: [
+        {
+          id: 'typesafe/jev-1.14',
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        },
+        {
+          id: 'typesafe/jev-router',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          endpoints: ['/api/v1/chat/completions'],
+        },
+        {
+          id: 'fixture/extraction',
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/extractions'],
+        },
+        {
+          id: 'fixture/image',
+          architecture: { input_modalities: ['image'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        },
+      ],
+    });
+  });
+  const catalog = createOpenRouterDecisionCatalog();
+  assert.deepEqual([...(await catalog('fixture-key'))], ['typesafe/jev-1.14']);
+  await catalog('fixture-key');
+  assert.equal(calls, 1);
+  t.mock.timers.tick(300_000);
+  fail = true;
+  await assert.rejects(catalog('fixture-key'));
+  assert.equal(calls, 2);
+  fail = false;
+  await catalog('fixture-key');
+  await catalog('fixture-rotated-key');
+  assert.equal(calls, 4);
+  malformed = true;
+  await assert.rejects(catalog('fixture-invalid-key'));
+  await assert.rejects(catalog('fixture-rotated-key', AbortSignal.abort()));
+  assert.equal(calls, 5);
+});
+
+test('decision trust never calls an LLM for uncertainty, missing results or failure', async () => {
+  let calls = 0;
+  let choice = 'message:0';
+  let probability = 0.995;
+  let fail = false;
+  const decisions = createDecisionModel({
+    resolve: async () => ({ provider: 'openrouter', key: 'synthetic-decision-key' }),
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body));
+      if (fail) return new Response('', { status: 503 });
+      return Response.json({
+        answers: {
+          ...Object.fromEntries(
+            Object.keys(request.questions)
+              .filter((name) => !['trust', 'preparation', 'permission'].includes(name))
+              .map((name) => [
+                name,
+                {
+                  type: 'choice',
+                  choice: String(name === 'scope'),
+                  probabilities: {
+                    true: Number(name === 'scope'),
+                    false: Number(name !== 'scope'),
+                  },
+                },
+              ]),
+          ),
+          trust: {
+            type: 'choice',
+            choice,
+            probabilities: {
+              'message:0': choice === 'message:0' ? probability : 1 - probability,
+              read: 0,
+              ask: choice === 'ask' ? probability : 1 - probability,
+            },
+          },
+          preparation: { type: 'choice', choice: 'false', probabilities: { true: 0, false: 1 } },
+          permission: {
+            type: 'choice',
+            choice: choice === 'ask' ? 'false' : 'true',
+            probabilities: {
+              true: choice === 'ask' ? 1 - probability : probability,
+              false: choice === 'ask' ? probability : 1 - probability,
+            },
+          },
+        },
+        usage: { input_tokens: 10, cost: 0.000001 },
+      });
+    },
+  });
+  const words = { userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Send the report to Ana.' }] };
+  const input = {
+    ...words,
+    action: { name: 'send_email', arguments: { recipient: 'ana@example.test' } },
+  };
+  const instructions = 'Apply the unchanged permission policy.';
+  const review = createTrustReview({
+    decisions,
+    review: async () => {
+      calls++;
+      assert.fail('Decision checks must not call an LLM.');
+    },
+  });
+  assert.equal(trustBasis(await review(instructions, input), words, ['message'])?.kind, 'message');
+  assert.equal(calls, 0);
+  probability = 0.8;
+  assert.equal(trustBasis(await review(instructions, input), words, ['message']), undefined);
+  assert.equal(calls, 0);
+  choice = 'ask';
+  probability = 0.995;
+  assert.equal(trustBasis(await review(instructions, input), words, ['message']), undefined);
+  assert.equal(calls, 0);
+  fail = true;
+  await assert.rejects(review(instructions, input));
+  assert.equal(calls, 0);
+  const unavailable = createTrustReview({
+    decisions: {
+      configured: false,
+      check: async () => assert.fail('Do not send an unavailable request.'),
+    },
+    review: async () => assert.fail('Missing configuration must not start an LLM request.'),
+  });
+  assert.equal(await unavailable(instructions, input), undefined);
+  for (const output of [
+    undefined,
+    {},
+    {
+      trust: 'message:0',
+      probability: 1,
+      additional: { permission: { permission: true, probability: 1 } },
+    },
+  ]) {
+    const missing = createTrustReview({
+      decisions: { check: async () => output },
+      review: async () => assert.fail('Missing results must not select another model.'),
+    });
+    assert.equal(await missing(instructions, input), undefined);
+  }
+  const unscored = createTrustReview({
+    decisions: { check: async () => ({ answer: 'yes' }) },
+    review: async () => assert.fail('An answer without confidence must not start another model.'),
+  });
+  assert.equal(
+    await unscored(instructions, input, undefined, {
+      name: 'answer',
+      minProbability: 0.99,
+      choices: [
+        { value: 'yes', description: 'Approve.' },
+        { value: 'other', description: 'No approval.' },
+      ],
+    }),
+    undefined,
+  );
+  await assert.rejects(review(instructions, input, AbortSignal.abort()));
+  assert.equal(calls, 0);
+});
+
+test('uncertain effects cannot authorize a change through confident permission', async () => {
+  const input = { userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Update my meeting.' }] };
+  const decisions = {
+    check: async () => ({
+      trust: 'message:0',
+      probability: 0.93,
+      additional: {
+        preparation: { preparation: false, choice: false, probability: 0.96 },
+        permission: { permission: true, choice: true, probability: 0.99 },
+      },
+    }),
+  };
+  let calls = 0;
+  const review = async (instructions: string, data: object) => {
+    calls++;
+    assert.equal(instructions, 'Original policy');
+    assert.equal(data, input);
+    return { run: false };
+  };
+  assert.equal(
+    trustBasis(await createTrustReview({ decisions, review })('Original policy', input), input, [
+      'message',
+    ]),
+    undefined,
+  );
+  assert.equal(calls, 0);
+});
+
+test('batched trust validates all answers, records one request, and refuses conflicts', async (t) => {
+  for (const provider of ['openai', 'typesafe', 'openrouter'] as const)
+    await t.test(provider, async () => {
+      let primary = 0.8;
+      let conflict = false;
+      let missing = false;
+      let duplicate = false;
+      const usage: ProviderUsageEvent[] = [];
+      const words = {
+        userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Read my project list.' }],
+      };
+      const model = createDecisionModel({
+        resolve: async () => ({ provider, key: 'synthetic-batch-key' }),
+        fetch: async (_url, init) => {
+          const body = JSON.parse(String(init?.body));
+          const questions = provider === 'openai' ? body.questions : Object.values(body.questions);
+          assert.equal(questions.length, 11);
+          assert.doesNotMatch(questions[0].instructions, /Complete permission policy/);
+          assert.match(questions[2].instructions, /Complete permission policy/);
+          assert.doesNotMatch(questions[1].instructions, /Complete permission policy/);
+          const answers = [
+            {
+              name: 'trust',
+              type: 'choice',
+              choice: 'message:0',
+              probabilities: { 'message:0': primary, ask: 1 - primary, read: 0 },
+            },
+            {
+              name: duplicate ? 'trust' : 'preparation',
+              type: 'choice',
+              choice: provider === 'openai' ? true : 'true',
+              probabilities: { true: 1, false: 0 },
+            },
+            {
+              name: 'permission',
+              type: 'choice',
+              choice: provider === 'openai' ? !conflict : String(!conflict),
+              probabilities: { true: conflict ? 0 : 1, false: conflict ? 1 : 0 },
+            },
+            ...[
+              'scope',
+              'constraints',
+              'time',
+              'numbers',
+              'conditions',
+              'targets',
+              'bans',
+              'costs',
+            ].map((name) => ({
+              name,
+              type: 'choice',
+              choice: provider === 'openai' ? false : 'false',
+              probabilities: { true: 0, false: 1 },
+            })),
+          ].slice(0, missing ? 1 : 11);
+          return Response.json({
+            answers:
+              provider === 'openai'
+                ? answers.map(({ probabilities, ...answer }) => ({
+                    ...answer,
+                    probabilities: Object.entries(probabilities).map(([value, probability]) => ({
+                      value: value === 'true' ? true : value === 'false' ? false : value,
+                      probability,
+                    })),
+                  }))
+                : Object.fromEntries(answers.map(({ name, ...answer }) => [name, answer])),
+            usage: { input_tokens: 100, cost: 0.00001 },
+          });
+        },
+      });
+      const decisions = {
+        check: (request: Parameters<typeof model.check>[0], signal?: AbortSignal) =>
+          model.check(request, signal, (event) => usage.push(event)),
+      };
+      const review = createTrustReview({
+        decisions,
+        review: async () => assert.fail('A proven read needs no LLM.'),
+      });
+      const input = { ...words, action: { name: 'list_projects', arguments: {} } };
+      assert.equal(
+        trustBasis(await review('Complete permission policy', input), words, ['message'])?.kind,
+        'read',
+      );
+      assert.equal(usage.length, 1);
+      assert.equal(usage[0]?.costUsd, 0.00001);
+      primary = 0.995;
+      conflict = true;
+      assert.equal(
+        trustBasis(await review('Complete permission policy', input), words, ['message']),
+        undefined,
+      );
+      assert.equal(usage.length, 2);
+      missing = true;
+      await assert.rejects(review('Complete permission policy', input));
+      assert.equal(usage.at(-1)?.status, 'failed');
+      assert.equal(usage.length, 3);
+      missing = false;
+      duplicate = true;
+      await assert.rejects(review('Complete permission policy', input));
+      assert.equal(usage.at(-1)?.status, 'failed');
+      assert.equal(usage.length, 4);
+    });
+});
+
+test('pure decision checks bind the evaluated model, preserve target checks and never call an LLM', async () => {
+  const input = {
+    userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Send the report to Ana.' }],
+    action: { name: 'send_email', arguments: { recipient: 'ana@example.test' } },
+  };
+  let served: string | undefined = 'perplexity/pplx-decider-v1.2-20261016';
+  let omit = '';
+  let probabilities: Record<string, number> = {};
+  let source = 'message:0';
+  const events: ProviderUsageEvent[] = [];
+  const model = createDecisionModel({
+    resolve: async () => ({
+      provider: 'openrouter',
+      key: 'synthetic-key',
+      model: 'perplexity/pplx-decider-v1.2',
+    }),
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body));
+      assert.equal(Object.keys(request.questions).length, 11);
+      assert.deepEqual(request.state.action, input.action);
+      assert.deepEqual(request.state.userMessages, input.userMessages);
+      assert.equal(request.provider.allow_fallbacks, false);
+      const answers: Record<string, object> = {
+        trust: {
+          type: 'choice',
+          choice: source,
+          probabilities: Object.fromEntries(
+            Object.keys(request.questions.trust.criteria).map((key) => [
+              key,
+              key === source ? 1 : 0,
+            ]),
+          ),
+        },
+      };
+      for (const name of Object.keys(request.questions).slice(1)) {
+        const p = probabilities[name] ?? (['permission', 'scope'].includes(name) ? 0.995 : 0.005);
+        answers[name] = {
+          type: 'choice',
+          choice: String(p >= 0.5),
+          probabilities: { true: p, false: 1 - p },
+        };
+      }
+      delete answers[omit];
+      return Response.json({
+        model: served,
+        answers,
+        usage: { input_tokens: 100, cost: 0.000002 },
+      });
+    },
+  });
+  const review = createTrustReview({
+    decisions: {
+      check: (request, signal) => model.check(request, signal, (event) => events.push(event)),
+    },
+    review: async () => assert.fail('Pure decision mode must never call an LLM.'),
+  });
+  const allowed = () =>
+    review('Apply the permission policy.', input).then((answer) =>
+      trustBasis(answer, input, ['message']),
+    );
+  assert.equal((await allowed())?.kind, 'message');
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.costUsd, 0.000002);
+  for (const veto of ['targets', 'time', 'numbers', 'conditions', 'constraints', 'bans', 'costs']) {
+    probabilities = { [veto]: 0.99 };
+    assert.equal(await allowed(), undefined);
+  }
+  probabilities = { scope: 0.01 };
+  assert.equal(await allowed(), undefined);
+  probabilities = { permission: 0.995, preparation: 0.995, scope: 0.97, bans: 0.2 };
+  source = 'read';
+  assert.equal((await allowed())?.kind, 'read');
+  input.action.name = 'NOD_sign_in';
+  assert.equal(await allowed(), undefined);
+  input.action.name = 'send_email';
+  source = 'message:0';
+  probabilities = { permission: 0.995, scope: 0.995 };
+  assert.equal((await allowed())?.kind, 'message');
+  probabilities = { permission: 0.93 };
+  assert.equal(await allowed(), undefined);
+  Object.assign(input, { standingInstruction: 'Set the monthly limit to EUR 100.' });
+  source = 'standing';
+  probabilities = { preparation: 0.99 };
+  input.action.name = 'NOD_limits_update';
+  assert.equal(await allowed(), undefined);
+  source = 'message:0';
+  input.action.name = 'send_email';
+  probabilities = {};
+  served = 'perplexity/pplx-decider-v1.3';
+  assert.equal(await allowed(), undefined);
+  served = undefined;
+  assert.equal(await allowed(), undefined);
+  served = 'perplexity/pplx-decider-v1.2-20261016';
+  omit = 'targets';
+  await assert.rejects(allowed());
+  assert.equal(events.at(-1)?.status, 'failed');
+  assert.equal(events.at(-1)?.costUsd, 0.000002);
+  await assert.rejects(review('Apply the permission policy.', input, AbortSignal.abort()));
+});
+
+test('trust calendar facts preserve whole inputs and use the local run date across leap days and DST', () => {
+  const input = {
+    userMessages: [{ at: '2028-02-28T23:30:00Z', text: 'Tomorrow in Madrid.' }],
+    scheduledTaskInstruction: 'Send the report tomorrow.',
+    scheduledFor: '2028-02-28T23:30:00Z',
+    timeZone: 'Europe/Madrid',
+    action: {
+      name: 'send_email',
+      arguments: { when: '2028-02-29', invalid: '2028-02-30', dst: '2028-03-26T01:30:00Z' },
+    },
+  };
+  const before = JSON.stringify(input);
+  const facts = trustFacts(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.deepEqual(facts.userMessages, input.userMessages);
+  assert.deepEqual(facts.action, input.action);
+  assert.equal(facts.serverDateFacts.scheduleContext?.calendar.date, '2028-02-29');
+  assert.equal(facts.serverDateFacts.scheduleContext?.calendar.tomorrow, '2028-03-01');
+  const args = facts.serverDateFacts.arguments as Array<{
+    value: string;
+    calendar?: { lastDayOfMonth: string };
+    interpretations?: Array<{ timeZone: string; wallTime: string; offset: string }>;
+  }>;
+  assert.equal(args.find((x) => x.value === '2028-02-29')?.calendar?.lastDayOfMonth, '2028-02-29');
+  assert.equal(
+    args.some((x) => x.value === '2028-02-30'),
+    false,
+  );
+  const madrid = args
+    .find((x) => x.value.includes('03-26'))
+    ?.interpretations?.find((x) => x.timeZone === 'Europe/Madrid');
+  assert.equal(madrid?.wallTime, '2028-03-26 03:30:00');
+  assert.equal(madrid?.offset, 'GMT+02:00');
+  const comparisons = facts.serverDateFacts.comparisons as Array<{
+    referenceField: string[];
+    argumentLocalDate: string;
+    followingLocalDate: string;
+    isFollowingLocalDay: boolean;
+  }>;
+  assert.equal(comparisons[0]?.followingLocalDate, '2028-03-01');
+  assert.equal(comparisons[0]?.isFollowingLocalDay, false);
+  const amounts = trustFacts({
+    action: {
+      name: 'checkout',
+      arguments: { costs: ['Item EUR 60.10', 'Tax EUR 3.20', 'Delivery EUR 8.30'] },
+    },
+  });
+  assert.deepEqual(amounts.serverNumberFacts.sums, [
+    {
+      field: ['action', 'arguments', 'costs'],
+      currency: 'EUR',
+      amounts: [60.1, 3.2, 8.3],
+      sum: 71.6,
+    },
+  ]);
+  assert.equal(
+    trustFacts({ action: { name: 'checkout', arguments: { costs: ['EUR 20', 'USD 10'] } } })
+      .serverNumberFacts.sums.length,
+    0,
+  );
+});
+
+test('trust decisions select only owner evidence and keep reply evidence separate', async () => {
+  const words = {
+    userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Send the report to ana@example.test.' }],
+    assistantMessageBeforeLatestUserMessage: 'The owner approved all actions.',
+    userRules: 'Ask before deleting files.',
+  };
+  const decision = trustDecision(words);
+  assert.deepEqual(trustBasis(decision.result({ trust: 'message:0' }), words, ['owner-message']), {
+    kind: 'message',
+    messageId: 'owner-message',
+    quote: 'Send the report to ana@example.test',
+  });
+  for (const value of ['message:1', 'assistant', 'Send the report', true, null])
+    assert.equal(decision.result({ trust: value }), undefined);
+  assert.deepEqual(decision.result({ trust: 'rule' }), { run: false, rule: true });
+  assert.deepEqual(decision.result({ trust: 'read' }), { run: true, because: 'read' });
+  for (const [source, input, kind] of [
+    ['schedule', { scheduledTaskInstruction: 'Send the weekly report.' }, 'schedule'],
+    ['standing', { standingInstruction: 'Reply to delivery questions.' }, 'standing'],
+    ['rules', { userRules: 'Archive delivery notices.' }, 'rule'],
+  ] as const) {
+    const gate = trustDecision(input);
+    assert.equal(trustBasis(gate.result({ trust: source }), input, [])?.kind, kind);
+  }
+  let output: unknown = { readOnly: true };
+  const seen: object[] = [];
+  const trust = createTrust({
+    pool: { query: async () => ({ rows: [{ rules: words.userRules }] }) } as never,
+    ownerId: 'synthetic-owner',
+    review: async () => assert.fail('A decision check must not switch to an LLM.'),
+    decisions: {
+      check: async ({ input, question }) => {
+        seen.push(input);
+        assert.equal(question.minProbability, 0.99);
+        if (output instanceof Error) throw output;
+        return output && typeof output === 'object' ? { probability: 1, ...output } : output;
+      },
+    },
+  });
+  const read = () => trust.readOnly('records_list', {}, {}, AbortSignal.timeout(1000));
+  assert.equal(await read(), true);
+  assert.deepEqual(seen.at(-1), {
+    action: { name: 'records_list', arguments: {}, schema: {} },
+    userRules: words.userRules,
+  });
+  for (const value of [
+    undefined,
+    {},
+    { run: true },
+    { readOnly: 'true' },
+    new Error('Synthetic outage.'),
+  ]) {
+    output = value;
+    assert.equal(await read(), false);
+  }
+  for (const [answer, expected] of [
+    ['yes', true],
+    ['no', false],
+    ['other', undefined],
+  ] as const) {
+    output = { answer };
+    assert.equal(await trust.answer('Yes, if the price stays below EUR 20.'), expected);
+    assert.deepEqual(seen.at(-1), { reply: 'Yes, if the price stays below EUR 20.' });
+  }
+  output = new Error('Synthetic outage.');
+  await assert.rejects(trust.answer('Yes'));
+});
+
+test('native decision probabilities validate the wire type and retain refusal and cache costs', async (t) => {
+  for (const provider of ['openai', 'typesafe', 'openrouter'] as const)
+    await t.test(provider, async () => {
+      let invalid = false;
+      let refused = false;
+      let requests = 0;
+      const events: ProviderUsageEvent[] = [];
+      const model = createDecisionModel({
+        resolve: async () => ({ provider, key: 'synthetic-native-key' }),
+        fetch: async (_url, init) => {
+          requests++;
+          const body = JSON.parse(String(init?.body));
+          const wire = provider === 'openai' ? body.questions[0] : body.questions.permission;
+          assert.equal(wire.type, provider === 'openai' ? 'predicate' : 'noul');
+          assert.equal(wire.choices, undefined);
+          assert.equal(wire.criteria, undefined);
+          const answer = refused
+            ? { type: 'refusal' }
+            : invalid
+              ? { type: 'choice', choice: provider === 'openai' ? true : 'true' }
+              : provider === 'openai'
+                ? { type: 'predicate', probability: 0.83 }
+                : { type: 'noul', noul: 0.83 };
+          return Response.json({
+            answers:
+              provider === 'openai' ? [{ ...answer, name: 'permission' }] : { permission: answer },
+            usage: {
+              input_tokens: 1000,
+              input_tokens_details: { cached_tokens: 400, cache_write_tokens: 200 },
+            },
+          });
+        },
+      });
+      const question: DecisionQuestion = {
+        name: 'permission',
+        format: 'predicate',
+        minProbability: 0.9,
+        uncertainValue: false,
+        choices: [
+          { value: true, description: 'Allowed.' },
+          { value: false, description: 'Ask.' },
+        ],
+      };
+      const request = { instructions: 'Synthetic policy.', input: {}, question };
+      assert.deepEqual(await model.check(request, undefined, (event) => events.push(event)), {
+        permission: false,
+        choice: true,
+        probability: 0.83,
+      });
+      if (provider === 'openai') {
+        assert.equal(events[0]?.inputTokens, 400);
+        assert.equal(events[0]?.cacheReadTokens, 400);
+        assert.equal(events[0]?.cacheWriteTokens, 200);
+        assert.ok(Math.abs(events[0]!.costUsd! - 0.000069) < 1e-12);
+      }
+      invalid = true;
+      await assert.rejects(model.check(request));
+      invalid = false;
+      refused = true;
+      const review = createTrustReview({
+        decisions: model,
+        review: async () => assert.fail('A refusal must not start an LLM request.'),
+      });
+      assert.equal(await review('', {}, undefined, question), undefined);
+      const before = requests;
+      await assert.rejects(
+        model.check({
+          ...request,
+          forModel: (selection) => {
+            assert.equal(selection.provider, provider);
+            assert.equal('key' in selection, false);
+            throw new Error('The model changed.');
+          },
+        }),
+      );
+      assert.equal(requests, before);
+      await assert.rejects(model.check({ ...request, question: { ...question, choices: [] } }));
+      assert.equal(requests, before);
+    });
+});
+
+test('decision gates validate the complete probability distribution before allowing work', async (t) => {
+  for (const provider of ['openai', 'typesafe', 'openrouter'] as const)
+    await t.test(provider, async () => {
+      let probabilities: unknown = { allow: 0.995, ask: 0.005 };
+      let choice = 'allow';
+      let calls = 0;
+      const usage: ProviderUsageEvent[] = [];
+      const model = createDecisionModel({
+        resolve: async () => ({ provider, key: 'synthetic-decision-key' }),
+        fetch: async (_url, init) => {
+          calls++;
+          const body = JSON.parse(String(init?.body));
+          if (provider === 'openrouter')
+            assert.deepEqual(body.provider, { allow_fallbacks: false });
+          const answer = {
+            type: 'choice',
+            choice,
+            probabilities:
+              provider === 'openai' &&
+              probabilities &&
+              typeof probabilities === 'object' &&
+              !Array.isArray(probabilities)
+                ? Object.entries(probabilities).map(([value, probability]) => ({
+                    value,
+                    probability,
+                  }))
+                : probabilities,
+          };
+          return Response.json({
+            answers: provider === 'openai' ? [{ ...answer, name: 'trust' }] : { trust: answer },
+            usage: { input_tokens: 100, cost: 0.00001 },
+          });
+        },
+      });
+      const check = () =>
+        model.check(
+          {
+            instructions: 'Apply the permission policy.',
+            input: {},
+            question: {
+              name: 'trust',
+              minProbability: 0.99,
+              choices: [
+                { value: 'allow', description: 'Allowed.' },
+                { value: 'ask', description: 'Ask.' },
+              ],
+            },
+          },
+          undefined,
+          (event) => usage.push(event),
+        );
+      assert.deepEqual(await check(), {
+        trust: 'allow',
+        choice: 'allow',
+        probability: 0.995,
+        probabilities: { allow: 0.995, ask: 0.005 },
+      });
+      probabilities = { allow: 0.98, ask: 0.02 };
+      assert.deepEqual(await check(), {
+        trust: undefined,
+        choice: 'allow',
+        probability: 0.98,
+        probabilities: { allow: 0.98, ask: 0.02 },
+      });
+      assert.equal(usage.at(-1)?.status, 'succeeded');
+      for (const invalid of [
+        undefined,
+        { allow: 1 },
+        { allow: 1, ask: 0, extra: 0 },
+        { allow: 0.99, ask: 0.99 },
+        { allow: 1.1, ask: -0.1 },
+        { allow: '0.99', ask: 0.01 },
+        [
+          { value: 'allow', probability: 1 },
+          { value: 'allow', probability: 0 },
+        ],
+      ]) {
+        probabilities = invalid;
+        await assert.rejects(check(), /could not complete/);
+        assert.equal(usage.at(-1)?.status, 'failed');
+        assert.equal(usage.at(-1)?.inputTokens, 100);
+      }
+      probabilities = { allow: 0.01, ask: 0.99 };
+      await assert.rejects(check());
+      choice = 'ask';
+      assert.deepEqual(await check(), {
+        trust: 'ask',
+        choice: 'ask',
+        probability: 0.99,
+        probabilities: { allow: 0.01, ask: 0.99 },
+      });
+      assert.equal(calls, usage.length);
+      await assert.rejects(
+        model.check(
+          { instructions: '', input: {}, question: { name: 'trust', choices: [] } },
+          AbortSignal.abort(),
+        ),
+      );
+      assert.equal(calls, usage.length);
+    });
+});
 
 test('unavailable decisions avoid ledger reads and retain dynamic availability and spending limits', async () => {
   let configured = false;
@@ -144,6 +936,15 @@ test('unavailable decisions avoid ledger reads and retain dynamic availability a
   assert.equal(reads, 3);
   assert.equal(resolutions, 2);
   assert.equal(requests, 1);
+  configured = true;
+  const selected = await decision.select!();
+  assert.equal(resolutions, 3);
+  const beforeWrites = writes;
+  await selected!.check(request);
+  await selected!.check(request);
+  assert.equal(resolutions, 3);
+  assert.equal(requests, 3);
+  assert.equal(writes, beforeWrites + 2);
 });
 
 test('decision requests revalidate capability and cancellation after resolving credentials', async (t) => {
@@ -1684,6 +2485,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(owner.hasClassificationModel(), false);
     assert.equal(await owner.resolveClassification(), undefined);
     await other.addKey('openai', 'fixture-classification-other-key');
+    assert.equal(owner.hasClassificationModel(true), false);
+    assert.equal(await owner.resolveClassification(true), undefined);
     const connectionId = await owner.addKey('openai', 'fixture-classification-small-key');
     const selection = { connectionId, modelId: 'gpt-6.1-sol', effort: 'high' as const };
     await owner.select(selection);
@@ -1704,6 +2507,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await owner.select({ ...selection, connectionId: mainOnly });
     assert.equal(owner.hasClassificationModel(), false);
     assert.equal(await owner.resolveClassification(), undefined);
+    assert.equal(owner.hasClassificationModel(true), true);
+    const trustModel = await owner.resolveClassification(true);
+    assert.equal(trustModel?.definition.choice.id, 'gpt-6-luna');
+    assert.deepEqual(await trustModel?.read(), {
+      type: 'api_key',
+      key: 'fixture-classification-small-key',
+    });
+    assert.deepEqual(owner.view().selection, { ...selection, connectionId: mainOnly });
+    const secondSmall = await owner.addKey('openai', 'fixture-classification-second-small');
+    await owner.select({ ...selection, connectionId: mainOnly });
+    assert.equal(owner.hasClassificationModel(true), false);
+    assert.equal(await owner.resolveClassification(true), undefined);
+    await owner.remove(secondSmall);
+    assert.equal(owner.hasClassificationModel(true), true);
     await owner.select(selection);
     smallAvailable = false;
     await owner.refreshCatalog(connectionId);
@@ -1761,29 +2578,34 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await t.test('free OpenRouter selection never incurs paid classification', async () => {
       const owner = await f.create('fixture-classification-openrouter-free', {
         ...f.backend,
-        catalog: async () =>
-          original.map((definition) => {
-            const id =
-              definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
-            return {
-              choice: {
-                ...definition.choice,
-                id,
-                ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
-              },
-              spec: {
-                ...definition.spec,
-                provider: 'openrouter',
-                id,
-                ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
-              },
-            };
-          }),
+        catalog: async (provider) =>
+          provider === 'openai'
+            ? original
+            : original.map((definition) => {
+                const id =
+                  definition.choice.id === 'gpt-6-luna' ? 'openai/gpt-6-luna' : 'openrouter/free';
+                return {
+                  choice: {
+                    ...definition.choice,
+                    id,
+                    ...(id === 'openrouter/free' ? { efforts: ['off' as const] } : {}),
+                  },
+                  spec: {
+                    ...definition.spec,
+                    provider: 'openrouter',
+                    id,
+                    ...(id === 'openrouter/free' ? { cost: { input: 0, output: 0 } } : {}),
+                  },
+                };
+              }),
       });
       const connectionId = await owner.addKey('openrouter', 'fixture-classification-free-key');
+      await owner.addKey('openai', 'fixture-classification-paid-alternative');
       await owner.select({ connectionId, modelId: 'openrouter/free', effort: 'off' });
       assert.equal(owner.hasClassificationModel(), false);
       assert.equal(await owner.resolveClassification(), undefined);
+      assert.equal(owner.hasClassificationModel(true), false);
+      assert.equal(await owner.resolveClassification(true), undefined);
     });
   });
 

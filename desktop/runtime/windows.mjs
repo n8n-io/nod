@@ -5,6 +5,7 @@ import {
   access,
   lstat,
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -13,10 +14,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
-import { assetHash } from './assets.mjs';
+import { assetHash, resumableDownload, timeLeft } from './assets.mjs';
 import { execute, finishRuntime } from './index.mjs';
 
 const holders = new Map();
@@ -83,49 +84,35 @@ export async function installWsl({ signal } = {}) {
   );
 }
 
-async function download(
-  { url, bytes, sha256 },
-  path,
-  { signal, fetch: request = fetch, onProgress = () => {} },
-) {
-  let response;
-  for (let redirects = 0; redirects <= 3; redirects++) {
-    const address = new URL(url);
-    if (address.protocol !== 'https:' || address.username || address.password)
-      throw new Error('Nod received an unsafe download address.');
-    response = await request(url, {
-      signal,
-      redirect: 'manual',
-      headers: { accept: 'application/octet-stream' },
-    });
-    if (![301, 302, 303, 307, 308].includes(response.status)) break;
-    url = new URL(response.headers.get('location') || '', url).href;
-    await response.body?.cancel();
-  }
-  if (!response?.ok || !response.body)
-    throw new Error('The Nod download is unavailable. Try again.');
+async function download({ url, bytes, sha256 }, path, { signal, fetch, onProgress = () => {} }) {
+  const { start, stream, interrupted } = await resumableDownload(url, path, {
+    bytes,
+    fetch,
+    signal,
+  });
   const hash = createHash('sha256');
+  const estimate = timeLeft();
   let received = 0;
   let reported = 0;
-  const check = new Transform({
-    transform(chunk, encoding, callback) {
+  const check = new Writable({
+    write(chunk, encoding, callback) {
       received += chunk.length;
       hash.update(chunk);
       if (Date.now() - reported > 250) {
         reported = Date.now();
-        onProgress(received / bytes);
+        onProgress(received / bytes, estimate(Math.max(0, received - start), bytes - received));
       }
-      callback(
-        received > bytes ? new Error('The Nod download is larger than expected.') : null,
-        chunk,
-      );
+      callback(received > bytes ? new Error('The Nod download is larger than expected.') : null);
     },
   });
-  await pipeline(Readable.fromWeb(response.body), check, createWriteStream(path, { flags: 'wx' }), {
-    signal,
-  });
-  if (received !== bytes || hash.digest('hex') !== sha256)
-    throw new Error('The Nod download failed its integrity check. Try again.');
+  try {
+    await pipeline(stream, check, { signal });
+    if (received !== bytes || hash.digest('hex') !== sha256)
+      throw new Error('The Nod download failed its integrity check. Try again.');
+  } catch (error) {
+    if (!interrupted()) await rm(path, { force: true });
+    throw error;
+  }
 }
 
 export async function unsignedWindowsFiles(files, { release = false, signal } = {}) {
@@ -315,18 +302,24 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       () => false,
     );
     if (!present) await rm(placed, { force: true });
+    const archiveName = `guest-${manifest.guest.sha256.slice(0, 12)}.tar.gz`;
+    for (const name of await readdir(controlRoot))
+      if (/^guest-[a-f0-9]{12}\.tar\.gz$/.test(name) && name !== archiveName)
+        await rm(join(controlRoot, name), { force: true });
+    const archive = present ? placed : join(controlRoot, archiveName);
+    const partial = present ? 0 : ((await stat(archive).catch(() => undefined))?.size ?? 0);
     const space = await statfs(controlRoot);
     const required =
       manifest.guest.expandedBytes * 2 +
       manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
-      (present ? 0 : manifest.guest.bytes) +
+      (present ? 0 : Math.max(0, manifest.guest.bytes - partial)) +
       2 * 1024 ** 3;
     if (space.bavail * space.bsize < required)
       throw new Error(
         'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
-    const archive = present ? placed : join(controlRoot, 'guest.tar.gz');
     const guest = join(controlRoot, 'guest.tar');
+    let downloaded = false;
     try {
       if (!present) {
         if (!options.resolveDownloadUrl)
@@ -335,16 +328,17 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
           );
         const message = 'Downloading your private computer…';
         status({ phase: 'downloading', message, progress: 0 });
-        await rm(archive, { force: true });
         await download(
           { ...manifest.guest, url: await options.resolveDownloadUrl(manifest, signal) },
           archive,
           {
             signal,
             fetch: options.fetch,
-            onProgress: (progress) => status({ phase: 'downloading', message, progress }),
+            onProgress: (progress, secondsLeft) =>
+              status({ phase: 'downloading', message, progress, secondsLeft }),
           },
         );
+        downloaded = true;
         status({ phase: 'installing', message: 'Installing your private computer…' });
       }
       let expanded = 0;
@@ -391,7 +385,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       await rename(temporaryState, configPath);
     } finally {
       await rm(guest, { force: true });
-      if (!present) await rm(archive, { force: true });
+      if (downloaded) await rm(archive, { force: true });
     }
     await rm(placed, { force: true });
   }

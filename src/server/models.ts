@@ -377,29 +377,59 @@ export function createModelService(options: {
       if (definition) return { row, definition };
     }
   }
-  function classificationModel() {
+  function classificationModel(otherConnections = false) {
     const selected = selection && { ...selection };
-    const row = rows.find((row) => row.id === selected?.connectionId);
-    if (!row || !selected || row.status !== 'connected') return undefined;
-    const main = row.models.find((model) => model.choice.id === selected.modelId);
-    const definition = row.models.find(
-      (model) => model.choice.id === memoryModels[row.provider] && !model.choice.audio,
-    );
-    if (!main || !definition) return undefined;
-    const price = modelPricing(definition);
-    const mainPrice = modelPricing(main);
+    const current = rows.find((row) => row.id === selected?.connectionId);
+    const main = current?.models.find((model) => model.choice.id === selected?.modelId);
+    const price = main && modelPricing(main);
     if (
-      !price ||
-      price === 'variable' ||
-      price.input + price.output <= 0 ||
-      !mainPrice ||
-      mainPrice === 'variable' ||
-      mainPrice.input + mainPrice.output <= 0 ||
-      price.input > mainPrice.input ||
-      price.output > mainPrice.output
+      current?.provider === 'openrouter' &&
+      price &&
+      price !== 'variable' &&
+      price.input + price.output === 0
     )
       return undefined;
-    return { row, definition };
+    const candidates = [
+      current,
+      ...(otherConnections ? rows.filter((row) => row !== current) : []),
+    ];
+    for (const row of candidates) {
+      if (!row || row.status !== 'connected') continue;
+      const definition = row.models.find(
+        (model) => model.choice.id === memoryModels[row.provider] && !model.choice.audio,
+      );
+      if (!definition) continue;
+      if (otherConnections) {
+        if (row === current) return { row, definition };
+        const peers = candidates.filter(
+          (candidate) =>
+            candidate?.status === 'connected' &&
+            candidate.provider === row.provider &&
+            candidate.models.some(
+              (model) =>
+                model.choice.id === memoryModels[candidate.provider] && !model.choice.audio,
+            ),
+        );
+        if (peers.length === 1) return { row, definition };
+        continue;
+      }
+      const main = row.models.find((model) => model.choice.id === selected?.modelId);
+      if (!main) continue;
+      const price = modelPricing(definition);
+      const mainPrice = modelPricing(main);
+      if (
+        !price ||
+        price === 'variable' ||
+        price.input + price.output <= 0 ||
+        !mainPrice ||
+        mainPrice === 'variable' ||
+        mainPrice.input + mainPrice.output <= 0 ||
+        price.input > mainPrice.input ||
+        price.output > mainPrice.output
+      )
+        continue;
+      return { row, definition };
+    }
   }
   async function read(id: string) {
     const result = await store.change(async (state) => {
@@ -1001,11 +1031,11 @@ export function createModelService(options: {
         needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
-    hasClassificationModel() {
-      return Boolean(classificationModel());
+    hasClassificationModel(otherConnections = false) {
+      return Boolean(classificationModel(otherConnections));
     },
-    async resolveClassification(): Promise<ModelAccess | undefined> {
-      const candidate = classificationModel();
+    async resolveClassification(otherConnections = false): Promise<ModelAccess | undefined> {
+      const candidate = classificationModel(otherConnections);
       if (!candidate) return undefined;
       const { row, definition } = candidate;
       return {

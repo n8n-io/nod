@@ -894,6 +894,80 @@ test(
           await db.pool.query("UPDATE preferences SET rules='' WHERE owner_id=$1", [ownerId]);
         },
       );
+      await t.test(
+        'decision action checks retain owner evidence, confirmation and action locks',
+        async () => {
+          const text = 'Email Ana the synthetic report.';
+          const turn = await begin(text);
+          let output: unknown;
+          let mutate = false;
+          const args = email('ana@example.test');
+          const checking = createTrust({
+            pool: db.pool,
+            ownerId,
+            review: async () => assert.fail('A decision check must not switch to an LLM.'),
+            decisions: {
+              check: async ({ instructions, input, question, additionalQuestions }) => {
+                assert.equal(question.name, 'trust');
+                assert.equal(
+                  additionalQuestions?.find(({ name }) => name === 'permission')?.minProbability,
+                  0.99,
+                );
+                assert.doesNotMatch(instructions, /Reply with only JSON/);
+                const messages = (input as { userMessages: Array<{ text: string }> }).userMessages;
+                const index = messages.findIndex((message) => message.text === text);
+                assert.ok(index >= 0);
+                assert.ok(question.choices.some(({ value }) => value === `message:${index}`));
+                assert.deepEqual((input as { action: unknown }).action, {
+                  name: 'GMAIL_SEND_EMAIL',
+                  arguments: { ...args },
+                });
+                if (mutate) args.recipient_email = 'other@example.test';
+                if (output instanceof Error) throw output;
+                const answer = output ?? { trust: `message:${index}` };
+                return {
+                  ...(answer as object),
+                  probability: 1,
+                  additional: {
+                    ...Object.fromEntries(
+                      (additionalQuestions ?? [])
+                        .filter(({ name }) => !['permission', 'preparation'].includes(name))
+                        .map(({ name }) => [name, { choice: name === 'scope', probability: 1 }]),
+                    ),
+                    permission: {
+                      permission: (answer as { trust?: unknown }).trust !== 'ask',
+                      choice: (answer as { trust?: unknown }).trust !== 'ask',
+                      probability: 1,
+                    },
+                    preparation: { preparation: false, probability: 1 },
+                  },
+                };
+              },
+            },
+          });
+          const allowed = await checking.check(turn, 'GMAIL_SEND_EMAIL', args);
+          assert.equal(allowed.confirm, false);
+          if (!allowed.confirm) {
+            assert.equal(allowed.basis.kind, 'message');
+            if (allowed.basis.kind === 'message')
+              assert.equal(allowed.basis.quote, text.slice(0, -1));
+          }
+          for (const value of [
+            { trust: 'ask' },
+            { trust: 'message:999' },
+            { trust: 'assistant' },
+            { run: true, because: text },
+            new Error('Synthetic outage.'),
+          ]) {
+            output = value;
+            assert.equal((await checking.check(turn, 'GMAIL_SEND_EMAIL', args)).confirm, true);
+          }
+          output = undefined;
+          mutate = true;
+          await assert.rejects(checking.check(turn, 'GMAIL_SEND_EMAIL', args), /action changed/);
+          await finish(turn.turnId, 'cancelled');
+        },
+      );
       const askFor = async (turn: { threadId: string; turnId: string }, args: object) => {
         const verdict = await trust.check(turn, 'GMAIL_SEND_EMAIL', { ...args });
         assert.equal(verdict.confirm, true);
@@ -913,13 +987,24 @@ test(
           assert.deepEqual(
             Object.keys(reviews.at(-1)!).filter(
               (key) =>
-                !['userMessages', 'assistantMessageBeforeLatestUserMessage', 'action'].includes(
-                  key,
-                ),
+                ![
+                  'userMessages',
+                  'assistantMessageBeforeLatestUserMessage',
+                  'action',
+                  'timeZone',
+                ].includes(key),
             ),
             [],
           );
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
+          assert.equal(reviews.at(-1)?.timeZone, 'UTC');
+          await db.pool.query(
+            "UPDATE preferences SET time_zone='Europe/Madrid' WHERE owner_id=$1",
+            [ownerId],
+          );
+          await trust.check(turn, 'GMAIL_FETCH_EMAILS', {});
+          assert.equal(reviews.at(-1)?.timeZone, 'Europe/Madrid');
+          await db.pool.query('UPDATE preferences SET time_zone=NULL WHERE owner_id=$1', [ownerId]);
           await trust.check(turn, 'GMAIL_SEND_EMAIL', email('stranger@example.test'));
           assert.match(JSON.stringify(reviews.at(-1)?.action), /stranger@example\.test/);
           aligned = () => {

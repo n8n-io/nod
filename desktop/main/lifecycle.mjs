@@ -31,6 +31,7 @@ export function createDesktopLifecycle({
       phase: 'preparing',
       stage: 'computer',
       progress: undefined,
+      secondsLeft: undefined,
       needsRuntimeArchive: false,
       needsWsl: false,
       ...value,
@@ -89,6 +90,7 @@ export function createDesktopLifecycle({
               message: typeof value === 'string' ? value : value.message,
               stage: typeof value === 'object' ? (value.stage ?? 'computer') : 'computer',
               progress: typeof value === 'object' ? value.progress : undefined,
+              secondsLeft: typeof value === 'object' ? value.secondsLeft : undefined,
             }),
         });
         runtime = prepared;

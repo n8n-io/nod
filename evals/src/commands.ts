@@ -31,7 +31,7 @@ const help = `Nod capability evals
     run [--tier pr|full|release|live]  run the suite and print the pass rate, trust profile and what went wrong
     list                       show every scenario
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
-                               (--baseline main, --repeat 3, --scenario a,b, --label name, --out directory)
+                               (--baseline main, --repeat 3, --scenario a,b, --arms main-llm,branch-llm,gpt-decisions,jev-openrouter, --decision-model provider/model, --label name, --out directory)
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Nod, graded by the official judge
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)
@@ -240,6 +240,8 @@ export async function main(args: Args) {
         label: text(args, 'label') ?? new Date().toISOString().replace(/[:.]/g, '-'),
         repeat: whole(args, 'repeat', 3),
         caseIds: text(args, 'scenario')?.split(','),
+        arms: text(args, 'arms')?.split(','),
+        openRouterModel: text(args, 'decision-model'),
       });
       console.log(JSON.stringify(result, null, 2));
       return;

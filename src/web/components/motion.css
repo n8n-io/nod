@@ -17,6 +17,27 @@
 .ob-glyph-orbit[data-phase='settle'] {
   animation: ob-spin-out 1.6s cubic-bezier(0.33, 0.48, 0.4, 1);
 }
+.ob-glyph-orbiting > .ob-glyph-orbit {
+  transition: transform 300ms linear;
+}
+.ob-glyph-track {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.ob-glyph-trail {
+  stroke: var(--brand-pink);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  transition: stroke-dasharray 300ms linear;
+}
+.ob-glyph-receiving {
+  transform-box: view-box;
+  transform-origin: 25px 6px;
+  animation: ob-receiving 1.2s ease-in-out infinite;
+}
+.ob-glyph-waiting {
+  animation: ob-waiting 2.4s ease-in-out infinite;
+}
 .ob-glyph-react {
   transform-box: view-box;
   transform-origin: 25px 6px;
@@ -44,6 +65,20 @@
 @keyframes ob-spin-out {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes ob-receiving {
+  50% {
+    transform: scale(1.25);
+  }
+}
+@keyframes ob-waiting {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
   }
 }
 @keyframes ob-dot-hop {

@@ -1773,6 +1773,130 @@ test('decision routing uses the selected connection and never sends subscription
   });
 });
 
+test('trust mode selects available Jev, Decider and OpenAI before the small LLM', async (t) => {
+  const requests: Array<{ url: string; model: string; key: string | null }> = [];
+  let fail = false;
+  let catalog = [
+    'typesafe/jev-1.14',
+    'perplexity/pplx-decider-v1.2',
+    'openai/gpt-6-luna-decisions',
+  ];
+  let catalogFail = false;
+  let lookups = 0;
+  t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url).includes('/models/user')) {
+      lookups++;
+      if (catalogFail) return new Response('', { status: 503 });
+      assert.equal(init?.redirect, 'error');
+      return Response.json({
+        data: catalog.map((id) => ({
+          id,
+          architecture: { input_modalities: ['text'], output_modalities: ['decisions'] },
+          endpoints: ['/api/alpha/decisions'],
+        })),
+      });
+    }
+    const body = JSON.parse(String(init?.body));
+    requests.push({
+      url: String(url),
+      model: body.model,
+      key: new Headers(init?.headers).get('authorization'),
+    });
+    if (fail) return new Response('', { status: 503 });
+    return Response.json({
+      answers: String(url).includes('api.openai.com')
+        ? [{ type: 'choice', name: 'answer', choice: false }]
+        : { answer: { type: 'choice', choice: 'false' } },
+      usage: { input_tokens: 1 },
+    });
+  });
+  const { createDefaultAdapters } = await import('../src/server/composition.ts');
+  const adapters = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  assert.equal(adapters.trustModel, 'decision');
+  const keys = new Map([
+    ['openai', 'fixture-openai'],
+    ['openrouter', 'fixture-router'],
+  ]);
+  adapters.models!.hasApiKey = (provider) => keys.has(provider);
+  adapters.models!.apiKey = async (provider) => keys.get(provider);
+  adapters.models!.resolve = async () =>
+    assert.fail('Trust routing must not read subscription credentials.');
+  const check = (target = adapters) =>
+    target.trustDecisions!.check({
+      instructions: 'Apply policy.',
+      input: {},
+      question: { name: 'answer', choices: [{ value: false, description: 'Ask.' }] },
+    });
+  assert.deepEqual(await check(), { answer: false });
+  assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
+  assert.equal(lookups, 1);
+  await check();
+  assert.equal(lookups, 1);
+  fail = true;
+  const before = requests.length;
+  await assert.rejects(check());
+  assert.equal(requests.length, before + 1);
+  assert.equal(requests.at(-1)?.key, 'Bearer fixture-router');
+  fail = false;
+  catalog = catalog.slice(1);
+  keys.set('openrouter', 'fixture-router-rotated');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'perplexity/pplx-decider-v1.2');
+  catalog = catalog.slice(1);
+  keys.set('openrouter', 'fixture-router-no-decider');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  keys.delete('openai');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'openai/gpt-6-luna-decisions');
+  catalog = [];
+  keys.set('openrouter', 'fixture-router-no-decisions');
+  assert.equal(await adapters.trustDecisions!.select!(), undefined);
+  catalogFail = true;
+  keys.set('openrouter', 'fixture-router-list-failure');
+  keys.set('openai', 'fixture-openai');
+  const beforeLookupFailure = requests.length;
+  await assert.rejects(adapters.trustDecisions!.select!());
+  assert.equal(requests.length, beforeLookupFailure);
+  catalogFail = false;
+  keys.delete('openrouter');
+  await check();
+  assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  keys.clear();
+  const count = requests.length;
+  assert.equal(await check(), undefined);
+  assert.equal(requests.length, count);
+  const direct = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
+    TYPESAFE_API_KEY: 'fixture-typesafe',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  direct.models!.hasApiKey = () => false;
+  await check(direct);
+  assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
+  catalog = ['typesafe/jev-1.14'];
+  const router = createDefaultAdapters({
+    NOD_TRUST_MODEL: 'decision',
+    NOD_FEEDBACK_ENABLED: 'false',
+  });
+  router.models!.hasApiKey = (provider) => provider === 'openrouter';
+  router.models!.apiKey = async () => 'fixture-router';
+  await check(router);
+  assert.equal(requests.at(-1)?.model, 'typesafe/jev-1.14');
+  direct.models!.hasApiKey = (provider) => provider === 'openrouter';
+  direct.models!.apiKey = async () => 'fixture-router';
+  await check(direct);
+  assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
+  assert.equal(createDefaultAdapters({ NOD_FEEDBACK_ENABLED: 'false' }).trustModel, 'selected');
+  for (const mode of ['hybrid', 'small', 'unknown'])
+    assert.throws(() =>
+      createDefaultAdapters({ NOD_TRUST_MODEL: mode, NOD_FEEDBACK_ENABLED: 'false' }),
+    );
+});
+
 test('codemode heldout output preserves UTF-8 bytes and fails closed through the guard', async (t) => {
   const expected =
     Array.from(

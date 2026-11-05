@@ -44,7 +44,7 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
-import { createDecisionModel } from '../providers/decisions.ts';
+import { createDecisionModel, createOpenRouterDecisionCatalog } from '../providers/decisions.ts';
 import type { SpeechProvider, LocalSpeechControls } from '../ports/speech.ts';
 import { createLocalSpeechProvider } from '../providers/local-speech/index.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
@@ -210,6 +210,9 @@ export interface ApplicationAdapters {
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
+  trustModel?: 'selected' | 'llm' | 'decision';
+  trustDecisions?: DecisionModel;
+  trustCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
@@ -403,6 +406,36 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
+  const trustModel = z
+    .enum(['selected', 'llm', 'decision'])
+    .parse(env.NOD_TRUST_MODEL ?? 'selected');
+  const decisionCatalog = createOpenRouterDecisionCatalog();
+  const trustDecisions = createDecisionModel({
+    configured: () =>
+      Boolean(env.TYPESAFE_API_KEY?.trim()) ||
+      models.hasApiKey('openrouter') ||
+      models.hasApiKey('openai'),
+    resolve: async (signal) => {
+      if (env.TYPESAFE_API_KEY?.trim())
+        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim(), model: 'jev-1.14.0' };
+      let routerKey: string | undefined;
+      let available: Set<string> | undefined;
+      if (models.hasApiKey('openrouter')) {
+        routerKey = await models.apiKey('openrouter');
+        if (!routerKey) throw new Error('The trust model connection is unavailable.');
+        available = await decisionCatalog(routerKey, signal);
+        for (const model of ['typesafe/jev-1.14', 'perplexity/pplx-decider-v1.2'])
+          if (available.has(model)) return { provider: 'openrouter', key: routerKey, model };
+      }
+      if (models.hasApiKey('openai')) {
+        const key = await models.apiKey('openai');
+        if (!key) throw new Error('The trust model connection is unavailable.');
+        return { provider: 'openai', key };
+      }
+      if (routerKey && available?.has('openai/gpt-6-luna-decisions'))
+        return { provider: 'openrouter', key: routerKey, model: 'openai/gpt-6-luna-decisions' };
+    },
+  });
   const integrationBrowser = createIntegrationBrowser(
     desktopMode ? undefined : { origin: publicOrigin },
   );
@@ -528,6 +561,13 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    trustCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      resolve: () => models.resolveClassification(true),
+      configured: () => models.hasClassificationModel(true),
+    }),
     classificationCurator: createPiMemoryCurator({
       get provider() {
         return models.current.provider;
@@ -545,6 +585,8 @@ export function createDefaultAdapters(
     }),
     onboardingCurator: selectedCurator,
     decisions,
+    trustModel,
+    trustDecisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(),
       managed: managedChannelEnvironment(env),
@@ -1444,10 +1486,27 @@ async function initializeApplication(
       return { question: result[appConfirmation] };
     return { reason: 'allowed', basis: { kind: 'approved' } };
   }
+  const trustCurator =
+    (adapters.trustModel ?? 'selected') === 'selected'
+      ? onboardingCurator
+      : adapters.trustCurator
+        ? ledger.curator(adapters.trustCurator)
+        : adapters.classificationCurator
+          ? ledger.curator(adapters.classificationCurator)
+          : curator;
   const trust = createTrust({
     pool,
     ownerId,
-    review,
+    review: async (instructions, input, signal, question) => {
+      if (question)
+        instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
+      return trustCurator.configured
+        ? trustCurator.curate({ task: 'review', instructions, input }, signal)
+        : undefined;
+    },
+    ...(adapters.trustModel === 'decision' && adapters.trustDecisions
+      ? { decisions: ledger.decisions(adapters.trustDecisions) }
+      : {}),
   });
   const observations = createObservationSources(
     [
@@ -1479,12 +1538,17 @@ async function initializeApplication(
         await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
         return result;
       }
-      const verdict = await trust.check(turn, 'NOD_read_source', {
-        ...bound,
-        source: source.label,
-        description: source.description,
-        operation: 'Read current records from this registered read-only source.',
-      });
+      const verdict = await trust.check(
+        turn,
+        'NOD_read_source',
+        {
+          ...bound,
+          source: source.label,
+          description: source.description,
+          operation: 'Read current records from this registered read-only source.',
+        },
+        signal,
+      );
       if (verdict.confirm)
         throw Object.assign(
           new Error(
@@ -1616,7 +1680,7 @@ async function initializeApplication(
       },
       browserStep: async (turn, request, signal) => {
         const args = browserStepArgs(request);
-        const verdict = await trust.check(turn, 'NOD_browser', args);
+        const verdict = await trust.check(turn, 'NOD_browser', args, signal);
         if (!verdict.confirm) return 'run';
         if (
           request.step.action === 'click' &&
@@ -1937,7 +2001,7 @@ async function initializeApplication(
           const result = await integrations.execute(ownerId, action, args, turn, options.signal);
           return result;
         }
-        const verdict = await trust.check(turn, action, args);
+        const verdict = await trust.check(turn, action, args, options.signal);
         await options.admit?.(verdict.confirm);
         const prepared = hasWorkspaceFiles(args)
           ? await withTurnLock(turn.turnId, (client) =>

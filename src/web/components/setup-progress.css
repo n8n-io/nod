@@ -31,7 +31,8 @@
   flex: none;
   overflow: visible;
 }
-.setup-progress-message {
+.setup-progress-message,
+.setup-progress-status {
   display: grid;
   gap: 12px;
   width: 100%;
@@ -51,6 +52,9 @@
   line-height: 1.6;
   text-wrap: pretty;
   overflow-wrap: anywhere;
+}
+.setup-progress-message .setup-progress-meta {
+  font-variant-numeric: tabular-nums;
 }
 .setup-progress-actions {
   display: flex;

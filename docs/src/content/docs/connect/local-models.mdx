@@ -7,14 +7,14 @@ sidebar:
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-Nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
+Nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Your chat requests go to the address you enter. Trust checks use a known small model or a decision service and can have API costs. Their inputs go to that checker service.
 
 Local models work in the [desktop app](/get-started/install-desktop/), [source installs](/get-started/install-from-source/), and [self-hosted servers](/deploy/self-host/).
 
 The model server must be reachable from Nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to Nod's container.
 
-:::caution[Your model also decides when Nod asks you]
-Nod's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether Nod asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
+:::caution[Connect a Trust checker]
+By default, Nod's [trust check](/trust/approvals/) uses your local model at its lowest reasoning setting, and smaller models decide less reliably. You can choose a small model from another connection or a decision service as the [action checker](/connect/models/#select-the-action-checker) instead. Your local model still writes and checks confirmation questions.
 :::
 
 ## Before you start
@@ -141,9 +141,9 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 | Spending            | Nod doesn't know the server's prices, so **Usage** shows its requests as **No price**. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/#how-each-model-is-priced). A paid service still bills you. |
 | Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                                                                     |
 | Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                                                              |
-| Decision checks     | Your selected model handles confirmation replies and email checks unless `TYPESAFE_API_KEY` configures a decision model. See [Decision checks](/connect/models/#decision-checks).                                                      |
+| Decision checks     | Trust uses a separate small model or decision service. Email checks use the background model unless a decision service is available. See [Decision checks](/connect/models/#decision-checks).                                          |
 | Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                                                       |
-| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                                                       |
+| Where requests go   | Chat requests go to the address you enter. Trust requests go to the checker connection. Web search, websites, apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                     |
 | Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go).                                  |
 
 ## Troubleshooting
@@ -156,7 +156,7 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 | A new model doesn't appear on a server added in Settings      | Open **Manage** next to the connection, choose **Add connection**, then enter the same server address and API key, if used. This updates its model list. |
 | **Can’t load its models** next to a server set in `.env`      | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                  |
 | **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                          |
-| Nod asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                                    |
+| Nod asks before almost everything, or acts without asking     | Check the separate Trust connection and its mode. A failed check requires confirmation.                                                                  |
 
 ## Related resources
 

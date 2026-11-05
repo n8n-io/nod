@@ -291,6 +291,14 @@ export function createLedger({
       get configured() {
         return base.configured;
       },
+      ...(base.select
+        ? {
+            async select(signal?: AbortSignal) {
+              const selected = await base.select!(signal);
+              return selected && decisions(selected);
+            },
+          }
+        : {}),
       async check(request, signal, report) {
         signal?.throwIfAborted();
         if (base.configured === false) return undefined;

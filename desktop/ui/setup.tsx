@@ -20,6 +20,7 @@ type RuntimeStatus = {
   error?: string;
   details?: string;
   progress?: number;
+  secondsLeft?: number;
   needsWsl?: boolean;
   needsRuntimeArchive?: boolean;
   needsServerConnection?: boolean;
@@ -512,6 +513,7 @@ function Startup() {
         error={error}
         details={error ? failure?.details : undefined}
         progress={progress}
+        secondsLeft={progress === undefined ? undefined : active.secondsLeft}
       >
         {failure && desktop && (
           <div className="recovery-actions">
