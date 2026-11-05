@@ -1944,12 +1944,12 @@ test('runtime files become ready only after their own bytes verify, and a mismat
     downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
     fetch: async () => new Response(await readFile(tampered.archivePath)),
   });
-  await assert.rejects(rejected.ready(tampered.release.files[1].path));
-  await assert.rejects(rejected.done, (error) => {
+  await assert.rejects(rejected.ready(tampered.release.files[1].path), (error) => {
     assert.match(error.cause.message, /SHA-256/);
     assert.ok(error.cause.message.includes(tampered.release.files[1].path));
     return true;
   });
+  await assert.rejects(rejected.done);
   assert.deepEqual(await readdir(tampered.cacheRoot), []);
 });
 
