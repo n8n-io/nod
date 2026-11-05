@@ -68,7 +68,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
 - Every query and route is scoped to one owner.
-- File previews never run a file in Nod's own page. HTML runs in a sandboxed frame inside a second sandboxed frame. The outer frame blocks network requests and navigation from the inner frame before a request leaves. Local scripts still run, but forms and pop-ups are blocked. The preview closes after a blocked navigation. Other formats are read as data. Files that can run code get no local preview before they upload.
+- File previews never run a file in Nod's own page. HTML runs in a sandboxed frame inside a second sandboxed frame. The outer frame blocks network requests and navigation from the inner frame before a request leaves. It runs Nod's handlers even when scripts in the file are disabled. Interactive HTML can run local scripts, but forms and pop-ups are blocked. The preview closes after a blocked navigation. Other formats are read as data. Files that can run code get no local preview before they upload.
 
 ### Client access
 

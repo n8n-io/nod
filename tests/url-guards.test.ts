@@ -49,7 +49,7 @@ test(
     assert.ok(address && typeof address !== 'string');
     const destination = `http://127.0.0.1:${address.port}/collect?data=synthetic-marker`;
     const target = JSON.stringify(destination);
-    const attempts = [
+    const navigations = [
       `location.href=${target}`,
       `location.replace(${target})`,
       `location.assign(${target})`,
@@ -58,6 +58,9 @@ test(
       `const meta=document.createElement('meta');meta.httpEquiv='refresh';meta.content='0;url='+${target};document.head.append(meta)`,
       `document.querySelectorAll('meta').forEach(node=>node.remove());location.replace(${target})`,
       `document.open();document.write('<meta http-equiv="refresh" content="0;url='+${target}+'">');document.close()`,
+    ];
+    const attempts = [
+      ...navigations,
       `parent.location=${target}`,
       `top.location=${target}`,
       `window.open(${target},'_blank')`,
@@ -93,7 +96,7 @@ test(
     const host = createServer((_request, response) => {
       response.setHeader('content-type', 'text/html');
       response.end(
-        `<body><script>const messages=[];addEventListener('message',event=>{if(typeof event.data!=='string')return;messages.push(event.data);document.body.dataset.messages=JSON.stringify(messages);if(event.data==='nod:leave'&&event.source===document.querySelector('iframe').contentWindow)document.body.dataset.navigationBlocked='yes';if(event.data==='nod:close'&&[...document.querySelectorAll('iframe')].some(frame=>frame.contentWindow===event.source))document.body.dataset.closed='yes';if(event.data==='nod:leave'&&[...document.querySelectorAll('iframe')].some(frame=>frame.contentWindow===event.source))document.body.dataset.left='yes'})</script>${previews.join('')}</body>`,
+        `<body><script>const messages=[],blocked=new Set();addEventListener('message',event=>{if(typeof event.data!=='string')return;messages.push(event.data);document.body.dataset.messages=JSON.stringify(messages);const index=[...document.querySelectorAll('iframe')].findIndex(frame=>frame.contentWindow===event.source);if(index<0)return;if(event.data==='nod:leave'){blocked.add(index);document.body.dataset.navigationBlocked=JSON.stringify([...blocked].sort((a,b)=>a-b))}if(event.data==='nod:close')document.body.dataset.closed='yes'});addEventListener('load',()=>{document.querySelectorAll('iframe')[${attempts.length + 1}].contentWindow[0].location=${target}})</script>${previews.join('')}</body>`,
       );
     });
     const profile = await mkdtemp(join(tmpdir(), 'nod-preview-browser-'));
@@ -125,8 +128,9 @@ test(
         assert.match(result.stdout, new RegExp(`ran-${index}(?:&quot;|\")`));
       assert.deepEqual(received, []);
       assert.match(result.stdout, /data-closed="yes"/);
-      assert.match(result.stdout, /data-left="yes"/);
-      assert.match(result.stdout, /data-navigation-blocked="yes"/);
+      const blocked = /data-navigation-blocked="([^"]+)"/.exec(result.stdout);
+      assert.ok(blocked);
+      assert.deepEqual(JSON.parse(blocked[1]), [...navigations.keys(), attempts.length + 1]);
       assert.match(result.stdout, /&quot;interactive&quot;/);
       assert.match(result.stdout, /&quot;quoted-content&quot;/);
       assert.doesNotMatch(result.stdout, /&quot;thumbnail-script&quot;/);

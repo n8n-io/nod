@@ -7,9 +7,7 @@ export const escapeForwarder =
   "<script>addEventListener('keydown',function(e){if(e.key==='Escape')parent.postMessage('nod:close','*')},true)</script>";
 
 export function sandboxedDocument(content: string, head = '') {
-  const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}"><meta name="referrer" content="no-referrer"><base target="_blank">${head}${content}`;
-  const source = page.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}; frame-src 'none'; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;width:100%;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style><iframe title="File content" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" srcdoc="${source}" onload="if(this.dataset.loaded)parent.postMessage('nod:leave','*');this.dataset.loaded='yes'"></iframe><script>addEventListener('securitypolicyviolation',function(e){if(e.effectiveDirective==='frame-src')parent.postMessage('nod:leave','*')});addEventListener('message',function(e){if(e.source===document.querySelector('iframe').contentWindow&&e.data==='nod:close')parent.postMessage(e.data,'*')})</script>`;
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}"><meta name="referrer" content="no-referrer"><base target="_blank">${head}${content}`;
 }
 
 export function SandboxedFrame({
@@ -32,14 +30,17 @@ export function SandboxedFrame({
     window.addEventListener('message', leave);
     return () => window.removeEventListener('message', leave);
   }, [onLeave]);
+  const permissions = scripts ? 'allow-scripts' : 'allow-popups allow-popups-to-escape-sandbox';
+  const source = html.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}; frame-src 'none'; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;width:100%;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style><iframe title="File content" sandbox="${permissions}" referrerpolicy="no-referrer" srcdoc="${source}" onload="if(this.dataset.loaded)parent.postMessage('nod:leave','*');this.dataset.loaded='yes'"></iframe><script>addEventListener('securitypolicyviolation',function(e){if(e.effectiveDirective==='frame-src')parent.postMessage('nod:leave','*')});addEventListener('message',function(e){if(e.source===document.querySelector('iframe').contentWindow&&e.data==='nod:close')parent.postMessage(e.data,'*')})</script>`;
   return (
     <iframe
       ref={frame}
       className="artifact-frame"
       title={title}
-      sandbox={scripts ? 'allow-scripts' : 'allow-popups allow-popups-to-escape-sandbox'}
+      sandbox={scripts ? permissions : `allow-scripts ${permissions}`}
       referrerPolicy="no-referrer"
-      srcDoc={html}
+      srcDoc={page}
       onLoad={() => {
         loads.current += 1;
         if (loads.current > 1) onLeave();
