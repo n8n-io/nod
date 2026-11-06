@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
+import { parseIntoClientConfig } from 'pg-connection-string';
 import type { Agent, RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
 import type { Artifact, AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
@@ -164,18 +165,23 @@ test(
           t.after(() => admin.query(`DROP SCHEMA ${controlSchema} CASCADE`));
           await db.pool.query('CREATE TABLE cancellation_control_marks(value text)');
           await admin.query(`CREATE TABLE ${controlSchema}.cancellation_control_marks(value text)`);
+          const parameters = parseIntoClientConfig(database.href);
+          const ssl = Boolean(new pg.Client(parameters).ssl);
           const target = new pg.Pool({
-            host: database.hostname,
-            port: Number(database.port),
-            user: decodeURIComponent(database.username),
-            password: decodeURIComponent(database.password),
-            database: database.pathname.slice(1),
+            ...parameters,
+            password: parameters.password,
             options: `-c search_path=${controlSchema}`,
             application_name: 'synthetic-cancellation-control',
             max: 4,
           });
           t.after(() => target.end());
+          assert.equal(target.options.connectionString, undefined);
           await db.cancellationTransaction(async (client) => {
+            assert.equal(
+              (await client.query('SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()')).rows[0]
+                .ssl,
+              ssl,
+            );
             await client.query('INSERT INTO cancellation_control_marks(value) VALUES ($1)', [
               'owned-fixture',
             ]);
