@@ -3415,6 +3415,160 @@ test(
 );
 
 test(
+  'a settled OAuth callback survives a delayed restart refusal',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      url: 'http://localhost:4310/',
+      pretendToBeVisual: true,
+    });
+    const channels: Array<{ onmessage?: (event: { data: Record<string, string> }) => void }> = [];
+    const globals = {
+      window: dom.window,
+      document: dom.window.document,
+      navigator: dom.window.navigator,
+      HTMLElement: dom.window.HTMLElement,
+      IS_REACT_ACT_ENVIRONMENT: true,
+      BroadcastChannel: class {
+        onmessage?: (event: { data: Record<string, string> }) => void;
+        constructor() {
+          channels.push(this);
+        }
+        close() {}
+      },
+      fetch: globalThis.fetch,
+    };
+    const originals = new Map(
+      Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+    );
+    for (const [key, value] of Object.entries(globals))
+      Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    dom.window.open = () =>
+      ({ closed: false, close() {}, location: { href: '' } }) as unknown as Window;
+    const { act, createElement } = await import('react');
+    const { createRoot } = await import('react-dom/client');
+    const { useAppSignIn } = await import('../src/web/hooks/use-app-sign-in.ts');
+    try {
+      for (const outcome of ['connected', 'failed'])
+        await t.test(outcome, async (t) => {
+          const f = await appsFixture(t);
+          let release = () => {};
+          let entered = () => {};
+          let respond = () => {};
+          let received = (_status: number) => {};
+          let statusReady = () => {};
+          const statusRead = new Promise<void>((resolve) => {
+            statusReady = resolve;
+          });
+          const held = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const checking = new Promise<void>((resolve) => {
+            entered = resolve;
+          });
+          const responseHeld = new Promise<void>((resolve) => {
+            respond = resolve;
+          });
+          const responseReady = new Promise<number>((resolve) => {
+            received = resolve;
+          });
+          const inspect = f.provider.inspectAccount;
+          f.provider.inspectAccount = async (...args) => {
+            entered();
+            await held;
+            if (outcome === 'failed') throw new Error('Synthetic provider failure.');
+            return inspect(...args);
+          };
+          globalThis.fetch = async (path, options = {}) => {
+            const response = await f.app.inject({
+              method: (options.method ?? 'GET') as 'GET' | 'POST',
+              url: String(path),
+              ...(options.body
+                ? { payload: String(options.body), headers: { 'content-type': 'application/json' } }
+                : {}),
+            });
+            if (String(path) === '/api/apps/setup-status') statusReady();
+            if (
+              String(path) === '/api/apps/gmail/connect' &&
+              JSON.parse(String(options.body)).restartAttempt
+            ) {
+              received(response.statusCode);
+              await responseHeld;
+            }
+            return new Response(response.body, { status: response.statusCode });
+          };
+          let signIn!: ReturnType<typeof useAppSignIn>;
+          let settled = 0;
+          function SignIn() {
+            signIn = useAppSignIn({
+              entry: 'onboarding',
+              name: (service) => service,
+              onSettled() {
+                settled++;
+              },
+            });
+            return null;
+          }
+          const root = createRoot(dom.window.document.getElementById('root')!);
+          let restarting: Promise<void> | undefined;
+          try {
+            await act(async () => root.render(createElement(SignIn)));
+            await act(async () => {
+              await signIn.connect({ service: 'gmail' });
+              await statusRead;
+            });
+            const callback = new URL(f.callbacks.at(-1)!);
+            callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+            const completion = f.app.inject({ url: callback.pathname + callback.search });
+            await checking;
+            await act(async () => {
+              restarting = signIn.connect({ service: 'gmail' });
+              assert.equal(await responseReady, 409);
+            });
+            release();
+            const returned = new URL((await completion).headers.location!);
+            assert.equal(returned.searchParams.get('connection'), outcome);
+            await act(async () => {
+              channels.at(-1)!.onmessage?.({
+                data: {
+                  connection: outcome,
+                  service: 'gmail',
+                  attempt: callback.searchParams.get('state')!,
+                },
+              });
+            });
+            const completed = signIn.completed;
+            const error = signIn.error;
+            assert.equal(Boolean(completed), outcome === 'connected');
+            assert.equal(settled, 1);
+            await act(async () => {
+              respond();
+              await restarting;
+            });
+            assert.equal(signIn.completed, completed);
+            assert.equal(signIn.error, error);
+            assert.equal(signIn.pending, undefined);
+            assert.equal(settled, 1);
+            assert.equal(f.callbacks.length, 1);
+          } finally {
+            release();
+            respond();
+            await act(async () => {
+              await restarting;
+              root.unmount();
+            });
+          }
+        });
+    } finally {
+      dom.window.close();
+      for (const [key, value] of originals)
+        if (value) Object.defineProperty(globalThis, key, value);
+        else Reflect.deleteProperty(globalThis, key);
+    }
+  },
+);
+
+test(
   'an executing callback stays protected past expiry and an expired restart claim can be replaced without replay',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

@@ -284,14 +284,13 @@ export function useAppSignIn({
         setSignInOpened(external || Boolean(popup && !popup.closed));
     } catch (cause) {
       popup?.close();
-      if (controller.signal.aborted || request.current !== controller) return;
       if (
-        restarting &&
-        cause instanceof ApiError &&
-        cause.status === 409 &&
-        attempt.current === restarting
+        controller.signal.aborted ||
+        request.current !== controller ||
+        (restarting && attempt.current !== restarting)
       )
-        next = 'waiting';
+        return;
+      if (restarting && cause instanceof ApiError && cause.status === 409) next = 'waiting';
       else clearAttempt();
       setError(errorMessage(cause));
       capture('ui_error', { area: entry, action: 'connect' });
