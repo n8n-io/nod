@@ -700,6 +700,9 @@ test(
             assert.equal(await transport.cancelPairing!('another-setup'), false);
             const me = { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' };
             sockets[0].events.emit('creds.update', { me, registered: true });
+            sockets[0].events.emit('connection.update', { isNewLogin: true, qr: undefined });
+            assert.equal((await transport.pairing!()).qr, undefined);
+            assert.equal((await transport.pairing!()).state, 'connecting');
             sockets[0].events.emit('connection.update', { connection: 'open' });
             assert.equal((await transport.pairing!()).qr, undefined);
             assert.equal(await transport.cancelPairing!(initial.pairingId!), false);
