@@ -115,7 +115,13 @@ export function createComposioProxy(options: {
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
-  const signed = { send: request };
+  const signed = {
+    send: async (...args: Parameters<typeof fetch>) => {
+      const response = await request(...args);
+      await response.clone().body?.pipeTo(new WritableStream());
+      return response;
+    },
+  };
   const transport = client.getClient().withOptions({ transport: signed, maxRetries: 0 });
   client.getClient().request = transport.request.bind(transport);
   client.getClient().withOptions = (options) =>

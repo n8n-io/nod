@@ -202,6 +202,139 @@ test(
   },
 );
 
+test(
+  'managed integration SDK requests keep their deadline and cancellation through the response body',
+  { timeout: 15_000 },
+  async (t) => {
+    const { createServer } = await import('node:http');
+    const root = await mkdtemp(join(tmpdir(), 'nod-integration-response-'));
+    let receiving = () => {};
+    let release = () => {};
+    let requests = 0;
+    let complete = false;
+    const payload = 'x'.repeat(4 * 1024 * 1024);
+    const server = createServer(async (request, response) => {
+      for await (const chunk of request) void chunk;
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/v2/access/enroll') {
+        response.end(
+          JSON.stringify({
+            state: 'enabled',
+            userId:
+              'nod_' +
+              createHash('sha256')
+                .update(Buffer.from(String(request.headers['x-nod-public-key']), 'base64url'))
+                .digest('hex'),
+          }),
+        );
+        return;
+      }
+      assert.equal(request.url, '/v2/api/v3.1/tool_router/session/fixture-session/execute');
+      requests++;
+      if (complete) {
+        response.setHeader('x-fixture-response', 'preserved');
+        response.write('{"data":{"payload":"');
+        for (let offset = 0; offset < payload.length; offset += 65_536)
+          response.write(payload.slice(offset, offset + 65_536));
+        response.end('"},"error":null,"log_id":"fixture-log","result_type":"completed"}');
+        return;
+      }
+      response.write('{"data":');
+      release = () => {
+        if (!response.writableEnded)
+          response.end(
+            '{"messages":[]},"error":null,"log_id":"fixture-log","result_type":"completed"}',
+          );
+      };
+      receiving();
+    });
+    t.after(async () => {
+      release();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const request = globalThis.fetch;
+    const proxy = createComposioProxy({
+      dataRoot: root,
+      ownerId: 'fixture-owner',
+      keyStore: installationKeyStore,
+      checkpoint: fixtureIdentityCheckpoint,
+      url: 'https://proxy.example.test',
+      request: (input, init) => request(new URL(new URL(String(input)).pathname, origin), init),
+    });
+    await proxy.initialize();
+    await t.test('chunked response data and metadata stay available', async () => {
+      complete = true;
+      try {
+        const { data, response } = await proxy.client
+          .getClient()
+          .toolRouter.session.execute('fixture-session', {
+            tool_slug: 'GMAIL_FETCH_EMAILS',
+            arguments: {},
+          })
+          .withResponse();
+        assert.ok(data.result_type === 'completed');
+        assert.deepEqual(data.data, { payload });
+        assert.equal(response.headers.get('x-fixture-response'), 'preserved');
+        assert.equal(response.status, 200);
+        assert.equal(
+          response.url,
+          `${origin}/v2/api/v3.1/tool_router/session/fixture-session/execute`,
+        );
+        assert.deepEqual((await response.json()).data, { payload });
+        assert.equal(requests, 1);
+      } finally {
+        complete = false;
+      }
+    });
+    for (const mode of ['timeout', 'abort'] as const) {
+      await t.test(mode, async () => {
+        const controller = new AbortController();
+        const started = new Promise<void>((resolve) => {
+          receiving = resolve;
+        });
+        const before = requests;
+        const pending = proxy.client
+          .getClient()
+          .toolRouter.session.execute(
+            'fixture-session',
+            { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+            { timeout: mode === 'timeout' ? 200 : 10_000, signal: controller.signal },
+          )
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        try {
+          await Promise.race([
+            started,
+            pending.then(() => assert.fail('The app request ended before response headers.')),
+            delay(2_000).then(() => assert.fail('The fixture did not send response headers.')),
+          ]);
+          await delay(20);
+          if (mode === 'abort') controller.abort();
+          const error = await Promise.race([
+            pending,
+            delay(2_000).then(() => assert.fail('The app request did not end.')),
+          ]);
+          assert.ok(error instanceof Error);
+          assert.equal(
+            error.constructor.name,
+            mode === 'timeout' ? 'APIConnectionTimeoutError' : 'APIUserAbortError',
+          );
+          assert.equal(requests, before + 1);
+        } finally {
+          release();
+          await pending;
+        }
+      });
+    }
+  },
+);
+
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
     throw new Error('Unexpected external request in the managed integration fixture.');
