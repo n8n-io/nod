@@ -87,6 +87,7 @@ test(
       string,
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
+    const publicationOperations: Promise<unknown>[] = [];
     let completedTurns = 0;
     let stagingCompletion: Promise<unknown> | undefined;
     let publicationRead: { started(): void; resume: Promise<void> } | undefined;
@@ -187,6 +188,50 @@ test(
             (await target.query('SELECT value FROM cancellation_control_marks')).rows,
             [{ value: 'owned-fixture' }],
           );
+        },
+      );
+      await t.test(
+        'concurrent cancellation requests use one control connection at a time',
+        async () => {
+          const target = new pg.Pool({ ...db.pool.options, max: 4 });
+          const opened = new Set<pg.Pool>();
+          const connect = pg.Pool.prototype.connect;
+          const observed = t.mock.method(
+            pg.Pool.prototype,
+            'connect',
+            function (this: pg.Pool, ...args: unknown[]) {
+              if (this !== db.pool) opened.add(this);
+              return Reflect.apply(connect, this, args) as Promise<pg.PoolClient>;
+            },
+          );
+          let started!: () => void;
+          const entered = new Promise<void>((resolve) => {
+            started = resolve;
+          });
+          let resume!: () => void;
+          const blocked = new Promise<void>((resolve) => {
+            resume = resolve;
+          });
+          const work = Array.from({ length: 8 }, (_, index) =>
+            db.cancellationTransaction(async (client) => {
+              await client.query('SELECT 1');
+              started();
+              await blocked;
+              if (index === 0) throw new Error('Synthetic control transaction failure.');
+            }, target),
+          );
+          let results: PromiseSettledResult<unknown>[] = [];
+          try {
+            await entered;
+            assert.equal(opened.size, 1);
+          } finally {
+            resume();
+            results = await Promise.allSettled(work);
+            observed.mock.restore();
+            await target.end();
+          }
+          assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 7);
+          assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
         },
       );
       await threads.initializeThreads();
@@ -358,7 +403,19 @@ test(
           }
           const runtime = runtimes.get(context.prompt);
           assert.ok(runtime, 'A turn must use its assigned synthetic runtime.');
-          return runtime.runTurn(context);
+          return runtime.runTurn({
+            ...context,
+            reply(...args) {
+              const operation = context.reply(...args);
+              publicationOperations.push(operation);
+              return operation;
+            },
+            publish(...args) {
+              const operation = context.publish(...args);
+              publicationOperations.push(operation);
+              return operation;
+            },
+          });
         },
         speech: { synthesize: forbidden },
         requestCredential: forbidden,
@@ -620,7 +677,7 @@ test(
                 await runtime.dispose();
                 runtimes.delete(prompt);
               }
-              await delay(25);
+              await Promise.allSettled(publicationOperations);
               assert.equal(
                 (
                   await db.pool.query(
@@ -762,7 +819,7 @@ test(
             await runtime.dispose();
             runtimes.delete(prompt);
           }
-          await delay(25);
+          await Promise.allSettled(publicationOperations);
           assert.equal(
             (
               await db.pool.query(

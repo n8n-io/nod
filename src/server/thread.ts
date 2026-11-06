@@ -1990,6 +1990,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
+    if (signal.aborted && !stopping)
+      await cancellationTransaction((client) =>
+        client.query(
+          "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",
+          [turnId, ownerId],
+        ),
+      )
+        .then(({ rowCount }) => {
+          if (rowCount) refresh();
+        })
+        .catch((error: unknown) => logFailure('turn_cancellation_failed', error));
     if (work)
       dependencies.analytics?.({
         event: 'turn_completed',

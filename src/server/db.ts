@@ -25,15 +25,29 @@ export const pool = createPool({
   max: poolSize(process.env.DATABASE_POOL_MAX, 12),
 });
 
+const cancellationQueues = new WeakMap<pg.Pool, Promise<void>>();
+
 export async function cancellationTransaction<T>(
   action: (client: pg.PoolClient) => Promise<T>,
   database = pool,
 ) {
-  const control = createPool({ ...database.options, max: 1, min: 0 });
+  const previous = cancellationQueues.get(database);
+  let resume!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  cancellationQueues.set(database, queued);
+  await previous;
   try {
-    return await transaction(action, control);
+    const control = createPool({ ...database.options, max: 1, min: 0 });
+    try {
+      return await transaction(action, control);
+    } finally {
+      await control.end();
+    }
   } finally {
-    await control.end();
+    resume();
+    if (cancellationQueues.get(database) === queued) cancellationQueues.delete(database);
   }
 }
 

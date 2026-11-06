@@ -7250,8 +7250,19 @@ test(
           const previousRead = dependencies.readArtifact;
           let archivedThread = '';
           try {
-            for (const mode of ['task', 'reset', 'stale reset'])
+            for (const mode of [
+              'task',
+              'reset',
+              'stale reset',
+              'task rollback',
+              'reset rollback',
+              'stop rollback',
+            ])
               await t.test(mode, async () => {
+                const taskMode = mode.startsWith('task');
+                const resetting = mode.startsWith('reset');
+                const rollback = mode.endsWith('rollback');
+                const publications: Promise<unknown>[] = [];
                 const title = `Synthetic blocked publication ${mode}`;
                 let started!: () => void;
                 const reading = new Promise<void>((resolve) => {
@@ -7274,7 +7285,7 @@ test(
                     open: async (input) => ({
                       resumed: false,
                       async prompt() {
-                        if (mode === 'task' && input.sessionId === input.threadId) {
+                        if (taskMode && input.sessionId === input.threadId) {
                           await input.tools
                             .find((tool) => tool.name === 'task')!
                             .execute({
@@ -7300,8 +7311,15 @@ test(
                   },
                 });
                 dependencies.runTurn = (context) => {
-                  if (mode !== 'task' || context.background) active = context;
-                  return runtime.runTurn(context);
+                  if (!taskMode || context.background) active = context;
+                  return runtime.runTurn({
+                    ...context,
+                    reply(...args) {
+                      const publication = context.reply(...args);
+                      publications.push(publication);
+                      return publication;
+                    },
+                  });
                 };
                 const submitted = await sendJson({ text: title });
                 assert.equal(submitted.statusCode, 200, submitted.body);
@@ -7309,6 +7327,18 @@ test(
                 try {
                   await reading;
                   assert.ok(active);
+                  if (rollback)
+                    await db.pool.query(`
+                      CREATE SEQUENCE cancellation_fail_once;
+                      CREATE FUNCTION reject_first_cancellation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+                        IF nextval('cancellation_fail_once')=1 THEN RAISE EXCEPTION 'Synthetic cancellation commit failure'; END IF;
+                        RETURN NEW;
+                      END $$;
+                      CREATE CONSTRAINT TRIGGER reject_first_cancellation AFTER UPDATE ON turns
+                        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+                        WHEN (NEW.id='${active.turnId}' AND NEW.status='cancelled')
+                        EXECUTE FUNCTION reject_first_cancellation();
+                    `);
                   if (mode === 'stale reset') {
                     const stale = await request('POST', '/api/conversation/reset', {
                       threadId: archivedThread,
@@ -7318,19 +7348,17 @@ test(
                     assert.equal(await turnStatus(active.turnId), 'running');
                   }
                   if (mode === 'reset') archivedThread = active.threadId;
-                  const task =
-                    mode === 'task'
-                      ? (await db.pool.query('SELECT id FROM tasks WHERE title=$1', [title]))
-                          .rows[0]
-                      : undefined;
+                  const task = taskMode
+                    ? (await db.pool.query('SELECT id FROM tasks WHERE title=$1', [title])).rows[0]
+                    : undefined;
                   const response = request(
                     'POST',
                     task
                       ? `/api/tasks/${task.id}/stop`
-                      : mode === 'reset'
+                      : resetting
                         ? '/api/conversation/reset'
                         : '/api/thread/stop',
-                    mode === 'reset' ? { threadId: active.threadId } : undefined,
+                    resetting ? { threadId: active.threadId } : undefined,
                   );
                   stopping = response;
                   assert.equal(
@@ -7338,15 +7366,24 @@ test(
                     true,
                     'The stop request waited for the workspace file read.',
                   );
-                  assert.equal((await response).statusCode, 200);
+                  assert.equal((await response).statusCode, rollback ? 500 : 200);
                   assert.equal(active.signal.aborted, true);
+                  if (rollback) await waitFor(settled(active.turnId), 2000);
                   assert.equal(await turnStatus(active.turnId), 'cancelled');
                 } finally {
                   releaseRead();
                   await stopping;
                   await runtime.dispose();
+                  await Promise.allSettled(publications);
+                  if (rollback) {
+                    await db.pool.query(`
+                      DROP TRIGGER IF EXISTS reject_first_cancellation ON turns;
+                      DROP FUNCTION IF EXISTS reject_first_cancellation();
+                      DROP SEQUENCE IF EXISTS cancellation_fail_once;
+                    `);
+                    await request('POST', '/api/thread/stop');
+                  }
                 }
-                await delay(25);
                 assert.equal(
                   (
                     await db.pool.query(
