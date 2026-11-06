@@ -111,6 +111,7 @@ type ConnectionRow = {
   callback_verifier: string | null;
   setup_link_hash: string | null;
   callback_expires: Date | null;
+  callback_expired?: boolean;
   callback_return_to: ReturnTarget;
   trigger_id: string | null;
   triggers_enabled: boolean;
@@ -269,6 +270,15 @@ export async function initializeIntegrationSchema(pool: Pool) {
   `);
 }
 
+const activeCallbackClaims = new Set<string>();
+
+function protectedCallback(row: Pick<ConnectionRow, 'callback_claim_id' | 'callback_expired'>) {
+  return Boolean(
+    row.callback_claim_id &&
+    (activeCallbackClaims.has(row.callback_claim_id) || row.callback_expired !== true),
+  );
+}
+
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
   const mailCheck = options.mailCheck ?? noMailCheck;
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
@@ -344,7 +354,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     return (
       await (client ?? pool).query<ConnectionRow>(
-        `SELECT * FROM app_connections WHERE owner_id=$1 ORDER BY created_at,id${client ? ' FOR SHARE' : ''}`,
+        `SELECT *,callback_expires<=now() AS callback_expired FROM app_connections WHERE owner_id=$1 ORDER BY created_at,id${client ? ' FOR SHARE' : ''}`,
         [ownerId],
       )
     ).rows;
@@ -828,10 +838,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     await requireService(slug);
     await pool.query(
       `DELETE FROM app_connections WHERE owner_id=$1 AND account_id IS NULL AND callback_expires<now()
-       AND (configuration_id IS NOT DISTINCT FROM $2 OR callback_expires<now()-interval '10 minutes')`,
-      [configuredOwner, provider.configurationId ?? null],
+       AND (configuration_id IS NOT DISTINCT FROM $2 OR callback_expires<now()-interval '10 minutes')
+       AND (callback_claim_id IS NULL OR NOT (callback_claim_id=ANY($3::text[])))`,
+      [configuredOwner, provider.configurationId ?? null, [...activeCallbackClaims]],
     );
-    const active = (await connectionRows(configuredOwner)).filter(
+    const saved = await connectionRows(configuredOwner);
+    if (saved.some((row) => row.slug === slug && protectedCallback(row) && !row.revoked))
+      throw new IntegrationError(
+        'This sign-in is finishing. Wait for its result before starting again.',
+        409,
+      );
+    const active = saved.filter(
       (row) => row.slug === slug && row.account_id && !row.revoked && configurationMatches(row),
     );
     if (active.length >= 10)
@@ -861,6 +878,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       let discarded: ConnectionRow[] = [];
       try {
         await client.query('BEGIN');
+        const pending = await client.query<ConnectionRow>(
+          `SELECT *,callback_expires<=now() AS callback_expired FROM app_connections
+           WHERE owner_id=$1 AND slug=$2 AND callback_hash IS NOT NULL FOR UPDATE`,
+          [configuredOwner, slug],
+        );
+        if (pending.rows.some(protectedCallback))
+          throw new IntegrationError(
+            'This sign-in is finishing. Wait for its result before starting again.',
+            409,
+          );
         if (replacement) {
           const current = await client.query<ConnectionRow>(
             `SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3
@@ -946,11 +973,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch {}
   }
 
-  async function clearReconnect(id: string, hash: string, claimId?: string) {
+  async function clearReconnect(id: string, hash: string, claimId?: string, expiredOnly = false) {
     const discarded = await pool.query<ConnectionRow>(
       `DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3
-       AND account_id IS NULL AND callback_claim_id IS NOT DISTINCT FROM $4 RETURNING *`,
-      [id, configuredOwner, hash, claimId ?? null],
+       AND account_id IS NULL AND callback_claim_id IS NOT DISTINCT FROM $4
+       AND (NOT $5::boolean OR callback_expires<=now()) RETURNING *`,
+      [id, configuredOwner, hash, claimId ?? null, expiredOnly],
     );
     if (discarded.rows[0]) {
       await discardReconnect(discarded.rows[0]);
@@ -959,11 +987,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const { rows } = await pool.query<ConnectionRow>(
       `WITH pending AS (
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL
-         AND callback_claim_id IS NOT DISTINCT FROM $4 FOR UPDATE
+         AND callback_claim_id IS NOT DISTINCT FROM $4 AND (NOT $5::boolean OR callback_expires<=now()) FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
        callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
        WHERE c.id=pending.id RETURNING pending.*`,
-      [id, configuredOwner, hash, claimId ?? null],
+      [id, configuredOwner, hash, claimId ?? null, expiredOnly],
     );
     if (rows[0]) await discardReconnect(rows[0]);
     return rows[0]?.pending_account_id;
@@ -991,6 +1019,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     turn?: TurnRef,
   ) {
     const row = await selectConnection(configuredOwner, slug, connectionId, true);
+    if (protectedCallback(row))
+      throw new IntegrationError(
+        'This sign-in is finishing. Wait for its result before starting again.',
+        409,
+      );
+    if (row.callback_claim_id && row.callback_hash)
+      await clearReconnect(row.id, row.callback_hash, row.callback_claim_id, true);
     if (!configurationMatches(row)) {
       if (row.revoked || !normalizedEmail(row.account_email ?? ''))
         throw new IntegrationError(unverifiedAccount, 409);
@@ -1021,7 +1056,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     callbackUrl.searchParams.set('state', nonce);
     const reserved = await pool.query<ConnectionRow>(
       `WITH previous AS (
-         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked FOR UPDATE
+         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked
+         AND (callback_claim_id IS NULL OR callback_expires<=now())
+         AND (callback_claim_id IS NULL OR NOT (callback_claim_id=ANY($9::text[]))) FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
        callback_hash=$5,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
        FROM previous WHERE c.id=previous.id RETURNING previous.*`,
@@ -1034,6 +1071,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         email,
         returnTo,
         turn?.turnId ?? null,
+        [...activeCallbackClaims],
       ],
     );
     if (!reserved.rowCount)
@@ -2421,6 +2459,29 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           );
         if (input.connectionId && input.newAccount)
           throw new IntegrationError('An additional account cannot replace a saved account.', 400);
+        if (input.restartAttempt) {
+          const hash = createHash('sha256').update(input.restartAttempt).digest('hex');
+          const previous = (await connectionRows(configuredOwner)).find(
+            (row) => row.slug === request.params.slug && row.callback_hash === hash,
+          );
+          if (
+            !previous ||
+            protectedCallback(previous) ||
+            (previous.account_id
+              ? previous.id !== input.connectionId
+              : Boolean(input.connectionId)) ||
+            (await clearReconnect(
+              previous.id,
+              hash,
+              previous.callback_claim_id ?? undefined,
+              Boolean(previous.callback_claim_id),
+            )) === undefined
+          )
+            throw new IntegrationError(
+              'This sign-in is finishing or has ended. Wait for its result before starting again.',
+              409,
+            );
+        }
         if (input.connectionId)
           return reconnect(
             slugSchema.parse(request.params.slug),
@@ -2482,6 +2543,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 )
               ).rows[0];
               if (claimed) {
+                activeCallbackClaims.add(claimId);
                 returnTo = Object.hasOwn(returnPaths, claimed.callback_return_to)
                   ? claimed.callback_return_to
                   : 'apps';
@@ -2507,6 +2569,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                   track(claimed.slug, 'failed', 'verification_failed');
                   await clearReconnect(claimed.id, hash, claimId);
                   if (verifiedAccountId) await discardReconnect(claimed, verifiedAccountId);
+                } finally {
+                  activeCallbackClaims.delete(claimId);
                 }
               }
             } else if (!row.callback_claim_id) await clearReconnect(row.id, hash);
