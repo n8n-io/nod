@@ -155,6 +155,40 @@ test(
     );
     try {
       await db.initializeDatabase();
+      await t.test(
+        'control transactions write only through the supplied discrete database settings',
+        async (t) => {
+          const controlSchema = `test_control_${suffix}`;
+          await admin.query(`CREATE SCHEMA ${controlSchema}`);
+          t.after(() => admin.query(`DROP SCHEMA ${controlSchema} CASCADE`));
+          await db.pool.query('CREATE TABLE cancellation_control_marks(value text)');
+          await admin.query(`CREATE TABLE ${controlSchema}.cancellation_control_marks(value text)`);
+          const target = new pg.Pool({
+            host: database.hostname,
+            port: Number(database.port),
+            user: decodeURIComponent(database.username),
+            password: decodeURIComponent(database.password),
+            database: database.pathname.slice(1),
+            options: `-c search_path=${controlSchema}`,
+            application_name: 'synthetic-cancellation-control',
+            max: 4,
+          });
+          t.after(() => target.end());
+          await db.cancellationTransaction(async (client) => {
+            await client.query('INSERT INTO cancellation_control_marks(value) VALUES ($1)', [
+              'owned-fixture',
+            ]);
+          }, target);
+          assert.deepEqual(
+            (await db.pool.query('SELECT value FROM cancellation_control_marks')).rows,
+            [],
+          );
+          assert.deepEqual(
+            (await target.query('SELECT value FROM cancellation_control_marks')).rows,
+            [{ value: 'owned-fixture' }],
+          );
+        },
+      );
       await threads.initializeThreads();
       await createPersonalService({
         pool: db.pool,

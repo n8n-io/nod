@@ -13,7 +13,6 @@ function poolSize(value: string | undefined, fallback: number) {
 
 function createPool(config: pg.PoolConfig) {
   const created = new pg.Pool({
-    connectionString: databaseUrl,
     connectionTimeoutMillis: 10_000,
     ...config,
   });
@@ -21,7 +20,10 @@ function createPool(config: pg.PoolConfig) {
   return created;
 }
 
-export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12) });
+export const pool = createPool({
+  connectionString: databaseUrl,
+  max: poolSize(process.env.DATABASE_POOL_MAX, 12),
+});
 
 export async function cancellationTransaction<T>(
   action: (client: pg.PoolClient) => Promise<T>,
