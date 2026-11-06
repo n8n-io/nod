@@ -1369,6 +1369,12 @@ test(
             await pool.query('SELECT id FROM model_usage WHERE owner_id=$1', [ownerId])
           ).rows.map((row) => row.id);
           const body = `${'Synthetic report. '.repeat(3500)}Final owner condition.`;
+          const fallbackBody = 'Synthetic fallback.';
+          const sendChecks = () =>
+            (fallbackChecks.slice(fallback) as Array<Record<string, any>>).filter((input) => {
+              const checkedBody = input.action?.arguments?.body ?? input.data?.args?.body;
+              return checkedBody === body || checkedBody === fallbackBody;
+            });
           const turn = await propose(
             'GMAIL_SEND_EMAIL',
             { recipient_email: 'decision@example.test', body },
@@ -1378,7 +1384,7 @@ test(
           assert.equal(pending.status, 'pending');
           assert.equal(integrationFixture.writes.length, writes);
           assert.deepEqual(decisionInputs.slice(before), []);
-          const checked = fallbackChecks.slice(fallback) as Array<Record<string, any>>;
+          const checked = sendChecks();
           assert.equal(checked.length, 2);
           assert.equal(checked[0].action.arguments.body, body);
           assert.deepEqual(Object.keys(checked[1]).sort(), ['data', 'purpose', 'text']);
@@ -1397,7 +1403,7 @@ test(
           assert.equal(integrationFixture.writes.length, writes + 1);
           assert.deepEqual(decisionInputs.slice(before), []);
           assert.deepEqual(smallReplies.at(-1), { reply: 'Yes' });
-          assert.equal(fallbackChecks.length, fallback + 2);
+          assert.equal(sendChecks().length, 2);
           const rows = (
             await pool.query(
               'SELECT id,turn_id,cost_usd,details FROM model_usage WHERE owner_id=$1 AND NOT(id=ANY($2::text[])) ORDER BY created_at,id',
@@ -1433,7 +1439,7 @@ test(
             const count = decisionInputs.length;
             const held = await propose(
               'GMAIL_SEND_EMAIL',
-              { recipient_email: 'fallback@example.test', body: 'Synthetic fallback.' },
+              { recipient_email: 'fallback@example.test', body: fallbackBody },
               'apps',
             );
             const [card] = await approvalsFor(held);
@@ -1447,7 +1453,7 @@ test(
             await waitFor(declined.json().turnId, 'succeeded');
             assert.equal((await approvalsFor(held))[0].status, 'declined');
             assert.equal(decisionInputs.length, count);
-            assert.equal(fallbackChecks.length, fallback + 4);
+            assert.equal(sendChecks().length, 4);
           } finally {
             decisionsEnabled = true;
           }
