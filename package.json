@@ -37,6 +37,7 @@
     "@chat-adapter/state-pg": "^4.43.0",
     "@chat-adapter/telegram": "^4.43.0",
     "@chat-adapter/whatsapp": "^4.43.0",
+    "@composio/client": "2.0.0-rc.17",
     "@composio/core": "0.25.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { getEventListeners } from 'node:events';
 import {
   createHash,
   generateKeyPairSync,
@@ -16,7 +17,13 @@ import test, { type TestContext } from 'node:test';
 import type { Connection as AppConnection } from '../src/shared/contracts.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIUserAbortError,
+  APIError,
+  type RequestOptions,
+} from '@composio/client';
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
 import { JSDOM } from 'jsdom';
@@ -204,7 +211,7 @@ test(
 
 test(
   'managed integration SDK requests keep their deadline and cancellation through the response body',
-  { timeout: 15_000 },
+  { timeout: 45_000 },
   async (t) => {
     const { createServer } = await import('node:http');
     const root = await mkdtemp(join(tmpdir(), 'nod-integration-response-'));
@@ -212,9 +219,15 @@ test(
     let release = () => {};
     let requests = 0;
     let complete = false;
+    let originalResponse: Response | undefined;
+    let requestSignal: AbortSignal | undefined;
+    let mode: 'body' | 'headers' | 'success' | 'error' | 'reset' | 'empty' = 'body';
+    const received: Record<string, unknown>[] = [];
+    const cloneCalls = new WeakMap<Response, number>();
     const payload = 'x'.repeat(4 * 1024 * 1024);
     const server = createServer(async (request, response) => {
-      for await (const chunk of request) void chunk;
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
       response.setHeader('content-type', 'application/json');
       if (request.url === '/v2/access/enroll') {
         response.end(
@@ -231,6 +244,34 @@ test(
       }
       assert.equal(request.url, '/v2/api/v3.1/tool_router/session/fixture-session/execute');
       requests++;
+      received.push(JSON.parse(Buffer.concat(chunks).toString()));
+      const body =
+        '{"data":{"messages":[]},"error":null,"log_id":"fixture-log","result_type":"completed"}';
+      if (mode === 'reset') {
+        request.socket.destroy();
+        receiving();
+        return;
+      }
+      if (mode === 'empty') {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      if (mode === 'headers') {
+        release = () => {
+          if (!response.destroyed && !response.writableEnded) response.end(body);
+        };
+        receiving();
+        return;
+      }
+      if (mode === 'success') {
+        response.end(body);
+        return;
+      }
+      if (mode === 'error') {
+        response.statusCode = 503;
+        response.setHeader('retry-after-ms', '0');
+      }
       if (complete) {
         response.setHeader('x-fixture-response', 'preserved');
         response.write('{"data":{"payload":"');
@@ -241,7 +282,7 @@ test(
       }
       response.write('{"data":');
       release = () => {
-        if (!response.writableEnded)
+        if (!response.destroyed && !response.writableEnded)
           response.end(
             '{"messages":[]},"error":null,"log_id":"fixture-log","result_type":"completed"}',
           );
@@ -263,9 +304,70 @@ test(
       keyStore: installationKeyStore,
       checkpoint: fixtureIdentityCheckpoint,
       url: 'https://proxy.example.test',
-      request: (input, init) => request(new URL(new URL(String(input)).pathname, origin), init),
+      request: async (input, init) => {
+        assert.ok(init?.signal);
+        requestSignal = init.signal;
+        const response = await request(new URL(new URL(String(input)).pathname, origin), init);
+        const clone = response.clone.bind(response);
+        cloneCalls.set(response, 0);
+        t.mock.method(response, 'clone', () => {
+          cloneCalls.set(response, (cloneCalls.get(response) ?? 0) + 1);
+          return clone();
+        });
+        originalResponse = response;
+        return response;
+      },
     });
     await proxy.initialize();
+    const sdk = proxy.client.getClient();
+    const execute = (options: RequestOptions = {}, client = sdk) =>
+      client.toolRouter.session.execute(
+        'fixture-session',
+        { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+        { timeout: 5000, ...options },
+      );
+    const arrival = () =>
+      new Promise<void>((resolve) => {
+        receiving = resolve;
+      });
+    const bounded = <T>(work: PromiseLike<T>) =>
+      Promise.race([
+        work,
+        delay(5000).then(() => assert.fail('The SDK fixture did not reach its boundary.')),
+      ]);
+    await t.test('raw response headers arrive before the producer finishes its body', async () => {
+      const started = new Promise<void>((resolve) => {
+        receiving = resolve;
+      });
+      const pending = proxy.client
+        .getClient()
+        .toolRouter.session.execute(
+          'fixture-session',
+          { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} },
+          { timeout: 5000 },
+        );
+      const headers = pending.asResponse();
+      headers.catch(() => {});
+      try {
+        await Promise.race([
+          started,
+          headers.then(() => assert.fail('The partial response was not held.')),
+          delay(2000).then(() => assert.fail('The fixture did not send response headers.')),
+        ]);
+        const response = await Promise.race([
+          headers,
+          delay(1000).then(() => assert.fail('Response headers waited for the complete body.')),
+        ]);
+        assert.equal(response, originalResponse);
+        assert.equal(response.bodyUsed, false);
+        assert.equal(cloneCalls.get(response), 0);
+      } finally {
+        release();
+        await pending.catch(() => {});
+      }
+      assert.ok(originalResponse);
+      assert.equal(cloneCalls.get(originalResponse), 1);
+    });
     await t.test('chunked response data and metadata stay available', async () => {
       complete = true;
       try {
@@ -277,6 +379,7 @@ test(
           })
           .withResponse();
         assert.ok(data.result_type === 'completed');
+        assert.equal(cloneCalls.get(response), 1);
         assert.deepEqual(data.data, { payload });
         assert.equal(response.headers.get('x-fixture-response'), 'preserved');
         assert.equal(response.status, 200);
@@ -285,7 +388,7 @@ test(
           `${origin}/v2/api/v3.1/tool_router/session/fixture-session/execute`,
         );
         assert.deepEqual((await response.json()).data, { payload });
-        assert.equal(requests, 1);
+        assert.equal(requests, 2);
       } finally {
         complete = false;
       }
@@ -332,6 +435,234 @@ test(
         }
       });
     }
+    for (const stopped of ['timeout', 'abort'] as const)
+      for (const parse of [false, true])
+        await t.test(
+          `raw response ${stopped} ${parse ? 'with delayed parsing' : 'without parsing'}`,
+          async () => {
+            mode = 'body';
+            const owner = new AbortController();
+            const started = arrival();
+            const pending = execute({ timeout: 1000, signal: owner.signal });
+            const headers = pending.asResponse();
+            headers.catch(() => {});
+            try {
+              await bounded(Promise.race([started, headers.then(() => {})]));
+              const response = await bounded(headers);
+              assert.equal(response, originalResponse);
+              assert.equal(cloneCalls.get(response), 0);
+              assert.ok(requestSignal);
+              const signal = requestSignal;
+              const ended = new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener('abort', () => resolve(), { once: true });
+              });
+              if (stopped === 'abort') owner.abort();
+              await bounded(ended);
+              assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+              if (parse)
+                await assert.rejects(
+                  pending,
+                  stopped === 'timeout' ? APIConnectionTimeoutError : APIUserAbortError,
+                );
+              assert.equal(cloneCalls.get(response), 0);
+              await assert.rejects(response.text());
+            } finally {
+              owner.abort();
+              release();
+              await headers.catch(() => {});
+            }
+          },
+        );
+    for (const stopped of ['timeout', 'abort'] as const)
+      await t.test(`raw and parsed ${stopped} before response headers`, async () => {
+        mode = 'headers';
+        const owner = new AbortController();
+        const started = arrival();
+        const pending = execute({ timeout: 1000, signal: owner.signal });
+        const rawFailure = pending.asResponse().then(
+          () => assert.fail('The response headers were not held.'),
+          (error: unknown) => error,
+        );
+        const parsedFailure = pending.then(
+          () => assert.fail('The response headers were not held.'),
+          (error: unknown) => error,
+        );
+        try {
+          await bounded(
+            Promise.race([
+              started,
+              rawFailure.then((error) => {
+                throw error;
+              }),
+            ]),
+          );
+          if (stopped === 'abort') owner.abort();
+          const error = await bounded(rawFailure);
+          assert.ok(
+            error instanceof
+              (stopped === 'timeout' ? APIConnectionTimeoutError : APIUserAbortError),
+          );
+          assert.equal(await bounded(parsedFailure), error);
+          assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+        } finally {
+          owner.abort();
+          release();
+          await rawFailure;
+          await parsedFailure;
+        }
+      });
+    for (const outcome of ['success', 'error'] as const)
+      await t.test(
+        `the raw response remains readable after parsed ${outcome} and deadline`,
+        async () => {
+          mode = outcome;
+          const owner = new AbortController();
+          const started = arrival();
+          const pending = execute({ timeout: 1000, signal: owner.signal });
+          const headers = pending.asResponse();
+          headers.catch(() => {});
+          try {
+            if (outcome === 'error') await bounded(Promise.race([started, headers.then(() => {})]));
+            const response = await bounded(headers);
+            assert.equal(response, originalResponse);
+            assert.equal(response.status, outcome === 'success' ? 200 : 503);
+            release();
+            if (outcome === 'error')
+              await assert.rejects(
+                pending,
+                (error: unknown) => error instanceof APIError && error.status === 503,
+              );
+            else assert.equal((await pending.withResponse()).response, response);
+            assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+            await delay(1100);
+            owner.abort();
+            assert.equal(response.bodyUsed, false);
+            assert.deepEqual((await response.json()).data, { messages: [] });
+          } finally {
+            owner.abort();
+            release();
+            await headers.catch(() => {});
+          }
+        },
+      );
+    for (const outcome of ['error', 'reset'] as const)
+      for (const override of ['request', 'client'] as const)
+        await t.test(`${outcome} sends once with a ${override} retry override`, async () => {
+          mode = outcome;
+          const before = requests;
+          const started = arrival();
+          const owner = new AbortController();
+          const client = override === 'client' ? sdk.withOptions({ maxRetries: 4 }) : sdk;
+          const pending = execute(
+            { signal: owner.signal, ...(override === 'request' ? { maxRetries: 4 } : {}) },
+            client,
+          );
+          const failure = assert.rejects(pending, (error: unknown) =>
+            outcome === 'error'
+              ? error instanceof APIError && error.status === 503
+              : error instanceof APIConnectionError,
+          );
+          try {
+            await bounded(Promise.race([started, failure]));
+            release();
+            await bounded(failure);
+            assert.equal(requests, before + 1);
+            assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+          } finally {
+            owner.abort();
+            release();
+            await failure;
+          }
+        });
+    await t.test(
+      'request fields and caller signal are captured before the caller can change them',
+      async () => {
+        mode = 'success';
+        const first = new AbortController();
+        const second = new AbortController();
+        let initialLogs = 0;
+        let laterLogs = 0;
+        const record = () => {
+          initialLogs++;
+        };
+        const later = () => {
+          laterLogs++;
+        };
+        const client = sdk.withOptions({
+          timeout: 5000,
+          logLevel: 'debug',
+          logger: { debug: record, info: record, warn: record, error: record },
+        });
+        const body = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: { value: 'before' } };
+        const options: Parameters<typeof sdk.request>[0] = {
+          method: 'post',
+          path: '/api/v3.1/tool_router/session/fixture-session/execute',
+          body,
+          signal: first.signal,
+        };
+        const pending = client.request(options);
+        options.signal = second.signal;
+        body.arguments.value = 'after';
+        client.timeout = 1;
+        client.baseURL = 'https://changed.example.test';
+        client.logger = { debug: later, info: later, warn: later, error: later };
+        client.logLevel = 'error';
+        await pending;
+        assert.deepEqual(received.at(-1), {
+          tool_slug: 'GMAIL_SEND_EMAIL',
+          arguments: { value: 'before' },
+        });
+        assert.ok(initialLogs > 0);
+        assert.equal(laterLogs, 0);
+        assert.equal(getEventListeners(first.signal, 'abort').length, 0);
+        assert.equal(getEventListeners(second.signal, 'abort').length, 0);
+      },
+    );
+    await t.test('derived mutable timeout applies to the next request', async () => {
+      mode = 'body';
+      const owner = new AbortController();
+      const client = sdk.withOptions({ timeout: 10000 });
+      client.timeout = 1000;
+      const started = arrival();
+      const pending = client.toolRouter.session.execute(
+        'fixture-session',
+        { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+        { signal: owner.signal },
+      );
+      const headers = pending.asResponse();
+      headers.catch(() => {});
+      try {
+        await bounded(Promise.race([started, headers.then(() => {})]));
+        await bounded(headers);
+        await assert.rejects(bounded(pending), APIConnectionTimeoutError);
+        assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+      } finally {
+        owner.abort();
+        release();
+        await headers.catch(() => {});
+      }
+    });
+    await t.test('an already-aborted caller sends no request', async () => {
+      const before = requests;
+      const owner = new AbortController();
+      owner.abort();
+      const pending = execute({ signal: owner.signal });
+      await assert.rejects(pending.asResponse(), APIUserAbortError);
+      await assert.rejects(pending, APIUserAbortError);
+      assert.equal(requests, before);
+      assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+    });
+    await t.test('an empty raw response releases the caller listener without parsing', async () => {
+      mode = 'empty';
+      const owner = new AbortController();
+      const pending = execute({ signal: owner.signal });
+      const response = await pending.asResponse();
+      assert.equal(response, originalResponse);
+      assert.equal(response.status, 204);
+      assert.equal(response.body, null);
+      assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+    });
   },
 );
 

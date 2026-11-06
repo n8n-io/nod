@@ -1,3 +1,9 @@
+import {
+  APIPromise,
+  APIConnectionTimeoutError,
+  APIUserAbortError,
+  type Composio as ComposioClient,
+} from '@composio/client';
 import { Composio } from '@composio/core';
 import { createHash, randomBytes, randomUUID, sign } from 'node:crypto';
 import { z } from 'zod';
@@ -115,17 +121,87 @@ export function createComposioProxy(options: {
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
-  const signed = {
-    send: async (...args: Parameters<typeof fetch>) => {
-      const response = await request(...args);
-      await response.clone().body?.pipeTo(new WritableStream());
-      return response;
-    },
-  };
-  const transport = client.getClient().withOptions({ transport: signed, maxRetries: 0 });
-  client.getClient().request = transport.request.bind(transport);
-  client.getClient().withOptions = (options) =>
-    transport.withOptions({ ...options, transport: signed, maxRetries: 0 });
+  function signedClient<TClient extends ComposioClient>(raw: TClient): TClient {
+    const derive = raw.withOptions.bind(raw);
+    raw.withOptions = (value) => signedClient(derive({ ...value, maxRetries: 0 }));
+    raw.request = <T>(value: Parameters<ComposioClient['request']>[0]) => {
+      const signal = value.signal;
+      const controller = new AbortController();
+      const abort = () => controller.abort(new APIUserAbortError());
+      const timer = setTimeout(
+        () => controller.abort(new APIConnectionTimeoutError()),
+        value.timeout ?? raw.timeout,
+      );
+      timer.unref();
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        controller.signal.removeEventListener('abort', cleanup);
+      };
+      controller.signal.addEventListener('abort', cleanup, { once: true });
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+      const active = async <TResult>(work: PromiseLike<TResult>): Promise<TResult> => {
+        let stop = () => {};
+        try {
+          return await Promise.race([
+            work,
+            new Promise<never>((_resolve, reject) => {
+              stop = () => reject(controller.signal.reason);
+              controller.signal.addEventListener('abort', stop, { once: true });
+              if (controller.signal.aborted) stop();
+            }),
+          ]);
+        } finally {
+          controller.signal.removeEventListener('abort', stop);
+        }
+      };
+      const failure = (error: unknown) => {
+        throw controller.signal.aborted ? controller.signal.reason : error;
+      };
+      let operation!: APIPromise<T>;
+      const exchange = active(
+        new Promise<Response>((resolve, reject) => {
+          try {
+            controller.signal.throwIfAborted();
+            operation = derive({
+              maxRetries: 0,
+              transport: {
+                send: (input) =>
+                  request(input, {
+                    signal: AbortSignal.any([input.signal, controller.signal]),
+                  }),
+              },
+            }).request<T>({ ...value, maxRetries: 0 });
+            resolve(operation.asResponse());
+          } catch (error) {
+            reject(error);
+          }
+        }),
+      ).then(
+        (response) => {
+          if (!response.body) cleanup();
+          return response;
+        },
+        (error: unknown) => {
+          cleanup();
+          return failure(error);
+        },
+      );
+      return new APIPromise<T>(exchange, async () => {
+        try {
+          controller.signal.throwIfAborted();
+          return await active(operation);
+        } catch (error) {
+          return failure(error);
+        } finally {
+          cleanup();
+        }
+      });
+    };
+    return raw;
+  }
+  signedClient(client.getClient());
   async function rpc(
     path: string,
     body: unknown,

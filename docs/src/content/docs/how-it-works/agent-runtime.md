@@ -151,7 +151,7 @@ flowchart TD
 
 Public web reads also run in parallel when the model requests independent searches or pages in one step. Each call passes the same turn guard. Browser steps run in sequence.
 
-Managed app requests keep their SDK time limit and cancellation active until the whole response arrives. Nod does not retry these requests.
+Managed app requests use the request's time limit, or the client's default, for the whole response. Nod keeps that deadline and the caller's Stop signal active after headers arrive. The SDK keeps its normal lazy parsing: a raw response is available at headers, and Nod does not read an extra copy first. Completed parsing removes the timer and Stop listener without aborting the retained raw response. Without parsing, a raw response with a body keeps those guards until its deadline or Stop. Client and request options cannot enable retries.
 
 A call acts only once every `apps` or `manage_personal_context` call issued before it in the turn is decided, and each earlier one that asks has opened its question or failed. If one of them opened a question, the later call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 
