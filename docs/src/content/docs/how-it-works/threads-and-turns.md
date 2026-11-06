@@ -65,6 +65,8 @@ stateDiagram-v2
 
 `withTurnLock(turnId, op)` fences every database write a turn makes. The write runs only if the turn is still `running` on the active thread. A stopped, finished or reset turn can't write anything late, but an outside action that already started can still finish.
 
+Stop uses a separate, short-lived database connection when worker connections are busy, then closes it after the request. It checks the owner and requested scope before it aborts running work. It aborts that work before saving cancellation, so a pending file read cannot hold the turn's database lock. A read that returns later cannot publish a file or message. Stop does not retry the read or any outside action.
+
 Account, schedule and source checks inside a transaction use its database connection. They do not wait for a second connection while they hold the first. Approval and source checks keep their normal locks and owner scope.
 
 ## One background observer

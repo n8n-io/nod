@@ -23,6 +23,18 @@ function createPool(config: pg.PoolConfig) {
 
 export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12) });
 
+export async function cancellationTransaction<T>(
+  action: (client: pg.PoolClient) => Promise<T>,
+  database = pool,
+) {
+  const control = createPool({ ...database.options, max: 1, min: 0 });
+  try {
+    return await transaction(action, control);
+  } finally {
+    await control.end();
+  }
+}
+
 export async function initializeDatabase() {
   if (!databaseUrl)
     throw new Error('Run pnpm run dev to configure the local database, or set DATABASE_URL.');

@@ -16,6 +16,7 @@ import {
   type TurnRef,
 } from './thread.ts';
 import { afterCommit, transaction } from './transaction.ts';
+import { cancellationTransaction } from './db.ts';
 import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences.ts';
 import { personalSecret } from './memory-tree.ts';
@@ -687,7 +688,7 @@ export function createTasks(options: {
     app.post<{ Params: { id: string } }>('/api/tasks/:id/stop', async (request) => {
       const capture = snapshotAnalytics(options.analytics);
       const id = z.uuid().parse(request.params.id);
-      const cancelled = await transaction(
+      const cancelled = await cancellationTransaction(
         async (client) => stop(client, id, (await lockThread(client)).id, capture, 'owner'),
         pool,
       );

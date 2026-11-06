@@ -7243,6 +7243,135 @@ test(
           }
         },
       );
+      await t.test(
+        'task Stop and reset release a blocked publication without crossing its scope',
+        async (t) => {
+          const previousRun = dependencies.runTurn;
+          const previousRead = dependencies.readArtifact;
+          let archivedThread = '';
+          try {
+            for (const mode of ['task', 'reset', 'stale reset'])
+              await t.test(mode, async () => {
+                const title = `Synthetic blocked publication ${mode}`;
+                let started!: () => void;
+                const reading = new Promise<void>((resolve) => {
+                  started = resolve;
+                });
+                let releaseRead!: () => void;
+                const readGate = new Promise<void>((resolve) => {
+                  releaseRead = resolve;
+                });
+                let active: RuntimeContext | undefined;
+                dependencies.readArtifact = async () => {
+                  started();
+                  await readGate;
+                  return Buffer.from('Synthetic late file');
+                };
+                const runtime = createAgentRuntime({
+                  workspace: fakeWorkspace(),
+                  computer: fakeComputer(),
+                  agent: {
+                    open: async (input) => ({
+                      resumed: false,
+                      async prompt() {
+                        if (mode === 'task' && input.sessionId === input.threadId) {
+                          await input.tools
+                            .find((tool) => tool.name === 'task')!
+                            .execute({
+                              action: 'start',
+                              title,
+                              doneWhen: 'The synthetic file is delivered.',
+                              now: 'Reading the synthetic file.',
+                              message: 'The synthetic task is starting.',
+                            });
+                          return;
+                        }
+                        await input.tools
+                          .find((tool) => tool.name === 'send_message')!
+                          .execute({
+                            text: `Read [the file](/workspace/${input.threadId}/blocked.txt).`,
+                            intent: 'final',
+                          });
+                      },
+                      abort() {},
+                      dispose() {},
+                    }),
+                    dispose() {},
+                  },
+                });
+                dependencies.runTurn = (context) => {
+                  if (mode !== 'task' || context.background) active = context;
+                  return runtime.runTurn(context);
+                };
+                const submitted = await sendJson({ text: title });
+                assert.equal(submitted.statusCode, 200, submitted.body);
+                let stopping: Promise<unknown> | undefined;
+                try {
+                  await reading;
+                  assert.ok(active);
+                  if (mode === 'stale reset') {
+                    const stale = await request('POST', '/api/conversation/reset', {
+                      threadId: archivedThread,
+                    });
+                    assert.equal(stale.statusCode, 409);
+                    assert.equal(active.signal.aborted, false);
+                    assert.equal(await turnStatus(active.turnId), 'running');
+                  }
+                  if (mode === 'reset') archivedThread = active.threadId;
+                  const task =
+                    mode === 'task'
+                      ? (await db.pool.query('SELECT id FROM tasks WHERE title=$1', [title]))
+                          .rows[0]
+                      : undefined;
+                  const response = request(
+                    'POST',
+                    task
+                      ? `/api/tasks/${task.id}/stop`
+                      : mode === 'reset'
+                        ? '/api/conversation/reset'
+                        : '/api/thread/stop',
+                    mode === 'reset' ? { threadId: active.threadId } : undefined,
+                  );
+                  stopping = response;
+                  assert.equal(
+                    await Promise.race([response.then(() => true), delay(1000).then(() => false)]),
+                    true,
+                    'The stop request waited for the workspace file read.',
+                  );
+                  assert.equal((await response).statusCode, 200);
+                  assert.equal(active.signal.aborted, true);
+                  assert.equal(await turnStatus(active.turnId), 'cancelled');
+                } finally {
+                  releaseRead();
+                  await stopping;
+                  await runtime.dispose();
+                }
+                await delay(25);
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      "SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant'",
+                      [active!.turnId],
+                    )
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      "SELECT 1 FROM artifacts WHERE thread_id=$1 AND name='blocked.txt'",
+                      [active!.threadId],
+                    )
+                  ).rowCount,
+                  0,
+                );
+              });
+          } finally {
+            dependencies.runTurn = previousRun;
+            dependencies.readArtifact = previousRead;
+          }
+        },
+      );
     } finally {
       for (const resolve of gates.values()) resolve();
       events.off('event', onEvent);
