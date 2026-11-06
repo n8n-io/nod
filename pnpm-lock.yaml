@@ -74,8 +74,8 @@ importers:
         specifier: ^9.3.5
         version: 9.3.5
       '@fastify/multipart':
-        specifier: ^10.1.4
-        version: 10.1.4
+        specifier: ^10.1.7
+        version: 10.1.7
       '@fastify/static':
         specifier: ^10.1.7
         version: 10.1.7
@@ -759,11 +759,11 @@ packages:
   '@fastify/ajv-compiler@4.0.6':
     resolution: {integrity: sha512-NtuzM0SfaMJbGlnjr9LWQUN5LzgSrbB8tf/wRZNas+4E1O/Nmzl53e7ruT61HDZyRCJGC6FxIogmNZO1c5ETBA==}
 
-  '@fastify/busboy@3.2.2':
-    resolution: {integrity: sha512-yXSS27qPExaXeuLvMRMXOLtpipzfQYNjG3FkunDWKGfMYjKuhFXko9CVzqxm8jcF+lmtS9Fd89QNdh9XDjnbNg==}
+  '@fastify/busboy@3.2.4':
+    resolution: {integrity: sha512-lQS8xcXT54rdJb+wlG/Q7SMSdtkZEpLPHooSDUZyyZm9LJD7X1kONPhVoPaHq+dsPtWUGGLIz9gBNhs9qKbylw==}
 
-  '@fastify/deepmerge@3.2.2':
-    resolution: {integrity: sha512-155eqA/WMQdN6gUD4RrhS2K0Pcz2Ou9pQ86L0sipOpP9ONbTA6oYw/hW4VdBjR4egcDHqmWUK9x80oUX7S1mDQ==}
+  '@fastify/deepmerge@3.2.4':
+    resolution: {integrity: sha512-kc8GQq5gX9RRhw0rov3DMrN8wS8yRlxJRdDzsYwwdBV/wazuVgc/1K7CKL90tlvu3RlHan6Y0R0aE3nJtBz2eQ==}
 
   '@fastify/error@4.2.0':
     resolution: {integrity: sha512-RSo3sVDXfHskiBZKBPRgnQTtIqpi/7zhJOEmAxCiBcM7d0uwdGdxLlsCaLzGs8v8NnxIRlfG0N51p5yFaOentQ==}
@@ -783,8 +783,8 @@ packages:
   '@fastify/middie@9.3.5':
     resolution: {integrity: sha512-oY1Yp/UfwS/qcmSV4PgOEqlTxHytRWSjl5MB07hDhlKfecAwJ4TQ7zBxdX2AWAuq+xbfPXM7EgH7EwOIQ2fSPA==}
 
-  '@fastify/multipart@10.1.4':
-    resolution: {integrity: sha512-J510g4fSp3bXh0DEezcPyMXkQzhn2K3blpSESaOGhqQfzNHR4vhiBBHkdisSM2FU4ltTK/jqObUWs0WmHYNYYg==}
+  '@fastify/multipart@10.1.7':
+    resolution: {integrity: sha512-Zjqtrjts+litOXPad9wkX9SayV7Jno8Mnw+cNssi0I3FvPbfWwe9GYj69m0W+KMz4kjHViv6q5VKR3b8jW8yjA==}
 
   '@fastify/proxy-addr@5.1.1':
     resolution: {integrity: sha512-zv07Y9GEuDsJPegZoDFd4SDWaZOW8N2pa0GSrYmKpId/tjt1Hgo3BjZBVjdVpfVrHaA+Qv5jawtS2O50J5xM9g==}
@@ -5135,9 +5135,9 @@ snapshots:
       ajv-formats: 3.0.1(ajv@8.20.0)
       fast-uri: 4.2.3
 
-  '@fastify/busboy@3.2.2': {}
+  '@fastify/busboy@3.2.4': {}
 
-  '@fastify/deepmerge@3.2.2': {}
+  '@fastify/deepmerge@3.2.4': {}
 
   '@fastify/error@4.2.0': {}
 
@@ -5161,10 +5161,10 @@ snapshots:
       path-to-regexp: 8.4.2
       reusify: 1.1.0
 
-  '@fastify/multipart@10.1.4':
+  '@fastify/multipart@10.1.7':
     dependencies:
-      '@fastify/busboy': 3.2.2
-      '@fastify/deepmerge': 3.2.2
+      '@fastify/busboy': 3.2.4
+      '@fastify/deepmerge': 3.2.4
       '@fastify/error': 4.2.1
       fastify-plugin: 6.0.1
       secure-json-parse: 4.1.1

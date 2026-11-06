@@ -42,7 +42,7 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@fastify/middie": "^9.3.5",
-    "@fastify/multipart": "^10.1.4",
+    "@fastify/multipart": "^10.1.7",
     "@fastify/static": "^10.1.7",
     "@huggingface/transformers": "3.8.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
