@@ -6,6 +6,7 @@ import {
   copyFile,
   access,
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -19,6 +20,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, posix, relative, resolve } from 'node:path';
 import test from 'node:test';
@@ -2265,6 +2268,98 @@ test('a short saved download survives an offline lookup and resumes only on an e
   assert.equal(resolutions, 2);
   assert.equal(requests, 1);
   assert.equal(await findRuntimeAssets(options), installed);
+});
+
+test('a complete saved archive must be a regular file before offline recovery can use it', async (t) => {
+  for (const kind of ['link', 'directory']) {
+    const options = await fixture(t);
+    const partial = join(
+      options.cacheRoot,
+      `${options.release.id}.${options.release.archive.sha256.slice(0, 12)}.download`,
+    );
+    await mkdir(options.cacheRoot);
+    if (kind === 'link') await symlink(options.archivePath, partial, 'file');
+    else await mkdir(partial);
+    const inode = (await stat(options.archivePath)).ino;
+    let lookups = 0;
+    await assert.rejects(
+      ensureRuntimeAssets({
+        ...options,
+        resolveDownloadUrl: async () => {
+          lookups++;
+          throw new Error('Synthetic offline lookup');
+        },
+        fetch: () => assert.fail('An unavailable lookup must not start a request.'),
+      }),
+      /Synthetic offline lookup/,
+    );
+    assert.equal(lookups, 1);
+    const metadata = await lstat(partial);
+    assert.equal(kind === 'link' ? metadata.isSymbolicLink() : metadata.isDirectory(), true);
+    assert.equal((await stat(options.archivePath)).ino, inode);
+    assert.equal(await assetHash(options.archivePath), options.release.archive.sha256);
+    assert.equal(await findRuntimeAssets(options), undefined);
+  }
+});
+
+test('concurrent offline retries do not open a saved archive after another caller consumes it', async (t) => {
+  const options = await fixture(t);
+  const partial = join(
+    options.cacheRoot,
+    `${options.release.id}.${options.release.archive.sha256.slice(0, 12)}.download`,
+  );
+  await mkdir(options.cacheRoot);
+  await copyFile(options.archivePath, partial);
+  const offline = () => assert.fail('A complete saved archive must not use the network.');
+  const filesystem = createRequire(import.meta.url)('node:fs');
+  const original = filesystem.createReadStream;
+  const gate = Promise.withResolvers();
+  let verifications = 0;
+  let held = false;
+  const read = t.mock.method(filesystem, 'createReadStream', (path, settings) => {
+    if (path === partial && verifications === 2 && !held) {
+      held = true;
+      return Readable.from(
+        (async function* () {
+          await gate.promise;
+          yield* original(path, settings);
+        })(),
+        { objectMode: false },
+      );
+    }
+    return original(path, settings);
+  });
+  syncBuiltinESMExports();
+  try {
+    const install = () =>
+      ensureRuntimeAssets({
+        ...options,
+        resolveDownloadUrl: offline,
+        fetch: offline,
+        onStatus: (value) => {
+          if (value.phase === 'verifying') verifications++;
+        },
+      });
+    const first = install();
+    const second = install().then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    const installed = await first;
+    gate.resolve();
+    const result = await second;
+    assert.ifError(result.error);
+    assert.equal(result.value, installed);
+    assert.equal(verifications, 1);
+    assert.equal(await findRuntimeAssets(options), installed);
+    assert.deepEqual(await readdir(options.cacheRoot), [options.release.id]);
+    for (const file of options.release.files)
+      assert.equal(await assetHash(join(installed, file.path)), file.sha256);
+  } finally {
+    gate.resolve();
+    read.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('runtime download rejects corrupt bytes, cleans its download and allows a verified retry', async (t) => {

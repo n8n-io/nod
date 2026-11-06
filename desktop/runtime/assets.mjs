@@ -370,6 +370,7 @@ function unpackRuntime(
     failure,
     onStatus,
     onBytes = () => {},
+    verifySource,
     finish = async () => {},
     signal,
     cacheRoot,
@@ -389,6 +390,7 @@ function unpackRuntime(
     const writeSignal = signal ? AbortSignal.any([signal, writing.signal]) : writing.signal;
     try {
       signal?.throwIfAborted();
+      await verifySource?.();
       await mkdir(dirname(root), { recursive: true, mode: 0o700 });
       const published = await reusableFiles(root, release, signal);
       for (const path of published) files.get(path).resolve();
@@ -725,15 +727,6 @@ export async function openRuntimeAssets(options) {
       if (error.code !== 'ENOENT') throw error;
     });
     if (metadata?.isFile() && metadata.size >= release.archive.bytes) {
-      options.signal?.throwIfAborted();
-      options.onStatus?.({ phase: 'verifying', message: 'Checking your local computer…' });
-      if (
-        metadata.size !== release.archive.bytes ||
-        (await assetHash(archivePath, options.signal)) !== release.archive.sha256
-      ) {
-        await rm(archivePath, { force: true });
-        throw new Error('The saved Nod runtime download failed its integrity check. Try again.');
-      }
       return unpackRuntime(release, () => createReadStream(archivePath), {
         message: 'Installing your local computer…',
         failure: 'The Nod runtime download did not complete. Try again.',
@@ -741,6 +734,19 @@ export async function openRuntimeAssets(options) {
         signal: options.signal,
         cacheRoot: options.cacheRoot,
         inspectDisk: options.inspectDisk,
+        verifySource: async () => {
+          options.signal?.throwIfAborted();
+          options.onStatus?.({ phase: 'verifying', message: 'Checking your local computer…' });
+          if (
+            metadata.size !== release.archive.bytes ||
+            (await assetHash(archivePath, options.signal)) !== release.archive.sha256
+          ) {
+            await rm(archivePath, { force: true });
+            throw new Error(
+              'The saved Nod runtime download failed its integrity check. Try again.',
+            );
+          }
+        },
         finish: async (error) => {
           if (!error) await rm(archivePath, { force: true });
         },
