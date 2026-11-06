@@ -229,6 +229,7 @@ export function useAppSignIn({
     setPairingConfirmed(false);
     setError('');
     let next: 'waiting' | undefined;
+    let ownedAttempt = restarting;
     try {
       if (previous && !restarting)
         await api('/api/apps/setup-cancel', {
@@ -274,6 +275,7 @@ export function useAppSignIn({
         url,
         report: completion.complete,
       };
+      ownedAttempt = attempt.current;
       flushSync(() => {
         setSignInUrl(url);
       });
@@ -287,10 +289,16 @@ export function useAppSignIn({
       if (
         controller.signal.aborted ||
         request.current !== controller ||
-        (restarting && attempt.current !== restarting)
+        (ownedAttempt && attempt.current !== ownedAttempt)
       )
         return;
-      if (restarting && cause instanceof ApiError && cause.status === 409) next = 'waiting';
+      if (
+        restarting &&
+        attempt.current === restarting &&
+        cause instanceof ApiError &&
+        cause.status === 409
+      )
+        next = 'waiting';
       else clearAttempt();
       setError(errorMessage(cause));
       capture('ui_error', { area: entry, action: 'connect' });

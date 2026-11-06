@@ -3449,9 +3449,20 @@ test(
     const { createRoot } = await import('react-dom/client');
     const { useAppSignIn } = await import('../src/web/hooks/use-app-sign-in.ts');
     try {
-      for (const outcome of ['connected', 'failed'])
+      for (const outcome of ['connected', 'failed', 'opener-failed'])
         await t.test(outcome, async (t) => {
           const f = await appsFixture(t);
+          const openerFailure = new Error('Synthetic desktop opener failure.');
+          let opened = 0;
+          if (outcome === 'opener-failed')
+            Object.defineProperty(dom.window, 'nodDesktop', {
+              configurable: true,
+              value: {
+                async openExternal() {
+                  if (++opened === 2) throw openerFailure;
+                },
+              },
+            });
           let release = () => {};
           let entered = () => {};
           let respond = () => {};
@@ -3490,6 +3501,7 @@ test(
             if (String(path) === '/api/apps/setup-status') statusReady();
             if (
               String(path) === '/api/apps/gmail/connect' &&
+              outcome !== 'opener-failed' &&
               JSON.parse(String(options.body)).restartAttempt
             ) {
               received(response.statusCode);
@@ -3517,6 +3529,16 @@ test(
               await signIn.connect({ service: 'gmail' });
               await statusRead;
             });
+            if (outcome === 'opener-failed') {
+              await act(async () => signIn.connect({ service: 'gmail' }));
+              assert.equal(opened, 2);
+              assert.equal(f.callbacks.length, 2);
+              assert.equal(signIn.error, openerFailure.message);
+              assert.equal(signIn.signInUrl, undefined);
+              assert.equal(signIn.pending, undefined);
+              assert.equal(signIn.completed, undefined);
+              return;
+            }
             const callback = new URL(f.callbacks.at(-1)!);
             callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
             const completion = f.app.inject({ url: callback.pathname + callback.search });
@@ -3557,6 +3579,7 @@ test(
               await restarting;
               root.unmount();
             });
+            Reflect.deleteProperty(dom.window, 'nodDesktop');
           }
         });
     } finally {
