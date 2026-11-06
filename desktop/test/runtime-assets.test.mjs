@@ -2696,7 +2696,7 @@ test('Mac image loading keeps verified files through late pack failure and expli
         assert.equal((await stat(join(assets.root, file))).ino, inode);
         assert.equal(await assetHash(join(assets.root, file)), image.sha256);
         assert.equal(await findRuntimeAssets(options), assets.root);
-        assert.equal(requests, retry === 'download' ? 2 : 1);
+        assert.equal(requests, retry === 'download' && outcome === 'checksum' ? 2 : 1);
       });
     }
   }
