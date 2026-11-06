@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -2314,43 +2315,46 @@ test('concurrent offline retries do not open a saved archive after another calle
   const filesystem = createRequire(import.meta.url)('node:fs');
   const original = filesystem.createReadStream;
   const gate = Promise.withResolvers();
-  let verifications = 0;
+  const caller = new AsyncLocalStorage();
+  const readers = new Set();
   let held = false;
   const read = t.mock.method(filesystem, 'createReadStream', (path, settings) => {
-    if (path === partial && verifications === 2 && !held) {
-      held = true;
-      return Readable.from(
-        (async function* () {
-          await gate.promise;
-          yield* original(path, settings);
-        })(),
-        { objectMode: false },
-      );
+    if (path === partial && !readers.has(caller.getStore())) {
+      readers.add(caller.getStore());
+      if (readers.size === 2) {
+        held = true;
+        return Readable.from(
+          (async function* () {
+            await gate.promise;
+            yield* original(path, settings);
+          })(),
+          { objectMode: false },
+        );
+      }
     }
     return original(path, settings);
   });
   syncBuiltinESMExports();
   try {
-    const install = () =>
-      ensureRuntimeAssets({
-        ...options,
-        resolveDownloadUrl: offline,
-        fetch: offline,
-        onStatus: (value) => {
-          if (value.phase === 'verifying') verifications++;
-        },
-      });
-    const first = install();
-    const second = install().then(
-      (value) => ({ value }),
-      (error) => ({ error }),
-    );
-    const installed = await first;
+    const install = (id) =>
+      caller
+        .run(id, () =>
+          ensureRuntimeAssets({ ...options, resolveDownloadUrl: offline, fetch: offline }),
+        )
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        );
+    const first = install('first');
+    const second = install('second');
+    await Promise.race([first, second]);
     gate.resolve();
-    const result = await second;
-    assert.ifError(result.error);
-    assert.equal(result.value, installed);
-    assert.equal(verifications, 1);
+    const results = await Promise.all([first, second]);
+    for (const result of results) assert.ifError(result.error);
+    const installed = results[0].value;
+    assert.equal(results[1].value, installed);
+    assert.equal(readers.size, 1);
+    assert.equal(held, false);
     assert.equal(await findRuntimeAssets(options), installed);
     assert.deepEqual(await readdir(options.cacheRoot), [options.release.id]);
     for (const file of options.release.files)
@@ -2358,6 +2362,50 @@ test('concurrent offline retries do not open a saved archive after another calle
   } finally {
     gate.resolve();
     read.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test('an offline retry uses the installed cache if another caller already consumed the saved archive', async (t) => {
+  const options = await fixture(t);
+  const partial = join(
+    options.cacheRoot,
+    `${options.release.id}.${options.release.archive.sha256.slice(0, 12)}.download`,
+  );
+  await mkdir(options.cacheRoot);
+  await copyFile(options.archivePath, partial);
+  const filesystem = createRequire(import.meta.url)('node:fs/promises');
+  const original = filesystem.lstat;
+  const gate = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  const caller = new AsyncLocalStorage();
+  const inspect = t.mock.method(filesystem, 'lstat', async (path, settings) => {
+    if (path === partial && caller.getStore() === 'waiting') {
+      entered.resolve();
+      await gate.promise;
+    }
+    return original(path, settings);
+  });
+  syncBuiltinESMExports();
+  try {
+    const offline = () => assert.fail('A completed concurrent install must not use the network.');
+    const install = () =>
+      ensureRuntimeAssets({ ...options, resolveDownloadUrl: offline, fetch: offline });
+    const waiting = caller.run('waiting', install).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await entered.promise;
+    const installed = await caller.run('winner', install);
+    gate.resolve();
+    const result = await waiting;
+    assert.ifError(result.error);
+    assert.equal(result.value, installed);
+    assert.equal(await findRuntimeAssets(options), installed);
+    assert.deepEqual(await readdir(options.cacheRoot), [options.release.id]);
+  } finally {
+    gate.resolve();
+    inspect.mock.restore();
     syncBuiltinESMExports();
   }
 });

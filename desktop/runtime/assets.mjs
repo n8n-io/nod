@@ -726,6 +726,11 @@ export async function openRuntimeAssets(options) {
     const metadata = await lstat(archivePath).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
     });
+    if (pending.has(root)) return pending.get(root);
+    const cached = await verifiedCache(release, options.signal, options.cacheRoot);
+    if (cached)
+      return { root: cached, paths: [], ready: async () => {}, done: Promise.resolve(cached) };
+    if (pending.has(root)) return pending.get(root);
     if (metadata?.isFile() && metadata.size >= release.archive.bytes) {
       return unpackRuntime(release, () => createReadStream(archivePath), {
         message: 'Installing your local computer…',
