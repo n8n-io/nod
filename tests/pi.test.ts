@@ -401,6 +401,126 @@ test('models and routers complete tool discovery inside the endpoint context', a
     });
 });
 
+test('model checks fit the output limit of the selected text model', async (t) => {
+  const { nativeAudioModel } = await import('../src/providers/pi/model-catalog.ts');
+  for (const kind of ['text', 'anthropic', 'audio text companion'])
+    await t.test(kind, async (t) => {
+      const text = smallContextAccess('compatible', 'fixture-output-limit', 128000);
+      if (kind === 'anthropic') {
+        text.provider = 'anthropic';
+        text.read = async () => ({ type: 'api_key', key: 'fixture-output-key' });
+        text.definition.spec = {
+          ...text.definition.spec,
+          provider: 'anthropic',
+          api: 'anthropic-messages',
+          baseUrl: 'http://127.0.0.1:1',
+        };
+      }
+      const access: import('../src/ports/models.ts').ModelAccess =
+        kind === 'audio text companion'
+          ? {
+              provider: 'openai',
+              method: 'api_key',
+              effort: 'off',
+              read: async () => ({ type: 'api_key', key: 'fixture-output-key' }),
+              definition: {
+                choice: {
+                  id: nativeAudioModel.id,
+                  name: nativeAudioModel.name,
+                  efforts: ['off'],
+                  images: false,
+                  audio: true,
+                  contextWindow: nativeAudioModel.contextWindow,
+                },
+                spec: { ...nativeAudioModel },
+              },
+              textModel: {
+                definition: {
+                  ...text.definition,
+                  spec: { ...text.definition.spec, provider: 'openai' },
+                },
+                effort: 'off',
+              },
+            }
+          : text;
+      const requests: Array<{ model: string; max_tokens: number }> = [];
+      t.mock.method(globalThis, 'fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        requests.push(body);
+        if (body.max_tokens > Number(text.definition.spec.maxTokens))
+          return Response.json(
+            { error: { message: 'The requested output exceeds the model limit.' } },
+            { status: 400 },
+          );
+        if (kind === 'anthropic') {
+          const events = [
+            {
+              type: 'message_start',
+              message: {
+                id: 'fixture-output',
+                type: 'message',
+                role: 'assistant',
+                model: body.model,
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 10, output_tokens: 0 },
+              },
+            },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: '{"allowed":true}' },
+            },
+            { type: 'content_block_stop', index: 0 },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn', stop_sequence: null },
+              usage: { output_tokens: 5 },
+            },
+            { type: 'message_stop' },
+          ];
+          return new Response(
+            events
+              .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+              .join(''),
+            { headers: { 'content-type': 'text/event-stream' } },
+          );
+        }
+        return new Response(
+          `data: ${JSON.stringify({
+            id: 'fixture-output',
+            choices: [{ index: 0, delta: { content: '{"allowed":true}' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          })}\n\ndata: [DONE]\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      });
+      const curator = createPiMemoryCurator({
+        provider: access.provider,
+        configured: () => true,
+        resolve: async () => access,
+      });
+      for (const task of ['review', 'classify'] as const)
+        assert.deepEqual(
+          await curator.curate({
+            task,
+            instructions: 'Return the synthetic decision as JSON.',
+            input: { request: 'Read the synthetic record.' },
+          }),
+          { allowed: true },
+        );
+      assert.deepEqual(
+        requests.map(({ model, max_tokens }) => ({ model, max_tokens })),
+        [
+          { model: 'fixture-output-limit', max_tokens: 4096 },
+          { model: 'fixture-output-limit', max_tokens: 512 },
+        ],
+      );
+    });
+});
+
 test('small Pi sessions save full output and keep nested results available to scripts', async (t) => {
   const { workspace, prefix, root } = await hostSandbox(t);
   const directory = await mkdtemp(join(tmpdir(), 'nod-small-output-'));

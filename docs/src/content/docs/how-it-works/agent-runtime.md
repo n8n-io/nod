@@ -97,6 +97,8 @@ If a restored session already uses more than half a small model's window, Nod ad
 
 For these small windows, direct text tool results above half the window in characters are saved in full under `.nod/outputs/` inside the workspace. The model gets a file reference and a short preview. Nested codemode calls keep their full results so scripts can process them. Scripts can call Nod and connected MCP tools. Each call keeps its normal validation, account binding, trust check, approval order and stop guard. An approval or private-entry wait stops later calls. The final script output is untrusted data. Full argument validation and the turn guard still apply.
 
+Each model request uses at most the output limit of its target model. Text requests from an audio model use the limit of its text companion. A smaller requested output limit stays unchanged.
+
 Before sending a small-window model request, Nod estimates the complete serialized payload at one token per three UTF-8 bytes. It leaves a safety margin and limits output to at most a quarter of the window. A request that leaves fewer than 128 output tokens fails before it reaches the provider. This estimate includes tool schemas. Images use Pi's estimate of 1,200 tokens each, instead of counting their encoded bytes as text. The provider's actual text and image token counts can differ. Nod does not cut the current owner instruction or rules to make a request fit.
 
 When a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
