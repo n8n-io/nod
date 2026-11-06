@@ -39,7 +39,12 @@ export async function cancellationTransaction<T>(
   cancellationQueues.set(database, queued);
   await previous;
   try {
-    const control = createPool({ ...database.options, max: 1, min: 0 });
+    const control = createPool({
+      ...database.options,
+      password: database.options.password,
+      max: 1,
+      min: 0,
+    });
     try {
       return await transaction(action, control);
     } finally {
