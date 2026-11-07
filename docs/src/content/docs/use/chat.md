@@ -98,7 +98,9 @@ For large files or formats whose waveform your browser can't read, the player sh
 
 The message box stays open while Nod works. You can send another message at any time. Your sent messages have no receipt or queue labels.
 
-One short status line beside the animated Nod mark shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer.
+Your message appears at once. A status line beside the animated Nod mark says **Sending…** while Nod accepts it, then **Working…** while work is queued or running without a specific step. It stays visible during a slow first response from your model.
+
+When a specific step is available, the line shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer. A failed send clears the indicator and shows an error.
 
 Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
 

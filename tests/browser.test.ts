@@ -5700,7 +5700,7 @@ test(
   },
 );
 
-test('chat waits for an authored activity description while keeping active work stoppable', async () => {
+test('chat shows pending sends and active work before a model step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -5723,7 +5723,7 @@ test('chat waits for an authored activity description while keeping active work 
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       HTMLElement.prototype.scrollTo = () => {};
       HTMLElement.prototype.scrollIntoView = () => {};
-      let messageRequest, releaseMessage, stops = 0;
+      let messageRequest, releaseMessage, releaseRefresh, stops = 0;
       globalThis.fetch = async (path, options = {}) => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
@@ -5760,15 +5760,19 @@ test('chat waits for an authored activity description while keeping active work 
         since: '2026-10-26T12:00:00Z',
       };
       try {
-        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' } });
+        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' },
+          refresh: () => new Promise(resolve => { releaseRefresh = resolve; }) });
         await settle(() => messageRequest && document.querySelector('.message-user'));
-        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
         await act(async () => releaseMessage(Response.json({
           messageId: messageRequest.clientMessageId, turnId: activity.turnId,
         })));
+        await settle(() => releaseRefresh);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
         state = { ...state, activity: [activity] };
+        await act(async () => releaseRefresh());
         await render();
-        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
         const stop = document.querySelector('[aria-label="Stop all work"]');
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
@@ -5776,7 +5780,7 @@ test('chat waits for an authored activity description while keeping active work 
         for (const detail of [{ site: 'example.test' }, { title: 'Synthetic task', taskId: 'synthetic-task' }, { step: '   ' }]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
-          assert.equal(Boolean(document.querySelector('.thinking')), false);
+          assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
           assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         }
         state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',
