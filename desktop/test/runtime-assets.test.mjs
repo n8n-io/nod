@@ -2707,7 +2707,7 @@ test('Mac startup repairs existing guests before Docker and refuses failed or st
 });
 
 test('Mac runtime updates stop the old guest before changing its assets mount', async (t) => {
-  for (const initial of ['Running', 'Broken', 'Stopped', 'refused', 'aborted']) {
+  for (const initial of ['Running', 'Broken', 'Stopped', 'refused', 'stop-error', 'aborted']) {
     await t.test(initial, async (t) => {
       const root = await mkdtemp(join(tmpdir(), 'nod-guest-update-'));
       t.after(() => rm(root, { recursive: true, force: true }));
@@ -2755,6 +2755,7 @@ test('Mac runtime updates stop the old guest before changing its assets mount', 
             assert.deepEqual(JSON.parse(await readFile(configuration, 'utf8')), old);
             if (initial === 'aborted') controller.abort(new Error('Synthetic update stop'));
             if (initial !== 'refused') state = 'Stopped';
+            if (initial === 'stop-error') throw new Error('Synthetic stop failure');
           }
           if (args[0] === 'start') {
             assert.equal(state, 'Stopped');
@@ -2773,7 +2774,7 @@ test('Mac runtime updates stop the old guest before changing its assets mount', 
         preserveRuntimeCache: true,
         signal: controller.signal,
       };
-      if (['refused', 'aborted'].includes(initial)) {
+      if (['refused', 'stop-error', 'aborted'].includes(initial)) {
         await assert.rejects(
           prepare(options, () => {}),
           initial === 'aborted' ? /Synthetic update stop/ : /stop/i,
@@ -2788,6 +2789,7 @@ test('Mac runtime updates stop the old guest before changing its assets mount', 
         );
         assert.ok(commands.includes('start'));
       }
+      assert.ok(!commands.includes('delete'));
     });
   }
 });

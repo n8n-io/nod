@@ -314,7 +314,7 @@ async function prepare(options, onComputerStart) {
       const currentStatus = await runLima(['list', '--format', '{{.Status}}', vm]);
       if (currentStatus.trim() !== 'Stopped') {
         status('preparing', 'Stopping your local computer for the update…');
-        await runLima(['stop', '--tty=false', vm], { timeout: 90_000 }).catch(() => {});
+        await runLima(['stop', '--tty=false', vm], { timeout: 90_000 });
         signal?.throwIfAborted();
         await waitFor(
           async () => {

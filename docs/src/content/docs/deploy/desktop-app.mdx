@@ -159,7 +159,7 @@ When a newer release appears, Nod prepares it before offering restart. It reuses
 
 Nod keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 
-On a Mac, startup stops the private computer before it changes the mounted runtime pack. Nod confirms that the computer stopped before it updates the mount and starts it again. If Nod cannot confirm that the computer stopped, it keeps the existing mount and offers a retry.
+On a Mac, startup stops the private computer before it changes the mounted runtime pack. Nod confirms that the computer stopped before it updates the mount and starts it again. If the stop command fails or Nod cannot confirm that the computer stopped, it keeps the existing mount and offers a retry.
 
 On a Mac, Nod removes temporary file copies before it asks the native updater to quit and install. File cleanup does not cancel the updater's quit request.
 
