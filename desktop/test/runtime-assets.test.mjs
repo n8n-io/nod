@@ -2706,6 +2706,92 @@ test('Mac startup repairs existing guests before Docker and refuses failed or st
   }
 });
 
+test('Mac runtime updates stop the old guest before changing its assets mount', async (t) => {
+  for (const initial of ['Running', 'Broken', 'Stopped', 'refused', 'aborted']) {
+    await t.test(initial, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-guest-update-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const assets = join(root, 'assets');
+      const dataRoot = join(root, 'profile');
+      const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
+      const limaHome = join(root, '.nod-desktop', identity);
+      const configuration = join(limaHome, 'nod/lima.yaml');
+      const old = {
+        mounts: [{ location: join(root, 'old'), mountPoint: '/opt/nod-assets', writable: false }],
+      };
+      await mkdir(join(limaHome, 'nod'), { recursive: true });
+      await mkdir(join(assets, 'lima/bin'), { recursive: true });
+      await mkdir(join(dataRoot, 'desktop-runtime'), { recursive: true });
+      await writeFile(join(assets, 'lima/bin/limactl'), 'Synthetic Lima executable');
+      await writeFile(
+        join(assets, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          platform: `darwin-${process.arch}`,
+          guest: { file: 'guest.img', sha256: '1'.repeat(64) },
+          dockerGuest: { file: 'docker-guest.tar.gz', sha256: '2'.repeat(64) },
+          images: [],
+        }),
+      );
+      await writeFile(
+        join(dataRoot, 'desktop-runtime/state.json'),
+        JSON.stringify({
+          version: 1,
+          limaHome,
+          port: 54329,
+          password: '3'.repeat(64),
+        }),
+      );
+      await writeFile(configuration, JSON.stringify(old));
+      const controller = new AbortController();
+      let state = initial;
+      const commands = [];
+      const prepare = await macRuntimePrepare(root, assets, {
+        waitFor: async (operation) => operation(),
+        execute: async (_command, args) => {
+          commands.push(args[0]);
+          if (args[0] === 'list') return state;
+          if (args[0] === 'stop') {
+            assert.deepEqual(JSON.parse(await readFile(configuration, 'utf8')), old);
+            if (initial === 'aborted') controller.abort(new Error('Synthetic update stop'));
+            if (initial !== 'refused') state = 'Stopped';
+          }
+          if (args[0] === 'start') {
+            assert.equal(state, 'Stopped');
+            assert.equal(
+              JSON.parse(await readFile(configuration, 'utf8')).mounts[0].location,
+              assets,
+            );
+          }
+          return '';
+        },
+        finishRuntime: async () => {},
+      });
+      const options = {
+        dataRoot,
+        resourcesPath: root,
+        preserveRuntimeCache: true,
+        signal: controller.signal,
+      };
+      if (['refused', 'aborted'].includes(initial)) {
+        await assert.rejects(
+          prepare(options, () => {}),
+          initial === 'aborted' ? /Synthetic update stop/ : /stop/i,
+        );
+        assert.deepEqual(JSON.parse(await readFile(configuration, 'utf8')), old);
+        assert.ok(!commands.includes('start'));
+      } else {
+        await prepare(options, () => {});
+        assert.equal(
+          commands.filter((command) => command === 'stop').length,
+          initial === 'Stopped' ? 0 : 1,
+        );
+        assert.ok(commands.includes('start'));
+      }
+    });
+  }
+});
+
 test('Mac image loading keeps verified files through late pack failure and explicit retry', async (t) => {
   for (const outcome of ['connection', 'cancelled', 'checksum']) {
     for (const retry of ['download', 'archive', 'directory']) {

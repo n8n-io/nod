@@ -159,6 +159,8 @@ When a newer release appears, Nod prepares it before offering restart. It reuses
 
 Nod keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 
+On a Mac, startup stops the private computer before it changes the mounted runtime pack. Nod confirms that the computer stopped before it updates the mount and starts it again. If Nod cannot confirm that the computer stopped, it keeps the existing mount and offers a retry.
+
 On a Mac, Nod removes temporary file copies before it asks the native updater to quit and install. File cleanup does not cancel the updater's quit request.
 
 The [Terminal installer](/get-started/install-desktop/#install-nod) stops an old ShipIt update job before it replaces the app. It removes that job's cache only after the new app passes its checks. It keeps the previous app copy if the new app cannot open. For a manual DMG install after an update failure, see [update recovery](/get-started/install-desktop/#a-failed-mac-update-blocks-a-new-install).
