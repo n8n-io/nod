@@ -157,20 +157,19 @@ export function AppAccountManager({
                     </span>
                   </div>
                   <div className="app-account-actions">
-                    {account.canReconnect &&
-                      (account.status === 'disconnected' || account.reconnectRequired) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="account-reconnect"
-                          aria-label={`Reconnect ${label} to ${account.name}`}
-                          title={`Reconnect ${label}`}
-                          disabled={busy}
-                          onClick={() => onConnect(account, false)}
-                        >
-                          <RefreshCw size={16} aria-hidden="true" />
-                        </Button>
-                      )}
+                    {account.canReconnect && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="account-reconnect"
+                        aria-label={`Reconnect ${label} to ${account.name}`}
+                        title={`Reconnect ${label}`}
+                        disabled={busy}
+                        onClick={() => onConnect(account, false)}
+                      >
+                        <RefreshCw size={16} aria-hidden="true" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"

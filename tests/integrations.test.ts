@@ -2807,6 +2807,50 @@ async function appsFixture(
 }
 
 test(
+  'Gmail scope failures preserve the account and its existing reconnect path',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    f.provider.reconnectAccount = async () => assert.fail('Consent needs an owner action.');
+    const account = await f.connect('gmail');
+    const before = (
+      await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [account.connectionId])
+    ).rows[0];
+    let requests = 0;
+    f.session.execute = async () => {
+      requests++;
+      throw new IntegrationPermissionError(
+        'HTTP 403: Request had insufficient authentication scopes.',
+      );
+    };
+    await assert.rejects(
+      f.service.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+        connectionId: account.connectionId,
+      }),
+      (error: Error & { statusCode?: number }) => {
+        assert.equal(error.statusCode, 403);
+        assert.match(error.message, /Do not retry until permissions change/);
+        assert.ok(error.message.includes(account.connectionId!));
+        return true;
+      },
+    );
+    assert.equal(requests, 1);
+    assert.ok(!f.removed.includes(account.accountId!));
+    assert.deepEqual(
+      (await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [account.connectionId]))
+        .rows[0],
+      before,
+    );
+    const saved = (await f.service.list('local-development', { refresh: false })).find(
+      (item) => item.connectionId === account.connectionId,
+    );
+    assert.equal(saved?.status, 'connected');
+    assert.equal(saved?.canReconnect, true);
+    assert.equal(saved?.reconnectRequired, false);
+  },
+);
+
+test(
   'app preflight reads account state through the transaction with a full pool',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -8155,6 +8199,27 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     resultType: 'completed',
   };
   assert.deepEqual(await session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'), result);
+  for (const failure of [
+    {
+      error: 'HTTP 403: Request had insufficient authentication scopes.',
+      resultType: 'failed',
+      data: {},
+    },
+    {
+      error: null,
+      resultType: 'completed',
+      data: {
+        successful: false,
+        error: 'HTTP 403: Request had insufficient authentication scopes.',
+      },
+    },
+  ]) {
+    result = failure;
+    await assert.rejects(
+      session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'),
+      IntegrationPermissionError,
+    );
+  }
   result = {
     error: `Permission denied. ${'x'.repeat(5000)}`,
     data: {
