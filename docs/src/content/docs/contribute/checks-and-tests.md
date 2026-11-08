@@ -58,7 +58,7 @@ semgrep scan --config p/ci --severity ERROR --metrics off --disable-version-chec
 
 CodeQL checks JavaScript, TypeScript, and Python when the repository is public. To use it while the repository is private, enable GitHub Code Security and set `NOD_PRIVATE_CODEQL` to `true`. The workflow does not change repository access or branch protection.
 
-CI also runs Gitleaks on all fetched Git refs and the checkout. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
+CI also runs Gitleaks on all fetched Git refs and the checkout. It downloads the pinned scanner through the authenticated GitHub API and checks its SHA-256 before extraction. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
 
 Check dependency advisories in each package:
 
