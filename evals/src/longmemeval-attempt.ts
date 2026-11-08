@@ -303,7 +303,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
       const warmLast = warmCalls.findLast((call) => call.operation !== 'compaction');
       if (!warmLast) throw new Error('The first chat turn recorded no model request.');
       const opening = contextOf(warmLast) + (Number(warmLast.outputTokens) || 0);
-      const warmCost = (await spent(stack, warmStart)).cost;
+      const warmUsage = await spent(stack, warmStart);
       const ids = runs.length ? await seed(stack, ownerId, threadId, history) : firstIds;
       const [{ firstInstruction }, { currentUserTime }, { threadIdentity }] = await Promise.all([
         load<typeof import('../../src/runtime/prompt.ts')>('src/runtime/prompt.ts'),
@@ -364,7 +364,12 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         }
       });
       const chat = await ask(stack, item, 'chat', deadline);
-      runs.push({ ...chat.run, costUsd: chat.run.costUsd + warmCost, historyTokens: measured });
+      runs.push({
+        ...chat.run,
+        costUsd: chat.run.costUsd + warmUsage.cost,
+        unpricedCalls: chat.run.unpricedCalls + warmUsage.unpriced,
+        historyTokens: measured,
+      });
     }
     return {
       ...base,
@@ -372,6 +377,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
       learning: {
         ticks,
         costUsd: learning.cost,
+        unpricedCalls: learning.unpriced,
         modelCalls: learning.calls,
         notes: notes.length,
         confirmed: statusCount('stated'),

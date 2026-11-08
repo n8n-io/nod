@@ -167,22 +167,38 @@ function headers(
   return path.auth === 'x-api-key' ? { 'X-API-Key': token } : { Authorization: `Bearer ${token}` };
 }
 
-function redact(value: unknown, token: string): unknown {
-  if (typeof value === 'string') return value.replaceAll(token, '[redacted]');
+function credentialVariants(token: string) {
+  const variants = new Set([token, JSON.stringify(token).slice(1, -1)]);
+  try {
+    variants.add(encodeURIComponent(token));
+    variants.add(encodeURI(token));
+    variants.add(new URLSearchParams({ value: token }).toString().slice(6));
+  } catch {}
+  for (const value of [...variants])
+    variants.add(value.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()));
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+
+function redactText(value: string, variants: string[]) {
+  return variants.reduce((text, variant) => text.replaceAll(variant, '[redacted]'), value);
+}
+
+function redact(value: unknown, token: string, variants = credentialVariants(token)): unknown {
+  if (typeof value === 'string') return redactText(value, variants);
   if (isIntegrationFile(value))
-    return Buffer.from(value.bytes).includes(token)
+    return variants.some((variant) => Buffer.from(value.bytes).includes(variant))
       ? {
-          name: redact(value.name, token),
+          name: redactText(value.name, variants),
           mimeType: value.mimeType,
           error: 'The file was withheld because it contains the connection credential.',
         }
-      : { ...value, name: redact(value.name, token) };
-  if (Array.isArray(value)) return value.map((item) => redact(item, token));
+      : { ...value, name: redactText(value.name, variants) };
+  if (Array.isArray(value)) return value.map((item) => redact(item, token, variants));
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value).map(([name, item]) => [
-        name.replaceAll(token, '[redacted]'),
-        redact(item, token),
+        redactText(name, variants),
+        redact(item, token, variants),
       ]),
     );
   return value;

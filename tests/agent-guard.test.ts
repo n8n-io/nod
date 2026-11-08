@@ -35,6 +35,8 @@ import { createMailCheck } from '../src/server/mail-check.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { MemoryBrief } from '../src/ports/memory-recall.ts';
 import { presentationText, type Presentation } from '../src/shared/presentation.ts';
+import { appToolArgs, type AppTool } from '../src/server/app-reads.ts';
+import { withoutSchemaPatterns } from '../src/shared/json-schema.ts';
 
 async function fixture(
   run: (
@@ -2784,6 +2786,41 @@ test('current evidence stays untrusted and excludes private, failed and foreign 
     /"2026-10-30T10:00:00Z":"2026-10-30T11:00:00\+01:00"/,
   );
   assert.ok(current.some((read) => read.action.startsWith('mcp__records__')));
+});
+
+test('external tool schemas drop regex constraints before argument validation', () => {
+  const expression = '^(a+)+$';
+  const schema = {
+    type: 'object',
+    properties: {
+      query: { type: 'string', pattern: expression },
+      nested: { allOf: [{ type: 'string', pattern: expression }] },
+    },
+    patternProperties: { [expression]: { type: 'string' } },
+    propertyNames: { pattern: expression },
+    required: ['query'],
+  };
+  assert.deepEqual(withoutSchemaPatterns(schema), {
+    type: 'object',
+    properties: { query: { type: 'string' }, nested: { allOf: [{ type: 'string' }] } },
+    propertyNames: {},
+    required: ['query'],
+  });
+  const tool: AppTool = {
+    name: 'records:find',
+    action: 'CONNECTED_MCP_CALL',
+    description: 'Find synthetic records',
+    schema,
+    pathId: 'synthetic-path',
+    tool: 'find',
+  };
+  const connectionId = randomUUID();
+  assert.deepEqual(appToolArgs(tool, { query: 'not-a-match' }, connectionId), {
+    tool: 'find',
+    input: { query: 'not-a-match' },
+    connectionId,
+    pathId: 'synthetic-path',
+  });
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {

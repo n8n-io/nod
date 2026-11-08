@@ -123,6 +123,9 @@ const cost = (result: QuestionRun) =>
   (result.learning?.costUsd ?? 0) +
   result.runs.reduce((sum, run) => sum + run.costUsd + (run.verdict?.costUsd ?? 0), 0);
 
+const unpriced = (result: QuestionRun) =>
+  (result.learning?.unpricedCalls ?? 0) > 0 || result.runs.some((run) => run.unpricedCalls > 0);
+
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
 
@@ -180,6 +183,7 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
       : null;
   return {
     questions: results.length,
+    unpriced: results.some(unpriced),
     setups: bySetup,
     learning: {
       costUsd: learned.reduce((sum, item) => sum + item.costUsd, 0),
@@ -188,7 +192,10 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
       meanLearned: mean((item) => item.learned),
       meanTentative: mean((item) => item.tentative),
     },
-    totalCostUsd: results.reduce((sum, result) => sum + cost(result), 0),
+    totalCostUsd: results.some(unpriced)
+      ? null
+      : results.reduce((sum, result) => sum + cost(result), 0),
+    knownCostUsd: results.reduce((sum, result) => sum + cost(result), 0),
   };
 }
 
@@ -199,7 +206,7 @@ function markdown(
   const lines = [
     `# LongMemEval-S on Nod: ${manifest.label}`,
     '',
-    `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, $${summary.totalCostUsd.toFixed(2)} total.`,
+    `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, ${summary.unpriced ? `$${summary.knownCostUsd.toFixed(2)} known subtotal; total cost unknown` : `$${summary.totalCostUsd!.toFixed(2)} total`}.`,
     '',
   ];
   for (const [setup, result] of Object.entries(summary.setups)) {
@@ -296,6 +303,7 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       results.set(item.question_id, done);
   }
   let spent = [...results.values()].reduce((sum, result) => sum + cost(result), 0);
+  let hasUnpriced = [...results.values()].some(unpriced);
   const rank = (id: string) => createHash('sha256').update(`order:${id}`).digest('hex');
   const queue = picked
     .filter((item) => !results.has(item.question_id))
@@ -307,10 +315,14 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
   let stopped = false;
   await Promise.all(
     Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
-      while (next < queue.length) {
-        if (options.budget !== undefined && spent >= options.budget) {
+      while (next < queue.length && !stopped) {
+        if (options.budget !== undefined && (hasUnpriced || spent >= options.budget)) {
           if (!stopped)
-            console.log(`Stopping: $${spent.toFixed(2)} spent of the $${options.budget} budget.`);
+            console.log(
+              hasUnpriced
+                ? 'Stopping: completed model usage has no valid price.'
+                : `Stopping: $${spent.toFixed(2)} spent of the $${options.budget} budget.`,
+            );
           stopped = true;
           return;
         }
@@ -326,6 +338,7 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
               return undefined;
             });
         spent += cost(result);
+        if (unpriced(result)) hasUnpriced = true;
         results.set(item.question_id, result);
         await writeFile(
           join(directory, 'questions', `${item.question_id}.json`),

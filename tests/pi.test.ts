@@ -2915,6 +2915,27 @@ test('each model call yields one chat-format trace without image data', async ()
   ])
     assert.ok(!sent.includes(value), value);
   assert.ok(sent.includes('Synthetic built-in guide') && sent.includes('synthetic-guide'));
+  const currentRead = piModelTrace(
+    {
+      ...calls[0],
+      message: {
+        ...calls[0].message,
+        content: [
+          {
+            type: 'toolCall',
+            id: 'current-learned',
+            name: 'skills',
+            arguments: { action: 'read', name: 'synthetic-current-flow' },
+          },
+        ],
+      },
+    },
+    { source: 'agent' },
+  );
+  const currentOutput = currentRead.output as {
+    tool_calls: Array<{ function: { arguments: string } }>;
+  };
+  assert.deepEqual(JSON.parse(currentOutput.tool_calls[0].function.arguments), { action: 'read' });
   const { ownerContext, compactOwnerContext, firstInstruction } =
     await import('../src/runtime/prompt.ts');
   const privateFact = 'Synthetic private memory detail: the blue parcel is in the attic.';

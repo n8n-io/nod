@@ -22,6 +22,7 @@ import type { MemoryBrief, MemoryReplyVisual } from '../src/ports/memory-recall.
 import { presentationText, type Presentation } from '../src/shared/presentation.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { createWritingStyleLearning } from '../src/server/writing-style.ts';
+import { createLearnedSkills } from '../src/server/learned-skills.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
@@ -973,6 +974,59 @@ test('style learning sends only the owner’s own sent text and keeps one replac
   assert.deepEqual(await entries(), [
     ['preferences', 'writing-style', 'Writing style: my own words.', 'stated'],
   ]);
+  curator.curate = async () => {
+    await memory.control({ clear: true });
+    return { style: 'A stale pre-clear result.' };
+  };
+  await learning.learn(async () => sent);
+  assert.deepEqual(await entries(), []);
+  curator.curate = curate;
+  reply = { style: 'A fresh post-clear result.' };
+  await learn();
+  assert.deepEqual(
+    (await entries()).map((entry) => entry[2]),
+    ['Writing style: A fresh post-clear result.'],
+  );
+});
+
+test('skill learning cannot commit across a memory clear', async () => {
+  const memory = createMemoryService({
+    pool: {
+      query: async () => ({ rows: [{ now: new Date().toISOString() }] }),
+    } as unknown as pg.Pool,
+    ownerId: 'skill-owner',
+    store: memoryObjectStore(),
+  });
+  let clearDuringPreparation = true;
+  const curator: MemoryCurator = {
+    id: 'fixture',
+    configured: true,
+    curate: async () => {
+      if (clearDuringPreparation) await memory.control({ clear: true });
+      return {
+        skill: { description: 'Use when testing synthetic flows.', body: 'Open the fixture.' },
+      };
+    },
+  };
+  const skills = createLearnedSkills({
+    memory,
+    curator,
+    builtIn: [],
+    redact: (text) => text,
+  });
+  const draft = {
+    action: 'save' as const,
+    name: 'synthetic-flow',
+    description: 'Use when testing synthetic flows.',
+    body: 'Open the fixture.',
+  };
+  await assert.rejects(skills.learn(draft, randomUUID()), /Memory changed/);
+  assert.deepEqual((await memory.load()).skills, []);
+  clearDuringPreparation = false;
+  assert.deepEqual(await skills.learn(draft, randomUUID()), {
+    status: 'saved',
+    name: 'synthetic-flow',
+  });
 });
 
 test(

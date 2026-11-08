@@ -47,6 +47,7 @@ export interface AttemptResult {
   toolErrors: number;
   firstReplySeconds: number | null;
   judgeCostUsd: number | null;
+  judgeTokens?: number;
   metrics?: {
     modelUsage: UsageDetails[];
     interactions: Record<string, number>;

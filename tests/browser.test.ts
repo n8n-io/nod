@@ -30,6 +30,7 @@ import { runProcess } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
 import { openDevtools } from '../src/providers/agent-browser/devtools.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
+import { createBridgeComputer } from '../src/providers/container-browser/client.ts';
 import {
   browserNamespace,
   createContainerBrowserComputer,
@@ -1279,7 +1280,12 @@ function workerComputer() {
   };
 }
 
-async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: Computer } = {}) {
+async function harness(
+  control: {
+    beforeFirstBridge?: Promise<void>;
+    computer?: Computer | (() => Computer);
+  } = {},
+) {
   const root = await mkdtemp('/tmp/sk-browser-');
   const socketPath = join(root, 'control.sock');
   const instances = new Map<string, ReturnType<typeof workerComputer>>();
@@ -1287,6 +1293,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     socketPath,
     dataRoot: root,
     createComputer: async (path) => {
+      if (typeof control.computer === 'function') return control.computer();
       if (control.computer) return control.computer;
       const value = workerComputer();
       instances.set(path, value);
@@ -1589,6 +1596,59 @@ async function interruptedBrowser(fixture: Awaited<ReturnType<typeof harness>>, 
   await cancelled;
   return { computer, instance, release };
 }
+
+for (const successful of [true, false])
+  test(`a cancelled ${successful ? 'successful' : 'cancelled'} bridge response fences later actions`, async () => {
+    const entered = deferred<string>();
+    let launches = 0;
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    child.stdin.on('data', (chunk: Buffer) => {
+      for (const line of String(chunk).trim().split('\n')) {
+        const frame = JSON.parse(line);
+        if (frame.type === 'request') entered.resolve(frame.request.id);
+      }
+    });
+    const computer = createBridgeComputer({
+      namespace: 'sk-000000000000000000000001',
+      launch: () => {
+        launches++;
+        return child as never;
+      },
+    });
+    const controller = new AbortController();
+    const pending = computer.act(
+      'task',
+      { action: 'click', selector: '#submit' },
+      controller.signal,
+    );
+    const id = await entered.promise;
+    child.stdout.write(
+      JSON.stringify(
+        successful
+          ? {
+              id,
+              ok: true,
+              result: { text: 'Done', url: 'https://example.com' },
+              metadata: { status: 'succeeded' },
+            }
+          : { id, ok: false, error: 'cancelled', metadata: { status: 'cancelled' } },
+      ) + '\n',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    child.emit('close', 0);
+    await assert.rejects(pending, /Browser operation cancelled/);
+    await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+    assert.equal(launches, 1);
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  });
 
 for (const method of ['open', 'bindProfile'] as const)
   test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
@@ -5191,12 +5251,21 @@ test('a checked browser step is described from its snapshot and runs only on tha
     await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.act('checked', { action: 'fill', selector: '#account', text: 'synthetic' });
     const search = await computer.currentPage('checked', { action: 'click', selector: '@e3' });
-    assert.deepEqual(search, {
-      origin: 'https://1.1.1.1',
-      url: 'https://1.1.1.1/login',
-      controls: [{ role: 'textbox', name: 'Search' }],
-      submits: 'unknown',
-    });
+    assert.match(search.target!, /^[0-9a-f]{64}$/);
+    assert.deepEqual(
+      {
+        origin: search.origin,
+        url: search.url,
+        controls: search.controls,
+        submits: search.submits,
+      },
+      {
+        origin: 'https://1.1.1.1',
+        url: 'https://1.1.1.1/login',
+        controls: [{ role: 'textbox', name: 'Search' }],
+        submits: 'unknown',
+      },
+    );
     const next = { action: 'click', selector: '@e2' } as const;
     await assert.rejects(
       computer.act('checked', { ...next, expectOrigin: 'https://2.2.2.2' }),
@@ -5225,6 +5294,32 @@ test('a checked browser step is described from its snapshot and runs only on tha
       ).dropTarget,
       [{ role: 'button', name: '' }],
     );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'drag',
+        selector: '@e3',
+        targetSelector: '@e2',
+        expectTarget: search.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    page().location = {
+      origin: 'https://1.1.1.1',
+      href: 'https://1.1.1.1/login?token=first',
+    };
+    page().dom.window.history.replaceState(null, '', '/login?token=first');
+    const collision = await computer.currentPage('checked', next);
+    page().location.href = 'https://1.1.1.1/login?token=second';
+    page().dom.window.history.replaceState(null, '', '/login?token=second');
+    await assert.rejects(
+      computer.act('checked', {
+        ...next,
+        expectOrigin: collision.origin,
+        expectUrl: collision.url,
+        expectTarget: collision.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
     assert.deepEqual(page().entered, []);
     await assert.rejects(
       computer.download('checked', { selector: '@e2' }),
@@ -5238,7 +5333,14 @@ test('a checked browser step is described from its snapshot and runs only on tha
       commands.some((command) => command.action === 'download'),
       false,
     );
-    await computer.act('checked', { ...next, expectOrigin: 'https://1.1.1.1' });
+    const nextTarget = await computer.currentPage('checked', next);
+    await computer.act('checked', { action: 'snapshot' });
+    assert.equal((await computer.currentPage('checked', next)).target, nextTarget.target);
+    await computer.act('checked', {
+      ...next,
+      expectOrigin: 'https://1.1.1.1',
+      expectTarget: nextTarget.target,
+    });
     assert.deepEqual(page().entered, ['synthetic']);
     await assert.rejects(
       computer.act('checked', {
@@ -5252,6 +5354,10 @@ test('a checked browser step is described from its snapshot and runs only on tha
     const before = await computer.act('checked', { action: 'snapshot' });
     const searchRef = /textbox "Search" \[ref=(e\d+)\]/.exec(before.text)?.[1];
     assert.ok(searchRef);
+    const beforeControlChange = await computer.currentPage('checked', {
+      action: 'click',
+      selector: `@${searchRef}`,
+    });
     await computer.act('checked', {
       action: 'evaluate',
       script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
@@ -5260,6 +5366,14 @@ test('a checked browser step is described from its snapshot and runs only on tha
       (await computer.currentPage('checked', { action: 'click', selector: `@${searchRef}` }))
         .controls,
       [{ role: 'textbox', name: 'Delete account' }],
+    );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'click',
+        selector: `@${searchRef}`,
+        expectTarget: beforeControlChange.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
     );
   } finally {
     await computer.dispose();
@@ -5451,23 +5565,26 @@ test(
     assert.ok(address && typeof address !== 'string');
     const origin = `http://127.0.0.1:${address.port}`;
     let socketPath = '';
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-      daemonCommand: async (path, command, signal, timeoutMs) => {
-        socketPath = path;
-        return existingDaemonCommand(path, command, signal, timeoutMs);
-      },
-    });
-    const selectMethod = computer.selectSignInMethod!;
-    computer.selectSignInMethod = async (id, input, signal) => {
-      if (input.methodId === cancelledMethod)
-        signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
-      return selectMethod(id, input, signal);
+    const makeComputer = () => {
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+        daemonCommand: async (path, command, signal, timeoutMs) => {
+          socketPath = path;
+          return existingDaemonCommand(path, command, signal, timeoutMs);
+        },
+      });
+      const selectMethod = computer.selectSignInMethod!;
+      computer.selectSignInMethod = async (id, input, signal) => {
+        if (input.methodId === cancelledMethod)
+          signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
+        return selectMethod(id, input, signal);
+      };
+      return computer;
     };
-    const worker = await harness({ computer });
+    const worker = await harness({ computer: makeComputer });
     const client = worker.client(directory, { timeoutMs: 30_000 });
     const act = (input: BrowserAction) => client.act('fixture', input);
     const choices = [
@@ -5687,6 +5804,8 @@ test(
       assert.equal(cancelling.signal.aborted, true);
       assert.deepEqual(received, Array(5).fill('/selected'));
       await assert.rejects(client.selectSignInMethod!('fixture', interruptedSelection));
+      await assert.rejects(act({ action: 'click', selector: '#ordinary' }), /unavailable/);
+      await act({ action: 'open', url: origin + '/cancel' });
       await act({ action: 'click', selector: '#ordinary' });
       const deadline = Date.now() + 5000;
       while (received.length < 6 && Date.now() < deadline) await delay(10);

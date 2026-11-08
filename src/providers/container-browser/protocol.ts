@@ -79,6 +79,10 @@ const browserAction = z
     locale: z.string().max(35).optional(),
     expectOrigin: z.string().min(1).max(2048).optional(),
     expectUrl: z.string().min(1).max(8192).optional(),
+    expectTarget: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
     readOnly: z.boolean().optional(),
   })
   .strict();
@@ -176,6 +180,10 @@ export const browserRequest = z.discriminatedUnion('method', [
           size: z.number().int().min(1).max(fileBytes),
           expectOrigin: z.string().min(1).max(2048).optional(),
           expectUrl: z.string().min(1).max(8192).optional(),
+          expectTarget: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .optional(),
         })
         .strict(),
     })

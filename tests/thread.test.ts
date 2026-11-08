@@ -5988,6 +5988,37 @@ test(
               },
             );
             await t.test(
+              'an unchanged material revision still delivers after quiet hours',
+              async () => {
+                await reset();
+                assert.equal(((await save()) as { status: string }).status, 'notified');
+                await preferences.update({
+                  quietHoursEnabled: true,
+                  quietStart: new Date(Date.now() - 3600000).toISOString().slice(11, 16),
+                  quietEnd: new Date(Date.now() + 3600000).toISOString().slice(11, 16),
+                });
+                version = 'v2';
+                assert.equal(
+                  ((await save({ materialChange: 'condition_changed' })) as { status: string })
+                    .status,
+                  'prepared',
+                );
+                await preferences.update({ quietHoursEnabled: false });
+                assert.equal(((await save()) as { status: string }).status, 'notified');
+                assert.equal(((await save()) as { status: string }).status, 'prepared');
+                assert.equal(await delivered(), 2);
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT pending_delivery FROM proactive_issues WHERE owner_id=$1',
+                      [ownerId],
+                    )
+                  ).rows[0].pending_delivery,
+                  null,
+                );
+              },
+            );
+            await t.test(
               'observer nudges reach the message API and desktop listener once across repeated events',
               async () => {
                 await reset();
@@ -7601,6 +7632,23 @@ test(
         Buffer.from((await memoryObject()).bytes).toString('utf8'),
         /sk-fixture|broken/,
       );
+      const beforeClear = 'Remember this synthetic pre-clear note.';
+      const beforeClearMessage = await post(beforeClear);
+      const curate = curator.curate;
+      let clearDuringPreparation = true;
+      curator.curate = async (request) => {
+        if (clearDuringPreparation) await memory.control({ clear: true });
+        return curate(request);
+      };
+      await assert.rejects(
+        remember([add('about', 'before-clear', beforeClear)], beforeClearMessage),
+        /Memory changed/,
+      );
+      assert.equal((await memory.view()).notes.length, 0);
+      clearDuringPreparation = false;
+      await remember([add('about', 'before-clear', beforeClear)], beforeClearMessage);
+      assert.equal((await memory.view()).notes.length, 1);
+      curator.curate = curate;
     } finally {
       await close();
     }

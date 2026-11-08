@@ -7702,7 +7702,9 @@ test(
       await admin.end();
     });
     const owner = 'fixture-owner';
-    const token = 'synthetic-secret-token';
+    const token = 'synthetic/secret token';
+    const encoded = encodeURIComponent(token);
+    const formEncoded = new URLSearchParams({ value: token }).toString().slice(6);
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
@@ -7711,7 +7713,7 @@ test(
     const transport = createDiscoveredTransport(async (input, init) => {
       if (String(input) === 'https://fixture.example/api/records')
         return Response.json(
-          { error: { code: 'invalid_field', detail: `Rejected ${token}` } },
+          { error: { code: 'invalid_field', detail: `Rejected ${encoded}` } },
           { status: 422 },
         );
       if (String(input) === 'https://fixture.example/api/files/agenda')
@@ -7731,9 +7733,12 @@ test(
       if (String(input) === 'https://fixture.example/api/files/log')
         return new Response('x'.repeat(20_000), { headers: { 'content-type': 'text/plain' } });
       if (String(input) === 'https://fixture.example/api/files/echo')
-        return new Response(Buffer.from(`echo ${token}`), {
-          headers: { 'content-type': 'application/octet-stream' },
-        });
+        return new Response(
+          Buffer.from(`echo ${encoded.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase())}`),
+          {
+            headers: { 'content-type': 'application/octet-stream' },
+          },
+        );
       if (init?.method === 'GET') return new Response(null, { status: 405 });
       const message = JSON.parse(String(init?.body));
       if (message.id === undefined) return new Response(null, { status: 202 });
@@ -7757,7 +7762,7 @@ test(
                 }
               : {
                   isError: true,
-                  content: [{ type: 'text', text: `Unknown record for ${token}` }],
+                  content: [{ type: 'text', text: `Unknown record for ${formEncoded}` }],
                 },
       });
     });
@@ -7803,6 +7808,7 @@ test(
       (error) => {
         assert.match(failure(error), /\(422\).*invalid_field.*Rejected \[redacted\]/);
         assert.doesNotMatch(failure(error), new RegExp(token));
+        assert.ok(!failure(error).includes(encoded));
         return true;
       },
     );
@@ -7811,6 +7817,7 @@ test(
       (error) => {
         assert.match(failure(error), /Unknown record for \[redacted\]/);
         assert.doesNotMatch(failure(error), new RegExp(token));
+        assert.ok(!failure(error).includes(formEncoded));
         return true;
       },
     );

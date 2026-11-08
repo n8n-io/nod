@@ -12,6 +12,7 @@ import { isPublicAddress, publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTool, DiscoveredTransport } from '../../ports/discovered.ts';
 import { appFile, mcpFiles } from '../app-files.ts';
 import { fileBytes } from '../../shared/files.ts';
+import { withoutSchemaPatterns } from '../../shared/json-schema.ts';
 
 const textType =
   /^$|^text\/|[/+]json\b|[/+]xml\b|^application\/(x-www-form-urlencoded|javascript)\b/i;
@@ -373,7 +374,7 @@ export function createDiscoveredTransport(
               ...listed.tools.map((tool) => ({
                 name: tool.name,
                 ...(tool.description ? { description: tool.description } : {}),
-                inputSchema: tool.inputSchema,
+                inputSchema: withoutSchemaPatterns(tool.inputSchema),
                 ...(tool.annotations ? { annotations: tool.annotations } : {}),
               })),
             );

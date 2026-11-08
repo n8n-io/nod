@@ -41,7 +41,9 @@ Ask Nod to connect a service it can't find in the app catalog. Nod proposes a wa
 | HTTP API    | A method and path on the API       | A token in a header                   |
 | CLI         | A command with arguments           | Tokens in environment variables       |
 
-Nod keeps the token encrypted in Vault, and the server adds it to each call. A file returned by the service that contains the token is withheld.
+Nod keeps the token encrypted in Vault, and the server adds it to each call. Results and errors remove plaintext, JSON-escaped and URL- or form-encoded representations of the token. A returned file containing any of those representations is withheld.
+
+Nod doesn't execute regular-expression constraints from an external MCP input schema. It removes `pattern` and `patternProperties` before local structural validation. The MCP server remains responsible for enforcing its complete input contract.
 
 ## How connected CLIs keep the token safe
 

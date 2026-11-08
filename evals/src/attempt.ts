@@ -206,6 +206,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
       judgeCostUsd: judgeLlm.spent().costUsd,
+      judgeTokens: judgeLlm.spent().tokens,
       metrics: {
         modelUsage: trace.usage.requests ?? [],
         compactions: trace.compactions ?? 0,

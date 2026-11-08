@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import {
   appConfirmation,
@@ -1085,11 +1086,13 @@ async function initializeApplication(
       expectOrigin: _expectOrigin,
       readOnly: _readOnly,
       expectUrl: _expectUrl,
+      expectTarget: _expectTarget,
       ...command
     } = step as BrowserAction;
     return {
       website: page.origin,
       page: page.url,
+      ...(page.target ? { target: page.target } : {}),
       step: step.action,
       ...(page.controls?.length ? { control: page.controls } : {}),
       ...(page.submits ? { submits: page.submits } : {}),
@@ -1123,12 +1126,23 @@ async function initializeApplication(
       Object.assign(new BrowserActionError('browser_target_changed'), { notRun: true });
     if (!browserId) throw notRun();
     const current = await computer
-      .currentPage(browserId, command.action === 'upload' ? undefined : (command as BrowserAction))
+      .currentPage(
+        browserId,
+        command.action === 'upload'
+          ? { action: 'click', selector: String(command.selector) }
+          : (command as BrowserAction),
+      )
       .catch(() => undefined);
     if (
       current?.origin !== expectOrigin ||
       current.url !== args.page ||
       current.dialog !== args.dialog ||
+      current.target !== args.target ||
+      !isDeepStrictEqual(current.controls?.length ? current.controls : undefined, args.control) ||
+      !isDeepStrictEqual(
+        current.dropTarget?.length ? current.dropTarget : undefined,
+        args.dropTarget,
+      ) ||
       formSent(current.submits) !== formSent(args.submits)
     )
       throw notRun();
@@ -1145,11 +1159,13 @@ async function initializeApplication(
               ),
               expectOrigin,
               expectUrl: String(args.page),
+              ...(args.target ? { expectTarget: String(args.target) } : {}),
             })
           : await computer.act(browserId, {
               ...(command as BrowserAction),
               expectOrigin,
               expectUrl: String(args.page),
+              ...(args.target ? { expectTarget: String(args.target) } : {}),
             });
       return { url: page.url, page: page.text };
     } catch (error) {

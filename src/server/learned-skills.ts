@@ -134,6 +134,8 @@ export function createLearnedSkills(options: {
       return { status: 'not_saved', reason: 'Nothing reusable remained without personal details.' };
     const saved = await commit(() =>
       memory.edit((fresh) => {
+        if (fresh.generation !== tree.generation)
+          throw new Error('Memory changed while this skill was being prepared. Save it again.');
         const now = new Date().toISOString();
         const existing = fresh.skills.find((item) => item.name === input.name);
         if (existing?.updated !== current?.updated)

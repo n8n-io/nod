@@ -83,6 +83,9 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
     await deliver(
       {
         ...trace,
+        name: text(trace.name) || '[redacted]',
+        provider: text(trace.provider) || '[redacted]',
+        tools: trace.tools.map((tool) => text(tool) || '[redacted]'),
         messages: scrub(trace.messages),
         output: scrub(trace.output),
         ...(trace.error ? { error: text(trace.error) } : {}),

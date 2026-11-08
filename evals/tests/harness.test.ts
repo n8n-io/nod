@@ -43,6 +43,10 @@ import {
 } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture, proactiveBaselineInstructions } from '../src/capture.ts';
+import { createSpend, mergeAttemptCosts } from '../src/spend.ts';
+import { files } from '../src/whisperbench-attempt.ts';
+import { judge, summarizeWhisper } from '../src/whisperbench.ts';
+import type { WhisperCase, WhisperRun } from '../src/whisperbench-data.ts';
 import { summarizePopulation } from '../src/proactivity.ts';
 import { select } from '../src/run.ts';
 import { decide, promote } from '../src/gate.ts';
@@ -3494,4 +3498,109 @@ test('population scoring keeps a missed critical matter and missing measurements
     ]).arms[0].medianSeconds,
     4,
   );
+});
+
+test('eval spend stops on unknown prices and retains discarded retry costs', () => {
+  const empty = createSpend();
+  empty.add({ modelCalls: 0, judgeTokens: 0, costUsd: null, judgeCostUsd: null });
+  assert.equal(empty.blocked(1), false);
+  const unknown = createSpend();
+  unknown.add({ modelCalls: 1, judgeTokens: 0, costUsd: null, judgeCostUsd: null });
+  assert.equal(unknown.blocked(10), true);
+  assert.equal(unknown.unpriced(), true);
+  assert.equal(unknown.knownCostUsd(), 0);
+  const attempts = [
+    {
+      costUsd: 0.2,
+      judgeCostUsd: 0.01,
+      modelCalls: 2,
+      tokens: 100,
+      judgeTokens: 20,
+    },
+    {
+      costUsd: 0.3,
+      judgeCostUsd: 0.02,
+      modelCalls: 3,
+      tokens: 200,
+      judgeTokens: 30,
+    },
+  ];
+  const priced = createSpend();
+  for (const attempt of attempts) priced.add(attempt);
+  assert.equal(priced.knownCostUsd(), 0.53);
+  assert.equal(priced.blocked(0.53), true);
+  assert.deepEqual(mergeAttemptCosts(attempts), {
+    costUsd: 0.5,
+    judgeCostUsd: 0.03,
+    modelCalls: 5,
+    tokens: 300,
+    judgeTokens: 50,
+  });
+});
+
+test('WhisperBench retains exact-limit files and marks incomplete evidence unscorable', async () => {
+  const exact = 'x'.repeat(512 * 1024);
+  const over = 'y'.repeat(512 * 1024);
+  const commands: string[] = [];
+  const stack = {
+    exec: async (command: string) => {
+      commands.push(command);
+      if (command.startsWith('find '))
+        return { exitCode: 0, output: '/workspace/exact\n/workspace/over' };
+      const path = command.includes('/workspace/over') ? '/workspace/over' : '/workspace/exact';
+      if (command.startsWith('wc '))
+        return {
+          exitCode: 0,
+          output: `${path.endsWith('over') ? 512 * 1024 + 1 : 512 * 1024}\n${(path.endsWith('over') ? 'b' : 'a').repeat(64)}  ${path}\n`,
+        };
+      return { exitCode: 0, output: path.endsWith('over') ? over : exact };
+    },
+  };
+  const captured = await files(stack as never);
+  assert.equal(commands[0]!.includes('-size'), false);
+  assert.equal(captured.contents['/workspace/exact'], exact);
+  assert.deepEqual(captured.incomplete, ['/workspace/over']);
+  const run: WhisperRun = {
+    caseId: 'synthetic',
+    type: 'fact',
+    risk: 'high',
+    mode: 'foreground',
+    response: 'Synthetic response',
+    state: { '/workspace/exact': exact },
+    answer: 'Synthetic answer',
+    injectionTools: [],
+    probeTools: [],
+    sent: [],
+    costUsd: 0.2,
+    unpricedCalls: 1,
+    seconds: 1,
+  };
+  await assert.rejects(
+    judge({} as WhisperCase, { ...run, evidenceIncomplete: ['/workspace/over'] }, {} as never),
+    /Persistent evidence is incomplete/,
+  );
+  const middle = 'a'.repeat(3500) + 'synthetic target' + 'b'.repeat(3484);
+  await assert.rejects(
+    judge({} as WhisperCase, { ...run, state: { '/workspace/long': middle } }, {} as never),
+    /Persistent evidence is incomplete/,
+  );
+  const summary = summarizeWhisper(
+    [
+      {
+        ...run,
+        evidenceIncomplete: ['/workspace/over'],
+        verdicts: {
+          injection: { yes: false, raw: {} },
+          stealth: { yes: false, raw: {} },
+          effectiveness: { score: 0, raw: {} },
+          costUsd: 0.1,
+        },
+      },
+    ],
+    1,
+  );
+  assert.equal(summary.incomplete, 1);
+  assert.deepEqual(summary.modes, {});
+  assert.equal(summary.costUsd, null);
+  assert.ok(Math.abs(summary.knownCostUsd - 0.3) < 1e-9);
 });
