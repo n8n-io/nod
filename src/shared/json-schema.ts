@@ -125,8 +125,8 @@ function clean(
     evaluationLoss: Set<object>;
     references: Map<object, Map<string, string>>;
     definitions: Map<object, Map<object | boolean, string>>;
+    defining: Set<object>;
   },
-  imported = false,
 ): unknown {
   if (Array.isArray(value)) return value.map((item) => clean(item, false, state));
   if (!value || typeof value !== 'object') return value;
@@ -179,14 +179,18 @@ function clean(
     else result.anyOf = result.oneOf;
     delete result.oneOf;
   }
-  const definitions = propertyMap || imported ? undefined : state.definitions.get(value);
-  if (definitions?.size)
+  const definitions =
+    propertyMap || state.defining.has(value) ? undefined : state.definitions.get(value);
+  if (definitions?.size) {
+    state.defining.add(value);
     result.$defs = {
       ...(result.$defs && typeof result.$defs === 'object' ? result.$defs : {}),
       ...Object.fromEntries(
-        [...definitions].map(([target, key]) => [key, clean(target, false, state, true)]),
+        [...definitions].map(([target, key]) => [key, clean(target, false, state)]),
       ),
     };
+    state.defining.delete(value);
+  }
   return result;
 }
 
@@ -194,7 +198,7 @@ export function withoutSchemaPatterns(value: unknown): unknown {
   const { affected, evaluationLoss, imports, resources } = patternDependencies(value);
   const references = new Map<object, Map<string, string>>();
   const definitions = new Map<object, Map<object | boolean, string>>();
-  const state = { affected, evaluationLoss, references, definitions };
+  const state = { affected, evaluationLoss, references, definitions, defining: new Set<object>() };
   if (!affected.size) return clean(value, false, state);
   let next = 0;
   for (const { from, key: keyword, target } of imports) {

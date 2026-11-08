@@ -3003,6 +3003,27 @@ test('external regex removal keeps valid compound arguments and shared definitio
     },
     {
       schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              {
+                $id: 'https://schema.example/copied',
+                type: 'object',
+                $defs: {
+                  value: { oneOf: [{ type: 'string', pattern: '^alpha$' }, { const: 'beta' }] },
+                },
+                properties: { value: { $ref: '#/$defs/value/oneOf/0' } },
+              },
+              { const: 'other' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: { value: 'alpha' },
+    },
+    {
+      schema: {
         $defs: { choice: { oneOf: [true, { pattern: '^alpha$' }] } },
         $ref: '#/$defs/choice/oneOf/0',
       },
@@ -3021,6 +3042,28 @@ test('external regex removal keeps valid compound arguments and shared definitio
           },
         },
         $ref: '#/$defs/node',
+      },
+      input: { name: 'alpha', next: { name: 'alpha' } },
+    },
+    {
+      schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              {
+                $id: 'https://schema.example/recursive',
+                type: 'object',
+                properties: {
+                  name: { type: 'string', pattern: '^alpha$' },
+                  next: { $ref: '#' },
+                },
+                required: ['name'],
+              },
+              { const: 'other' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
       },
       input: { name: 'alpha', next: { name: 'alpha' } },
     },
@@ -3122,6 +3165,20 @@ test('external regex removal keeps valid compound arguments and shared definitio
   assert.equal(named.$defs.__nod_ref_0.pattern, undefined);
   assert.equal(Compile(named as never).Check({ named: 'not-a-match' }), true);
   assert.deepEqual(withoutSchemaPatterns(named), named);
+  const nested = withoutSchemaPatterns({
+    type: 'object',
+    examples: [
+      {
+        $id: 'https://schema.example/literal',
+        type: 'object',
+        $defs: { choice: { oneOf: [{ type: 'string', pattern: '^(a+)+$' }, { const: 'beta' }] } },
+        properties: { value: { $ref: '#/$defs/choice/oneOf/0' } },
+      },
+    ],
+    properties: { value: { $ref: 'https://schema.example/literal' } },
+  });
+  assert.equal(Compile(nested as never).Check({ value: { value: 'not-a-match' } }), true);
+  assert.deepEqual(withoutSchemaPatterns(nested), nested);
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {
