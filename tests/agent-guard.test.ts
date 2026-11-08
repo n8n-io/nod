@@ -2828,6 +2828,47 @@ test('external tool schemas drop regex constraints before argument validation', 
     connectionId,
     pathId: 'synthetic-path',
   });
+  const dynamic = {
+    type: 'object',
+    properties: {
+      filter: { const: { pattern: 'synthetic', patternProperties: { literal: 'value' } } },
+    },
+    patternProperties: { '^field_[a-z]+$': { type: 'string', pattern: expression } },
+    additionalProperties: false,
+  };
+  const input = {
+    field_name: 'synthetic',
+    filter: { pattern: 'synthetic', patternProperties: { literal: 'value' } },
+  };
+  assert.deepEqual(withoutSchemaPatterns(dynamic), {
+    type: 'object',
+    properties: dynamic.properties,
+    additionalProperties: true,
+  });
+  assert.deepEqual(appToolArgs({ ...tool, schema: dynamic }, input, connectionId), {
+    tool: 'find',
+    input,
+    connectionId,
+    pathId: 'synthetic-path',
+  });
+  assert.deepEqual(
+    withoutSchemaPatterns({
+      type: 'object',
+      default: input,
+      examples: [input],
+      enum: [input],
+      dependentRequired: { pattern: ['filter'] },
+      unevaluatedProperties: false,
+    }),
+    {
+      type: 'object',
+      default: input,
+      examples: [input],
+      enum: [input],
+      dependentRequired: { pattern: ['filter'] },
+      unevaluatedProperties: false,
+    },
+  );
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {

@@ -553,9 +553,14 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
 
   const controlTarget = async (query: ControlQuery) => {
     const found = await locate(query);
-    return found
+    const [frame] = found ? await tree(found.session) : [];
+    return found && frame?.loaderId
       ? {
-          identity: { session: found.session, backendNodeId: found.backendNodeId },
+          identity: {
+            frame: frame.id,
+            document: frame.loaderId,
+            backendNodeId: found.backendNodeId,
+          },
           controls: await controlsFor(found),
         }
       : undefined;

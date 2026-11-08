@@ -10,6 +10,7 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
+import { runProcess } from '../../src/providers/process.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
 import type { AccountSettings } from '../../src/shared/account.ts';
@@ -64,7 +65,7 @@ import { collect, collectUsage, requireBackgroundPrompts, type Run } from '../sr
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
-import { createStackRequest, type Stack } from '../src/stack.ts';
+import { createStackRequest, repository, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
@@ -3553,6 +3554,66 @@ test('eval spend stops on unknown prices and retains discarded retry costs', () 
       judgeTokens: 1,
     },
   );
+});
+
+test('LongMemEval reports saved failures when the budget prevents a retry', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-longmem-resume-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const script = `
+    import assert from 'node:assert/strict';
+    import childProcess from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { mock } from 'node:test';
+    import { mkdir, writeFile } from 'node:fs/promises';
+    mock.module(${JSON.stringify(new URL('../src/run.ts', import.meta.url).href)}, {
+      exports: { prepare: async () => ({ OPENAI_API_KEY: 'synthetic' }) },
+    });
+    mock.method(globalThis, 'fetch', async () => { throw new Error('No network requests are allowed.'); });
+    mock.method(childProcess, 'spawn', () => { throw new Error('No model processes are allowed.'); });
+    syncBuiltinESMExports();
+    const { runLongMemEval } = await import(${JSON.stringify(new URL('../src/longmemeval.ts', import.meta.url).href)});
+    const root = process.argv[1];
+    const item = {
+      question_id: 'synthetic', question_type: 'single-session-user',
+      question: 'What color?', answer: 'amber',
+    };
+    const data = root + '/data.json';
+    await writeFile(data, JSON.stringify([item]));
+    for (const [label, costUsd, unpricedCalls] of [['known', 10, 0], ['unknown', 0, 1]]) {
+      const directory = root + '/longmemeval/' + label + '/questions';
+      await mkdir(directory, { recursive: true });
+      await writeFile(directory + '/synthetic.json', JSON.stringify({
+        questionId: 'synthetic', type: item.question_type, abstention: false,
+        setups: ['memory'], seconds: 1, error: 'Synthetic failure',
+        runs: [{ setup: 'memory', reply: '', tools: [], costUsd, unpricedCalls,
+          modelCalls: 1, tokens: 10, compactions: 0, seconds: 1, error: 'Synthetic failure' }],
+      }));
+      const { summary } = await runLongMemEval({
+        data, root, label, model: 'openai/synthetic', judge: 'openai/synthetic',
+        setups: ['memory'], questions: ['synthetic'], concurrency: 1, budget: 1, resume: true,
+      });
+      assert.equal(summary.questions, 1);
+      assert.equal(summary.knownCostUsd, costUsd);
+      assert.equal(summary.totalCostUsd, unpricedCalls ? null : costUsd);
+      assert.equal(summary.unpriced, unpricedCalls > 0);
+      assert.equal(summary.setups.memory.incomplete, 1);
+      assert.equal(summary.setups.memory.costUsd, costUsd);
+    }
+  `;
+  const result = await runProcess(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--experimental-test-module-mocks',
+      '--input-type=module',
+      '-e',
+      script,
+      root,
+    ],
+    { cwd: repository, timeoutMs: 15_000 },
+  );
+  assert.equal(result.exitCode, 0, result.stderr + result.stdout);
 });
 
 test('WhisperBench retains exact-limit files and marks incomplete evidence unscorable', async () => {

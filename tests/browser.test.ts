@@ -1253,6 +1253,9 @@ function workerComputer() {
     close: async () => {
       calls.push({ method: 'close' });
     },
+    clear: async (id) => {
+      calls.push({ method: 'clear', input: id });
+    },
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
     },
@@ -1714,6 +1717,67 @@ test('read-only cancellation preserves an existing mutation fence', async () => 
     child.stderr.destroy();
   }
 });
+
+test(
+  'cancelling and reopening one browser keeps other sessions in the same namespace running',
+  { timeout: 10_000 },
+  async () => {
+    const fixture = await harness();
+    const dataRoot = '/synthetic/parallel-cancellation';
+    const computer = fixture.client(dataRoot);
+    const entered = deferred();
+    const chatEntered = deferred();
+    const releaseChat = deferred();
+    let chatSignal: AbortSignal | undefined;
+    try {
+      await computer.act('chat', { action: 'snapshot' });
+      const instance = fixture.instance(dataRoot);
+      instance.setAct(async (id, input, signal) => {
+        if (id === 'task' && input.action === 'click') {
+          entered.resolve();
+          await new Promise<void>((_resolve, reject) =>
+            signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }),
+          );
+        }
+        if (id === 'chat' && input.action === 'wait') {
+          chatSignal = signal;
+          chatEntered.resolve();
+          await releaseChat.promise;
+        }
+        return { text: id, url: 'https://example.com' };
+      });
+      const controller = new AbortController();
+      const cancelled = assert.rejects(
+        computer.act('task', { action: 'click', selector: '#submit' }, controller.signal),
+        /cancelled/,
+      );
+      await entered.promise;
+      controller.abort();
+      await cancelled;
+      await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+      assert.equal((await computer.act('chat', { action: 'snapshot' })).text, 'chat');
+      const chat = computer.act('chat', { action: 'wait' });
+      await chatEntered.promise;
+      await computer.act('task', { action: 'open', url: 'https://example.com/reopened' });
+      assert.equal(chatSignal?.aborted, false);
+      assert.equal(fixture.instance(dataRoot), instance);
+      assert.deepEqual(
+        instance.calls.filter(({ method }) => method === 'clear'),
+        [{ method: 'clear', input: 'task' }],
+      );
+      assert.equal(
+        instance.calls.some(({ method }) => method === 'dispose'),
+        false,
+      );
+      releaseChat.resolve();
+      assert.equal((await chat).text, 'chat');
+      assert.equal((await computer.act('chat', { action: 'snapshot' })).text, 'chat');
+    } finally {
+      releaseChat.resolve();
+      await fixture.close();
+    }
+  },
+);
 
 for (const method of ['open', 'bindProfile'] as const)
   test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
@@ -5540,6 +5604,23 @@ test(
       });
       const cssStep = { action: 'click', selector: '#plain' } as const;
       const original = await computer.currentPage('submits', cssStep);
+      assert.equal((await computer.currentPage('submits', cssStep)).target, original.target);
+      await computer.act('submits', { ...cssStep, expectTarget: original.target });
+      const enterStep = { action: 'press', key: 'Enter' } as const;
+      const focused = await computer.currentPage('submits', enterStep);
+      await computer.act('submits', { ...enterStep, expectTarget: focused.target });
+      const located = await computer.act('submits', {
+        action: 'evaluate',
+        script:
+          "const r=document.querySelector('#plain').getBoundingClientRect();({x:(r.x+r.width/2)/innerWidth,y:(r.y+r.height/2)/innerHeight})",
+      });
+      const point = JSON.parse(located.text.slice(located.text.indexOf('\n') + 1)) as {
+        x: number;
+        y: number;
+      };
+      const pointStep = { action: 'click', ...point } as const;
+      const pointed = await computer.currentPage('submits', pointStep);
+      await computer.act('submits', { ...pointStep, expectTarget: pointed.target });
       await computer.act('submits', {
         action: 'evaluate',
         script:

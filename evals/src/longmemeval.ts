@@ -176,9 +176,7 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
           evidenceOutsideRecent: accuracy(runs.filter(({ result }) => !result.evidenceInRecent)),
           incomplete: attempted - runs.length,
           compacted: runs.filter(({ run }) => run.compactions > 0).length,
-          costUsd:
-            runs.reduce((sum, { run }) => sum + run.costUsd, 0) +
-            results.reduce((sum, result) => sum + (result.previousSetupCostsUsd?.[setup] ?? 0), 0),
+          costUsd: results.reduce((sum, result) => sum + (setupCosts(result)[setup] ?? 0), 0),
           meanTools: runs.length
             ? Math.round(
                 (10 * runs.reduce((sum, { run }) => sum + run.tools.length, 0)) / runs.length,
@@ -394,7 +392,9 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       }
     }),
   );
-  const ordered = picked.flatMap((item) => results.get(item.question_id) ?? []);
+  const ordered = picked.flatMap(
+    (item) => results.get(item.question_id) ?? retried.get(item.question_id) ?? [],
+  );
   const summary = summarizeLongMemEval(ordered, options.setups);
   await writeFile(join(directory, 'summary.json'), JSON.stringify({ manifest, summary }, null, 2));
   const report = markdown(summary, manifest);

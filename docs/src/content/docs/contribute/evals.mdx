@@ -84,6 +84,8 @@ Each attempt reads the cost ledger again after the application closes and before
 
 `--budget` counts every completed try, including retries discarded from the final score. With a budget set, completed model usage without a valid price stops new tasks and retries. Work already running can finish, so concurrent runs can exceed the limit. Reports retain discarded retry charges. Unknown prices leave the total unknown; only LongMemEval and WhisperBench reports preserve the known subtotal. LongMemEval and WhisperBench follow the same stop rule.
 
+When a budget prevents a saved failed run from being retried, LongMemEval keeps its costs, unknown pricing, and incomplete coverage in the report.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.

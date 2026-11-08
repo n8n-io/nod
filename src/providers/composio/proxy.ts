@@ -172,7 +172,7 @@ export function createComposioProxy(options: {
                     signal: AbortSignal.any([input.signal, controller.signal]),
                   }),
               },
-            }).request<T>({ ...value, maxRetries: 0 });
+            }).request<T>({ ...value, signal: controller.signal, maxRetries: 0 });
             resolve(operation.asResponse());
           } catch (error) {
             reject(error);
