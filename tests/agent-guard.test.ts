@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { Compile } from 'typebox/compile';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { appConfirmation } from '../src/ports/agent.ts';
@@ -2869,6 +2870,99 @@ test('external tool schemas drop regex constraints before argument validation', 
       unevaluatedProperties: false,
     },
   );
+});
+
+test('external regex removal keeps valid compound arguments and shared definitions usable', () => {
+  const cases: Array<{ schema: Record<string, unknown>; input: unknown }> = [
+    {
+      schema: { type: 'string', oneOf: [{ pattern: '^alpha$' }, { pattern: '^beta$' }] },
+      input: 'alpha',
+    },
+    { schema: { type: 'string', not: { pattern: '^blocked$' } }, input: 'allowed' },
+    {
+      schema: {
+        type: 'string',
+        if: { pattern: '^alpha$' },
+        then: { const: 'alpha' },
+        else: { const: 'beta' },
+      },
+      input: 'beta',
+    },
+    {
+      schema: {
+        type: 'array',
+        contains: { type: 'string', pattern: '^alpha$' },
+        minContains: 1,
+        maxContains: 1,
+      },
+      input: ['alpha', 'beta'],
+    },
+    {
+      schema: {
+        $defs: {
+          alpha: { type: 'string', pattern: '^alpha$' },
+          beta: { type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [{ $ref: '#/$defs/alpha' }, { $ref: '#/$defs/beta' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        type: 'string',
+        allOf: [{ minLength: 2 }],
+        anyOf: [{ const: 'alpha' }, { const: 'beta' }],
+        oneOf: [{ pattern: '^alpha$' }, { pattern: '^beta$' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        type: 'object',
+        allOf: [{ patternProperties: { '^field_': { type: 'string' } } }],
+        unevaluatedProperties: false,
+      },
+      input: { field_name: 'synthetic' },
+    },
+  ];
+  for (const example of cases) {
+    const { $defs, ...value } = example.schema;
+    const schema = {
+      type: 'object',
+      ...($defs ? { $defs } : {}),
+      properties: { value },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const args = { value: example.input };
+    assert.equal(Compile(schema as never).Check(args), true);
+    const cleaned = withoutSchemaPatterns(schema);
+    assert.equal(Compile(cleaned as never).Check(args), true);
+    assert.deepEqual(withoutSchemaPatterns(cleaned), cleaned);
+    const tool: AppTool = {
+      name: 'find',
+      action: 'CONNECTED_MCP_CALL',
+      description: 'Read synthetic records',
+      schema,
+      pathId: 'synthetic',
+      tool: 'find',
+    };
+    assert.deepEqual(appToolArgs(tool, args, 'synthetic'), {
+      tool: 'find',
+      input: args,
+      connectionId: 'synthetic',
+      pathId: 'synthetic',
+    });
+    assert.throws(() => appToolArgs(tool, {}, 'synthetic'), /do not match/);
+    assert.throws(() => appToolArgs(tool, { ...args, extra: true }, 'synthetic'), /do not match/);
+  }
+  const strict = {
+    type: 'string',
+    oneOf: [{ const: 'alpha' }, { const: 'beta' }],
+    not: { const: 'blocked' },
+  };
+  assert.deepEqual(withoutSchemaPatterns(strict), strict);
+  assert.equal(Compile(withoutSchemaPatterns(strict) as never).Check('other'), false);
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {

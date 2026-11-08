@@ -18,12 +18,19 @@ const schemas = new Set([
   'contentSchema',
 ]);
 
-function clean(value: unknown, propertyMap: boolean): unknown {
-  if (Array.isArray(value)) return value.map((item) => clean(item, false));
+function clean(
+  value: unknown,
+  propertyMap: boolean,
+  state: { patterns: boolean; relax: boolean },
+): unknown {
+  if (Array.isArray(value)) return value.map((item) => clean(item, false, state));
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
+  const result = Object.fromEntries(
     Object.entries(value).flatMap(([key, item]) => {
-      if (!propertyMap && (key === 'pattern' || key === 'patternProperties')) return [];
+      if (!propertyMap && (key === 'pattern' || key === 'patternProperties')) {
+        state.patterns = true;
+        return [];
+      }
       if (
         !propertyMap &&
         Object.hasOwn(value, 'patternProperties') &&
@@ -34,18 +41,38 @@ function clean(value: unknown, propertyMap: boolean): unknown {
         [
           key,
           propertyMap
-            ? clean(item, false)
+            ? clean(item, false, state)
             : maps.has(key)
-              ? clean(item, true)
+              ? clean(item, true, state)
               : schemas.has(key)
-                ? clean(item, false)
+                ? clean(item, false, state)
                 : item,
         ],
       ];
     }),
   );
+  if (!propertyMap && state.relax) {
+    delete result.not;
+    delete result.if;
+    delete result.maxContains;
+    for (const key of ['unevaluatedProperties', 'unevaluatedItems'])
+      if (Object.hasOwn(result, key)) result[key] = true;
+    if (Array.isArray(result.oneOf)) {
+      if (Object.hasOwn(result, 'anyOf'))
+        result.allOf = [
+          ...(Array.isArray(result.allOf) ? result.allOf : []),
+          { anyOf: result.oneOf },
+        ];
+      else result.anyOf = result.oneOf;
+      delete result.oneOf;
+    }
+  }
+  return result;
 }
 
 export function withoutSchemaPatterns(value: unknown): unknown {
-  return clean(value, false);
+  const state = { patterns: false, relax: false };
+  const cleaned = clean(value, false, state);
+  state.relax = state.patterns;
+  return state.relax ? clean(cleaned, false, state) : cleaned;
 }
