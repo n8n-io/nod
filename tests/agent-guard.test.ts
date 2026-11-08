@@ -2918,18 +2918,119 @@ test('external regex removal keeps valid compound arguments and shared definitio
     },
     {
       schema: {
+        $defs: {
+          alpha: { $dynamicAnchor: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { $dynamicAnchor: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [{ $dynamicRef: '#alpha' }, { $dynamicRef: '#beta' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
         type: 'object',
         allOf: [{ patternProperties: { '^field_': { type: 'string' } } }],
         unevaluatedProperties: false,
       },
       input: { field_name: 'synthetic' },
     },
+    ...['$id', '$anchor'].map((key) => ({
+      schema: {
+        $defs: {
+          alpha: { [key]: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { [key]: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [
+          { $ref: `${key === '$anchor' ? '#' : ''}alpha` },
+          { $ref: `${key === '$anchor' ? '#' : ''}beta` },
+        ],
+      },
+      input: 'alpha',
+    })),
+    ...['$id', '$anchor'].map((key) => ({
+      schema: {
+        $id: 'https://schema.example/root',
+        $defs: {
+          alpha: { [key]: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { [key]: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [
+          {
+            $ref:
+              key === '$anchor'
+                ? 'https://schema.example/root#alpha'
+                : 'https://schema.example/alpha',
+          },
+          { $ref: key === '$anchor' ? '#beta' : 'beta' },
+        ],
+      },
+      input: 'alpha',
+    })),
+    {
+      schema: {
+        type: 'object',
+        properties: {
+          nested: {
+            $id: 'https://schema.example/nested',
+            type: 'object',
+            $defs: {
+              choice: {
+                oneOf: [
+                  { type: 'string', pattern: '^alpha$' },
+                  { type: 'string', pattern: '^beta$' },
+                ],
+              },
+            },
+            properties: { value: { $ref: '#/$defs/choice/oneOf/0' } },
+          },
+        },
+      },
+      input: { nested: { value: 'alpha' } },
+    },
+    {
+      schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              { type: 'string', pattern: '^alpha$' },
+              { type: 'string', pattern: '^beta$' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        $defs: { choice: { oneOf: [true, { pattern: '^alpha$' }] } },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        $defs: {
+          node: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', pattern: '^alpha$' },
+              next: { $ref: '#/$defs/node' },
+            },
+            required: ['name'],
+          },
+        },
+        $ref: '#/$defs/node',
+      },
+      input: { name: 'alpha', next: { name: 'alpha' } },
+    },
   ];
   for (const example of cases) {
-    const { $defs, ...value } = example.schema;
+    const { $defs, $id, ...value } = example.schema;
     const schema = {
       type: 'object',
       ...($defs ? { $defs } : {}),
+      ...($id ? { $id } : {}),
       properties: { value },
       required: ['value'],
       additionalProperties: false,
@@ -2963,6 +3064,64 @@ test('external regex removal keeps valid compound arguments and shared definitio
   };
   assert.deepEqual(withoutSchemaPatterns(strict), strict);
   assert.equal(Compile(withoutSchemaPatterns(strict) as never).Check('other'), false);
+  const siblings = {
+    type: 'object',
+    properties: {
+      query: { type: 'string', pattern: '^alpha$' },
+      choice: { type: 'string', oneOf: [{ minLength: 1 }, { maxLength: 1 }] },
+      guard: {
+        type: 'string',
+        not: { $defs: { unused: { pattern: '^alpha$' } }, const: 'blocked' },
+      },
+      condition: {
+        type: 'string',
+        if: { const: 'alpha' },
+        then: { const: 'alpha' },
+        else: { const: 'beta' },
+      },
+      tags: { type: 'array', contains: { type: 'string' }, maxContains: 1 },
+    },
+    unevaluatedProperties: false,
+  };
+  const good = {
+    query: 'alpha',
+    choice: 'alpha',
+    guard: 'allowed',
+    condition: 'beta',
+    tags: ['one'],
+  };
+  for (const args of [
+    good,
+    { ...good, choice: 'a' },
+    { ...good, guard: 'blocked' },
+    { ...good, condition: 'other' },
+    { ...good, tags: ['one', 'two'] },
+    { ...good, extra: true },
+  ])
+    assert.equal(
+      Compile(withoutSchemaPatterns(siblings) as never).Check(args),
+      Compile(siblings).Check(args),
+    );
+  const literal = {
+    type: 'object',
+    examples: [{ $id: 'literal', type: 'string', pattern: '^(a+)+$' }],
+    properties: { named: { $ref: 'literal' }, value: { $ref: '#/examples/0' } },
+  };
+  const cleaned = withoutSchemaPatterns(literal) as Record<string, any>;
+  assert.deepEqual(cleaned.examples, literal.examples);
+  assert.notEqual(cleaned.properties.value.$ref, '#/examples/0');
+  assert.equal(cleaned.properties.named.$ref, cleaned.properties.value.$ref);
+  assert.equal(cleaned.$defs.__nod_ref_0.pattern, undefined);
+  assert.equal(Compile(cleaned as never).Check({ value: 'not-a-match' }), true);
+  assert.deepEqual(withoutSchemaPatterns(cleaned), cleaned);
+  const named = withoutSchemaPatterns({
+    ...literal,
+    properties: { named: { $ref: 'literal' } },
+  }) as Record<string, any>;
+  assert.notEqual(named.properties.named.$ref, 'literal');
+  assert.equal(named.$defs.__nod_ref_0.pattern, undefined);
+  assert.equal(Compile(named as never).Check({ named: 'not-a-match' }), true);
+  assert.deepEqual(withoutSchemaPatterns(named), named);
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {
