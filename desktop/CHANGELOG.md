@@ -2,6 +2,53 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.5.2 - 2026-11-08
+
+### Features
+
+- **desktop:** Show runtime download progress and resume interrupted downloads. [#602](https://github.com/n8n-io/nod/pull/602) (9b4ed70)
+- **trust:** Add a decision safety gate with Jev. [commit](https://github.com/n8n-io/nod/commit/bf04eb70fcf06e44934262040f2803d2305af010) (bf04eb7)
+
+### Fixes
+
+- **apps:** Show reconnect for connected accounts. [#618](https://github.com/n8n-io/nod/pull/618) (80df5d9)
+- **desktop:** Stop the VM before updating the runtime mount. [#617](https://github.com/n8n-io/nod/pull/617) (b5bdf35)
+- **chat:** Show activity before the first model step. [#616](https://github.com/n8n-io/nod/pull/616) (3b96b32)
+- **apps:** Bind sign-in restarts to their callback attempt. [#615](https://github.com/n8n-io/nod/pull/615) (04361eb)
+- **integrations:** Keep request limits through response bodies. [#614](https://github.com/n8n-io/nod/pull/614) (cbe0522)
+- **models:** Use the target model output limit. [#613](https://github.com/n8n-io/nod/pull/613) (0091bc8)
+- **desktop:** Retry complete Mac runtime downloads offline. [#612](https://github.com/n8n-io/nod/pull/612) (901c6c3)
+- **runtime:** Stop turns with blocked file publication. [#611](https://github.com/n8n-io/nod/pull/611) (ec8423c)
+- **channels:** Hide an accepted WhatsApp QR code. [#610](https://github.com/n8n-io/nod/pull/610) (acc4fb1)
+- **desktop:** Keep verified runtime files through failed downloads. [commit](https://github.com/n8n-io/nod/commit/b9c42b9abadb645808a26673786dd06cb6302bd4) (b9c42b9)
+- **desktop:** Keep runtime download failure causes. [commit](https://github.com/n8n-io/nod/commit/f435ddd638aba5493507a199551e971e1781dd37) (f435ddd)
+- **web:** Block HTML preview navigation before network access. [#607](https://github.com/n8n-io/nod/pull/607) (da1601d)
+- **desktop:** Prevent PostgreSQL hangs after VM kernel updates. [commit](https://github.com/n8n-io/nod/commit/6e165e7d05f47c31b0e93b6dcd9dd7b6e9060210) (6e165e7)
+- **trust:** Check actions with the selected model by default again. [#605](https://github.com/n8n-io/nod/pull/605) (525680c)
+- Task completion and handoff, memory replies, settings links and eval grading. [#599](https://github.com/n8n-io/nod/pull/599) (c9ce11f)
+- **web:** Always open chat after onboarding. [#600](https://github.com/n8n-io/nod/pull/600) (0a30c48)
+
+### Documentation
+
+- **desktop:** Say interrupted downloads resume in the tester help table. [#603](https://github.com/n8n-io/nod/pull/603) (8a3170a)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- Authenticate verified build downloads. [#620](https://github.com/n8n-io/nod/pull/620) (c66ca9f)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.5.0...c66ca9f2e5a0f31fb2b8bac3f0c2b57647d19b59)
+
+<details>
+<summary>Build details</summary>
+
+Source: `c66ca9f2e5a0f31fb2b8bac3f0c2b57647d19b59`
+Previous release: `nod-v0.5.0`
+
+</details>
+
 ## 0.5.1 - 2026-11-04
 
 ### Features
