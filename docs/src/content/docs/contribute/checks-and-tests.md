@@ -60,6 +60,8 @@ CodeQL checks JavaScript, TypeScript, and Python when the repository is public. 
 
 CI also runs Gitleaks on all fetched Git refs and the checkout. It downloads the pinned scanner through the authenticated GitHub API and checks its SHA-256 before extraction. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
 
+Windows CI downloads Electron through the authenticated GitHub API. The download, cached archives, native fixtures and release build use the checksums shipped with the pinned Electron package. The download token is scoped to its preparation step and is not passed to the test apps.
+
 Check dependency advisories in each package:
 
 ```sh

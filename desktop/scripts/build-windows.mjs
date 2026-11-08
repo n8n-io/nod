@@ -20,6 +20,9 @@ const assets = resolve(
   process.env.NOD_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
 );
 const configuration = JSON.parse(await readFile(join(root, 'desktop/package.json'), 'utf8'));
+const electronChecksums = JSON.parse(
+  await readFile(join(root, 'desktop/node_modules/electron/checksums.json')),
+);
 const signed = process.env.NOD_RELEASE_BUILD === 'true';
 const tracesToken = process.env.NOD_TRACES_TOKEN;
 if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
@@ -89,6 +92,7 @@ const [application] = await packager({
   executableName: 'nod',
   appVersion: configuration.version,
   electronVersion,
+  download: { checksums: electronChecksums },
   platform: 'win32',
   arch: 'x64',
   win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Nod', FileDescription: 'Nod' },

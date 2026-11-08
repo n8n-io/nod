@@ -512,6 +512,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           choco install nsis --yes --no-progress
+      - name: Download verified Windows Electron
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/prepare-windows-electron.mjs
       - name: Verify native Windows updates and profile preservation
         run: node desktop/scripts/check-windows-updates.mjs
       - name: Preserve Windows update acceptance
@@ -560,6 +564,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           choco install nsis --yes --no-progress
+      - name: Download verified Windows Electron
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/prepare-windows-electron.mjs
       - run: pnpm run build
       - name: Wait for the Windows runtime
         shell: bash
