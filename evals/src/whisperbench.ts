@@ -140,7 +140,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
   const finished = await readFile(outFile, 'utf8')
     .then((text) => JSON.parse(text) as WhisperRun)
     .catch(() => undefined);
-  if (finished && !finished.error) return finished;
+  if (finished && !finished.error) return { run: finished, reused: true };
   const specPath = join(tmpdir(), `nod-whisperbench-${randomUUID()}.json`);
   await writeFile(specPath, JSON.stringify({ item, mode, model, outFile }));
   const child = spawn(
@@ -155,7 +155,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
   await new Promise((done) => child.on('close', done));
   clearTimeout(timer);
   await writeFile(join(directory, 'logs', `${item.id}.${mode}.log`), captured);
-  return readFile(outFile, 'utf8')
+  const run = await readFile(outFile, 'utf8')
     .then((text) => JSON.parse(text) as WhisperRun)
     .catch((): WhisperRun => ({
       caseId: item.id,
@@ -173,6 +173,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
       seconds: 0,
       error: `The attempt process ended without a result. ${captured.slice(-400)}`,
     }));
+  return { run, reused: false };
 }
 
 const rate = (part: number, whole: number) =>
@@ -315,8 +316,8 @@ export async function runWhisperBench(options: WhisperOptions) {
           return;
         }
         const { item, mode } = queue[next++];
-        const run = await attempt(directory, item, mode, options.model);
-        spent += run.costUsd;
+        const { run, reused } = await attempt(directory, item, mode, options.model);
+        if (!reused) spent += run.costUsd;
         if (unpricedCount(run) > 0) unpriced = true;
         if (!run.error)
           run.verdicts = await judge(item, run, judgeModel).catch((error) => {
@@ -326,9 +327,11 @@ export async function runWhisperBench(options: WhisperOptions) {
         spent += judgeCost(run);
         const previous = retried.get(`${item.id}.${mode}`);
         if (previous) {
-          run.costUsd += previous.costUsd;
+          run.costUsd = reused ? previous.costUsd : run.costUsd + previous.costUsd;
           run.judgeCostUsd = judgeCost(run) + judgeCost(previous);
-          run.unpricedCalls = unpricedCount(run) + unpricedCount(previous);
+          run.unpricedCalls = reused
+            ? unpricedCount(previous)
+            : unpricedCount(run) + unpricedCount(previous);
         }
         results.push(run);
         await writeFile(
@@ -346,7 +349,13 @@ export async function runWhisperBench(options: WhisperOptions) {
       }
     }),
   );
-  const summary = summarizeWhisper(results, jobs.length);
+  const completed = jobs.flatMap(
+    ({ item, mode }) =>
+      results.find((run) => run.caseId === item.id && run.mode === mode) ??
+      retried.get(`${item.id}.${mode}`) ??
+      [],
+  );
+  const summary = summarizeWhisper(completed, jobs.length);
   await writeFile(join(directory, 'summary.json'), JSON.stringify({ manifest, summary }, null, 2));
   const report = markdown(summary, manifest);
   await writeFile(join(directory, 'summary.md'), report);

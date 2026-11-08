@@ -189,21 +189,27 @@ function credentialExpression(variant: string) {
   );
 }
 
-function redactText(value: string, variants: string[]) {
-  return variants.reduce(
-    (text, variant) => text.replace(credentialExpression(variant), '[redacted]'),
-    value,
-  );
+type CredentialVariant = { value: string; expression: RegExp };
+
+function redactText(value: string, variants: CredentialVariant[]) {
+  return variants.reduce((text, variant) => text.replace(variant.expression, '[redacted]'), value);
 }
 
-function redact(value: unknown, token: string, variants = credentialVariants(token)): unknown {
+function redact(
+  value: unknown,
+  token: string,
+  variants = credentialVariants(token).map((value) => ({
+    value,
+    expression: credentialExpression(value),
+  })),
+): unknown {
   if (typeof value === 'string') return redactText(value, variants);
   if (isIntegrationFile(value))
     return variants.some((variant) => {
       const bytes = Buffer.from(value.bytes);
       return (
-        bytes.includes(variant) ||
-        (variant.includes('%') && credentialExpression(variant).test(bytes.toString('latin1')))
+        bytes.includes(variant.value) ||
+        (variant.value.includes('%') && variant.expression.test(bytes.toString('latin1')))
       );
     })
       ? {

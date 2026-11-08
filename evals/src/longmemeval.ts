@@ -131,6 +131,13 @@ const unpricedCount = (result: QuestionRun) =>
   result.runs.reduce((sum, run) => sum + (run.unpricedCalls ?? (run.modelCalls > 0 ? 1 : 0)), 0);
 const unpriced = (result: QuestionRun) => unpricedCount(result) > 0;
 const totalCost = (result: QuestionRun) => cost(result) + (result.previousCostUsd ?? 0);
+const setupCosts = (result: QuestionRun) => {
+  const costs = { ...(result.previousSetupCostsUsd ?? {}) };
+  for (const run of result.runs) costs[run.setup] = (costs[run.setup] ?? 0) + run.costUsd;
+  return costs;
+};
+const learningCost = (result: QuestionRun) =>
+  (result.learning?.costUsd ?? 0) + (result.previousLearningCostUsd ?? 0);
 
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
@@ -169,7 +176,9 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
           evidenceOutsideRecent: accuracy(runs.filter(({ result }) => !result.evidenceInRecent)),
           incomplete: attempted - runs.length,
           compacted: runs.filter(({ run }) => run.compactions > 0).length,
-          costUsd: runs.reduce((sum, { run }) => sum + run.costUsd, 0),
+          costUsd:
+            runs.reduce((sum, { run }) => sum + run.costUsd, 0) +
+            results.reduce((sum, result) => sum + (result.previousSetupCostsUsd?.[setup] ?? 0), 0),
           meanTools: runs.length
             ? Math.round(
                 (10 * runs.reduce((sum, { run }) => sum + run.tools.length, 0)) / runs.length,
@@ -192,7 +201,9 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
     unpriced: results.some(unpriced),
     setups: bySetup,
     learning: {
-      costUsd: learned.reduce((sum, item) => sum + item.costUsd, 0),
+      costUsd:
+        learned.reduce((sum, item) => sum + item.costUsd, 0) +
+        results.reduce((sum, result) => sum + (result.previousLearningCostUsd ?? 0), 0),
       meanNotes: mean((item) => item.notes),
       meanConfirmed: mean((item) => item.confirmed),
       meanLearned: mean((item) => item.learned),
@@ -353,6 +364,8 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
         const previous = retried.get(item.question_id);
         if (previous) {
           result.previousCostUsd = totalCost(previous);
+          result.previousSetupCostsUsd = setupCosts(previous);
+          result.previousLearningCostUsd = learningCost(previous);
           result.previousUnpricedCalls = unpricedCount(previous);
         }
         results.set(item.question_id, result);

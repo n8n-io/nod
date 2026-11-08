@@ -159,7 +159,7 @@ export function createBridgeComputer(options: {
       function cancel() {
         if (settled || cancelling) return;
         cancelling = true;
-        uncertain = !['currentPage', 'screenshot'].includes(input.method);
+        if (!['currentPage', 'screenshot'].includes(input.method)) uncertain = true;
         clearTimeout(timer);
         if (!response) child.stdin.write(JSON.stringify({ type: 'cancel', id: request.id }) + '\n');
         drainTimer = setTimeout(unavailable, options.drainTimeoutMs ?? 15_000);

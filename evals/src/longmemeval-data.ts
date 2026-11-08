@@ -69,6 +69,8 @@ export interface QuestionRun {
   evidenceInRecent?: boolean;
   historyMessages?: number;
   previousCostUsd?: number;
+  previousSetupCostsUsd?: Partial<Record<SetupName, number>>;
+  previousLearningCostUsd?: number;
   previousUnpricedCalls?: number;
   seconds: number;
   error?: string;

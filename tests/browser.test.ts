@@ -1650,6 +1650,71 @@ for (const successful of [true, false])
     child.stderr.destroy();
   });
 
+test('read-only cancellation preserves an existing mutation fence', async () => {
+  const entered: string[] = [];
+  const waiting: Array<() => void> = [];
+  const children: Array<ReturnType<typeof fakeBridge>> = [];
+  function fakeBridge() {
+    return Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+  }
+  const computer = createBridgeComputer({
+    namespace: 'sk-000000000000000000000002',
+    launch: () => {
+      const child = fakeBridge();
+      children.push(child);
+      child.stdin.on('data', (chunk: Buffer) => {
+        for (const line of String(chunk).trim().split('\n')) {
+          const frame = JSON.parse(line);
+          if (frame.type === 'request') {
+            entered.push(frame.request.id);
+            waiting.shift()?.();
+          }
+        }
+      });
+      return child as never;
+    },
+  });
+  const request = (input: BrowserAction, signal: AbortSignal) => {
+    const ready = new Promise<void>((resolve) => waiting.push(resolve));
+    const pending = computer.act('task', input, signal);
+    return { pending, ready };
+  };
+  const mutation = new AbortController();
+  const first = request({ action: 'click', selector: '#submit' }, mutation.signal);
+  await first.ready;
+  const observation = new AbortController();
+  const secondReady = new Promise<void>((resolve) => waiting.push(resolve));
+  const secondPending = computer.screenshot('task', observation.signal);
+  await secondReady;
+  mutation.abort();
+  observation.abort();
+  const firstRejected = assert.rejects(first.pending, /cancelled/);
+  const secondRejected = assert.rejects(secondPending, /cancelled/);
+  for (const [index, child] of children.entries()) {
+    const id = entered[index]!;
+    child.stdout.write(
+      JSON.stringify({ id, ok: false, error: 'cancelled', metadata: { status: 'cancelled' } }) +
+        '\n',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    child.emit('close', 0);
+  }
+  await firstRejected;
+  await secondRejected;
+  await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+  assert.equal(children.length, 2);
+  for (const child of children) {
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
+});
+
 for (const method of ['open', 'bindProfile'] as const)
   test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
     const fixture = await harness();

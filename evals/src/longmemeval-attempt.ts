@@ -71,7 +71,7 @@ async function threadOf(stack: Stack) {
 
 async function spent(stack: Stack, since?: Date) {
   const { rows } = await stack.pool.query(
-    `SELECT coalesce(sum(cost_usd),0)::float AS cost, count(*)::int AS calls,
+    `SELECT coalesce(sum(coalesce(cost_usd,(details->>'estimateUsd')::float8,0)),0)::float AS cost, count(*)::int AS calls,
             coalesce(sum(coalesce((details->>'inputTokens')::bigint,0)+coalesce((details->>'outputTokens')::bigint,0)+coalesce((details->>'cacheReadTokens')::bigint,0)+coalesce((details->>'cacheWriteTokens')::bigint,0)),0)::float AS tokens,
             count(*) FILTER (WHERE details::text LIKE '%"compaction"%')::int AS compactions,
             count(*) FILTER (WHERE details->>'status'='succeeded' AND coalesce(cost_usd,(details->>'estimateUsd')::float8,0)=0)::int AS unpriced
