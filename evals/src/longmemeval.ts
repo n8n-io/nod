@@ -123,8 +123,14 @@ const cost = (result: QuestionRun) =>
   (result.learning?.costUsd ?? 0) +
   result.runs.reduce((sum, run) => sum + run.costUsd + (run.verdict?.costUsd ?? 0), 0);
 
-const unpriced = (result: QuestionRun) =>
-  (result.learning?.unpricedCalls ?? 0) > 0 || result.runs.some((run) => run.unpricedCalls > 0);
+const unpricedCount = (result: QuestionRun) =>
+  (result.previousUnpricedCalls ?? 0) +
+  (result.learning
+    ? (result.learning.unpricedCalls ?? (result.learning.modelCalls > 0 ? 1 : 0))
+    : 0) +
+  result.runs.reduce((sum, run) => sum + (run.unpricedCalls ?? (run.modelCalls > 0 ? 1 : 0)), 0);
+const unpriced = (result: QuestionRun) => unpricedCount(result) > 0;
+const totalCost = (result: QuestionRun) => cost(result) + (result.previousCostUsd ?? 0);
 
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
@@ -194,8 +200,8 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
     },
     totalCostUsd: results.some(unpriced)
       ? null
-      : results.reduce((sum, result) => sum + cost(result), 0),
-    knownCostUsd: results.reduce((sum, result) => sum + cost(result), 0),
+      : results.reduce((sum, result) => sum + totalCost(result), 0),
+    knownCostUsd: results.reduce((sum, result) => sum + totalCost(result), 0),
   };
 }
 
@@ -288,6 +294,7 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       throw new Error(`Label ${options.label} was run with other setups. Pick a new label.`);
   } else await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const results = new Map<string, QuestionRun>();
+  const retried = new Map<string, QuestionRun>();
   for (const item of picked) {
     const done = await readFile(join(directory, 'questions', `${item.question_id}.json`), 'utf8')
       .then((text) => JSON.parse(text) as QuestionRun)
@@ -301,9 +308,11 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       wanted.every((setup) => scored(done.runs.find((run) => run.setup === setup)))
     )
       results.set(item.question_id, done);
+    else if (done) retried.set(item.question_id, done);
   }
-  let spent = [...results.values()].reduce((sum, result) => sum + cost(result), 0);
-  let hasUnpriced = [...results.values()].some(unpriced);
+  const savedAttempts = [...results.values(), ...retried.values()];
+  let spent = savedAttempts.reduce((sum, result) => sum + totalCost(result), 0);
+  let hasUnpriced = savedAttempts.some(unpriced);
   const rank = (id: string) => createHash('sha256').update(`order:${id}`).digest('hex');
   const queue = picked
     .filter((item) => !results.has(item.question_id))
@@ -331,14 +340,21 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
           (setup) => setup === 'memory' || chatIds.has(item.question_id),
         );
         const result = await attempt(directory, item, setups, options.model);
+        spent += cost(result);
+        if (unpriced(result)) hasUnpriced = true;
         for (const run of result.runs)
-          if (!(run.error && !run.reply))
+          if (!(run.error && !run.reply)) {
             run.verdict = await judge(item, run.reply, judgeModel).catch((error) => {
               run.error = error instanceof Error ? error.message : String(error);
               return undefined;
             });
-        spent += cost(result);
-        if (unpriced(result)) hasUnpriced = true;
+            spent += run.verdict?.costUsd ?? 0;
+          }
+        const previous = retried.get(item.question_id);
+        if (previous) {
+          result.previousCostUsd = totalCost(previous);
+          result.previousUnpricedCalls = unpricedCount(previous);
+        }
         results.set(item.question_id, result);
         await writeFile(
           join(directory, 'questions', `${item.question_id}.json`),

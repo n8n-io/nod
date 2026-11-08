@@ -1636,14 +1636,23 @@ export function createAgentBrowserComputer(options: {
     target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
   ) {
     const ref = referenceOf(target.selector);
-    if (ref) return state.refs.has(ref) ? [state.refs.get(ref)!] : [];
-    if (!target.selector && !target.point && !target.focused) return [];
+    if (ref)
+      return {
+        controls: state.refs.has(ref) ? [state.refs.get(ref)!] : [],
+        identity: state.refVersions.has(ref) ? { ref, version: state.refVersions.get(ref)! } : null,
+      };
+    if (!target.selector && !target.point && !target.focused)
+      return { controls: [], identity: { kind: 'page' } };
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      return ((await devtools?.controls(target).catch(() => [])) ?? []).map((control) => ({
-        role: control.role,
-        name: redactBrowserText(control.name, state.secrets).slice(0, 300),
-      }));
+      const resolved = await devtools?.target(target).catch(() => undefined);
+      return {
+        controls: (resolved?.controls ?? []).map((control) => ({
+          role: control.role,
+          name: redactBrowserText(control.name, state.secrets).slice(0, 300),
+        })),
+        identity: resolved?.identity ?? null,
+      };
     } finally {
       devtools?.close();
     }
@@ -1679,16 +1688,6 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  function controlIdentity(
-    state: BrowserState,
-    target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
-  ) {
-    const ref = referenceOf(target.selector);
-    return ref
-      ? { ref, version: state.refVersions.get(ref) ?? null }
-      : { selector: target.selector, point: target.point, focused: target.focused };
-  }
-
   async function stepControls(state: BrowserState, step: BrowserAction) {
     const point =
       step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
@@ -1700,13 +1699,12 @@ export function createAgentBrowserComputer(options: {
           : point
             ? { point }
             : { focused: step.action === 'type' };
-    const controls = await controlsOf(state, target);
+    const { controls, identity: sourceIdentity } = await controlsOf(state, target);
     const enter =
       (step.action === 'press' && step.key === 'Enter') ||
       (step.action === 'type' && /[\r\n]/.test(step.text ?? ''));
     const submits =
       step.action === 'click' || enter ? await submissionOf(state, target, enter) : undefined;
-    const sourceIdentity = controlIdentity(state, target);
     if (step.action !== 'drag')
       return { controls, sourceIdentity, ...(submits ? { rawSubmits: submits } : {}) };
     const drop = step.targetSelector
@@ -1714,11 +1712,12 @@ export function createAgentBrowserComputer(options: {
       : step.points && step.points.length > 1
         ? { point: step.points.at(-1)! }
         : {};
+    const dropResolved = await controlsOf(state, drop);
     return {
       controls,
       sourceIdentity,
-      dropTarget: await controlsOf(state, drop),
-      dropIdentity: controlIdentity(state, drop),
+      dropTarget: dropResolved.controls,
+      dropIdentity: dropResolved.identity,
     };
   }
 
@@ -1759,22 +1758,25 @@ export function createAgentBrowserComputer(options: {
       ? await dialogPageUrl(state, signal).catch(() => '')
       : await currentUrl(state, signal).catch(() => '');
     const refs = [referenceOf(input.selector), referenceOf(input.targetSelector)];
-    const target =
+    const checked =
       input.expectTarget !== undefined && at
-        ? (
-            await targetDetails(
-              state,
-              { ...input, action: input.action ?? 'click' },
-              at,
-              dialog?.message.slice(0, 2000),
-            )
-          ).target
+        ? await targetDetails(
+            state,
+            { ...input, action: input.action ?? 'click' },
+            at,
+            dialog?.message.slice(0, 2000),
+          )
         : undefined;
+    const unresolved =
+      checked?.details &&
+      (checked.details.sourceIdentity === null ||
+        ('dropIdentity' in checked.details && checked.details.dropIdentity === null));
     if (
       !at ||
       (input.expectOrigin !== undefined && originOf(at) !== input.expectOrigin) ||
       (input.expectUrl !== undefined && redactBrowserUrl(at, state.secrets) !== input.expectUrl) ||
-      (input.expectTarget !== undefined && target !== input.expectTarget) ||
+      (input.expectTarget !== undefined && checked?.target !== input.expectTarget) ||
+      unresolved ||
       refs.some((ref) => ref !== undefined && !state.refs.has(ref))
     )
       throw new BrowserActionError('browser_target_changed');

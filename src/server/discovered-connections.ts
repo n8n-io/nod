@@ -179,14 +179,33 @@ function credentialVariants(token: string) {
   return [...variants].sort((a, b) => b.length - a.length);
 }
 
+function credentialExpression(variant: string) {
+  const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    escaped.replace(/%[0-9A-F]{2}/g, (code) =>
+      code.replace(/[A-F]/g, (letter) => `[${letter}${letter.toLowerCase()}]`),
+    ),
+    'g',
+  );
+}
+
 function redactText(value: string, variants: string[]) {
-  return variants.reduce((text, variant) => text.replaceAll(variant, '[redacted]'), value);
+  return variants.reduce(
+    (text, variant) => text.replace(credentialExpression(variant), '[redacted]'),
+    value,
+  );
 }
 
 function redact(value: unknown, token: string, variants = credentialVariants(token)): unknown {
   if (typeof value === 'string') return redactText(value, variants);
   if (isIntegrationFile(value))
-    return variants.some((variant) => Buffer.from(value.bytes).includes(variant))
+    return variants.some((variant) => {
+      const bytes = Buffer.from(value.bytes);
+      return (
+        bytes.includes(variant) ||
+        (variant.includes('%') && credentialExpression(variant).test(bytes.toString('latin1')))
+      );
+    })
       ? {
           name: redactText(value.name, variants),
           mimeType: value.mimeType,

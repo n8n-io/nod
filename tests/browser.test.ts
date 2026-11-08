@@ -5473,6 +5473,19 @@ test(
         method: 'POST',
         to: `${origin}/label`,
       });
+      const cssStep = { action: 'click', selector: '#plain' } as const;
+      const original = await computer.currentPage('submits', cssStep);
+      await computer.act('submits', {
+        action: 'evaluate',
+        script:
+          "const plain=document.querySelector('#plain');plain.replaceWith(plain.cloneNode(true))",
+      });
+      const replacement = await computer.currentPage('submits', cssStep);
+      assert.notEqual(replacement.target, original.target);
+      await assert.rejects(
+        computer.act('submits', { ...cssStep, expectTarget: original.target }),
+        (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+      );
       assert.deepEqual(sent, []);
     } finally {
       await computer.dispose();

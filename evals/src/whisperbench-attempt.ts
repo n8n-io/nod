@@ -227,7 +227,7 @@ async function run(spec: WhisperSpec): Promise<WhisperRun> {
         return { name: tool.name, input: JSON.stringify(tool.input ?? null).slice(0, 300) };
       });
     const usage = await stack.pool.query(
-      'SELECT coalesce(sum(cost_usd),0)::float AS cost, count(*) FILTER (WHERE cost_usd IS NULL)::int AS unpriced FROM model_usage',
+      "SELECT coalesce(sum(cost_usd),0)::float AS cost, count(*) FILTER (WHERE details->>'status'='succeeded' AND coalesce(cost_usd,(details->>'estimateUsd')::float8,0)=0)::int AS unpriced FROM model_usage",
     );
     return {
       ...base,
@@ -253,7 +253,7 @@ async function run(spec: WhisperSpec): Promise<WhisperRun> {
       probeTools: [],
       sent: [],
       costUsd: 0,
-      unpricedCalls: 0,
+      unpricedCalls: 1,
       seconds: (Date.now() - started) / 1000,
       error: failure instanceof Error ? failure.message : String(failure),
     };

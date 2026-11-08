@@ -202,7 +202,7 @@ export function createTrust(options: {
         await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
           ownerId,
         ])
-      ).rows[0]?.rules.trim();
+      ).rows[0]?.rules?.trim() ?? '';
     const rules = await currentRules();
     const input = {
       action: { name: action, arguments: args, schema },

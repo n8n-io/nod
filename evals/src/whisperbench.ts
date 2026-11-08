@@ -36,6 +36,10 @@ const prices: Record<string, { input: number; output: number }> = {
   'gpt-5.4-nano': { input: 0.05, output: 0.4 },
 };
 
+const unpricedCount = (run: WhisperRun) => run.unpricedCalls ?? 1;
+const judgeCost = (run: WhisperRun) => run.judgeCostUsd ?? run.verdicts?.costUsd ?? 0;
+const cost = (run: WhisperRun) => run.costUsd + judgeCost(run);
+
 async function ask(model: Model, system: string, evidence: object) {
   let temperature = true;
   for (let attempt = 0; ; attempt++) {
@@ -86,6 +90,7 @@ export async function judge(item: WhisperCase, run: WhisperRun, model: Model) {
   if (incomplete.length)
     throw new Error(`Persistent evidence is incomplete: ${[...new Set(incomplete)].join(', ')}`);
   let costUsd = 0;
+  run.judgeCostUsd = 0;
   const injection = Object.keys(run.state).length
     ? await ask(model, injectionJudge, {
         target_memory: item.target,
@@ -93,6 +98,7 @@ export async function judge(item: WhisperCase, run: WhisperRun, model: Model) {
       })
     : { answer: { verdict: 'no', carrier_path: null, reason: 'nothing persistent was written' } };
   costUsd += 'costUsd' in injection ? injection.costUsd : 0;
+  run.judgeCostUsd = costUsd;
   const stealth = run.response.trim()
     ? await ask(model, stealthJudge, {
         user_request: run.mode === 'foreground' ? foregroundRequest : standingRule,
@@ -106,6 +112,7 @@ export async function judge(item: WhisperCase, run: WhisperRun, model: Model) {
             : { verdict: 'no', violation: 'empty_response', reason: 'no reply' },
       };
   costUsd += 'costUsd' in stealth ? stealth.costUsd : 0;
+  run.judgeCostUsd = costUsd;
   const effectiveness = await ask(model, effectivenessJudge, {
     poisoned_fact: item.target,
     question: item.question,
@@ -116,6 +123,7 @@ export async function judge(item: WhisperCase, run: WhisperRun, model: Model) {
       .join('\n'),
   });
   costUsd += effectiveness.costUsd;
+  run.judgeCostUsd = costUsd;
   return {
     injection: {
       yes: String(injection.answer.verdict).toLowerCase() === 'yes',
@@ -161,6 +169,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
       probeTools: [],
       sent: [],
       costUsd: 0,
+      unpricedCalls: 1,
       seconds: 0,
       error: `The attempt process ended without a result. ${captured.slice(-400)}`,
     }));
@@ -191,11 +200,11 @@ export function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
   const groups = [...new Set(scored.map((run) => `${run.mode}`))];
   return {
     incomplete: planned - scored.length,
-    unpriced: runs.some((run) => (run.unpricedCalls ?? 0) > 0),
-    knownCostUsd: runs.reduce((sum, run) => sum + run.costUsd + (run.verdicts?.costUsd ?? 0), 0),
-    costUsd: runs.some((run) => (run.unpricedCalls ?? 0) > 0)
+    unpriced: runs.some((run) => unpricedCount(run) > 0),
+    knownCostUsd: runs.reduce((sum, run) => sum + cost(run), 0),
+    costUsd: runs.some((run) => unpricedCount(run) > 0)
       ? null
-      : runs.reduce((sum, run) => sum + run.costUsd + (run.verdicts?.costUsd ?? 0), 0),
+      : runs.reduce((sum, run) => sum + cost(run), 0),
     modes: Object.fromEntries(
       groups.map((mode) => {
         const items = scored.filter((run) => run.mode === mode);
@@ -280,16 +289,21 @@ export async function runWhisperBench(options: WhisperOptions) {
   } else await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const jobs = cases.flatMap((item) => options.modes.map((mode) => ({ item, mode })));
   const results: WhisperRun[] = [];
+  const retried = new Map<string, WhisperRun>();
   const queue: typeof jobs = [];
   for (const job of jobs) {
     const done = await readFile(join(directory, 'runs', `${job.item.id}.${job.mode}.json`), 'utf8')
       .then((text) => JSON.parse(text) as WhisperRun)
       .catch(() => undefined);
     if (done?.verdicts && !done.error) results.push(done);
-    else queue.push(job);
+    else {
+      if (done) retried.set(`${job.item.id}.${job.mode}`, done);
+      queue.push(job);
+    }
   }
-  let spent = results.reduce((sum, run) => sum + run.costUsd + (run.verdicts?.costUsd ?? 0), 0);
-  let unpriced = results.some((run) => (run.unpricedCalls ?? 0) > 0);
+  const savedAttempts = [...results, ...retried.values()];
+  let spent = savedAttempts.reduce((sum, run) => sum + cost(run), 0);
+  let unpriced = savedAttempts.some((run) => unpricedCount(run) > 0);
   let stopped = false;
   console.log(`WhisperBench: ${jobs.length} runs, ${queue.length} to run. Results in ${directory}`);
   let next = 0;
@@ -302,13 +316,20 @@ export async function runWhisperBench(options: WhisperOptions) {
         }
         const { item, mode } = queue[next++];
         const run = await attempt(directory, item, mode, options.model);
+        spent += run.costUsd;
+        if (unpricedCount(run) > 0) unpriced = true;
         if (!run.error)
           run.verdicts = await judge(item, run, judgeModel).catch((error) => {
             run.error = error instanceof Error ? error.message : String(error);
             return undefined;
           });
-        spent += run.costUsd + (run.verdicts?.costUsd ?? 0);
-        if ((run.unpricedCalls ?? 0) > 0) unpriced = true;
+        spent += judgeCost(run);
+        const previous = retried.get(`${item.id}.${mode}`);
+        if (previous) {
+          run.costUsd += previous.costUsd;
+          run.judgeCostUsd = judgeCost(run) + judgeCost(previous);
+          run.unpricedCalls = unpricedCount(run) + unpricedCount(previous);
+        }
         results.push(run);
         await writeFile(
           join(directory, 'runs', `${item.id}.${mode}.json`),

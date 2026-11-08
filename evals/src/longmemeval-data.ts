@@ -55,7 +55,7 @@ export interface QuestionRun {
   learning?: {
     ticks: number;
     costUsd: number;
-    unpricedCalls: number;
+    unpricedCalls?: number;
     modelCalls: number;
     notes: number;
     confirmed: number;
@@ -68,6 +68,8 @@ export interface QuestionRun {
   };
   evidenceInRecent?: boolean;
   historyMessages?: number;
+  previousCostUsd?: number;
+  previousUnpricedCalls?: number;
   seconds: number;
   error?: string;
 }

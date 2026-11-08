@@ -6,33 +6,42 @@ export type AttemptCost = {
   judgeTokens?: number;
 };
 
+const scale = 1_000_000;
 const valid = (cost: number | null | undefined): cost is number =>
   typeof cost === 'number' && Number.isFinite(cost) && cost >= 0;
+const units = (cost: number) => Math.ceil(cost * scale);
 
 export function createSpend() {
-  let knownCostUsd = 0;
+  let knownUnits = 0;
   let unpriced = false;
   return {
     add(attempt: AttemptCost) {
-      if (valid(attempt.costUsd)) knownCostUsd += attempt.costUsd;
+      if (valid(attempt.costUsd)) knownUnits += units(attempt.costUsd);
       else if ((attempt.modelCalls ?? 0) > 0 || attempt.costUsd != null) unpriced = true;
-      if (valid(attempt.judgeCostUsd)) knownCostUsd += attempt.judgeCostUsd;
+      if (valid(attempt.judgeCostUsd)) knownUnits += units(attempt.judgeCostUsd);
       else if ((attempt.judgeTokens ?? 0) > 0 || attempt.judgeCostUsd != null) unpriced = true;
     },
     blocked(budget?: number) {
-      return budget !== undefined && (unpriced || knownCostUsd >= budget);
+      return budget !== undefined && (unpriced || knownUnits >= units(budget));
     },
-    knownCostUsd: () => knownCostUsd,
+    knownCostUsd: () => knownUnits / scale,
     unpriced: () => unpriced,
   };
 }
 
 export function mergeAttemptCosts<T extends AttemptCost>(attempts: T[]) {
   const last = attempts.at(-1)!;
-  const known = (key: 'costUsd' | 'judgeCostUsd') =>
-    attempts.every((attempt) => valid(attempt[key]))
-      ? attempts.reduce((sum, attempt) => sum + attempt[key]!, 0)
+  const known = (key: 'costUsd' | 'judgeCostUsd') => {
+    const priced = (attempt: T) =>
+      valid(attempt[key]) ||
+      (key === 'costUsd' ? attempt.modelCalls === 0 : attempt.judgeTokens === 0);
+    return attempts.every(priced)
+      ? attempts.reduce(
+          (sum, attempt) => sum + (valid(attempt[key]) ? units(attempt[key]!) : 0),
+          0,
+        ) / scale
       : null;
+  };
   return {
     ...last,
     costUsd: known('costUsd'),

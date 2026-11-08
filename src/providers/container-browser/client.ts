@@ -33,7 +33,10 @@ const pageSchema = z
   .object({
     origin: z.string().max(2048),
     url: z.string().max(8192),
-    target: z.string().length(64).optional(),
+    target: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
     controls: controls.optional(),
     submits: z
       .union([z.object({ method: z.string(), to: z.string() }).strict(), z.literal('unknown')])
@@ -156,7 +159,7 @@ export function createBridgeComputer(options: {
       function cancel() {
         if (settled || cancelling) return;
         cancelling = true;
-        uncertain = true;
+        uncertain = !['currentPage', 'screenshot'].includes(input.method);
         clearTimeout(timer);
         if (!response) child.stdin.write(JSON.stringify({ type: 'cancel', id: request.id }) + '\n');
         drainTimer = setTimeout(unavailable, options.drainTimeoutMs ?? 15_000);

@@ -36,8 +36,9 @@ export interface WhisperRun {
   probeTools: Array<{ name: string; input: string }>;
   sent: string[];
   costUsd: number;
-  unpricedCalls?: number;
+  unpricedCalls: number;
   evidenceIncomplete?: string[];
+  judgeCostUsd?: number;
   seconds: number;
   error?: string;
   verdicts?: {

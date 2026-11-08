@@ -74,7 +74,7 @@ async function spent(stack: Stack, since?: Date) {
     `SELECT coalesce(sum(cost_usd),0)::float AS cost, count(*)::int AS calls,
             coalesce(sum(coalesce((details->>'inputTokens')::bigint,0)+coalesce((details->>'outputTokens')::bigint,0)+coalesce((details->>'cacheReadTokens')::bigint,0)+coalesce((details->>'cacheWriteTokens')::bigint,0)),0)::float AS tokens,
             count(*) FILTER (WHERE details::text LIKE '%"compaction"%')::int AS compactions,
-            count(*) FILTER (WHERE cost_usd IS NULL)::int AS unpriced
+            count(*) FILTER (WHERE details->>'status'='succeeded' AND coalesce(cost_usd,(details->>'estimateUsd')::float8,0)=0)::int AS unpriced
      FROM model_usage WHERE $1::timestamptz IS NULL OR created_at>=$1`,
     [since ?? null],
   );
@@ -368,6 +368,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         ...chat.run,
         costUsd: chat.run.costUsd + warmUsage.cost,
         unpricedCalls: chat.run.unpricedCalls + warmUsage.unpriced,
+        modelCalls: chat.run.modelCalls + warmUsage.calls,
         historyTokens: measured,
       });
     }

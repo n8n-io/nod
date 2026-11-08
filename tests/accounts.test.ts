@@ -591,7 +591,7 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     assert.equal(trustBasis(gate.result({ trust: source }), input, [])?.kind, kind);
   }
   let output: unknown = { readOnly: true };
-  let currentRules = words.userRules;
+  let currentRules: string | undefined = words.userRules;
   let holdReview = false;
   let reviewStarted: () => void = () => {};
   let releaseReview: () => void = () => {};
@@ -643,6 +643,16 @@ test('trust decisions select only owner evidence and keep reply evidence separat
   holdReview = false;
   currentRules = words.userRules;
   assert.equal(await read(), true);
+  holdReview = true;
+  currentRules = undefined;
+  started = new Promise<void>((resolve) => (reviewStarted = resolve));
+  released = new Promise<void>((resolve) => (releaseReview = resolve));
+  const emptyRowRead = read();
+  await started;
+  currentRules = '';
+  releaseReview();
+  assert.equal(await emptyRowRead, true);
+  holdReview = false;
   for (const [answer, expected] of [
     ['yes', true],
     ['no', false],
@@ -1347,7 +1357,7 @@ describe('account routes', () => {
           ],
         },
       ],
-      tools: ['send_email', 'Marta Vidal'],
+      tools: ['send_email', 'Marta Vidal', `tool-${turnId}`],
       output: { role: 'assistant', content: 'Thanks Marta, sent to +44 20 7946 0958.' },
       usage: {
         inputTokens: 10,

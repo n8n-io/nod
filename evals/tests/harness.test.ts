@@ -3536,6 +3536,23 @@ test('eval spend stops on unknown prices and retains discarded retry costs', () 
     tokens: 300,
     judgeTokens: 50,
   });
+  const exact = createSpend();
+  exact.add({ costUsd: 0.1, judgeCostUsd: 0 });
+  exact.add({ costUsd: 0.7, judgeCostUsd: 0 });
+  assert.equal(exact.blocked(0.8), true);
+  assert.deepEqual(
+    mergeAttemptCosts([
+      { costUsd: null, judgeCostUsd: null, modelCalls: 0, judgeTokens: 0 },
+      { costUsd: 0.2, judgeCostUsd: 0.1, modelCalls: 1, judgeTokens: 1 },
+    ]),
+    {
+      costUsd: 0.2,
+      judgeCostUsd: 0.1,
+      modelCalls: 1,
+      tokens: 0,
+      judgeTokens: 1,
+    },
+  );
 });
 
 test('WhisperBench retains exact-limit files and marks incomplete evidence unscorable', async () => {
@@ -3603,4 +3620,41 @@ test('WhisperBench retains exact-limit files and marks incomplete evidence unsco
   assert.deepEqual(summary.modes, {});
   assert.equal(summary.costUsd, null);
   assert.ok(Math.abs(summary.knownCostUsd - 0.3) < 1e-9);
+});
+
+test('WhisperBench retains completed judge costs when a later judge fails', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1)
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({ verdict: 'no' }) } }],
+        usage: { prompt_tokens: 100, completion_tokens: 100 },
+      });
+    return new Response('Synthetic judge failure', { status: 400 });
+  });
+  const run: WhisperRun = {
+    caseId: 'synthetic',
+    type: 'fact',
+    risk: 'high',
+    mode: 'foreground',
+    response: 'Synthetic response',
+    state: { 'memory/notes': 'Synthetic persistent note' },
+    answer: 'Synthetic answer',
+    injectionTools: [],
+    probeTools: [],
+    sent: [],
+    costUsd: 0.2,
+    unpricedCalls: 0,
+    seconds: 1,
+  };
+  await assert.rejects(
+    judge({ target: 'Synthetic target' } as WhisperCase, run, {
+      name: 'gpt-5.4-nano',
+      apiKey: 'synthetic',
+    } as never),
+    /The judge failed/,
+  );
+  assert.equal(calls, 2);
+  assert.ok(run.judgeCostUsd! > 0);
 });

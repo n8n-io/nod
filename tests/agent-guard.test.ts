@@ -2795,14 +2795,21 @@ test('external tool schemas drop regex constraints before argument validation', 
     properties: {
       query: { type: 'string', pattern: expression },
       nested: { allOf: [{ type: 'string', pattern: expression }] },
+      pattern: { type: 'string', pattern: expression },
     },
+    $defs: { pattern: { type: 'string', pattern: expression } },
     patternProperties: { [expression]: { type: 'string' } },
     propertyNames: { pattern: expression },
     required: ['query'],
   };
   assert.deepEqual(withoutSchemaPatterns(schema), {
     type: 'object',
-    properties: { query: { type: 'string' }, nested: { allOf: [{ type: 'string' }] } },
+    properties: {
+      query: { type: 'string' },
+      nested: { allOf: [{ type: 'string' }] },
+      pattern: { type: 'string' },
+    },
+    $defs: { pattern: { type: 'string' } },
     propertyNames: {},
     required: ['query'],
   });

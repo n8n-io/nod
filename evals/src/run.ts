@@ -309,10 +309,21 @@ export async function runSuite(options: RunOptions) {
         const previous = await readFile(file, 'utf8')
           .then((text) => JSON.parse(text) as AttemptResult)
           .catch(() => undefined);
+        if (options.resume && previous) accounting.add(previous);
         let result =
           options.resume && previous && previous.status !== 'incomplete' ? previous : undefined;
-        if (result) accounting.add(result);
-        const discarded: AttemptResult[] = [];
+        if (
+          options.resume &&
+          previous?.status === 'incomplete' &&
+          options.budget !== undefined &&
+          accounting.blocked(options.budget)
+        ) {
+          stoppedForBudget();
+          result = previous;
+        }
+        const discarded: AttemptResult[] =
+          options.resume && previous?.status === 'incomplete' && !result ? [previous] : [];
+        let attempted = false;
         for (let tries = 0; !result && tries <= options.retries; tries++) {
           if (tries > 0 && accounting.blocked(options.budget)) {
             stoppedForBudget();
@@ -325,6 +336,7 @@ export async function runSuite(options: RunOptions) {
             judge,
             task,
           });
+          attempted = true;
           if (
             result.status === 'incomplete' &&
             result.blame !== 'agent' &&
@@ -343,7 +355,7 @@ export async function runSuite(options: RunOptions) {
             await sleep(Math.min(30_000 * 3 ** tries, 90_000));
           } else accounting.add(result);
         }
-        if (discarded.length) {
+        if (discarded.length && attempted) {
           result = mergeAttemptCosts([...discarded, ...(result ? [result] : [])]);
           await writeFile(file, JSON.stringify(result, null, 2));
         }
