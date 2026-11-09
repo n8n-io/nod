@@ -104,6 +104,7 @@ app.setPath(
 );
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const resumePath = join(profileRoot, 'update-resume.json');
+const resumeRead = readFile(resumePath, 'utf8').catch(() => undefined);
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'nod', 'updates');
 const settings = createSettingsStore(
   join(profileRoot, 'settings.json'),
@@ -1538,7 +1539,7 @@ async function rememberState(window) {
 }
 
 async function resumeState() {
-  const text = await readFile(resumePath, 'utf8').catch(() => undefined);
+  const text = await resumeRead;
   if (text === undefined) return;
   await rm(resumePath, { force: true }).catch(() => {});
   try {

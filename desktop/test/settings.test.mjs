@@ -1734,8 +1734,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
         await f.storage.store.save({ welcome: { usageData: false, continued: true } });
       try {
         const launched = f.launch();
-        for (let i = 0; !f.windows.length && i < 50; i++)
-          await new Promise((r) => setTimeout(r, 10));
+        for (let i = 0; !f.windows.length && i < 50; i++) await new Promise(setImmediate);
         const setup = f.windows[0];
         assert.ok(setup);
         assert.equal(setup.isVisible(), false);
