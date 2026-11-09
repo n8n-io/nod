@@ -392,11 +392,12 @@ export function Scheduled({
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />
-        {!empty && (
-          <div className="secondary-heading-actions">
-            <NewPlan onAsk={onAsk} />
-          </div>
-        )}
+        <div className="secondary-heading-actions">
+          <Button variant="ghost" size="sm" onClick={() => onAsk('Show my rules')}>
+            Rules
+          </Button>
+          {!empty && <NewPlan onAsk={onAsk} />}
+        </div>
       </header>
       {schedules.error && (
         <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
