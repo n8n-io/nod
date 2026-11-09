@@ -72,7 +72,7 @@ In chat, open a task preview and select **Show activity**. The details show plan
 
 ## Read task results
 
-A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Nod sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
+A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Research, guides, plans and other long reports come as a Markdown document, unless you ask for them in chat. Nod sends the file and a short result to the conversation, and does the same for a long result in chat. A follow-up, such as completing a sign-in, continues the same saved session.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
