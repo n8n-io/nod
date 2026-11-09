@@ -8698,7 +8698,7 @@ test(
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid);
         CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now());
+        CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
@@ -8842,6 +8842,16 @@ test(
       const chatEntry = (entries: TrustEntry[]) =>
         entries.find((entry) => entry.title === 'Tell Sam we take the quote')!;
       assert.ok(view.entries.every((entry: TrustEntry) => entry.messageId === null));
+      const hiddenConfirmation = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,turn_id,thread_id,hidden_at) VALUES($1,'owner','assistant','Retired confirmation',$2,$3,now())",
+        [hiddenConfirmation, scheduled, conversation],
+      );
+      const scheduledEntry = (await app.inject('/api/trust'))
+        .json()
+        .entries.find((entry: TrustEntry) => entry.id === scheduled) as TrustEntry;
+      assert.equal(scheduledEntry.messageId, null);
+      assert.equal(scheduledEntry.costUsd, 0.1);
       assert.deepEqual(chatEntry(view.entries).actions, [
         { label: 'Gmail: fetch emails' },
         { label: 'Gmail: send email', because: { kind: 'approved' } },
@@ -8881,6 +8891,8 @@ test(
         ],
       );
       assert.equal(await linkedMessage(), latestResult);
+      await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [latestResult]);
+      assert.equal(await linkedMessage(), firstResult);
       await pool.query('DELETE FROM messages WHERE id=$1', [latestResult]);
       assert.equal(await linkedMessage(), firstResult);
       await pool.query('DELETE FROM messages WHERE id=$1', [firstResult]);

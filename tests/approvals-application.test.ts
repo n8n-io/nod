@@ -8,6 +8,7 @@ import test from 'node:test';
 import pg from 'pg';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { AgentToolResult } from '../src/ports/agent.ts';
+import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -16,6 +17,7 @@ import { BrowserActionError, type CredentialInput } from '../src/ports/computer.
 import { authenticatorKey } from '../src/shared/authenticator-key.ts';
 import { authenticatorCode } from '../src/server/authenticator.ts';
 import { transaction } from '../src/server/transaction.ts';
+import { createChannels } from '../src/server/channels.ts';
 import type { AppState } from '../src/shared/contracts.ts';
 import { mergeMessages } from '../src/web/lib/chat-messages.ts';
 
@@ -1290,6 +1292,157 @@ test(
               clientMessageId: randomUUID(),
             });
             assert.equal(staleReply.statusCode, 404, staleReply.body);
+          }
+        },
+      );
+
+      await t.test(
+        'direct schedule cancellation waits for a channel confirmation in flight',
+        async () => {
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const prompt = `Synthetic channel cancellation ${randomUUID()}`;
+          const sourceId = `channel:telegram:bot:${randomUUID()}`;
+          const channel = 'telegram:synthetic';
+          plans.set(prompt, { action: 'schedule_cancel', args: { id: schedule.id } });
+          const turn = await transaction(async (client) => {
+            const turnId = await enqueueTurn(prompt, {
+              source: 'schedule',
+              sourceId: `schedule-fixture:${randomUUID()}`,
+              background: true,
+              channel,
+              channelSourceId: sourceId,
+              client,
+            });
+            await client.query(
+              `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+             VALUES($1,$2,$3,0,$4,$5,$6,$7,'UTC',$8)`,
+              [
+                randomUUID(),
+                ownerId,
+                schedule.id,
+                randomUUID(),
+                'Synthetic cancellation reminder',
+                turnId,
+                new Date().toISOString(),
+                'Check the synthetic schedule status.',
+              ],
+            );
+            return turnId;
+          }, pool);
+          await waitFor(turn, 'waiting');
+          const [approval] = await approvalsFor(turn);
+          assert.equal(approval.status, 'pending');
+          const messageId = approval.confirmation_message_id as string;
+          const channelPool = new pg.Pool({
+            connectionString: process.env.DATABASE_URL,
+            max: 1,
+            connectionTimeoutMillis: 10_000,
+          });
+          const posts: Array<{ threadId: string; text: string }> = [];
+          let postEntered = false;
+          let releasePost = () => {};
+          const postReleased = new Promise<void>((resolve) => {
+            releasePost = resolve;
+          });
+          const transport: MessagingTransport = {
+            channels: [
+              {
+                id: 'telegram',
+                status: 'configured',
+                missing: [],
+                accountId: 'bot',
+                allowedSenderIds: ['111'],
+              },
+            ],
+            receive: async () => ({ status: 200, body: {} }),
+            post: async (input) => {
+              postEntered = true;
+              await postReleased;
+              await channelPool.query('SELECT 1');
+              posts.push({ threadId: input.threadId, text: input.text });
+              return { id: 'synthetic-channel-message' };
+            },
+            close: async () => {},
+          };
+          let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+          let sending: Promise<void> | undefined;
+          let pausing: ReturnType<typeof request> | undefined;
+          try {
+            channels = await createChannels(channelPool, {
+              ownerId,
+              transport,
+              subscribe: () => () => {},
+              intervalMs: 600_000,
+              submit: async () => {
+                throw new Error('Synthetic channel did not receive a message.');
+              },
+              isRetirableScheduleConfirmation: async (id) =>
+                Boolean(
+                  (
+                    await pool.query(
+                      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action='NOD_schedule_cancel'",
+                      [ownerId, id],
+                    )
+                  ).rowCount,
+                ),
+            });
+            await channelPool.query(
+              `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,turn_id,state,created_at,owner_id,channel)
+             VALUES($1,'telegram','bot','111','synthetic-chat','Synthetic channel request',now()-interval '1 minute',$2,'submitted',now()-interval '1 minute',$3,$4)`,
+              [sourceId, turn, ownerId, channel],
+            );
+            sending = channels.drain();
+            for (let attempt = 0; attempt < 300 && !postEntered; attempt++) await delay(20);
+            assert.equal(postEntered, true);
+            pausing = request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false });
+            let waiting = false;
+            for (let attempt = 0; attempt < 300 && !waiting; attempt++) {
+              waiting = Boolean(
+                (
+                  await admin.query(
+                    `SELECT 1 FROM pg_stat_activity a WHERE a.wait_event_type='Lock'
+                   AND a.query LIKE 'SELECT id FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE%'
+                   AND EXISTS (
+                     SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
+                     JOIN pg_namespace n ON n.oid=c.relnamespace
+                     WHERE l.pid=a.pid AND l.granted AND c.relname='schedules' AND n.nspname=$1
+                   ) LIMIT 1`,
+                    [schema],
+                  )
+                ).rowCount,
+              );
+              if (!waiting) await delay(20);
+            }
+            assert.equal(waiting, true);
+            assert.equal(
+              (await pool.query('SELECT enabled FROM schedules WHERE id=$1', [schedule.id])).rows[0]
+                .enabled,
+              true,
+            );
+            releasePost();
+            const response = await pausing;
+            await sending;
+            assert.equal(response.statusCode, 200, response.body);
+            await assertCancelled(schedule);
+            assert.equal((await approvalsFor(turn))[0].status, 'expired');
+            assert.deepEqual(posts, [{ threadId: 'synthetic-chat', text: confirmationText }]);
+            assert.deepEqual(
+              (
+                await channelPool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+                  messageId,
+                ])
+              ).rows,
+              [{ state: 'sent' }],
+            );
+            assert.ok(
+              (await pool.query('SELECT hidden_at FROM messages WHERE id=$1', [messageId])).rows[0]
+                .hidden_at,
+            );
+          } finally {
+            releasePost();
+            await Promise.allSettled([sending, pausing]);
+            await channels?.close();
+            await channelPool.end();
           }
         },
       );

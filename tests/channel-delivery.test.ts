@@ -17,6 +17,7 @@ import {
   managedChannelEnvironment,
 } from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
+import { transaction } from '../src/server/transaction.ts';
 import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
@@ -1163,6 +1164,75 @@ test(
           await channels.close();
         }
       });
+  },
+);
+
+test(
+  'in-flight schedule confirmations finish before their retirement commits',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(t, 1);
+    const control = new pg.Pool({ ...pool.options, password: pool.options.password, max: 1 });
+    const messageId = randomUUID();
+    const originalPost = transport.post;
+    let postEntered = false;
+    let releasePost = () => {};
+    const postReleased = new Promise<void>((resolve) => {
+      releasePost = resolve;
+    });
+    transport.post = async (input) => {
+      postEntered = true;
+      await postReleased;
+      await pool.query('SELECT 1');
+      return originalPost(input);
+    };
+    const channels = await create({
+      isRetirableScheduleConfirmation: async (id) => id === messageId,
+    });
+    let sending: Promise<void> | undefined;
+    let update: Promise<unknown> | undefined;
+    let updaterPid: number | undefined;
+    try {
+      receive('111', 'retire-during-send', 'chat-retire-during-send');
+      await channels.drain();
+      await reply(
+        (await turnOf('retire-during-send')).turn_id,
+        'Cancel the schedule?',
+        messageId,
+        0,
+      );
+      sending = channels.drain();
+      await until(() => postEntered);
+      update = transaction(async (client) => {
+        updaterPid = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
+          .rows[0]!.pid;
+        await client.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [messageId]);
+      }, control);
+      await until(() => updaterPid !== undefined);
+      await until(async () => {
+        const { rows } = await pool.query<{ waiting: boolean }>(
+          'SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted) AS waiting',
+          [updaterPid],
+        );
+        return rows[0]?.waiting ?? false;
+      });
+      assert.deepEqual(posts, []);
+      releasePost();
+      await Promise.all([sending, update]);
+      assert.deepEqual(posts, [
+        { threadId: 'chat-retire-during-send', text: 'Cancel the schedule?' },
+      ]);
+      assert.deepEqual(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [messageId]))
+          .rows,
+        [{ state: 'sent' }],
+      );
+    } finally {
+      releasePost();
+      await Promise.allSettled([sending, update]);
+      await channels.close();
+      await control.end();
+    }
   },
 );
 

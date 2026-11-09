@@ -442,7 +442,7 @@ export function createLedger({
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          (SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
-           WHERE m.owner_id=$1 AND th.owner_id=$1 AND th.archived_at IS NULL
+           WHERE m.owner_id=$1 AND th.owner_id=$1 AND th.archived_at IS NULL AND m.hidden_at IS NULL
              AND m.thread_id=u.thread_id AND ((m.turn_id=u.id AND m.role='assistant') OR m.id=u.message_id)
            ORDER BY (m.turn_id=u.id AND m.role='assistant') DESC NULLS LAST,m.created_at DESC,m.id DESC LIMIT 1) AS message_id,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.models,c.plan,c.unpriced,

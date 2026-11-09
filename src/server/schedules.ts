@@ -1,5 +1,6 @@
 import { afterCommit, transaction as inTransaction } from './transaction.ts';
 import { createHash, randomUUID } from 'node:crypto';
+import { cancellationTransaction } from './db.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
@@ -74,7 +75,7 @@ export interface ScheduleDependencies {
   stopConsumer?: (id: string) => Promise<void>;
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
-  retireScheduleConfirmations?(client: PoolClient, id: string): Promise<void>;
+  retireScheduleConfirmations?(client: PoolClient, id: string, waitForSend: boolean): Promise<void>;
   now?: () => Date;
   sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
 }
@@ -179,6 +180,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   const transaction = <T>(operation: (client: PoolClient) => Promise<T>, shared?: PoolClient) =>
     shared ? operation(shared) : inTransaction(operation, pool);
+
+  const retirementTransaction = <T>(
+    operation: (client: PoolClient) => Promise<T>,
+    shared?: PoolClient,
+  ) => (shared ? operation(shared) : cancellationTransaction(operation, pool));
 
   function validateTiming(input: z.infer<typeof timingSchema>, enabled: boolean) {
     try {
@@ -754,7 +760,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    const row = await transaction(async (client) => {
+    const mutate = input.enabled === false ? retirementTransaction : transaction;
+    const row = await mutate(async (client) => {
       const previous = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -805,7 +812,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           ? previous.nextRun
           : nextOccurrence(saved),
       );
-      if (input.enabled === false) await dependencies.retireScheduleConfirmations?.(client, id);
+      if (input.enabled === false)
+        await dependencies.retireScheduleConfirmations?.(client, id, !shared);
       return updated;
     }, shared);
     afterCommit(shared ?? pool, () => {
@@ -824,7 +832,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   async function remove(id: string) {
     z.uuid().parse(id);
-    const row = await transaction(async (client) => {
+    const row = await retirementTransaction(async (client) => {
       const row = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -834,7 +842,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
-      await dependencies.retireScheduleConfirmations?.(client, id);
+      await dependencies.retireScheduleConfirmations?.(client, id, true);
       return row;
     });
     refresh();

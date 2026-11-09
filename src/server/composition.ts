@@ -927,7 +927,8 @@ async function initializeApplication(
     analytics: captureAnalytics,
   });
   let retireScheduleConfirmations:
-    ((client: import('pg').PoolClient, id: string) => Promise<void>) | undefined;
+    | ((client: import('pg').PoolClient, id: string, waitForSend: boolean) => Promise<void>)
+    | undefined;
   const personal = createPersonalService({
     analytics: captureAnalytics,
     pool,
@@ -935,9 +936,9 @@ async function initializeApplication(
     scheduler: boss,
     enqueueTurn,
     refresh,
-    retireScheduleConfirmations: (client, id) => {
+    retireScheduleConfirmations: (client, id, waitForSend) => {
       if (!retireScheduleConfirmations) throw new Error('Approvals are not ready.');
-      return retireScheduleConfirmations(client, id);
+      return retireScheduleConfirmations(client, id, waitForSend);
     },
     memory,
     learnedSkills,
@@ -2227,6 +2228,7 @@ async function initializeApplication(
       attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
+      isRetirableScheduleConfirmation: approvals.isRetirableScheduleConfirmation,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),

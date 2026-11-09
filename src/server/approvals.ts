@@ -661,7 +661,7 @@ export async function createApprovals(
     };
   }
 
-  async function retireScheduleConfirmations(client: PoolClient, id: string) {
+  async function retireScheduleConfirmations(client: PoolClient, id: string, waitForSend: boolean) {
     const pending = (
       await client.query<{
         id: string;
@@ -684,6 +684,21 @@ export async function createApprovals(
     const messageIds = pending.flatMap((row) =>
       row.confirmation_message_id ? [row.confirmation_message_id] : [],
     );
+    if (messageIds.length)
+      try {
+        if (waitForSend) await client.query("SET LOCAL lock_timeout = '30s'");
+        await client.query(
+          `SELECT id FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE${waitForSend ? '' : ' NOWAIT'}`,
+          [ownerId, messageIds],
+        );
+      } catch (cause) {
+        if ((cause as { code?: string }).code !== '55P03') throw cause;
+        throw Object.assign(new Error('A schedule confirmation is still being sent.'), {
+          code: '55P03',
+          notRun: true,
+          statusCode: 409,
+        });
+      }
     await client.query(
       "UPDATE approvals SET status='expired' WHERE owner_id=$1 AND id=ANY($2::uuid[])",
       [ownerId, approvalIds],
@@ -703,10 +718,19 @@ export async function createApprovals(
     });
   }
 
+  async function isRetirableScheduleConfirmation(messageId: string) {
+    const result = await pool.query(
+      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action IN ('NOD_schedule_cancel','NOD_schedule_update') LIMIT 1",
+      [ownerId, messageId],
+    );
+    return Boolean(result.rowCount);
+  }
+
   return {
     request,
     chat: { answer: answerChat, accept: acceptChat },
     executeConfirmed,
     retireScheduleConfirmations,
+    isRetirableScheduleConfirmation,
   };
 }

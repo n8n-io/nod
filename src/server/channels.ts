@@ -3,7 +3,7 @@ import { answerChoicesSchema, questionWithChoices } from '../shared/answer-choic
 import { createHash, randomUUID } from 'node:crypto';
 import type { Artifact, SubmitMessageResponse } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
+import pg, { type Pool, type PoolClient } from 'pg';
 import { z } from 'zod';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
@@ -100,6 +100,7 @@ interface ChannelOptions {
   media?: ChannelMedia;
   modelConfigured?: () => boolean;
   verificationPending?: (channel: string) => Promise<boolean>;
+  isRetirableScheduleConfirmation?: (messageId: string) => Promise<boolean>;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
@@ -301,6 +302,19 @@ export async function channelReply(
 
 export async function createChannels(pool: Pool, options: ChannelOptions) {
   const { ownerId } = options;
+  let sendFencePool: Pool | undefined;
+  const fencePool = () => {
+    if (!sendFencePool) {
+      sendFencePool = new pg.Pool({
+        ...pool.options,
+        password: pool.options.password,
+        max: 1,
+        idleTimeoutMillis: 1000,
+      });
+      sendFencePool.on('error', (error) => logFailure('database_idle_error', error));
+    }
+    return sendFencePool;
+  };
   let transport = options.transport;
   let channels = transport.channels.map((channel) => ({
     ...channel,
@@ -443,7 +457,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     try {
       const target = await pool.query<{ id: string }>(
         `SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
-         WHERE m.owner_id=$5 AND th.owner_id=$5 AND th.archived_at IS NULL AND m.role='assistant' AND m.id IN (
+         WHERE m.owner_id=$5 AND th.owner_id=$5 AND th.archived_at IS NULL AND m.role='assistant' AND m.hidden_at IS NULL AND m.id IN (
            SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
            WHERE $4=ANY(o.provider_message_ids) AND o.state='sent'
              AND i.provider=$1 AND i.account_id=$2 AND i.sender_id=$3 AND i.owner_id=$5)
@@ -1209,7 +1223,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const target = row.reply_to_message_id
         ? ((
             await pool.query(
-              `SELECT o.provider_message_id,m.text FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id AND m.owner_id=i.owner_id
+              `SELECT o.provider_message_id,m.text FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id AND m.owner_id=i.owner_id AND m.hidden_at IS NULL
          WHERE o.message_id=$1 AND o.state='sent' AND i.owner_id=$2 AND i.provider=$3 AND i.account_id=$4 AND i.sender_id=$5 AND i.thread_id=$6`,
               [
                 row.reply_to_message_id,
@@ -1222,46 +1236,70 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             )
           ).rows[0] as { provider_message_id: string; text: string } | undefined)
         : undefined;
-      const sent = await transport.post({
-        ...(target
-          ? {
-              replyToMessageId: target.provider_message_id,
-              ...(row.provider === 'whatsapp'
-                ? { replyToText: channelText(target.text).text }
-                : {}),
-            }
-          : {}),
-        channelId: row.provider,
-        accountId: row.account_id,
-        threadId: row.thread_id,
-        text,
-        ...(attachments
-          ? {
-              attachments,
-              attachmentFailure: async (names: string[]) => {
-                const notice = await presentChannelText(
-                  row.message_thread_id,
-                  {
-                    kind: 'delivery',
-                    text: '',
-                    attachments: 'in_nod',
-                    secureAction: false,
-                    files: names.map((name) => channelText(name).text),
-                  },
-                  options.present,
-                );
-                if (
-                  !(await currentMessage(row, claimId, 'sending')) ||
-                  closed ||
-                  replacing ||
-                  !permitted(row)
-                )
-                  return undefined;
-                return notice;
-              },
-            }
-          : {}),
-      });
+      const post = (database: Pool | PoolClient) =>
+        transport.post({
+          ...(target
+            ? {
+                replyToMessageId: target.provider_message_id,
+                ...(row.provider === 'whatsapp'
+                  ? { replyToText: channelText(target.text).text }
+                  : {}),
+              }
+            : {}),
+          channelId: row.provider,
+          accountId: row.account_id,
+          threadId: row.thread_id,
+          text,
+          ...(attachments
+            ? {
+                attachments,
+                attachmentFailure: async (names: string[]) => {
+                  const notice = await presentChannelText(
+                    row.message_thread_id,
+                    {
+                      kind: 'delivery',
+                      text: '',
+                      attachments: 'in_nod',
+                      secureAction: false,
+                      files: names.map((name) => channelText(name).text),
+                    },
+                    options.present,
+                  );
+                  if (
+                    !(await currentMessage(row, claimId, 'sending', database)) ||
+                    closed ||
+                    replacing ||
+                    !permitted(row)
+                  )
+                    return undefined;
+                  return notice;
+                },
+              }
+            : {}),
+        });
+      const sent = (await options.isRetirableScheduleConfirmation?.(row.message_id))
+        ? await transaction(async (client) => {
+            const visible = await client.query(
+              'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND hidden_at IS NULL FOR SHARE',
+              [row.message_id, ownerId],
+            );
+            if (
+              !visible.rowCount ||
+              !(await currentMessage(row, claimId, 'sending', client)) ||
+              closed ||
+              replacing ||
+              !permitted(row)
+            )
+              return undefined;
+            return post(client);
+          }, fencePool())
+        : (await currentMessage(row, claimId, 'sending')) && !closed && !replacing && permitted(row)
+          ? await post(pool)
+          : undefined;
+      if (!sent) {
+        await block('message_changed', 'sending');
+        return true;
+      }
       await pool.query(
         `WITH sent AS (UPDATE channel_outbox SET state='sent',provider_message_id=$2,provider_message_ids=$3,claim_id=NULL,updated_at=now()
            WHERE message_id=$1 AND claim_id=$4 AND state='sending' RETURNING message_id)
@@ -1616,6 +1654,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     await running;
     await presenceRunning;
     await Promise.allSettled(pendingMedia.values());
+    await sendFencePool?.end();
     await transport.close();
   }
 

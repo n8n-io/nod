@@ -4157,6 +4157,13 @@ test(
         [telegramReply, '🤷‍♀️'],
         [whatsappReply, '❤️'],
       ]);
+      await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [telegramReply]);
+      try {
+        await sendTelegram(telegramReaction(101, ['👍']));
+        assert.equal(reactedTo.length, 6);
+      } finally {
+        await pool.query('UPDATE messages SET hidden_at=NULL WHERE id=$1', [telegramReply]);
+      }
       const whatsappOwnerMessage = await idOf(
         "SELECT message_id FROM channel_inbox WHERE source_id='channel:whatsapp:555000:wamid.good'",
       );
@@ -4476,6 +4483,25 @@ test(
         await sendWhatsApp(inbound);
         await channels.drain();
         assert.equal(replyTargets.at(-1)?.messageId, imageReply);
+      }
+      const unquoted = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        'Current response without a retired quote.',
+      );
+      await pool.query('UPDATE messages SET reply_to_message_id=$2 WHERE id=$1', [
+        unquoted,
+        whatsappReply,
+      ]);
+      await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [whatsappReply]);
+      try {
+        const before = sent.length;
+        await channels.drain();
+        assert.deepEqual(
+          sent.slice(before).map(({ provider, body }) => [provider, body.context ?? null]),
+          [['whatsapp', null]],
+        );
+      } finally {
+        await pool.query('UPDATE messages SET hidden_at=NULL WHERE id=$1', [whatsappReply]);
       }
       const rejectedImages = await addReply(
         'channel:whatsapp:555000:wamid.good',

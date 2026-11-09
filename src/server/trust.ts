@@ -74,7 +74,7 @@ export function createTrust(options: {
             `WITH latest AS (SELECT m.id,m.created_at,m.reply_to_message_id,u.channel FROM messages m
                JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.id=$3 AND m.owner_id=$1),
              answered AS (SELECT a.id,a.text,a.turn_id FROM messages a, latest
-               WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.text<>''
+               WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.text<>'' AND a.hidden_at IS NULL
                  AND a.created_at>$5 AND (a.created_at,a.id)<(latest.created_at,latest.id)
                  AND (a.id=latest.reply_to_message_id OR (latest.reply_to_message_id IS NULL
                    AND EXISTS (SELECT 1 FROM turns c WHERE c.id=a.turn_id AND c.owner_id=$1 AND c.channel=latest.channel)))
@@ -84,7 +84,7 @@ export function createTrust(options: {
             [ownerId, threadId, latest.id, taskId, since],
           )
         : await pool.query<{ text: string }>(
-            `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
+            `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>'' AND hidden_at IS NULL
              AND created_at>$5 AND (created_at,id)<($3,$4)
              AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL)
              ORDER BY created_at DESC,id DESC LIMIT 1`,
