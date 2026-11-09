@@ -3686,22 +3686,22 @@ test('channel presentation isolates private links from the model and rejects uns
   });
   assert.match(
     modelsLink,
-    /Reconnect \(Settings > Models\): https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/,
+    /Reconnect \(Settings > Models\): https:\/\/nod\.n8n\.io\/docs\/open\/#\/settings\/models/,
   );
   assert.doesNotMatch(modelsLink, /localhost|127\.0\.0\.1|nod:\/\//);
   const informationLink = await channelReply('See [Usage](/usage).', { threadId: 'owned-thread' });
-  assert.match(informationLink, /Usage: https:\/\/nod-docs\.pages\.dev\/open\/#\/usage/);
+  assert.match(informationLink, /Usage: https:\/\/nod\.n8n\.io\/docs\/open\/#\/usage/);
   const prepared = `/prepared/${randomUUID()}`;
   const resultLink = await channelReply(`See [Contract \\[reply\\]](${prepared}).`, {
     threadId: 'owned-thread',
   });
-  assert.ok(resultLink.includes(`https://nod-docs.pages.dev/open/#${prepared}`));
+  assert.ok(resultLink.includes(`https://nod.n8n.io/docs/open/#${prepared}`));
   assert.doesNotMatch(resultLink, /localhost|127\.0\.0\.1|nod:\/\//);
   const adapted = await channelReply('/credentials/request-id', {
     threadId: 'owned-thread',
     present: async () => 'Open [Settings > Models](/settings/models).',
   });
-  assert.match(adapted, /https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/);
+  assert.match(adapted, /https:\/\/nod\.n8n\.io\/docs\/open\/#\/settings\/models/);
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });
