@@ -17,17 +17,24 @@ const failure = () =>
   );
 
 export function completeAssistantMessage(message: AssistantMessage): AssistantMessage {
+  if (!Array.isArray(message.content)) return { ...message, content: [] };
   let changed = false;
-  const content = message.content.map((part) => {
+  const content = message.content.flatMap((part) => {
+    if (!part || typeof part !== 'object') {
+      changed = true;
+      return [];
+    }
     if (part.type === 'text' && typeof part.text !== 'string') {
       changed = true;
-      return { ...part, text: '' };
+      return [{ ...part, text: '' }];
     }
     if (part.type === 'thinking' && typeof part.thinking !== 'string') {
       changed = true;
-      return { ...part, thinking: '' };
+      return part.redacted && typeof part.thinkingSignature === 'string' && part.thinkingSignature
+        ? [{ ...part, thinking: '[Reasoning redacted]' }]
+        : [];
     }
-    return part;
+    return [part];
   });
   return changed ? { ...message, content } : message;
 }
@@ -145,11 +152,11 @@ function rebaseSession(source: SessionManager, next: SessionManager) {
     } else if (entry.type === 'message') {
       const message = entry.message;
       next.appendMessage(
-        ('content' in message && typeof message.content !== 'string'
+        ('content' in message && Array.isArray(message.content)
           ? {
               ...message,
               content: message.content.map((part) =>
-                part.type === 'image' && message.role === 'toolResult' && images-- > keptImages
+                part?.type === 'image' && message.role === 'toolResult' && images-- > keptImages
                   ? { type: 'text' as const, text: removedImage }
                   : part,
               ),
