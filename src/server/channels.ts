@@ -556,6 +556,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     ).rows[0]?.message_id;
   }
 
+  async function hiddenReplyTarget(database: Pool | PoolClient, messageId: string) {
+    const result = await database.query(
+      'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND hidden_at IS NOT NULL',
+      [messageId, ownerId],
+    );
+    return Boolean(result.rowCount);
+  }
+
   async function acceptMessage(message: InboundMessage, channelId: string) {
     const receiveSignal = receiving.signal;
     const parsed = messageSchema.safeParse(message);
@@ -938,13 +946,19 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const replyToMessageId = pending.provider_reply_id
       ? await nativeReply(pending, pending.thread_id, pending.provider_reply_id)
       : undefined;
+    const hiddenBeforeAnswer = replyToMessageId
+      ? await hiddenReplyTarget(pool, replyToMessageId)
+      : false;
     const command =
       !pending.attachments?.length && options.taskCommand
         ? (taskCommand.exec(pending.text.trim())?.[1]?.toLowerCase() as
             'tasks' | 'status' | 'stop' | undefined)
         : undefined;
     const answer =
-      command || pending.attachments?.length || (pending.provider_reply_id && !replyToMessageId)
+      hiddenBeforeAnswer ||
+      command ||
+      pending.attachments?.length ||
+      (pending.provider_reply_id && !replyToMessageId)
         ? undefined
         : await options.answer?.(pending.text, channel, replyToMessageId).catch(() => undefined);
     let afterCommit: (() => Promise<void>) | undefined;
@@ -968,7 +982,30 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         return false;
       }
+      if (
+        replyToMessageId &&
+        (hiddenBeforeAnswer || (await hiddenReplyTarget(client, replyToMessageId)))
+      ) {
+        await client.query(
+          "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
+          [row.source_id, ownerId],
+        );
+        return true;
+      }
       if (command) {
+        if (replyToMessageId) {
+          const target = await client.query(
+            'SELECT hidden_at FROM messages WHERE id=$1 AND owner_id=$2 FOR SHARE',
+            [replyToMessageId, ownerId],
+          );
+          if (target.rows[0]?.hidden_at) {
+            await client.query(
+              "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
+              [row.source_id, ownerId],
+            );
+            return true;
+          }
+        }
         const reply = await options.taskCommand!(
           client,
           command,
@@ -1001,7 +1038,23 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         [row.source_id, turnId, messageId, ownerId, channel],
       );
       return true;
-    }, pool);
+    }, pool).catch(async (cause) => {
+      if (
+        !replyToMessageId ||
+        !(cause instanceof Error) ||
+        !('statusCode' in cause) ||
+        cause.statusCode !== 404
+      )
+        throw cause;
+      const discarded = await pool.query(
+        `UPDATE channel_inbox i SET state='discarded'
+         WHERE i.source_id=$1 AND i.owner_id=$2 AND i.state='pending' AND i.provider_reply_id=$3
+           AND EXISTS (SELECT 1 FROM messages m WHERE m.id=$4 AND m.owner_id=i.owner_id AND m.hidden_at IS NOT NULL)`,
+        [pending.source_id, ownerId, pending.provider_reply_id, replyToMessageId],
+      );
+      if (!discarded.rowCount) throw cause;
+      return true;
+    });
     if (submitted === undefined) return false;
     await afterCommit?.();
     if (submitted) options.refresh?.();

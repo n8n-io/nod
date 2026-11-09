@@ -32,7 +32,7 @@ async function patchSchedule(id: string, body: Record<string, unknown>) {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(45_000),
   });
   pageDataCache.update<Schedule[]>(path, (items) =>
     items ? items.map((entry) => (entry.id === id ? { ...entry, ...saved } : entry)) : items,

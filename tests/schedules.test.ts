@@ -846,3 +846,134 @@ test(
     }
   },
 );
+
+test('scheduled controls await a delayed pause and delete response', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/',
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLButtonElement: dom.window.HTMLButtonElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (duration: number) => nativeTimeout(duration / 50));
+  const schedule: Schedule = {
+    id: randomUUID(),
+    title: 'Delayed schedule',
+    prompt: 'Synthetic reminder.',
+    kind: 'recurring',
+    cron: '0 9 * * *',
+    runAt: null,
+    timeZone: 'UTC',
+    enabled: true,
+    revision: 1,
+    nextRun: null,
+    lastRun: null,
+    baselineObservation: null,
+    monthlyUsd: null,
+  };
+  let current: Schedule | null = schedule;
+  const mutations: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL, options?: RequestInit) => {
+    assert.equal(String(path), `/api/schedules${options?.method ? `/${schedule.id}` : ''}`);
+    if (!options?.method) return Response.json(current ? [current] : []);
+    const signal = options.signal;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 650);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        },
+        { once: true },
+      );
+    });
+    mutations.push(options.method);
+    if (options.method === 'PATCH') {
+      assert.deepEqual(JSON.parse(String(options.body)), { enabled: false });
+      current = { ...schedule, enabled: false, revision: 2 };
+      return Response.json(current);
+    }
+    assert.equal(options.method, 'DELETE');
+    current = null;
+    return Response.json({ ok: true });
+  });
+  const { act, createElement, Fragment } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const { PauseSwitch, PlanToast, useDirectChange } =
+    await import('../src/web/components/plan-controls.tsx');
+  const { DeletePlan } = await import('../src/web/components/delete-plan.tsx');
+  pageDataCache.clear();
+  pageDataCache.update('/api/schedules', () => [schedule]);
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  function Controls() {
+    const change = useDirectChange(schedule.id);
+    return createElement(PauseSwitch, { schedule, change });
+  }
+  await act(async () =>
+    root.render(
+      createElement(
+        Fragment,
+        null,
+        createElement(PlanToast),
+        createElement(Controls),
+        createElement(DeletePlan, { id: schedule.id, title: schedule.title }),
+      ),
+    ),
+  );
+  const click = async (selector: string) => {
+    const button = dom.window.document.querySelector<HTMLButtonElement>(selector);
+    assert.ok(button);
+    await act(async () => button.click());
+  };
+  await click('[role="switch"]');
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    true,
+  );
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 750)));
+  assert.match(
+    dom.window.document.querySelector('.plan-toast')?.textContent ?? '',
+    /Paused Delayed schedule/,
+  );
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    false,
+  );
+  await click('button[aria-label="Delete schedule Delayed schedule"]');
+  await click('.delete-plan-actions button.button-destructive');
+  assert.match(
+    dom.window.document.querySelector('.delete-plan-dialog')?.textContent ?? '',
+    /Deleting/,
+  );
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 750)));
+  assert.equal(dom.window.document.querySelector('.delete-plan-dialog'), null);
+  assert.deepEqual(mutations, ['PATCH', 'DELETE']);
+});

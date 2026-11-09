@@ -314,10 +314,15 @@ async function insertEvent(
   );
 }
 
-async function assertReplyTarget(client: PoolClient, threadId: string, messageId?: string) {
+async function assertReplyTarget(
+  client: PoolClient,
+  threadId: string,
+  messageId?: string,
+  lock = false,
+) {
   if (!messageId) return;
   const target = await client.query(
-    'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND hidden_at IS NULL',
+    `SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND hidden_at IS NULL${lock ? ' FOR SHARE' : ''}`,
     [messageId, ownerId, threadId],
   );
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
@@ -646,6 +651,7 @@ export async function submitUserMessage(
           threadId: thread.id,
           answer,
         });
+    await assertReplyTarget(client, thread.id, options.replyToMessageId, true);
     if (confirmed && 'turnId' in confirmed) return confirmed;
     await localArtifacts.retainArtifacts(
       attachments.map((attachment) => attachment.id),

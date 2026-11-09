@@ -2174,6 +2174,122 @@ for (const provider of ['telegram', 'whatsapp'])
         await channels.drain();
         assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
+        const beforeRetired = calls.length;
+        await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [anchor]);
+        receive('111', 'retired-stop', 'chat-a', '/stop', 'provider-1');
+        receive('111', 'after-retired', 'chat-a', 'Start a new task');
+        await channels.drain();
+        assert.equal(calls.length, beforeRetired);
+        assert.deepEqual(
+          (
+            await pool.query('SELECT state,turn_id FROM channel_inbox WHERE source_id=$1', [
+              `channel:${provider}:bot:retired-stop`,
+            ])
+          ).rows[0],
+          { state: 'discarded', turn_id: null },
+        );
+        assert.ok((await turnOf('after-retired')).turn_id);
+      } finally {
+        await channels.close();
+      }
+    },
+  );
+
+for (const provider of ['telegram', 'whatsapp'])
+  test(
+    `${provider} consumes replies to hidden confirmations and drains later messages`,
+    { skip: !process.env.TEST_DATABASE_URL },
+    async (t) => {
+      const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(
+        t,
+        undefined,
+        provider,
+      );
+      const firstConfirmation = randomUUID();
+      const racedConfirmation = randomUUID();
+      const submitted: Array<{ text: string; target?: string }> = [];
+      const answered: string[] = [];
+      const channels = await create({
+        answer: async (text) => {
+          answered.push(text);
+          return undefined;
+        },
+        submit: async (text, sourceId, client, channel, _messageId, _answer, target) => {
+          submitted.push({ text, target });
+          const turnId = randomUUID();
+          await client.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+            [turnId, threadId, sourceId, channel],
+          );
+          if (text === 'Yes, cancel the second task') {
+            assert.equal(target, racedConfirmation);
+            await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [
+              racedConfirmation,
+            ]);
+            throw Object.assign(new Error('The reply is unavailable in this conversation.'), {
+              statusCode: 404,
+            });
+          }
+          return turnId;
+        },
+      });
+      try {
+        receive('111', 'initial', 'chat-a');
+        await channels.drain();
+        const initial = (await turnOf('initial')).turn_id;
+        await reply(initial, 'Cancel the first task?', firstConfirmation, 0);
+        await channels.drain();
+        assert.equal(posts.length, 1);
+        await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [firstConfirmation]);
+        receive('111', 'stale-first', 'chat-a', 'Yes, cancel the first task', 'provider-1');
+        receive('111', 'following-first', 'chat-a', 'Start something new');
+        await channels.drain();
+        assert.equal(
+          submitted.some((item) => item.text === 'Yes, cancel the first task'),
+          false,
+        );
+        assert.equal(answered.includes('Yes, cancel the first task'), false);
+        await reply(initial, 'Cancel the second task?', racedConfirmation, 1);
+        await channels.drain();
+        assert.equal(posts.length, 2);
+        receive('111', 'stale-race', 'chat-a', 'Yes, cancel the second task', 'provider-2');
+        receive('111', 'following-race', 'chat-a', 'Check the weather');
+        await channels.drain();
+        const inbox = (
+          await pool.query(
+            'SELECT source_id,state,turn_id FROM channel_inbox WHERE source_id=ANY($1::text[]) ORDER BY source_id',
+            [
+              ['stale-first', 'following-first', 'stale-race', 'following-race'].map(
+                (id) => `channel:${provider}:bot:${id}`,
+              ),
+            ],
+          )
+        ).rows;
+        assert.deepEqual(
+          inbox.map(({ source_id, state, turn_id }) => ({
+            source: source_id.split(':').at(-1),
+            state,
+            hasTurn: Boolean(turn_id),
+          })),
+          [
+            { source: 'following-first', state: 'submitted', hasTurn: true },
+            { source: 'following-race', state: 'submitted', hasTurn: true },
+            { source: 'stale-first', state: 'discarded', hasTurn: false },
+            { source: 'stale-race', state: 'discarded', hasTurn: false },
+          ],
+        );
+        assert.deepEqual(
+          (await pool.query('SELECT source_id FROM turns ORDER BY source_id')).rows.map(
+            ({ source_id }) => source_id,
+          ),
+          ['following-first', 'following-race', 'initial'].map(
+            (id) => `channel:${provider}:bot:${id}`,
+          ),
+        );
+        assert.equal(
+          submitted.find((item) => item.text === 'Check the weather')?.target,
+          undefined,
+        );
       } finally {
         await channels.close();
       }

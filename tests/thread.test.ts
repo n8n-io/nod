@@ -1276,6 +1276,64 @@ test(
         );
       });
 
+      await t.test('a reply retired during approval handling creates no turn', async () => {
+        const targetId = randomUUID();
+        const sourceId = `channel:telegram:fixture:${randomUUID()}`;
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant','Cancel the scheduled task?')",
+          [targetId, ownerId, (await thread.activeThread()).id],
+        );
+        let enter!: () => void;
+        const entered = new Promise<void>((resolve) => {
+          enter = resolve;
+        });
+        let release!: () => void;
+        const proceed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const submission = thread.submitUserMessage(
+          'Yes',
+          [],
+          { channel: 'telegram:fixture', sourceId, replyToMessageId: targetId },
+          {
+            answer: async () => undefined,
+            accept: async () => {
+              enter();
+              await proceed;
+              return undefined;
+            },
+          },
+        );
+        try {
+          await entered;
+          await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1 AND owner_id=$2', [
+            targetId,
+            ownerId,
+          ]);
+          release();
+          await assert.rejects(
+            submission,
+            (cause: unknown) => (cause as { statusCode?: number }).statusCode === 404,
+          );
+          assert.equal(
+            (
+              await db.pool.query('SELECT 1 FROM turns WHERE owner_id=$1 AND source_id=$2', [
+                ownerId,
+                sourceId,
+              ])
+            ).rowCount,
+            0,
+          );
+        } finally {
+          release();
+          await Promise.allSettled([submission]);
+          await db.pool.query('DELETE FROM messages WHERE id=$1 AND owner_id=$2', [
+            targetId,
+            ownerId,
+          ]);
+        }
+      });
+
       await t.test(
         'client message IDs dedupe concurrent sends and reject changed payloads',
         async () => {

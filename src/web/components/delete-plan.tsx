@@ -28,7 +28,7 @@ export function DeletePlan({ id, title }: { id: string; title: string }) {
     try {
       await api(`${path}/${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)]),
       });
       if (controller.signal.aborted) return;
       setOpen(false);

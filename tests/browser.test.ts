@@ -6378,6 +6378,142 @@ test(
   },
 );
 
+test('chat retires reply targets without losing drafts or duplicating ambiguous sends', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [rect];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [rect];
+      const requests = [], releases = [];
+      let committed = null;
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        assert.equal(path, '/api/messages');
+        const message = JSON.parse(options.body);
+        requests.push(message);
+        if (committed)
+          return message.clientMessageId === committed.clientMessageId
+            ? Response.json({
+                error: 'This message ID is already in use. Send this as a new message.',
+              }, { status: 409 })
+            : Response.json({ messageId: message.clientMessageId, turnId: 'synthetic-duplicate-turn' });
+        return new Promise((resolve, reject) => releases.push({ resolve, reject }));
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      const ids = [
+        '00000000-0000-4000-8000-000000000701',
+        '00000000-0000-4000-8000-000000000702',
+        '00000000-0000-4000-8000-000000000703',
+      ];
+      const messages = ids.map((id, index) => ({
+        id, role: 'assistant', text: 'Synthetic confirmation ' + index,
+        attachments: [], turnId: 'synthetic-turn-' + index, createdAt: '2026-10-26T12:00:00Z',
+      }));
+      const draft = 'Synthetic cancellation draft';
+      const draftKey = 'nod.chat-draft.synthetic-owner.synthetic-thread';
+      const saveDraft = reply => localStorage.setItem(draftKey, JSON.stringify({
+        version: 1, text: draft, reply, attachments: [], missing: [],
+      }));
+      saveDraft(null);
+      let state = {
+        threadId: 'synthetic-thread', turns: [], activity: [], tasks: [],
+        verificationRequests: [], configuration: { llmReady: true }, messages,
+      };
+      let root = createRoot(document.getElementById('root'));
+      const render = () => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {},
+      })));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected reply transition to settle');
+      };
+      const reply = async id => {
+        const button = document.querySelector('[data-message-id="' + id + '"] [aria-label="Reply to message"]');
+        assert.ok(button, 'Expected visible reply target ' + id);
+        await act(async () => button.click());
+        assert.ok(document.querySelector('.composer-reply'));
+      };
+      const submit = () => act(async () =>
+        document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+      const hasDraft = () => document.querySelector('[contenteditable]')?.textContent === draft;
+      try {
+        await render();
+        await settle(hasDraft);
+        await reply(ids[0]);
+        state = { ...state, hiddenMessageIds: [ids[0]] };
+        await render();
+        assert.equal(document.querySelector('.composer-reply'), null);
+        assert.ok(hasDraft());
+        assert.equal(JSON.parse(localStorage.getItem(draftKey)).reply, null);
+        await act(async () => root.unmount());
+        saveDraft({ id: ids[0], role: 'assistant', text: messages[0].text });
+        root = createRoot(document.getElementById('root'));
+        await render();
+        await settle(hasDraft);
+        assert.equal(document.querySelector('.composer-reply'), null);
+        await reply(ids[1]);
+        await submit();
+        await settle(() => requests.length === 1);
+        assert.equal(requests[0].replyToMessageId, ids[1]);
+        await act(async () => releases[0].resolve(Response.json({
+          error: 'The reply is unavailable in this conversation.',
+        }, { status: 404 })));
+        await settle(() => hasDraft() && !document.querySelector('.composer-reply'));
+        state = { ...state, hiddenMessageIds: [ids[0], ids[1]] };
+        await render();
+        await reply(ids[2]);
+        await submit();
+        await settle(() => requests.length === 2);
+        assert.equal(requests[1].replyToMessageId, ids[2]);
+        committed = requests[1];
+        state = { ...state, hiddenMessageIds: ids };
+        await render();
+        await act(async () => releases[1].reject(new TypeError('Synthetic response lost')));
+        await settle(() => hasDraft() && !document.querySelector('.composer-reply'));
+        await submit();
+        await settle(() => requests.length === 3 &&
+          document.querySelector('[role="alert"]')?.textContent.includes('This message ID'));
+        assert.equal(requests[2].replyToMessageId, undefined);
+        assert.equal(requests[2].clientMessageId, committed.clientMessageId);
+        assert.equal(requests[2].text, draft);
+        assert.ok(hasDraft());
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
 test('chat shows pending sends and active work before a model step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

@@ -380,14 +380,30 @@ export function Chat({
     id: string;
     threadId: string;
     signature: string;
+    plainSignature: string;
+    replyId?: string;
     recording?: File;
-    body: string;
+    body?: string;
   } | null>(null);
   const recordingIds = useRef(new WeakMap<File, string>());
   const handledRequest = useRef<string | null>(null);
   const requestedSends = useRef<Array<{ text: string; result?: ComposerSendResult }>>([]);
   const historyVersion = useRef(0);
   const threadId = state.threadId;
+  const hiddenMessageIds = useRef<ReadonlySet<string>>(new Set());
+  hiddenMessageIds.current = new Set(state.hiddenMessageIds ?? []);
+  useLayoutEffect(() => {
+    const hidden = hiddenMessageIds.current;
+    if (replyTo && hidden.has(replyTo.id)) setReplyTo(null);
+    if (taskReply.current && hidden.has(taskReply.current)) taskReply.current = null;
+    if (retry.current?.replyId && hidden.has(retry.current.replyId))
+      retry.current = {
+        ...retry.current,
+        signature: retry.current.plainSignature,
+        replyId: undefined,
+        body: undefined,
+      };
+  }, [replyTo?.id, state.hiddenMessageIds]);
   const chatVisible = useRef(visible);
   chatVisible.current = visible;
   const preserveUnreadPosition = useRef(false);
@@ -895,15 +911,20 @@ export function Chat({
     const recordingKey = recording && recordingSource(recording);
     if (recordingKey && !recordingIds.current.has(recordingKey))
       recordingIds.current.set(recordingKey, crypto.randomUUID());
+    const attachmentIds = attachments.map((item) => item.id);
+    const recordingId = recordingKey ? recordingIds.current.get(recordingKey) : null;
+    const plainSignature = privateVerification
+      ? null
+      : JSON.stringify([value, attachmentIds, null, null, false, recordingId, null]);
     const signature = privateVerification
       ? null
       : JSON.stringify([
           value,
-          attachments.map((item) => item.id),
+          attachmentIds,
           reply?.id ?? null,
           reply?.text ?? null,
           reply?.isQuote === true,
-          recordingKey ? recordingIds.current.get(recordingKey) : null,
+          recordingId,
           questionAnswer ?? null,
         ]);
     if (privateVerification) retry.current = null;
@@ -940,6 +961,7 @@ export function Chat({
     let failed = false;
     let retryableFailure = false;
     let questionUnavailable = false;
+    let replyUnavailable = false;
     let submittedBody = previousAttempt?.body;
     if (reply && !directAnswer) {
       taskReply.current = null;
@@ -979,13 +1001,33 @@ export function Chat({
           restoreRecording: !privateVerification,
         };
       }
+      if (replyId && hiddenMessageIds.current.has(replyId)) {
+        failed = true;
+        retry.current =
+          plainSignature === null
+            ? null
+            : {
+                id,
+                threadId: sentThread,
+                signature: plainSignature,
+                plainSignature,
+                recording: submittedRecording,
+              };
+        setOptimistic((current) => current.filter((item) => item.message.id !== id));
+        setError('The reply is unavailable in this conversation.');
+        return {
+          sent: false,
+          restoreText: !privateVerification || !explicitVerification,
+          restoreRecording: !privateVerification,
+        };
+      }
       const messageBody =
         submittedBody ??
         JSON.stringify({
           threadId: sentThread,
           clientMessageId: id,
           text: value,
-          attachmentIds: attachments.map((item) => item.id),
+          attachmentIds,
           ...(replyId
             ? {
                 replyToMessageId: replyId,
@@ -1019,6 +1061,11 @@ export function Chat({
       privateVerification ||= verificationStatus !== undefined;
       if (!response.ok) {
         retryableFailure = result.retryable === true;
+        replyUnavailable =
+          Boolean(replyId) &&
+          (response.status === 404 ||
+            (response.status === 400 &&
+              result.error === 'The reply is unavailable in this conversation.'));
         questionUnavailable =
           response.status === 409 &&
           result.code === 'question_unavailable' &&
@@ -1080,7 +1127,10 @@ export function Chat({
         return { sent: true };
       }
       failed = true;
-      if (questionUnavailable && replyId) {
+      const retiredReply = Boolean(
+        replyId && (replyUnavailable || hiddenMessageIds.current.has(replyId)),
+      );
+      if (questionUnavailable && replyId && !retiredReply) {
         retry.current = null;
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
         setUnavailableQuestions((current) => new Set([...current, replyId]));
@@ -1095,17 +1145,36 @@ export function Chat({
           questionUnavailable: true,
         };
       }
-      if (retryableFailure && recordingKey) recordingIds.current.delete(recordingKey);
+      if (retryableFailure && recordingKey && !retiredReply)
+        recordingIds.current.delete(recordingKey);
+      if (retiredReply) {
+        if (taskReply.current === replyId) taskReply.current = null;
+        setReplyTo((current) => (current?.id === replyId ? null : current));
+      }
       retry.current =
-        !privateVerification && !retryableFailure && signature !== null && submittedBody
+        retiredReply && !privateVerification && plainSignature !== null
           ? {
               id,
               threadId: sentThread,
-              signature,
+              signature: plainSignature,
+              plainSignature,
               recording: submittedRecording,
-              body: submittedBody,
             }
-          : null;
+          : !privateVerification &&
+              !retryableFailure &&
+              signature !== null &&
+              plainSignature !== null &&
+              submittedBody
+            ? {
+                id,
+                threadId: sentThread,
+                signature,
+                plainSignature,
+                replyId,
+                recording: submittedRecording,
+                body: submittedBody,
+              }
+            : null;
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
       const failure = privateVerification
         ? attachments.length
@@ -1123,7 +1192,14 @@ export function Chat({
     } finally {
       outstandingSends.current--;
       finished(!failed);
-      if (failed && reply && !directAnswer && sequence === sendCount.current)
+      if (
+        failed &&
+        reply &&
+        !directAnswer &&
+        !replyUnavailable &&
+        !hiddenMessageIds.current.has(reply.id) &&
+        sequence === sendCount.current
+      )
         setReplyTo((current) => current ?? reply);
       if (threadRef.current === sentThread && --pendingSends.current === 0) {
         sendQueue.current = Promise.resolve(true);
@@ -1806,7 +1882,9 @@ export function Chat({
               ref={composer}
               draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
               privateReply={Boolean(state.verificationRequests?.length)}
-              restoreReply={setReplyTo}
+              restoreReply={(saved) => {
+                if (!saved || !hiddenMessageIds.current.has(saved.id)) setReplyTo(saved);
+              }}
               ready={state.configuration.llmReady && !welcoming && !spendingPaused}
               text={text}
               setText={setText}
