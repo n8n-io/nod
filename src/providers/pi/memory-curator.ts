@@ -20,7 +20,6 @@ const untraced = new Set([
   'reflect',
   'remember',
   'recall',
-  'memory_check',
   'review',
   'style',
   'skill',

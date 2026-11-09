@@ -916,9 +916,6 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       const outcome = {
         none: 'The text answer is already visible to the owner.',
         original: 'The visual and accompanying text are already visible to the owner.',
-        corrected: 'The corrected visual and accompanying text are already visible to the owner.',
-        omitted:
-          'The corrected plain-text answer is already visible to the owner; the requested visual was not included.',
       }[delivery.presentation];
       return {
         ...delivery,
