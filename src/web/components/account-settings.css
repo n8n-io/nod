@@ -30,8 +30,7 @@
   margin-bottom: 28px;
 }
 .settings-sidebar h1,
-.settings-category > h2,
-.settings-category-heading > h2 {
+.settings-category > h2 {
   margin: 0;
   font-size: 24px;
   font-weight: 550;
@@ -116,16 +115,17 @@
   padding: 30px clamp(24px, 4vw, 56px) 36px;
   container: account-settings / inline-size;
 }
-.settings-category > h2,
-.settings-category-heading {
+.settings-category > h2 {
   margin-bottom: 24px;
 }
-.settings-category-heading {
-  display: flex;
-  flex-wrap: wrap;
+.settings-privacy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 4px 16px;
+  column-gap: 16px;
+}
+.settings-privacy > :not(h2, .settings-data-sharing) {
+  grid-column: 1 / -1;
 }
 .settings-data-sharing {
   padding: 0;
@@ -557,12 +557,8 @@
   .account-settings-body {
     padding: 24px 20px 28px;
   }
-  .settings-category > h2,
-  .settings-category-heading > h2 {
+  .settings-category > h2 {
     font-size: 21px;
-  }
-  .settings-category > h2,
-  .settings-category-heading {
     margin-bottom: 20px;
   }
   .settings-category + .settings-category {

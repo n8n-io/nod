@@ -459,17 +459,18 @@ export function AccountSettings({
                       }
                     />
                   </section>
-                  <section className="settings-category" aria-labelledby={`${id}-privacy`}>
-                    <div className="settings-category-heading">
-                      <h2 id={`${id}-privacy`} tabIndex={-1}>
-                        Privacy & data
-                      </h2>
-                      <DataSharing
-                        className="settings-data-sharing"
-                        usage={account.usageData}
-                        traces={account.traces}
-                      />
-                    </div>
+                  <section
+                    className="settings-category settings-privacy"
+                    aria-labelledby={`${id}-privacy`}
+                  >
+                    <h2 id={`${id}-privacy`} tabIndex={-1}>
+                      Privacy & data
+                    </h2>
+                    <DataSharing
+                      className="settings-data-sharing"
+                      usage={account.usageData}
+                      traces={account.traces}
+                    />
                     <section className="account-region">
                       <div className="account-preference-row">
                         <span>Share usage data</span>
