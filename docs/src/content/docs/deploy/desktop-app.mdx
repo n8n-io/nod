@@ -151,7 +151,7 @@ flowchart TD
   ask -- Restart now --> restart
 ```
 
-Restarting stops a running reply, scheduled task or background check, and you can ask Nod to continue afterwards. Queued messages, schedules and app checks resume. Nod reopens as you left it: the same window size and place, the same screen, and any unsent text in the message box. If that place is no longer on a connected display, the window opens at its default size instead.
+Restarting stops a running reply, scheduled task or background check, and you can ask Nod to continue afterwards. Queued messages, schedules and app checks resume. Nod reopens as you left it: the same window size and place, the same page, such as Chat or Usage, and any unsent text in the message box. If that place is no longer on a connected display, the window opens at its default size instead.
 
 Nod downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. While the runtime pack or Windows installer downloads, the update item in the menu shows how far it has got. On a Mac, it also loads the new container images into the running computer, so Nod is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on and quiet hours allow it. The menu offers **Restart to update**, and background checks never open a dialog. On a Mac, an update must be signed by n8n, and Nod refuses one with a lower version number, so an update feed can't roll Nod back to an older build. On Windows, the restart runs the installer in the background and opens Nod again. While Nod shuts down to install the update, its window stays open and shows **Updating Nod…** until it quits to install. If the window was closed, Nod opens it.
 

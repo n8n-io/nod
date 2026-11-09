@@ -1519,7 +1519,8 @@ async function restartForUpdate() {
   if (quitting || !(await confirmRestart())) return;
   update({ phase: 'updating', message: 'Updating…' });
   const window = [engineWindow, setupWindow].find((item) => item && !item.isDestroyed());
-  if (!engineWindow || engineWindow.isDestroyed()) void showSettings('general', true);
+  if (engineWindow && !engineWindow.isDestroyed()) engineWindow.show();
+  else await showSettings('general', true);
   await rememberState(window);
   await quit(installUpdate);
 }

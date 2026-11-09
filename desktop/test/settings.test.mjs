@@ -2716,7 +2716,7 @@ test('quit removes temporary files and stops downloads before the updater can qu
 });
 
 test('an update restart keeps Nod on screen and reopens it as it was', async (t) => {
-  for (const scenario of ['open', 'setup', 'closed', 'offscreen'])
+  for (const scenario of ['open', 'minimized', 'setup', 'closed', 'offscreen'])
     await t.test(scenario, async (t) => {
       let shown;
       const request = async (url) =>
@@ -2748,6 +2748,7 @@ test('an update restart keeps Nod on screen and reopens it as it was', async (t)
         Object.assign(setup, { bounds: { ...chat.bounds }, maximized: true });
       }
       if (scenario === 'closed' || scenario === 'setup') chat.destroy();
+      if (scenario === 'minimized') chat.minimize();
       await f.restartForUpdate();
       assert.equal(f.children[0].killed, true);
       assert.equal(f.status().phase, 'updating');
@@ -2767,12 +2768,12 @@ test('an update restart keeps Nod on screen and reopens it as it was', async (t)
         assert.equal(next.children[0].port, f.children[0].port);
         const reopened = next.windows.find((window) => window.url && window.isVisible());
         assert.ok(reopened);
-        if (scenario === 'open' || scenario === 'setup') {
+        if (['open', 'minimized', 'setup'].includes(scenario)) {
           assert.deepEqual(reopened.bounds, chat.bounds);
           assert.equal(reopened.isMaximized(), true);
           assert.deepEqual(
             reopened.sent.find(([channel]) => channel === 'nod:navigate'),
-            scenario === 'open' ? ['nod:navigate', '/usage'] : undefined,
+            scenario === 'setup' ? undefined : ['nod:navigate', '/usage'],
           );
         } else {
           assert.deepEqual(reopened.bounds, { x: 0, y: 0, width: 1200, height: 860 });
