@@ -1538,8 +1538,11 @@ async function rememberState(window) {
 }
 
 async function resumeState() {
+  const text = await readFile(resumePath, 'utf8').catch(() => undefined);
+  if (text === undefined) return;
+  await rm(resumePath, { force: true }).catch(() => {});
   try {
-    const saved = JSON.parse(await readFile(resumePath, 'utf8'));
+    const saved = JSON.parse(text);
     pendingAppPath ||= appOpenPath(`nod://open${saved.path}`, appPages) || undefined;
     if (Number.isInteger(saved.port) && saved.port > 1023 && saved.port < 65536)
       resumePort = saved.port;
@@ -1557,10 +1560,7 @@ async function resumeState() {
         )
     )
       resumeWindow = { bounds: { x, y, width, height }, maximized: saved.maximized === true };
-  } catch {
-  } finally {
-    await rm(resumePath, { force: true }).catch(() => {});
-  }
+  } catch {}
 }
 
 async function confirmRestart() {
