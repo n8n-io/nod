@@ -1352,6 +1352,28 @@ test(
               [ownerId, taskId],
             )
           ).rows[0].count;
+          const blocker = await pool.connect();
+          try {
+            await blocker.query('BEGIN');
+            await blocker.query('SELECT id FROM tasks WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+              taskId,
+              ownerId,
+            ]);
+            const blocked = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              enabled: false,
+            });
+            assert.equal(blocked.statusCode, 409, blocked.body);
+            assert.match(blocked.body, /This task is still being updated/);
+            assert.equal((await approvalsFor(turn))[0].status, 'pending');
+            assert.equal(
+              (await pool.query('SELECT enabled FROM schedules WHERE id=$1', [schedule.id])).rows[0]
+                .enabled,
+              true,
+            );
+          } finally {
+            await blocker.query('ROLLBACK');
+            blocker.release();
+          }
           const paused = await request('PATCH', `/api/schedules/${schedule.id}`, {
             enabled: false,
           });

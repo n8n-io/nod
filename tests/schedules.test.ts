@@ -1181,7 +1181,7 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
   assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE', 'PATCH', 'DELETE']);
   assert.equal(attempts.filter((method) => method === 'DELETE').length, 5);
   current = { ...schedule, title: 'Changed elsewhere', revision: 2 };
-  holdNextMutation = true;
+  mutationDelay = 0;
   await click('button[aria-label="Edit schedule Delayed schedule"]');
   const title = dom.window.document.querySelector<HTMLInputElement>('.schedule-editor-form input');
   assert.ok(title);
@@ -1192,12 +1192,14 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
     );
     title.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   });
+  assert.equal(buttonByText('Save changes')?.hasAttribute('disabled'), false);
   await clickButton('Save changes');
+  assert.equal(attempts.filter((method) => method === 'PATCH').length, 5);
   await waitFor(
     () =>
       dom.window.document
         .querySelector('.schedule-editor-dialog')
-        ?.textContent?.includes('The schedule changed.') === true,
+        ?.textContent?.includes('Schedule changed.') === true,
     'editor conflict',
   );
   assert.equal(title.value, 'My unsaved title');

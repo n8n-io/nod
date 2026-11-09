@@ -708,15 +708,25 @@ export async function createApprovals(
         'UPDATE messages SET hidden_at=now() WHERE owner_id=$1 AND id=ANY($2::uuid[])',
         [ownerId, messageIds],
       );
-    const tasks = (
-      await client.query<{ id: string; turn_id: string; thread_id: string }>(
-        `SELECT t.id,t.turn_id,u.thread_id FROM tasks t
-         JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id AND u.task_id=t.id
-         WHERE t.owner_id=$1 AND t.state='open' AND u.id=ANY($2::uuid[])
-         ORDER BY t.id FOR UPDATE OF t`,
-        [ownerId, turnIds],
-      )
-    ).rows;
+    let tasks: Array<{ id: string; turn_id: string; thread_id: string }>;
+    try {
+      tasks = (
+        await client.query<{ id: string; turn_id: string; thread_id: string }>(
+          `SELECT t.id,t.turn_id,u.thread_id FROM tasks t
+           JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id AND u.task_id=t.id
+           WHERE t.owner_id=$1 AND t.state='open' AND u.id=ANY($2::uuid[])
+           ORDER BY t.id FOR UPDATE OF t NOWAIT`,
+          [ownerId, turnIds],
+        )
+      ).rows;
+    } catch (cause) {
+      if ((cause as { code?: string }).code !== '55P03') throw cause;
+      throw Object.assign(new Error('This task is still being updated. Try again.'), {
+        code: '55P03',
+        notRun: true,
+        statusCode: 409,
+      });
+    }
     for (const task of tasks) {
       const messageId = randomUUID();
       await client.query(
