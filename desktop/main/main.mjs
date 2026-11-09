@@ -138,6 +138,7 @@ let updateRequestedManually = false;
 let updatePhase = 'idle';
 let updateProgress;
 let updateFailed = false;
+let dismissedUpdateVersion;
 let pendingPreload;
 let stopUpdateChecks;
 let disposeArtifactFiles;
@@ -1370,6 +1371,7 @@ function publicUpdateStatus() {
     checking: Boolean(checkingUpdates),
     ...(updateProgress === undefined ? {} : { progress: updateProgress }),
     ...(updates?.ready ? { readyVersion: updates.ready.version } : {}),
+    ...(dismissedUpdateVersion ? { dismissedVersion: dismissedUpdateVersion } : {}),
   };
 }
 
@@ -1461,6 +1463,7 @@ async function checkForUpdates(manual = true, restartReady = false) {
         }
         const { response } = await dialog.showMessageBox({
           message: `Nod ${candidate.version} is ready.`,
+          detail: 'Unsent text in the message box will be lost.',
           buttons: ['Restart', 'Later'],
           defaultId: 1,
           cancelId: 1,
@@ -2158,18 +2161,17 @@ else {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return publicUpdateStatus();
       });
+      ipcMain.handle('nod:updates:dismiss', (event, version) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        if (typeof version !== 'string' || updates?.ready?.version !== version) return;
+        dismissedUpdateVersion = version;
+        publishUpdateStatus();
+      });
       ipcMain.handle('nod:updates:restart', async (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (!updates?.ready || checkingUpdates || quitting)
+        if ((!updates?.ready && !checkingUpdates) || quitting)
           throw new Error('No desktop update is ready.');
-        try {
-          await updates.restart();
-        } catch (error) {
-          updateFailed = true;
-          refreshUpdateMenu();
-          await writeDiagnostic(error.message).catch(() => {});
-          throw new Error('Nod could not restart for the update.');
-        }
+        await checkForUpdates(true, true);
       });
       ipcMain.handle('nod:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

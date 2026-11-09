@@ -3,6 +3,7 @@ import { RefreshCw } from './icons';
 import { Button } from './ui';
 import {
   desktopUpdateStatus,
+  dismissDesktopUpdate,
   restartDesktopUpdate,
   subscribeDesktopUpdateStatus,
   type DesktopUpdateStatus,
@@ -10,7 +11,6 @@ import {
 
 export function DesktopUpdateToast() {
   const [status, setStatus] = useState<DesktopUpdateStatus>();
-  const [dismissedVersion, setDismissedVersion] = useState<string>();
   const [restarting, setRestarting] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -28,7 +28,7 @@ export function DesktopUpdateToast() {
     return unsubscribe;
   }, []);
 
-  if (!status?.readyVersion || status.readyVersion === dismissedVersion) return null;
+  if (!status?.readyVersion || status.readyVersion === status.dismissedVersion) return null;
   const version = status.readyVersion;
 
   return (
@@ -59,8 +59,8 @@ export function DesktopUpdateToast() {
             size="sm"
             disabled={restarting}
             onClick={() => {
-              setDismissedVersion(version);
               setFailed(false);
+              void dismissDesktopUpdate(version).catch(() => {});
             }}
           >
             Later

@@ -5386,6 +5386,7 @@ test('background update readiness respects notification permission and quiet tim
     );
     const confirmationCount = Number(scenario.enabled && scenario.supported);
     assert.equal(f.notifications.length, confirmationCount);
+    window.minimize();
     await f.checkUpdates(updater, false);
     await f.checkUpdates(updater, false);
     assert.equal(prompts.length, 0);
@@ -5488,6 +5489,7 @@ test('update notification clicks during refresh wait for the latest verified rel
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: true },
     );
+    window.minimize();
     await f.checkUpdates(updater, false);
     const notification = f.notifications.at(-1);
     version = '0.4.1';
@@ -5579,6 +5581,7 @@ test('update notification requests survive refresh failures and stop safely duri
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: true },
     );
+    window.minimize();
     await f.checkUpdates(updater, false);
     const notification = f.notifications.at(-1);
     version = '0.4.1';
@@ -6634,7 +6637,7 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
   }
 });
 
-test('ready desktop updates reach the engine with notifications off and restart only from its main frame', async (t) => {
+test('ready desktop updates share Later across engine windows and reopen for a new version', async (t) => {
   let version = '0.5.2';
   const restarts = [];
   const updater = {
@@ -6656,6 +6659,7 @@ test('ready desktop updates reach the engine with notifications off and restart 
   assert.equal(window.isFocused(), true);
   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   const status = f.handlers.get('nod:updates:status');
+  const dismiss = f.handlers.get('nod:updates:dismiss');
   const restart = f.handlers.get('nod:updates:restart');
   assert.equal(status(event).readyVersion, undefined);
   assert.equal((await f.handlers.get('nod:settings:get')(event)).notifications, false);
@@ -6670,20 +6674,108 @@ test('ready desktop updates reach the engine with notifications off and restart 
     ),
   );
 
-  await f.handlers.get('nod:settings:save')(event, { notifications: true });
+  const child = new window.constructor({ show: false });
+  window.webContents.emit('did-create-window', child);
+  await child.loadURL('http://127.0.0.1:4310/');
+  const childEvent = { sender: child.webContents, senderFrame: child.webContents.mainFrame };
+  assert.equal(status(childEvent).readyVersion, version);
+  const subframe = { ...event, senderFrame: { ...event.senderFrame } };
+  assert.throws(() => status(subframe), /unavailable/);
+  assert.throws(() => dismiss(subframe, version), /unavailable/);
+  await assert.rejects(restart(subframe), /unavailable/);
+  const outside = { sender: {}, senderFrame: event.senderFrame };
+  assert.throws(() => status(outside), /unavailable/);
+  assert.throws(() => dismiss(outside, version), /unavailable/);
+  await assert.rejects(restart(outside), /unavailable/);
+  dismiss(event, '0.5.1');
+  assert.equal(status(event).dismissedVersion, undefined);
+  dismiss(event, version);
+  assert.equal(status(event).dismissedVersion, version);
+  assert.equal(status(childEvent).dismissedVersion, version);
+  for (const receiver of [window, child])
+    assert.ok(
+      receiver.sent.some(
+        ([channel, value]) =>
+          channel === 'nod:updates:status' && value.dismissedVersion === version,
+      ),
+    );
+
+  child.destroy();
+  window.destroy();
+  f.showEngine();
+  await new Promise(setImmediate);
+  const reopened = f.windows.at(-1);
+  const reopenedEvent = {
+    sender: reopened.webContents,
+    senderFrame: reopened.webContents.mainFrame,
+  };
+  assert.equal(status(reopenedEvent).readyVersion, version);
+  assert.equal(status(reopenedEvent).dismissedVersion, version);
+
+  await f.handlers.get('nod:settings:save')(reopenedEvent, { notifications: true });
   const priorNotifications = f.notifications.length;
   version = '0.5.3';
   await f.checkUpdates(updater, false);
   assert.equal(f.notifications.length, priorNotifications);
-  assert.equal(status(event).readyVersion, version);
-
-  const subframe = { ...event, senderFrame: { ...event.senderFrame } };
-  assert.throws(() => status(subframe), /unavailable/);
-  await assert.rejects(restart(subframe), /unavailable/);
-  const outside = { sender: {}, senderFrame: event.senderFrame };
-  assert.throws(() => status(outside), /unavailable/);
-  await assert.rejects(restart(outside), /unavailable/);
+  assert.equal(status(reopenedEvent).readyVersion, version);
+  assert.notEqual(status(reopenedEvent).readyVersion, status(reopenedEvent).dismissedVersion);
+  dismiss(reopenedEvent, '0.5.2');
+  assert.equal(status(reopenedEvent).dismissedVersion, '0.5.2');
   assert.deepEqual(restarts, []);
+});
+
+test('in-app update restart warns about unsent text, keeps Later safe, and shares one confirmation', async (t) => {
+  const choice = deferred();
+  const shown = deferred();
+  const prompts = [];
+  const restarts = [];
+  const updater = {
+    ready: undefined,
+    async check() {
+      this.ready = { version: '0.5.2' };
+      return this.ready;
+    },
+    async restart() {
+      restarts.push(this.ready.version);
+    },
+  };
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    prompt: (options) => {
+      prompts.push(options);
+      if (prompts.length === 1) {
+        shown.resolve();
+        return choice.promise;
+      }
+      return { response: 0 };
+    },
+  });
+  f.showEngine();
+  await new Promise(setImmediate);
+  const window = f.windows.at(-1);
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const status = f.handlers.get('nod:updates:status');
+  const restart = f.handlers.get('nod:updates:restart');
+  await assert.rejects(restart(event), /No desktop update is ready/);
+  await f.checkUpdates(updater, false);
+
+  const first = restart(event);
+  await shown.promise;
+  const second = restart(event);
+  assert.equal(prompts.length, 1);
+  assert.equal(status(event).checking, true);
+  assert.equal(f.updateMenu.enabled, false);
+  assert.match(prompts[0].message, /Nod 0\.5\.2 is ready/);
+  assert.match(prompts[0].detail, /Unsent text in the message box will be lost/);
+  assert.deepEqual([...prompts[0].buttons], ['Restart', 'Later']);
+  assert.equal(prompts[0].defaultId, 1);
+  assert.equal(prompts[0].cancelId, 1);
+  choice.resolve({ response: 1 });
+  await Promise.all([first, second]);
+  assert.deepEqual(restarts, []);
+  assert.equal(status(event).readyVersion, '0.5.2');
+  assert.equal(status(event).checking, false);
+
   await restart(event);
-  assert.deepEqual(restarts, [version]);
+  assert.equal(prompts.length, 2);
+  assert.deepEqual(restarts, ['0.5.2']);
 });

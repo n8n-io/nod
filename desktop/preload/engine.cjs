@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   ready: () => invoke('nod:renderer-ready'),
   status: () => invoke('nod:status'),
   updateStatus: () => invoke('nod:updates:status'),
+  dismissUpdate: (version) => invoke('nod:updates:dismiss', version),
   restartUpdate: () => invoke('nod:updates:restart'),
   prepare: (options) => invoke('nod:prepare', options),
   onStatus: (listener) => {

@@ -34,6 +34,7 @@ export type DesktopUpdateStatus = {
   checking: boolean;
   progress?: number;
   readyVersion?: string;
+  dismissedVersion?: string;
 };
 
 export type DesktopSettingsChange = { onboardingCompleted?: true } & Partial<
@@ -60,6 +61,7 @@ type DesktopWindow = Window & {
     onStatus?(listener: (status: DesktopStatus) => void): () => void;
     updateStatus?(): Promise<DesktopUpdateStatus>;
     onUpdateStatus?(listener: (status: DesktopUpdateStatus) => void): () => void;
+    dismissUpdate?(version: string): Promise<void>;
     restartUpdate?(): Promise<void>;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
@@ -198,6 +200,12 @@ export function desktopUpdateStatus() {
 
 export function subscribeDesktopUpdateStatus(listener: (status: DesktopUpdateStatus) => void) {
   return (window as DesktopWindow).nodDesktop?.onUpdateStatus?.(listener) ?? (() => {});
+}
+
+export function dismissDesktopUpdate(version: string) {
+  const dismiss = (window as DesktopWindow).nodDesktop?.dismissUpdate;
+  if (!dismiss) return Promise.reject(new Error('Desktop updates are unavailable.'));
+  return dismiss(version);
 }
 
 export function restartDesktopUpdate() {
