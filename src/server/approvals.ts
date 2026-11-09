@@ -26,11 +26,19 @@ export interface ApprovalExecutionContext {
   expectedRevision?: number;
 }
 
+export interface ApprovalWork {
+  kind: 'schedule' | 'task';
+  title: string;
+  ownerRequest?: string;
+  waitsForAnswer?: true;
+}
+
 export interface ApprovalDescription {
   turn: TurnRef;
   action: string;
   args: Record<string, unknown>;
   details?: Record<string, unknown>;
+  work?: ApprovalWork;
 }
 
 export interface ChatConfirmationInput {
@@ -101,11 +109,45 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
       authority_source_message_id: string | null;
       scheduled_for: Date;
       time_zone: string;
+      title: string;
+      kind: string | null;
     }>(
-      'SELECT authority_instruction,authority_source_message_id,scheduled_for,time_zone FROM schedule_runs WHERE turn_id=$1 AND owner_id=$2',
+      `SELECT r.authority_instruction,r.authority_source_message_id,r.scheduled_for,r.time_zone,r.title,s.kind
+       FROM schedule_runs r LEFT JOIN schedules s ON s.id=r.schedule_id AND s.owner_id=r.owner_id
+       WHERE r.turn_id=$1 AND r.owner_id=$2`,
       [turnId, ownerId],
     )
   ).rows[0];
+}
+
+async function workOf(
+  client: PoolClient,
+  taskId: string | null,
+  schedule: Awaited<ReturnType<typeof scheduleAuthority>>,
+): Promise<ApprovalWork | undefined> {
+  if (schedule)
+    return {
+      kind: 'schedule',
+      title: schedule.title,
+      ...(schedule.authority_instruction ? { ownerRequest: schedule.authority_instruction } : {}),
+      ...(schedule.kind === 'recurring' ? { waitsForAnswer: true as const } : {}),
+    };
+  if (!taskId) return undefined;
+  const task = (
+    await client.query<{ title: string; request: string | null }>(
+      `SELECT t.title,m.text AS request FROM tasks t
+       LEFT JOIN messages m ON m.id=t.source_message_id AND m.owner_id=t.owner_id AND m.role='user'
+       WHERE t.id=$1 AND t.owner_id=$2`,
+      [taskId, ownerId],
+    )
+  ).rows[0];
+  return (
+    task && {
+      kind: 'task',
+      title: task.title,
+      ...(task.request ? { ownerRequest: task.request } : {}),
+    }
+  );
 }
 
 export async function turnOrigin(turnId: string) {
@@ -236,7 +278,7 @@ export async function createApprovals(
     const expectedRevision = options.expectedRevision;
     options.signal?.throwIfAborted();
     await options.admit?.(!allowed);
-    const inspect = async (client: PoolClient) => {
+    const inspect = async (client: PoolClient, describing = false) => {
       options.signal?.throwIfAborted();
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)
@@ -257,13 +299,14 @@ export async function createApprovals(
       }
       const background = !steering && ['event', 'schedule'].includes(origin.source);
       let authorMessageId: string | null;
+      const schedule =
+        origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
       if (steering) {
         authorMessageId = steering.id;
       } else if (origin.source === 'event') {
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
-        const grant = await scheduleAuthority(client, origin.id);
-        authorMessageId = grant?.authority_source_message_id ?? null;
+        authorMessageId = schedule?.authority_source_message_id ?? null;
       } else {
         const author =
           origin.source === 'user' && origin.message_id
@@ -341,11 +384,15 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      return { authorMessageId, source: current.source };
+      return {
+        authorMessageId,
+        source: current.source,
+        ...(describing ? { work: await workOf(client, current.task_id, schedule) } : {}),
+      };
     };
     let question: string | undefined;
     if (!allowed) {
-      const existing = await withTurnLock(turn.turnId, inspect);
+      const existing = await withTurnLock(turn.turnId, (client) => inspect(client, true));
       if ('cached' in existing) {
         if (existing.cached) return existing.result;
         return { [appConfirmation]: existing.question as string };
@@ -357,6 +404,7 @@ export async function createApprovals(
           action,
           args: JSON.parse(encoded),
           ...(details ? { details: JSON.parse(details) } : {}),
+          ...(existing.work ? { work: existing.work } : {}),
         },
         options.signal,
       );
