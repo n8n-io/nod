@@ -143,14 +143,15 @@ Nod checks for updates when it starts, every six hours while open, and after you
 ```mermaid
 flowchart TD
   check[Check]:::muted --> ready[Update ready]
-  ready --> supports{In-app notice<br/>available in this build?}
-  supports -- yes --> notice[In-app update notice]:::accent
-  supports -- no --> menu[Restart to update<br/>in the menu]
+  ready --> menu[Restart to update<br/>in the menu]
+  ready -- Build supports notice --> notice[In-app update notice]:::accent
   ready -. Background check,<br/>notifications allowed .-> system[System notification]
-  system --> menu
+  system -- Click --> confirm[Restart or Later dialog]:::accent
+  confirm -- Later --> menu
+  confirm -- Restart --> busy{{Work running?}}
   notice -- Later --> menu
-  notice -- Restart --> busy{{Work running?}}
-  menu --> busy
+  notice -- Restart --> busy
+  menu -- Select --> confirm
   busy -- no --> restart[Restart]:::go
   busy -- yes --> ask[Ask you first]:::accent
   ask -- Restart now --> restart

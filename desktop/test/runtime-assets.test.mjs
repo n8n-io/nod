@@ -1475,7 +1475,7 @@ test('all three checked bundles publish together as one regular Nod release', as
       `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
     );
     await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
-    if (!recovery && !reusedRuntime) {
+    if (!recovery) {
       for (const missing of ['reopened', 'signatures']) {
         await writeFile(
           join(windows, 'windows-check.json'),
@@ -1495,7 +1495,7 @@ test('all three checked bundles publish together as one regular Nod release', as
       await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
       await assert.rejects(f.invoke('draft-all'));
       assert.equal((await f.readState()).created, 0);
-      assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
+      assert.equal((await f.readState()).releases[f.appTag], undefined);
       await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
       await writeFile(
         join(windows, windowsManifest),
