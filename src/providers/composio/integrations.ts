@@ -522,7 +522,7 @@ export function createComposioProvider(options: {
           const exactMatch = exact.length === requested.size;
           const visible = exactMatch ? exact : entries;
           const full = !exactMatch && visible.length > 6 ? visible.slice(0, 3) : visible;
-          const fullNames = new Set([...full, ...exact].map(([slug]) => slug));
+          const fullNames = new Set(full.map(([slug]) => slug));
           const hydrate =
             enabled.size > 0 && [...enabled].every((slug) => toolkits.includes(slug))
               ? missing.filter(([slug]) => fullNames.has(slug))

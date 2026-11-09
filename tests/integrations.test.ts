@@ -8483,12 +8483,12 @@ test('large Gmail searches hydrate visible schemas and exact names without loadi
   );
 
   requests.length = 0;
-  const partialExact = (await session.search(`${slugs[18]}, CONNECTED_HTTP`)).tools as Record<
+  const mixedQuery = (await session.search(`${slugs[18]}, CONNECTED_HTTP`)).tools as Record<
     string,
     { hasFullSchema?: boolean }
   >;
-  assert.deepEqual(requests, [[...slugs.slice(0, 3), slugs[18]]]);
-  assert.equal(partialExact[slugs[18]!]!.hasFullSchema, true);
+  assert.deepEqual(requests, [slugs.slice(0, 3)]);
+  assert.equal(mixedQuery[slugs[18]!]!.hasFullSchema, false);
 
   requests.length = 0;
   advertised = Object.fromEntries(slugs.slice(0, 5).map((slug) => [slug, incomplete(slug)]));
