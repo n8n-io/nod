@@ -1296,6 +1296,92 @@ test(
         },
       );
 
+      await t.test('state counts all hidden messages while bounding recent IDs', async () => {
+        const beforeResponse = await request('GET', '/api/state');
+        assert.equal(beforeResponse.statusCode, 200, beforeResponse.body);
+        const before = beforeResponse.json<AppState>();
+        assert.ok(Number.isInteger(before.hiddenMessageCount));
+        const hiddenIds: string[] = Array.from({ length: 161 }, () => randomUUID());
+        const visibleId = randomUUID();
+        const foreignId = randomUUID();
+        const archivedId = randomUUID();
+        const archivedThreadId = randomUUID();
+        await pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+          archivedThreadId,
+          ownerId,
+        ]);
+        try {
+          await pool.query(
+            `INSERT INTO messages(id,owner_id,thread_id,role,text,hidden_at)
+             SELECT source.id,$2,$3,'assistant','Retired state fixture',
+               clock_timestamp()+make_interval(mins => source.position::int)
+             FROM unnest($1::uuid[]) WITH ORDINALITY AS source(id,position)`,
+            [hiddenIds, ownerId, before.threadId],
+          );
+          await pool.query(
+            `INSERT INTO messages(id,owner_id,thread_id,role,text,hidden_at) VALUES
+             ($1,$2,$3,'assistant','Visible state fixture',NULL),
+             ($4,'foreign-owner',$3,'assistant','Foreign retired fixture',now()+interval '1 day'),
+             ($5,$2,$6,'assistant','Archived retired fixture',now()+interval '1 day')`,
+            [visibleId, ownerId, before.threadId, foreignId, archivedId, archivedThreadId],
+          );
+          const response = await request('GET', '/api/state');
+          assert.equal(response.statusCode, 200, response.body);
+          const state = response.json<AppState>();
+          assert.equal(state.hiddenMessageCount, before.hiddenMessageCount! + hiddenIds.length);
+          assert.equal(state.hiddenMessageIds?.length, 150);
+          assert.deepEqual(state.hiddenMessageIds, hiddenIds.slice(-150).reverse());
+          assert.ok(state.messages.some(({ id }) => id === visibleId));
+          assert.ok(state.messages.every(({ id }) => !hiddenIds.includes(id)));
+          const originalQuery = pool.query;
+          const query = originalQuery.bind(pool) as unknown as (
+            ...args: unknown[]
+          ) => Promise<unknown>;
+          let visibleRead: Promise<unknown> | undefined;
+          pool.query = ((...args: unknown[]) => {
+            const sql = args[0];
+            if (typeof sql !== 'string') return query(...args);
+            if (sql.includes('FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1')) {
+              const result = query(...args);
+              visibleRead = result;
+              return result;
+            }
+            if (sql.includes('ARRAY(SELECT id FROM messages WHERE owner_id=$1'))
+              return (async () => {
+                assert.ok(visibleRead);
+                await visibleRead;
+                await query(
+                  "UPDATE messages SET hidden_at=now()+interval '1 day' WHERE id=$1 AND owner_id=$2",
+                  [visibleId, ownerId],
+                );
+                return query(...args);
+              })();
+            return query(...args);
+          }) as typeof pool.query;
+          try {
+            const racedResponse = await request('GET', '/api/state');
+            assert.equal(racedResponse.statusCode, 200, racedResponse.body);
+            const racedState = racedResponse.json<AppState>();
+            assert.equal(racedState.hiddenMessageCount, state.hiddenMessageCount! + 1);
+            assert.equal(racedState.hiddenMessageIds?.[0], visibleId);
+            assert.equal(
+              racedState.messages.some(({ id }) => id === visibleId),
+              false,
+            );
+          } finally {
+            pool.query = originalQuery;
+          }
+        } finally {
+          await pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+            [...hiddenIds, visibleId, foreignId, archivedId],
+          ]);
+          await pool.query('DELETE FROM threads WHERE id=$1 AND owner_id=$2', [
+            archivedThreadId,
+            ownerId,
+          ]);
+        }
+      });
+
       await t.test(
         'direct schedule cancellation waits for a channel confirmation in flight',
         async () => {

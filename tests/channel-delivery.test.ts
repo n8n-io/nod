@@ -2207,8 +2207,26 @@ for (const provider of ['telegram', 'whatsapp'])
       );
       const firstConfirmation = randomUUID();
       const racedConfirmation = randomUUID();
+      const lateConfirmation = randomUUID();
       const submitted: Array<{ text: string; target?: string }> = [];
       const answered: string[] = [];
+      const query = pool.query.bind(pool) as (
+        text: string,
+        values?: unknown[],
+      ) => Promise<pg.QueryResult>;
+      let retireAfterNativeReply = false;
+      t.mock.method(pool, 'query', async (text: string, values?: unknown[]) => {
+        const result = await query(text, values);
+        if (
+          retireAfterNativeReply &&
+          text.includes('SELECT o.message_id FROM channel_outbox') &&
+          result.rows[0]?.message_id === racedConfirmation
+        ) {
+          retireAfterNativeReply = false;
+          await query('UPDATE messages SET hidden_at=now() WHERE id=$1', [racedConfirmation]);
+        }
+        return result;
+      });
       const channels = await create({
         answer: async (text) => {
           answered.push(text);
@@ -2221,11 +2239,9 @@ for (const provider of ['telegram', 'whatsapp'])
             "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
             [turnId, threadId, sourceId, channel],
           );
-          if (text === 'Yes, cancel the second task') {
-            assert.equal(target, racedConfirmation);
-            await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [
-              racedConfirmation,
-            ]);
+          if (text === 'Yes, cancel the third task') {
+            assert.equal(target, lateConfirmation);
+            await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [lateConfirmation]);
             throw Object.assign(new Error('The reply is unavailable in this conversation.'), {
               statusCode: 404,
             });
@@ -2252,16 +2268,39 @@ for (const provider of ['telegram', 'whatsapp'])
         await reply(initial, 'Cancel the second task?', racedConfirmation, 1);
         await channels.drain();
         assert.equal(posts.length, 2);
+        retireAfterNativeReply = true;
         receive('111', 'stale-race', 'chat-a', 'Yes, cancel the second task', 'provider-2');
         receive('111', 'following-race', 'chat-a', 'Check the weather');
         await channels.drain();
+        assert.equal(retireAfterNativeReply, false);
+        assert.equal(
+          submitted.some((item) => item.text === 'Yes, cancel the second task'),
+          false,
+        );
+        assert.equal(answered.includes('Yes, cancel the second task'), false);
+        await reply(initial, 'Cancel the third task?', lateConfirmation, 2);
+        await channels.drain();
+        assert.equal(posts.length, 3);
+        receive('111', 'stale-late', 'chat-a', 'Yes, cancel the third task', 'provider-3');
+        receive('111', 'following-late', 'chat-a', 'Summarize my calendar');
+        await channels.drain();
+        assert.equal(answered.includes('Yes, cancel the third task'), true);
+        assert.deepEqual(
+          submitted.find((item) => item.text === 'Yes, cancel the third task'),
+          { text: 'Yes, cancel the third task', target: lateConfirmation },
+        );
         const inbox = (
           await pool.query(
             'SELECT source_id,state,turn_id FROM channel_inbox WHERE source_id=ANY($1::text[]) ORDER BY source_id',
             [
-              ['stale-first', 'following-first', 'stale-race', 'following-race'].map(
-                (id) => `channel:${provider}:bot:${id}`,
-              ),
+              [
+                'stale-first',
+                'following-first',
+                'stale-race',
+                'following-race',
+                'stale-late',
+                'following-late',
+              ].map((id) => `channel:${provider}:bot:${id}`),
             ],
           )
         ).rows;
@@ -2273,8 +2312,10 @@ for (const provider of ['telegram', 'whatsapp'])
           })),
           [
             { source: 'following-first', state: 'submitted', hasTurn: true },
+            { source: 'following-late', state: 'submitted', hasTurn: true },
             { source: 'following-race', state: 'submitted', hasTurn: true },
             { source: 'stale-first', state: 'discarded', hasTurn: false },
+            { source: 'stale-late', state: 'discarded', hasTurn: false },
             { source: 'stale-race', state: 'discarded', hasTurn: false },
           ],
         );
@@ -2282,7 +2323,7 @@ for (const provider of ['telegram', 'whatsapp'])
           (await pool.query('SELECT source_id FROM turns ORDER BY source_id')).rows.map(
             ({ source_id }) => source_id,
           ),
-          ['following-first', 'following-race', 'initial'].map(
+          ['following-first', 'following-late', 'following-race', 'initial'].map(
             (id) => `channel:${provider}:bot:${id}`,
           ),
         );

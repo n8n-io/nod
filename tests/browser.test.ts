@@ -6487,24 +6487,324 @@ test('chat retires reply targets without losing drafts or duplicating ambiguous 
           error: 'The reply is unavailable in this conversation.',
         }, { status: 404 })));
         await settle(() => hasDraft() && !document.querySelector('.composer-reply'));
+        await submit();
+        await settle(() => requests.length === 2);
+        assert.equal(requests[1].replyToMessageId, undefined);
+        assert.notEqual(requests[1].clientMessageId, requests[0].clientMessageId);
+        await act(async () => releases[1].reject(new TypeError('Synthetic plain response lost')));
+        await settle(hasDraft);
         state = { ...state, hiddenMessageIds: [ids[0], ids[1]] };
         await render();
         await reply(ids[2]);
         await submit();
-        await settle(() => requests.length === 2);
-        assert.equal(requests[1].replyToMessageId, ids[2]);
-        committed = requests[1];
-        state = { ...state, hiddenMessageIds: ids };
+        await settle(() => requests.length === 3);
+        assert.equal(requests[2].replyToMessageId, ids[2]);
+        committed = requests[2];
+        await act(async () => releases[2].reject(new TypeError('Synthetic response lost')));
+        await settle(() => hasDraft() && document.querySelector('.composer-reply'));
+        state = { ...state, hiddenMessageIds: ids, messages: [...messages, {
+          id: committed.clientMessageId, role: 'user', text: draft, attachments: [],
+          replyToMessageId: ids[2], turnId: 'synthetic-committed-turn', createdAt: '2026-10-26T12:01:00Z',
+        }] };
         await render();
-        await act(async () => releases[1].reject(new TypeError('Synthetic response lost')));
         await settle(() => hasDraft() && !document.querySelector('.composer-reply'));
         await submit();
-        await settle(() => requests.length === 3 &&
-          document.querySelector('[role="alert"]')?.textContent.includes('This message ID'));
-        assert.equal(requests[2].replyToMessageId, undefined);
-        assert.equal(requests[2].clientMessageId, committed.clientMessageId);
-        assert.equal(requests[2].text, draft);
+        await settle(() => requests.length === 4);
+        assert.equal(requests[3].replyToMessageId, undefined);
+        assert.notEqual(requests[3].clientMessageId, committed.clientMessageId);
+        assert.equal(requests[3].text, draft);
+        assert.ok(document.querySelector('[data-message-id="' + committed.clientMessageId + '"]'));
+        assert.equal(document.querySelector('[role="alert"]'), null);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
+test('chat reloads older history after hidden confirmations exceed the ID window', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [rect];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [rect];
+      document.hasFocus = () => true;
+      const older = {
+        id: '00000000-0000-4000-8000-000000000801', role: 'assistant',
+        text: 'Older synthetic confirmation', attachments: [], turnId: 'synthetic-old-turn',
+        createdAt: '2026-10-25T12:00:00Z',
+      };
+      const stale = { ...older, id: '00000000-0000-4000-8000-000000000802',
+        text: 'Another retired confirmation', createdAt: '2026-10-24T12:00:00Z' };
+      const latest = Array.from({ length: 150 }, (_, index) => ({
+        id: '00000000-0000-4000-8000-' + String(1000 + index).padStart(12, '0'),
+        role: 'assistant', text: 'Recent synthetic message ' + index, attachments: [],
+        turnId: 'synthetic-recent-turn',
+        createdAt: new Date(Date.parse('2026-10-26T12:00:00Z') + index * 60_000).toISOString(),
+      }));
+      const recentHidden = Array.from({ length: 150 }, (_, index) =>
+        '00000000-0000-4000-8000-' + String(5000 + index).padStart(12, '0'));
+      const unreadTarget = latest[51];
+      const readCursor = { createdAt: latest[50].createdAt, messageIds: [latest[50].id] };
+      const threadId = '00000000-0000-4000-8000-000000000811';
+      const draft = 'Synthetic older reply';
+      const draftKey = 'nod.chat-draft.synthetic-owner.' + threadId;
+      localStorage.setItem(draftKey,
+        JSON.stringify({ version: 1, text: draft, reply: null, attachments: [], missing: [] }));
+      let retired = false, oldHistory = null, validReload = null, freshPages = 0, aroundChecks = 0;
+      const rejectSend = [];
+      const sends = [];
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        if (path === '/api/messages/around/' + older.id) {
+          aroundChecks++;
+          if (!retired && state.hiddenMessageCount === 152 && aroundChecks === 2)
+            throw new TypeError('Synthetic availability check offline');
+          return retired
+            ? Response.json({ error: 'Message not found.' }, { status: 404 })
+            : Response.json([older]);
+        }
+        if (String(path).startsWith('/api/messages?')) {
+          const beforeId = new URL(String(path), 'https://nod.fixture.invalid').searchParams.get('beforeId');
+          if (!retired && state.hiddenMessageCount === 152 && beforeId === latest[0].id)
+            return new Promise(resolve => { validReload = resolve; });
+          if (!retired && beforeId === older.id)
+            return new Promise(resolve => { oldHistory = resolve; });
+          if (retired) {
+            freshPages++;
+            return Response.json({ messages: [], hasMore: false });
+          }
+          return Response.json({ messages: [older], hasMore: true });
+        }
+        assert.equal(path, '/api/messages');
+        const body = JSON.parse(options.body);
+        sends.push(body);
+        if (sends.length <= 2)
+          return new Promise((_resolve, reject) => { rejectSend.push(reject); });
+        return Response.json({ messageId: body.clientMessageId, turnId: 'synthetic-sent-turn' });
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      let state = {
+        threadId, turns: [], activity: [], tasks: [], verificationRequests: [],
+        configuration: { llmReady: true }, messages: latest, hasEarlierMessages: true,
+        hiddenMessageCount: 151, hiddenMessageIds: recentHidden,
+      };
+      const root = createRoot(document.getElementById('root'));
+      const render = () => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {},
+        readCursor,
+      })));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected hidden-history transition to settle');
+      };
+      const hasDraft = () => document.querySelector('[contenteditable]')?.textContent === draft;
+      const visible = id => Boolean(document.querySelector('[data-message-id="' + id + '"]'));
+      const firstUnread = () => document.querySelector('.unread-divider')?.nextElementSibling?.getAttribute('data-message-id');
+      const submit = () => act(async () => document.querySelector('form').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })));
+      try {
+        await render();
+        await settle(hasDraft);
+        assert.equal(firstUnread(), unreadTarget.id);
+        await act(async () => window.dispatchEvent(new CustomEvent('nod:focus-message', {
+          detail: { messageId: older.id },
+        })));
+        await settle(() => visible(older.id));
+        await act(async () => new Promise(resolve => setTimeout(resolve, 30)));
+        const reply = document.querySelector('[data-message-id="' + older.id + '"] [aria-label="Reply to message"]');
+        assert.ok(reply);
+        await act(async () => reply.click());
+        assert.ok(document.querySelector('.composer-reply'));
+        await submit();
+        await settle(() => sends.length === 1 && rejectSend.length === 1);
+        await act(async () => rejectSend[0](new TypeError('Synthetic response lost')));
+        await settle(() => hasDraft() && document.querySelector('.composer-reply'));
+        state = { ...state, hiddenMessageCount: 152,
+          hiddenMessageIds: [unreadTarget.id, ...recentHidden.slice(0, 149)],
+          messages: latest.filter(message => message.id !== unreadTarget.id) };
+        await render();
+        assert.equal(firstUnread(), latest[52].id);
+        const retryReply = () => document.querySelector(
+          '.composer-reply button[aria-label="Retry reply availability"]');
+        await settle(() => aroundChecks >= 2 && validReload && retryReply());
+        assert.ok(!document.querySelector('.composer-reply')?.textContent.includes('Older synthetic confirmation'));
+        assert.equal(JSON.parse(localStorage.getItem(draftKey)).reply.text, older.text);
         assert.ok(hasDraft());
+        await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+        assert.equal(aroundChecks, 2);
+        await act(async () => retryReply().click());
+        await settle(() => aroundChecks >= 3 &&
+          document.querySelector('.composer-reply .message-reply-quote'));
+        assert.ok(hasDraft());
+        await submit();
+        await settle(() => sends.length === 2 && rejectSend.length === 2 &&
+          document.querySelector('.message-user .message-reply-quote'));
+        assert.ok(aroundChecks >= 3);
+        assert.equal(sends[1].clientMessageId, sends[0].clientMessageId);
+        assert.equal(sends[1].replyToMessageId, older.id);
+        await act(async () => validReload(Response.json({ messages: [older], hasMore: true })));
+        await settle(() => visible(older.id));
+        const scroll = document.querySelector('.conversation-scroll');
+        Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 100 });
+        Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 200 });
+        for (let attempt = 0; attempt < 30 && !oldHistory; attempt++)
+          await act(async () => {
+            scroll.scrollTop = 0;
+            scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 10));
+          });
+        assert.ok(oldHistory, 'Expected older pagination to be pending');
+        const pendingReply = document.querySelector('[data-message-id="' + older.id + '"] [aria-label="Reply to message"]');
+        assert.ok(pendingReply);
+        await act(async () => pendingReply.click());
+        assert.ok(document.querySelector('.composer-reply'));
+        retired = true;
+        state = { ...state, hiddenMessageCount: 303, hiddenMessageIds: recentHidden,
+          hasEarlierMessages: false };
+        await render();
+        assert.equal(visible(older.id), false);
+        assert.ok(!document.querySelector('.composer-reply')?.textContent.includes('Older synthetic confirmation'));
+        assert.ok(document.querySelector('.message-user'));
+        assert.equal(document.querySelector('.message-user .message-reply-quote'), null);
+        await settle(() => !document.querySelector('.composer-reply'));
+        await act(async () => oldHistory(Response.json({ messages: [stale], hasMore: false })));
+        await settle(() => freshPages > 0 && !visible(stale.id));
+        assert.equal(visible(older.id), false);
+        await act(async () => rejectSend[1](new TypeError('Synthetic second response lost')));
+        await settle(() => hasDraft() && !document.querySelector('.composer-reply'));
+        assert.equal(JSON.parse(localStorage.getItem(draftKey)).reply, null);
+        await submit();
+        await settle(() => document.querySelector('[role="alert"]')?.textContent.includes('may have been sent'));
+        assert.equal(sends.length, 2);
+        assert.ok(hasDraft());
+        await submit();
+        await settle(() => sends.length === 3);
+        assert.equal(sends[2].replyToMessageId, undefined);
+        assert.notEqual(sends[2].clientMessageId, sends[0].clientMessageId);
+        assert.equal(sends[2].text, draft);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
+test('chat removes a cached older reply quote when its target becomes hidden', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [rect];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [rect];
+      const target = {
+        id: '00000000-0000-4000-8000-000000000851', role: 'assistant',
+        text: 'Older synthetic confirmation', attachments: [],
+        turnId: 'synthetic-old-turn', createdAt: '2026-10-25T12:00:00Z',
+      };
+      const olderReply = {
+        id: '00000000-0000-4000-8000-000000000852', role: 'user',
+        text: 'Synthetic response', attachments: [], replyToMessageId: target.id,
+        replyTo: { id: target.id, role: target.role, text: target.text },
+        turnId: 'synthetic-reply-turn', createdAt: '2026-10-25T12:01:00Z',
+      };
+      const recent = {
+        id: '00000000-0000-4000-8000-000000000853', role: 'assistant',
+        text: 'Recent synthetic message', attachments: [],
+        turnId: 'synthetic-recent-turn', createdAt: '2026-10-26T12:00:00Z',
+      };
+      globalThis.fetch = async path => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        if (path === '/api/messages/around/' + olderReply.id)
+          return Response.json([target, olderReply]);
+        if (String(path).startsWith('/api/messages?'))
+          return Response.json({ messages: [], hasMore: false });
+        throw new Error('Unexpected request: ' + path);
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      let state = {
+        threadId: '00000000-0000-4000-8000-000000000854',
+        turns: [], activity: [], tasks: [], verificationRequests: [],
+        configuration: { llmReady: true }, messages: [recent], hasEarlierMessages: true,
+        hiddenMessageCount: 0, hiddenMessageIds: [],
+      };
+      const root = createRoot(document.getElementById('root'));
+      const render = () => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {},
+      })));
+      const quote = () => document.querySelector(
+        '[data-message-id="' + olderReply.id + '"] .message-reply-quote');
+      try {
+        await render();
+        await act(async () => window.dispatchEvent(new CustomEvent('nod:focus-message', {
+          detail: { messageId: olderReply.id },
+        })));
+        for (let attempt = 0; attempt < 100 && !quote(); attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(quote(), 'Expected the older persisted reply quote to load');
+        state = { ...state, hiddenMessageCount: 1, hiddenMessageIds: [target.id] };
+        await render();
+        assert.ok(document.querySelector('[data-message-id="' + olderReply.id + '"]'));
+        assert.equal(document.querySelector('[data-message-id="' + target.id + '"]'), null);
+        assert.equal(quote(), null);
       } finally {
         await act(async () => root.unmount());
         dom.window.close();

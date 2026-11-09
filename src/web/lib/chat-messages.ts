@@ -34,6 +34,11 @@ export function mergeMessages(
   for (const message of incoming) byId.set(message.id, message);
   return [...byId.values()]
     .filter((message) => !hiddenIds?.has(message.id))
+    .map((message) =>
+      message.replyTo && hiddenIds?.has(message.replyTo.id)
+        ? { ...message, replyTo: undefined }
+        : message,
+    )
     .sort(
       (a, b) =>
         Date.parse(a.createdAt) - Date.parse(b.createdAt) ||

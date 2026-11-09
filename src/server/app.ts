@@ -225,17 +225,24 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
+    const messageRows = pool.query(
+      `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
+         LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
+      [ownerId, thread.id],
+    );
+    const hiddenMetadata = messageRows.then(() =>
+      pool.query<{ count: number; ids: string[] }>(
+        `SELECT
+          (SELECT count(*)::int FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL) AS count,
+          ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL
+            ORDER BY hidden_at DESC,id DESC LIMIT 150) AS ids`,
+        [ownerId, thread.id],
+      ),
+    );
     const [messages, hiddenMessages, turns, pendingChoices, verificationRequests, activity] =
       await Promise.all([
-        pool.query(
-          `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
-         LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
-          [ownerId, thread.id],
-        ),
-        pool.query<{ id: string }>(
-          'SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL',
-          [ownerId, thread.id],
-        ),
+        messageRows,
+        hiddenMetadata,
         pool.query(
           `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
           [ownerId, thread.id],
@@ -254,7 +261,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
         dependencies.activity?.() ?? [],
       ]);
     const hasEarlierMessages = messages.rows.length > 150;
-    const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
+    const hiddenIds = new Set(hiddenMessages.rows[0]!.ids);
+    const visibleMessages = messages.rows
+      .slice(hasEarlierMessages ? 1 : 0)
+      .filter((message) => !hiddenIds.has(message.id));
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
@@ -265,7 +275,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
-      hiddenMessageIds: hiddenMessages.rows.map(({ id }) => id),
+      hiddenMessageCount: hiddenMessages.rows[0]!.count,
+      hiddenMessageIds: hiddenMessages.rows[0]!.ids,
       pendingAnswerChoiceMessageIds: pendingChoices.rows.map(({ id }) => id),
       messages: await messageViews(visibleMessages),
       turns: [...turns.rows, ...olderTurns],

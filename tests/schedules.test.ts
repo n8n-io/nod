@@ -847,7 +847,7 @@ test(
   },
 );
 
-test('scheduled controls await a delayed pause and delete response', async (t) => {
+test('scheduled controls reconcile pause and delete after a client timeout', async (t) => {
   const { JSDOM } = await import('jsdom');
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: 'https://nod.example.test/',
@@ -891,30 +891,56 @@ test('scheduled controls await a delayed pause and delete response', async (t) =
   };
   let current: Schedule | null = schedule;
   const mutations: string[] = [];
+  const attempts: string[] = [];
+  let mutationDelay = 650;
+  let finishAfterAbort = false;
+  let holdNextMutation = false;
+  const heldMutations: Array<() => void> = [];
+  let reads = 0;
   t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL, options?: RequestInit) => {
     assert.equal(String(path), `/api/schedules${options?.method ? `/${schedule.id}` : ''}`);
-    if (!options?.method) return Response.json(current ? [current] : []);
+    if (!options?.method) {
+      reads++;
+      return Response.json(current ? [current] : []);
+    }
+    if (options.method === 'PATCH')
+      assert.deepEqual(JSON.parse(String(options.body)), { enabled: false, expectedRevision: 1 });
+    else assert.equal(options.method, 'DELETE');
+    attempts.push(options.method);
     const signal = options.signal;
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, 650);
+    const held = holdNextMutation;
+    holdNextMutation = false;
+    return new Promise<Response>((resolve, reject) => {
+      const commit = () => {
+        if (options.method === 'PATCH') {
+          if (current?.revision !== 1) {
+            resolve(Response.json({ error: 'Schedule changed.' }, { status: 409 }));
+            return;
+          }
+          mutations.push(options.method);
+          current = { ...schedule, enabled: false, revision: 2 };
+          resolve(Response.json(current));
+        } else {
+          if (!current) {
+            resolve(Response.json({ error: 'Schedule not found.' }, { status: 404 }));
+            return;
+          }
+          mutations.push(options.method!);
+          current = null;
+          resolve(Response.json({ ok: true }));
+        }
+      };
+      const timer = held ? undefined : setTimeout(commit, mutationDelay);
+      if (held) heldMutations.push(commit);
       signal?.addEventListener(
         'abort',
         () => {
-          clearTimeout(timer);
+          if (!finishAfterAbort && timer) clearTimeout(timer);
           reject(signal.reason);
         },
         { once: true },
       );
     });
-    mutations.push(options.method);
-    if (options.method === 'PATCH') {
-      assert.deepEqual(JSON.parse(String(options.body)), { enabled: false });
-      current = { ...schedule, enabled: false, revision: 2 };
-      return Response.json(current);
-    }
-    assert.equal(options.method, 'DELETE');
-    current = null;
-    return Response.json({ ok: true });
   });
   const { act, createElement, Fragment } = await import('react');
   const { createRoot } = await import('react-dom/client');
@@ -953,12 +979,38 @@ test('scheduled controls await a delayed pause and delete response', async (t) =
     assert.ok(button);
     await act(async () => button.click());
   };
+  const buttonByText = (label: string) =>
+    [...dom.window.document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+  const clickButton = async (label: string) => {
+    const button = buttonByText(label);
+    assert.ok(button);
+    await act(async () => button.click());
+  };
+  const release = async () => {
+    const commit = heldMutations.shift();
+    assert.ok(commit);
+    await act(async () => commit());
+  };
+  const waitFor = async (ready: () => boolean, name: string, timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!ready()) {
+      if (Date.now() >= deadline) assert.fail(`Timed out waiting for ${name}`);
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    }
+  };
   await click('[role="switch"]');
   assert.equal(
     dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
     true,
   );
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 750)));
+  await waitFor(
+    () =>
+      mutations.length === 1 &&
+      dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled') === false,
+    'initial pause',
+  );
   assert.match(
     dom.window.document.querySelector('.plan-toast')?.textContent ?? '',
     /Paused Delayed schedule/,
@@ -973,7 +1025,146 @@ test('scheduled controls await a delayed pause and delete response', async (t) =
     dom.window.document.querySelector('.delete-plan-dialog')?.textContent ?? '',
     /Deleting/,
   );
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 750)));
+  await waitFor(
+    () => dom.window.document.querySelector('.delete-plan-dialog') === null,
+    'initial deletion',
+  );
   assert.equal(dom.window.document.querySelector('.delete-plan-dialog'), null);
   assert.deepEqual(mutations, ['PATCH', 'DELETE']);
+  current = schedule;
+  mutationDelay = 1200;
+  finishAfterAbort = true;
+  const beforeReads = reads;
+  await click('[role="switch"]');
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    true,
+  );
+  await waitFor(
+    () =>
+      current?.enabled === false &&
+      reads > beforeReads &&
+      dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled') === false,
+    'pause after client timeout',
+  );
+  assert.equal(current.enabled, false);
+  assert.match(
+    dom.window.document.querySelector('.plan-toast')?.textContent ?? '',
+    /Paused Delayed schedule/,
+  );
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    false,
+  );
+  assert.ok(reads > beforeReads);
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH']);
+  await click('button[aria-label="Delete schedule Delayed schedule"]');
+  await click('.delete-plan-actions button.button-destructive');
+  await waitFor(
+    () => current === null && dom.window.document.querySelector('.delete-plan-dialog') === null,
+    'deletion after client timeout',
+  );
+  assert.equal(dom.window.document.querySelector('.delete-plan-dialog'), null);
+  assert.equal(current, null);
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE']);
+  current = schedule;
+  holdNextMutation = true;
+  await click('button[aria-label="Delete schedule Delayed schedule"]');
+  await click('.delete-plan-actions button.button-destructive');
+  await waitFor(
+    () =>
+      dom.window.document
+        .querySelector('.delete-plan-dialog')
+        ?.textContent?.includes('The deletion may still finish.') === true,
+    'unresolved deletion',
+  );
+  assert.match(
+    dom.window.document.querySelector('.delete-plan-dialog')?.textContent ?? '',
+    /deletion may still finish/i,
+  );
+  assert.equal(
+    dom.window.document
+      .querySelector('.delete-plan-actions button.button-destructive')
+      ?.hasAttribute('disabled'),
+    true,
+  );
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE']);
+  assert.equal(current, schedule);
+  await release();
+  await click('.delete-plan-actions button.button-outline');
+  await waitFor(
+    () => dom.window.document.querySelector('.delete-plan-dialog') === null,
+    'confirmed late deletion',
+  );
+  assert.equal(dom.window.document.querySelector('.delete-plan-dialog'), null);
+  assert.equal(current, null);
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE']);
+  current = schedule;
+  holdNextMutation = true;
+  await click('[role="switch"]');
+  await waitFor(
+    () =>
+      dom.window.document
+        .querySelector('.plan-toast')
+        ?.textContent?.includes('may still finish') === true,
+    'unresolved pause',
+  );
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    true,
+  );
+  assert.equal(buttonByText('Try again'), undefined);
+  assert.equal(current, schedule);
+  assert.equal(attempts.filter((method) => method === 'PATCH').length, 3);
+  await clickButton('Check status');
+  await waitFor(() => Boolean(buttonByText('Try again')), 'qualified pause retry');
+  assert.ok(dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'));
+  mutationDelay = 650;
+  await clickButton('Try again');
+  await waitFor(
+    () =>
+      current?.enabled === false &&
+      dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled') === false,
+    'retried pause',
+  );
+  assert.equal(current.enabled, false);
+  assert.equal(
+    dom.window.document.querySelector('[role="switch"]')?.hasAttribute('disabled'),
+    false,
+  );
+  await release();
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE', 'PATCH']);
+  assert.equal(attempts.filter((method) => method === 'PATCH').length, 4);
+  current = schedule;
+  holdNextMutation = true;
+  await click('button[aria-label="Delete schedule Delayed schedule"]');
+  await click('.delete-plan-actions button.button-destructive');
+  await waitFor(
+    () =>
+      dom.window.document
+        .querySelector('.delete-plan-dialog')
+        ?.textContent?.includes('The deletion may still finish.') === true,
+    'unresolved deletion before retry',
+  );
+  assert.equal(attempts.filter((method) => method === 'DELETE').length, 4);
+  assert.equal(buttonByText('Try deleting again'), undefined);
+  await clickButton('Check status');
+  await waitFor(() => Boolean(buttonByText('Try deleting again')), 'qualified deletion retry');
+  assert.equal(
+    [...dom.window.document.querySelectorAll<HTMLButtonElement>('.delete-plan-actions button')]
+      .find((button) => button.textContent?.trim() === 'Delete schedule')
+      ?.hasAttribute('disabled'),
+    true,
+  );
+  mutationDelay = 650;
+  await clickButton('Try deleting again');
+  await waitFor(
+    () => current === null && dom.window.document.querySelector('.delete-plan-dialog') === null,
+    'retried deletion',
+  );
+  assert.equal(current, null);
+  assert.equal(dom.window.document.querySelector('.delete-plan-dialog'), null);
+  await release();
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE', 'PATCH', 'DELETE']);
+  assert.equal(attempts.filter((method) => method === 'DELETE').length, 5);
 });
