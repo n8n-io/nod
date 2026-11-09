@@ -312,14 +312,23 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   }, [turnId, attempt, closed, expanded, unavailable]);
 
   useEffect(() => {
-    if (!shown || revealed.has(turnId)) return;
-    revealed.add(turnId);
-    dialog.current?.scrollIntoView({
-      block: 'nearest',
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 'instant'
-        : 'smooth',
-    });
+    const element = dialog.current;
+    if (!shown || !element || revealed.has(turnId)) return;
+    const reveal = () => {
+      if (revealed.has(turnId) || !element.getClientRects().length) return;
+      revealed.add(turnId);
+      observer?.disconnect();
+      element.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'instant'
+          : 'smooth',
+      });
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(reveal);
+    observer?.observe(element);
+    reveal();
+    return () => observer?.disconnect();
   }, [shown, turnId]);
 
   useEffect(() => {
