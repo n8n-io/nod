@@ -2208,13 +2208,32 @@ for (const provider of ['telegram', 'whatsapp'])
       const firstConfirmation = randomUUID();
       const racedConfirmation = randomUUID();
       const lateConfirmation = randomUUID();
+      const lateReplacementConfirmation = randomUUID();
+      const hiddenAfterLookup = randomUUID();
+      const unrelatedHidden = randomUUID();
+      const activeConfirmation = randomUUID();
+      const scheduleConfirmations = new Set<string>([
+        firstConfirmation,
+        racedConfirmation,
+        lateConfirmation,
+        lateReplacementConfirmation,
+        hiddenAfterLookup,
+        activeConfirmation,
+      ]);
       const submitted: Array<{ text: string; target?: string }> = [];
+      const submittedAnswers: Array<{
+        text: string;
+        answer?: { approvalId: string; approved?: boolean };
+      }> = [];
       const answered: string[] = [];
+      const classified: Array<{ text: string; confirmation: string }> = [];
+      const commands: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
       const query = pool.query.bind(pool) as (
         text: string,
         values?: unknown[],
       ) => Promise<pg.QueryResult>;
       let retireAfterNativeReply = false;
+      let retireAfterHiddenLookup = false;
       t.mock.method(pool, 'query', async (text: string, values?: unknown[]) => {
         const result = await query(text, values);
         if (
@@ -2225,15 +2244,39 @@ for (const provider of ['telegram', 'whatsapp'])
           retireAfterNativeReply = false;
           await query('UPDATE messages SET hidden_at=now() WHERE id=$1', [racedConfirmation]);
         }
+        if (
+          retireAfterHiddenLookup &&
+          text ===
+            'SELECT text FROM messages WHERE id=$1 AND owner_id=$2 AND hidden_at IS NOT NULL' &&
+          values?.[0] === hiddenAfterLookup &&
+          !result.rowCount
+        ) {
+          retireAfterHiddenLookup = false;
+          await query('UPDATE messages SET hidden_at=now() WHERE id=$1', [hiddenAfterLookup]);
+        }
         return result;
       });
       const channels = await create({
-        answer: async (text) => {
-          answered.push(text);
-          return undefined;
+        isRetirableScheduleConfirmation: async (id) => scheduleConfirmations.has(id),
+        classifyRetiredReply: async (text, confirmation) => {
+          classified.push({ text, confirmation });
+          if (text === 'Why is this happening?') throw new Error('Synthetic classifier failure.');
+          if (
+            text === 'Why did you ask?' ||
+            text === 'Yes, move the reminder to tomorrow' ||
+            text === 'Yes, move the fifth task to tomorrow' ||
+            text === 'Why is the fourth task still here?'
+          )
+            return 'new';
+          return text === 'Maybe' ? 'uncertain' : 'stale';
         },
-        submit: async (text, sourceId, client, channel, _messageId, _answer, target) => {
+        answer: async (text, _channel, target) => {
+          answered.push(text);
+          return target ? { approvalId: 'synthetic-approval', approved: true } : undefined;
+        },
+        submit: async (text, sourceId, client, channel, _messageId, answer, target) => {
           submitted.push({ text, target });
+          submittedAnswers.push({ text, answer });
           const turnId = randomUUID();
           await client.query(
             "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
@@ -2246,7 +2289,20 @@ for (const provider of ['telegram', 'whatsapp'])
               statusCode: 404,
             });
           }
+          if (text === 'Yes, move the fifth task to tomorrow' && target) {
+            assert.equal(target, lateReplacementConfirmation);
+            await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [
+              lateReplacementConfirmation,
+            ]);
+            throw Object.assign(new Error('The reply is unavailable in this conversation.'), {
+              statusCode: 404,
+            });
+          }
           return turnId;
+        },
+        taskCommand: async (_client, command, target, hasReply) => {
+          commands.push({ command, target, hasReply });
+          return { threadId, replies: [{ text: `Fixture ${command}` }] };
         },
       });
       try {
@@ -2265,6 +2321,13 @@ for (const provider of ['telegram', 'whatsapp'])
           false,
         );
         assert.equal(answered.includes('Yes, cancel the first task'), false);
+        assert.deepEqual(
+          classified.find((item) => item.text === 'Yes, cancel the first task'),
+          {
+            text: 'Yes, cancel the first task',
+            confirmation: 'Cancel the first task?',
+          },
+        );
         await reply(initial, 'Cancel the second task?', racedConfirmation, 1);
         await channels.drain();
         assert.equal(posts.length, 2);
@@ -2278,6 +2341,13 @@ for (const provider of ['telegram', 'whatsapp'])
           false,
         );
         assert.equal(answered.includes('Yes, cancel the second task'), false);
+        assert.deepEqual(
+          classified.find((item) => item.text === 'Yes, cancel the second task'),
+          {
+            text: 'Yes, cancel the second task',
+            confirmation: 'Cancel the second task?',
+          },
+        );
         await reply(initial, 'Cancel the third task?', lateConfirmation, 2);
         await channels.drain();
         assert.equal(posts.length, 3);
@@ -2288,6 +2358,13 @@ for (const provider of ['telegram', 'whatsapp'])
         assert.deepEqual(
           submitted.find((item) => item.text === 'Yes, cancel the third task'),
           { text: 'Yes, cancel the third task', target: lateConfirmation },
+        );
+        assert.deepEqual(
+          classified.find((item) => item.text === 'Yes, cancel the third task'),
+          {
+            text: 'Yes, cancel the third task',
+            confirmation: 'Cancel the third task?',
+          },
         );
         const inbox = (
           await pool.query(
@@ -2331,6 +2408,219 @@ for (const provider of ['telegram', 'whatsapp'])
           submitted.find((item) => item.text === 'Check the weather')?.target,
           undefined,
         );
+        await reply(initial, 'Cancel the active task?', activeConfirmation, 3);
+        await channels.drain();
+        receive('111', 'active-yes', 'chat-a', 'Yes', `provider-${posts.length}`);
+        await channels.drain();
+        assert.deepEqual(
+          submitted.find((item) => item.text === 'Yes'),
+          {
+            text: 'Yes',
+            target: activeConfirmation,
+          },
+        );
+        assert.deepEqual(submittedAnswers.find((item) => item.text === 'Yes')?.answer, {
+          approvalId: 'synthetic-approval',
+          approved: true,
+        });
+        assert.equal(
+          classified.some((item) => item.text === 'Yes'),
+          false,
+        );
+
+        await reply(initial, 'Unrelated hidden message', unrelatedHidden, 4);
+        await channels.drain();
+        const unrelatedProviderId = `provider-${posts.length}`;
+        await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [unrelatedHidden]);
+        receive('111', 'unrelated-hidden', 'chat-a', 'Why is this gone?', unrelatedProviderId);
+        await channels.drain();
+        assert.equal(
+          (
+            await pool.query('SELECT state FROM channel_inbox WHERE source_id=$1', [
+              `channel:${provider}:bot:unrelated-hidden`,
+            ])
+          ).rows[0]?.state,
+          'discarded',
+        );
+        assert.equal(
+          classified.some((item) => item.text === 'Why is this gone?'),
+          false,
+        );
+
+        receive('111', 'retired-question', 'chat-a', 'Why did you ask?', 'provider-1');
+        receive(
+          '111',
+          'retired-replacement',
+          'chat-a',
+          'Yes, move the reminder to tomorrow',
+          'provider-1',
+        );
+        receive('111', 'retired-bare-yes', 'chat-a', 'Yes', 'provider-1');
+        receive('111', 'retired-no', 'chat-a', 'No', 'provider-1');
+        receive('111', 'retired-uncertain', 'chat-a', 'Maybe', 'provider-1');
+        receive(
+          '111',
+          'retired-classifier-failure',
+          'chat-a',
+          'Why is this happening?',
+          'provider-1',
+        );
+        receive('111', 'retired-tasks', 'chat-a', '/tasks', 'provider-1');
+        receive('111', 'retired-status', 'chat-a', '/status', 'provider-1');
+        receive('111', 'retired-stop', 'chat-a', '/stop', 'provider-1');
+        receive('111', 'after-classifier-failure', 'chat-a', 'Create a fresh task');
+        await channels.drain();
+        for (const text of ['Why did you ask?', 'Yes, move the reminder to tomorrow']) {
+          assert.deepEqual(
+            submitted.find((item) => item.text === text),
+            {
+              text,
+              target: undefined,
+            },
+          );
+          assert.equal(submittedAnswers.find((item) => item.text === text)?.answer, undefined);
+          assert.equal(answered.includes(text), false);
+          assert.deepEqual(
+            classified.find((item) => item.text === text),
+            {
+              text,
+              confirmation: 'Cancel the first task?',
+            },
+          );
+        }
+        assert.deepEqual(commands, [
+          { command: 'tasks', target: undefined, hasReply: false },
+          { command: 'status', target: undefined, hasReply: false },
+          { command: 'stop', target: undefined, hasReply: true },
+        ]);
+        for (const id of ['retired-bare-yes', 'retired-no']) {
+          assert.deepEqual(
+            (
+              await pool.query('SELECT state,turn_id FROM channel_inbox WHERE source_id=$1', [
+                `channel:${provider}:bot:${id}`,
+              ])
+            ).rows[0],
+            { state: 'discarded', turn_id: null },
+          );
+        }
+        assert.equal(
+          (
+            await pool.query(
+              'SELECT count(*)::int AS n FROM channel_outbox WHERE source_id=ANY($1::text[])',
+              [
+                ['stale-first', 'stale-race', 'stale-late', 'retired-bare-yes', 'retired-no'].map(
+                  (id) => `channel:${provider}:bot:${id}`,
+                ),
+              ],
+            )
+          ).rows[0].n,
+          0,
+        );
+        for (const text of ['Yes', 'No', 'Maybe', 'Why is this happening?'])
+          assert.deepEqual(
+            classified.find((item) => item.text === text),
+            {
+              text,
+              confirmation: 'Cancel the first task?',
+            },
+          );
+        const notices: string[] = [];
+        for (const id of ['retired-uncertain', 'retired-classifier-failure']) {
+          const rows = (
+            await pool.query(
+              `SELECT i.state,i.turn_id,m.owner_id,m.thread_id,m.role,m.text,m.reply_to_message_id,o.state AS delivery
+               FROM channel_inbox i JOIN channel_outbox o ON o.source_id=i.source_id
+               JOIN messages m ON m.id=o.message_id WHERE i.source_id=$1`,
+              [`channel:${provider}:bot:${id}`],
+            )
+          ).rows;
+          assert.equal(rows.length, 1);
+          assert.equal(rows[0].state, 'submitted');
+          assert.equal(rows[0].turn_id, null);
+          assert.equal(rows[0].owner_id, 'local-development');
+          assert.equal(rows[0].thread_id, threadId);
+          assert.equal(rows[0].role, 'assistant');
+          assert.equal(rows[0].reply_to_message_id, null);
+          assert.equal(rows[0].delivery, 'sent');
+          assert.ok(rows[0].text);
+          notices.push(rows[0].text);
+        }
+        assert.equal(notices[0], notices[1]);
+        assert.equal(posts.filter((post) => post.text === notices[0]).length, 2);
+        await channels.drain();
+        assert.equal(posts.filter((post) => post.text === notices[0]).length, 2);
+        assert.ok((await turnOf('after-classifier-failure')).turn_id);
+        assert.equal(
+          submitted.some((item) => item.text === 'Why is this happening?'),
+          false,
+        );
+
+        await reply(initial, 'Cancel the fourth task?', hiddenAfterLookup, 5);
+        await channels.drain();
+        retireAfterHiddenLookup = true;
+        receive(
+          '111',
+          'retired-after-lookup',
+          'chat-a',
+          'Why is the fourth task still here?',
+          `provider-${posts.length}`,
+        );
+        receive('111', 'following-lookup-race', 'chat-a', 'Summarize the weather');
+        await channels.drain();
+        assert.equal(retireAfterHiddenLookup, false);
+        assert.deepEqual(
+          submitted.filter((item) => item.text === 'Why is the fourth task still here?'),
+          [{ text: 'Why is the fourth task still here?', target: undefined }],
+        );
+        assert.equal(
+          submittedAnswers.find((item) => item.text === 'Why is the fourth task still here?')
+            ?.answer,
+          undefined,
+        );
+        assert.ok(answered.includes('Why is the fourth task still here?'));
+        assert.ok((await turnOf('retired-after-lookup')).turn_id);
+        assert.ok((await turnOf('following-lookup-race')).turn_id);
+
+        await reply(initial, 'Cancel the fifth task?', lateReplacementConfirmation, 6);
+        await channels.drain();
+        receive(
+          '111',
+          'retired-late-replacement',
+          'chat-a',
+          'Yes, move the fifth task to tomorrow',
+          `provider-${posts.length}`,
+        );
+        receive('111', 'following-late-replacement', 'chat-a', 'Summarize my tasks');
+        await channels.drain();
+        assert.deepEqual(
+          submitted.filter((item) => item.text === 'Yes, move the fifth task to tomorrow'),
+          [
+            { text: 'Yes, move the fifth task to tomorrow', target: lateReplacementConfirmation },
+            { text: 'Yes, move the fifth task to tomorrow', target: undefined },
+          ],
+        );
+        assert.deepEqual(
+          submittedAnswers
+            .filter((item) => item.text === 'Yes, move the fifth task to tomorrow')
+            .map((item) => item.answer),
+          [{ approvalId: 'synthetic-approval', approved: true }, undefined],
+        );
+        assert.deepEqual(
+          classified.find((item) => item.text === 'Yes, move the fifth task to tomorrow'),
+          {
+            text: 'Yes, move the fifth task to tomorrow',
+            confirmation: 'Cancel the fifth task?',
+          },
+        );
+        assert.equal(
+          (
+            await pool.query('SELECT count(*)::int AS count FROM turns WHERE source_id=$1', [
+              `channel:${provider}:bot:retired-late-replacement`,
+            ])
+          ).rows[0].count,
+          1,
+        );
+        assert.ok((await turnOf('following-late-replacement')).turn_id);
       } finally {
         await channels.close();
       }

@@ -101,6 +101,10 @@ interface ChannelOptions {
   modelConfigured?: () => boolean;
   verificationPending?: (channel: string) => Promise<boolean>;
   isRetirableScheduleConfirmation?: (messageId: string) => Promise<boolean>;
+  classifyRetiredReply?: (
+    text: string,
+    expiredConfirmation: string,
+  ) => Promise<'new' | 'stale' | 'uncertain'>;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
@@ -557,11 +561,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   async function hiddenReplyTarget(database: Pool | PoolClient, messageId: string) {
-    const result = await database.query(
-      'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND hidden_at IS NOT NULL',
+    const result = await database.query<{ text: string }>(
+      'SELECT text FROM messages WHERE id=$1 AND owner_id=$2 AND hidden_at IS NOT NULL',
       [messageId, ownerId],
     );
-    return Boolean(result.rowCount);
+    return result.rows[0];
   }
 
   async function acceptMessage(message: InboundMessage, channelId: string) {
@@ -943,18 +947,30 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (!pending) return false;
     const channel = conversationChannel(pending);
     if (closed || replacing) return false;
+    const permittedBeforeAnswer = permitted(pending);
     const replyToMessageId = pending.provider_reply_id
       ? await nativeReply(pending, pending.thread_id, pending.provider_reply_id)
       : undefined;
     const hiddenBeforeAnswer = replyToMessageId
       ? await hiddenReplyTarget(pool, replyToMessageId)
-      : false;
+      : undefined;
+    const retiredBeforeAnswer =
+      hiddenBeforeAnswer && replyToMessageId && options.isRetirableScheduleConfirmation
+        ? await options.isRetirableScheduleConfirmation(replyToMessageId)
+        : false;
     const command =
       !pending.attachments?.length && options.taskCommand
         ? (taskCommand.exec(pending.text.trim())?.[1]?.toLowerCase() as
             'tasks' | 'status' | 'stop' | undefined)
         : undefined;
+    const retiredAnswer =
+      permittedBeforeAnswer && retiredBeforeAnswer && hiddenBeforeAnswer && !command
+        ? ((await options
+            .classifyRetiredReply?.(pending.text, hiddenBeforeAnswer.text)
+            .catch(() => 'uncertain' as const)) ?? 'uncertain')
+        : undefined;
     const answer =
+      !permittedBeforeAnswer ||
       hiddenBeforeAnswer ||
       command ||
       pending.attachments?.length ||
@@ -962,6 +978,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         ? undefined
         : await options.answer?.(pending.text, channel, replyToMessageId).catch(() => undefined);
     let afterCommit: (() => Promise<void>) | undefined;
+    const replyTargetChanged = Symbol('reply target changed');
     const submitted = await transaction(async (client) => {
       const result = await client.query<InboxRow>(
         "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
@@ -982,10 +999,31 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         return false;
       }
-      if (
-        replyToMessageId &&
-        (hiddenBeforeAnswer || (await hiddenReplyTarget(client, replyToMessageId)))
-      ) {
+      const hiddenNow = replyToMessageId
+        ? await hiddenReplyTarget(client, replyToMessageId)
+        : undefined;
+      if (Boolean(hiddenNow) !== Boolean(hiddenBeforeAnswer)) throw replyTargetChanged;
+      if (hiddenNow && retiredBeforeAnswer && !command && retiredAnswer === 'uncertain') {
+        const threadId =
+          currentThread?.id ??
+          (options.activeThread
+            ? (await options.activeThread(client)).id
+            : ((
+                await client.query(
+                  'SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL',
+                  [ownerId],
+                )
+              ).rows[0]?.id ?? null));
+        await saveReply(client, row.source_id, threadId, {
+          text: 'That confirmation has expired. Please send your request again as a new message.',
+        });
+        await client.query(
+          "UPDATE channel_inbox SET state='submitted',channel=$3 WHERE source_id=$1 AND owner_id=$2",
+          [row.source_id, ownerId, channel],
+        );
+        return true;
+      }
+      if (hiddenNow && (!retiredBeforeAnswer || (!command && retiredAnswer !== 'new'))) {
         await client.query(
           "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
           [row.source_id, ownerId],
@@ -998,19 +1036,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             'SELECT hidden_at FROM messages WHERE id=$1 AND owner_id=$2 FOR SHARE',
             [replyToMessageId, ownerId],
           );
-          if (target.rows[0]?.hidden_at) {
-            await client.query(
-              "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
-              [row.source_id, ownerId],
-            );
-            return true;
-          }
+          if (target.rows[0]?.hidden_at && !retiredBeforeAnswer) throw replyTargetChanged;
         }
         const reply = await options.taskCommand!(
           client,
           command,
-          replyToMessageId,
-          Boolean(row.provider_reply_id),
+          retiredBeforeAnswer ? undefined : replyToMessageId,
+          retiredBeforeAnswer ? command === 'stop' : Boolean(row.provider_reply_id),
         );
         for (const message of reply.replies)
           await saveReply(client, row.source_id, reply.threadId, message);
@@ -1028,8 +1060,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         client,
         channel,
         messageId,
-        answer,
-        replyToMessageId,
+        retiredBeforeAnswer ? undefined : answer,
+        retiredBeforeAnswer ? undefined : replyToMessageId,
         row.attachments ?? [],
       );
       await options.attributeMediaUsage?.(client, row.media_usage_ids ?? [], turnId);
@@ -1039,20 +1071,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       );
       return true;
     }, pool).catch(async (cause) => {
+      if (cause === replyTargetChanged) return true;
       if (
+        retiredBeforeAnswer ||
         !replyToMessageId ||
         !(cause instanceof Error) ||
         !('statusCode' in cause) ||
         cause.statusCode !== 404
       )
         throw cause;
-      const discarded = await pool.query(
-        `UPDATE channel_inbox i SET state='discarded'
-         WHERE i.source_id=$1 AND i.owner_id=$2 AND i.state='pending' AND i.provider_reply_id=$3
-           AND EXISTS (SELECT 1 FROM messages m WHERE m.id=$4 AND m.owner_id=i.owner_id AND m.hidden_at IS NOT NULL)`,
-        [pending.source_id, ownerId, pending.provider_reply_id, replyToMessageId],
-      );
-      if (!discarded.rowCount) throw cause;
+      if (!(await hiddenReplyTarget(pool, replyToMessageId))) throw cause;
       return true;
     });
     if (submitted === undefined) return false;

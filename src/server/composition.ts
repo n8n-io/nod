@@ -1532,8 +1532,13 @@ async function initializeApplication(
     pool,
     ownerId,
     review: async (instructions, input, signal, question) => {
-      if (question)
-        instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
+      if (question) {
+        const values = question.choices.map(({ value }) => JSON.stringify(value)).join(', ');
+        instructions +=
+          question.name === 'retiredReply'
+            ? `\nReply with only JSON containing exactly two properties: ${JSON.stringify(question.name)} set to one of ${values}, and "probability" set to a number from 0 to 1 expressing confidence in that label.`
+            : `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values}.`;
+      }
       return trustCurator.configured
         ? trustCurator.curate({ task: 'review', instructions, input }, signal)
         : undefined;
@@ -2229,6 +2234,7 @@ async function initializeApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       isRetirableScheduleConfirmation: approvals.isRetirableScheduleConfirmation,
+      classifyRetiredReply: trust.classifyRetiredReply,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),
