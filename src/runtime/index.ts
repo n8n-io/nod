@@ -30,6 +30,7 @@ import {
   compactOwnerContext,
   compactSystemPrompt,
   firstInstruction,
+  observerInstruction,
   ownerContext,
   steeredInstruction,
   systemPrompt,
@@ -1209,9 +1210,16 @@ export function createAgentRuntime(dependencies: {
             tasks: [],
           }
         : context;
-      const fallback = instruct(
-        firstInstruction(requestContext, resumed && !compact, omitted, analysis),
-      );
+      const observer = context.proactivity
+        ? observerInstruction(
+            requestContext,
+            resumed && !compact,
+            currentUserTime(context.timeZone),
+          )
+        : undefined;
+      const fallback =
+        observer?.text ??
+        instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
         ? {
@@ -1225,6 +1233,7 @@ export function createAgentRuntime(dependencies: {
           : fallback,
         images,
         audio,
+        observer?.stable,
       );
       await pendingReplies;
       signal.throwIfAborted();

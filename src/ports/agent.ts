@@ -344,7 +344,12 @@ export interface AgentSession {
   readsImages?: boolean;
   readsAudio?: boolean;
   contextWindow?: number;
-  prompt(text: string, images: AgentImage[], audio?: AgentAudioInput): Promise<void>;
+  prompt(
+    text: string,
+    images: AgentImage[],
+    audio?: AgentAudioInput,
+    stablePrefixes?: string[],
+  ): Promise<void>;
   abort(): void | Promise<void>;
   dispose(): void | Promise<void>;
 }
