@@ -477,6 +477,11 @@
 .chat-page .working-text strong {
   font-weight: 400;
 }
+.chat-page .working-receipt {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.5;
+}
 .chat-page .working-text svg {
   display: inline-block;
   margin-right: 4px;

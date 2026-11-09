@@ -96,15 +96,38 @@ For large files or formats whose waveform your browser can't read, the player sh
 
 ## Keep talking while Nod works
 
-The message box stays open while Nod works. You can send another message at any time. Your sent messages have no receipt or queue labels.
+The message box stays open while Nod works, so you can send another message at any time. A status line beside the animated Nod mark always shows what's happening:
 
-Your message appears at once. A status line beside the animated Nod mark says **Sending…** while Nod accepts it, then **Working…** while work is queued or running without a specific step. It stays visible during a slow first response from your model.
+| The line says                             | What it means                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Sending…**                              | Your message is on its way.                                                                            |
+| **Working…**                              | Nod has your message and is about to start.                                                            |
+| **Thinking…**                             | Your model is working out the next step.                                                               |
+| A step, such as "Comparing flight prices" | What Nod is doing now. A website or app after it, such as **· skyscanner.net**, is where it's working. |
+| **· 3 min** at the end                    | Nothing new has happened for that long. Slow models and websites can take minutes; **Stop** ends it.   |
 
-When a specific step is available, the line shows the current activity, such as "Finding flights back from Copenhagen" or "Comparing flight prices". Nod updates this line when the main activity changes. It describes the task and contains no tool names. Tasks you started show their title beside the status. The line clears when Nod finishes, stops, or waits for your answer. A failed send clears the indicator and shows an error.
+The line describes the work, never tool names. It never counts seconds or guesses when Nod will finish. It clears when Nod answers, asks you something or stops, and hides while the app reconnects. Tasks you started show their title above their step. A failed send clears the line and shows an error.
 
-Nod can send a useful, verified partial result before it finishes. The activity line continues while work remains.
+### Send more while Nod works
 
-Telegram shows **typing…** and a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer chat request has one short opening message there so the activity has a place to update. A saved task uses its existing start message. WhatsApp shows **typing…** without extra progress messages. For Business Cloud connections, typing stops when the 24-hour reply window closes. QR connections have no such limit. These indicators send no notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
+When you send a message while Nod works, a second line says **Got your message. I'll read it after this step.** Nod reads it before its next step and answers it. If other messages come between your message and the answer, the answer quotes the message it answers.
+
+![Nod's status line reads "Comparing flight prices · skyscanner.net · 2 min", with "Got your message. I'll read it after this step." below it, after a follow-up message.](../../../assets/screens/chat-live-line.png)
+
+### When Nod stops
+
+Work ends with an answer, a question, or a short message saying what stopped it. A schedule, or a task Nod started on its own, also tells you by name when it fails. When you only share context, such as a routine, Nod can save it without replying. Nod can send a useful, verified partial result before it finishes; the status line continues while work remains.
+
+In the sidebar, the Chat item shows a moving dot while Nod works and a solid dot when it's waiting for you.
+
+### In Telegram and WhatsApp
+
+- **typing…** shows while Nod works on something you asked for, and stays on during slow steps.
+- A message you send while Nod works gets a 👀 reaction until Nod reads it.
+- Telegram also shows a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer request has one short opening message so the progress has a place to update; a saved task uses its start message.
+- WhatsApp Business Cloud connections stop typing when the 24-hour reply window closes. QR connections have no such limit.
+
+None of these send a notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Nod sends your message to that task. If the target is unclear, Nod asks which task you mean.
 

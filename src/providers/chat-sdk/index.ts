@@ -315,7 +315,7 @@ export function createChatSdkTransport(
     ].filter((value): value is string => Boolean(value)),
     ...(channel.provider === 'whatsapp'
       ? { supportsAttachments: true, replyWindowMs: 86400000, presenceMs: 20000 }
-      : { supportsAttachments: true, presenceMs: 4000 }),
+      : { supportsAttachments: true, presenceMs: 3000 }),
   }));
   const error = (status: number, message: string): MessagingWebhookResult => ({
     status,

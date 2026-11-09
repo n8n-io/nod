@@ -431,6 +431,7 @@ test(
       interruptedText;
     const dependencies: ThreadDependencies = {
       browserStep: async () => 'run',
+      taskChecks: (threadId) => tasks.resumeDue(threadId),
       analytics: captureAnalytics,
       currentModel: () => ({
         provider: 'compatible',
@@ -1698,7 +1699,9 @@ test(
           assert.deepEqual(await interruptedReplies(foreground), [
             { text: interruptedText, thread_id: threadId },
           ]);
-          assert.deepEqual(await interruptedReplies(background), []);
+          assert.deepEqual(await interruptedReplies(background), [
+            { text: interruptedText, thread_id: threadId },
+          ]);
           assert.deepEqual(await interruptedReplies(taskTurn), [
             { text: interruptedText, thread_id: threadId },
           ]);
@@ -1722,6 +1725,41 @@ test(
           );
         },
       );
+
+      await t.test('a task resumes its own session when its next check is due', async (t) => {
+        const id = randomUUID();
+        const turnId = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','running',true)",
+          [turnId, ownerId, threadId, id],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',1)",
+          [id, ownerId, turnId],
+        );
+        await db.pool.query('UPDATE turns SET task_id=$2 WHERE id=$1', [turnId, id]);
+        t.after(async () => {
+          await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
+        });
+        const due = new Date(Date.now() + 1_000).toISOString();
+        await tasks.execute({ turnId, threadId }, { action: 'update', id, nextCheck: due }, null);
+        await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
+          turnId,
+        ]);
+        assert.equal((await tasks.read()).find((task) => task.id === id)?.status, 'scheduled');
+        const check = async () =>
+          (
+            await db.pool.query(
+              "SELECT id,parent_turn_id FROM turns WHERE session_id=$1 AND source='resume' AND source_id=$2",
+              [id, `task-check:${id}:${Date.parse(due)}`],
+            )
+          ).rows[0] as { id: string; parent_turn_id: string } | undefined;
+        await waitFor(async () => Boolean(await check()), 20_000);
+        const resumed = (await check())!;
+        assert.equal(resumed.parent_turn_id, turnId);
+        await waitFor(settled(resumed.id));
+      });
 
       await t.test('consecutive messages run as turns on the same thread', async (t) => {
         const previousApps = currentApps;
@@ -2132,7 +2170,11 @@ test(
             `I couldn't finish this. ${spendingLimitReached}`,
           ]);
         }
-        for (const turnId of background.slice(0, 2)) assert.deepEqual(await notices(turnId), []);
+        await waitFor(async () => (await notices(background[0]!)).length === 1);
+        assert.deepEqual(await notices(background[0]!), [
+          `I couldn't finish “limit schedule fixture”. ${spendingLimitReached}`,
+        ]);
+        assert.deepEqual(await notices(background[1]!), []);
         const taskSession = randomUUID();
         const taskMessage = await transaction(
           (client) =>
@@ -2157,7 +2199,7 @@ test(
         await waitFor(settled(checkIn));
         await waitFor(async () => (await notices(checkIn)).length === 1);
         assert.deepEqual(await notices(checkIn), [
-          `I couldn't finish this. ${spendingLimitReached}`,
+          `I couldn't finish “Synthetic check-in”. ${spendingLimitReached}`,
         ]);
       });
 
@@ -3906,7 +3948,7 @@ test(
           const earlier = await thread.submitUserMessage('Earlier synthetic request');
           await waitFor(() => Boolean(ran(earlier.turnId)));
           await onboarding.complete('Alex');
-          assert.equal(onboarding.planning(), false);
+          assert.equal(onboarding.planning(), undefined);
           assert.equal(
             (
               await db.pool.query(
@@ -9004,3 +9046,91 @@ test('a first task stays open after its chat turn ends and follows its own saved
   state.tasks = [];
   assert.equal(status(), 'sent');
 });
+
+test(
+  'the live line drops a step from before a follow-up and keeps work Nod started apart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_activity_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    try {
+      await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz);
+        CREATE TABLE turns(id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid, session_id uuid, source text,
+          status text, channel text DEFAULT 'web', message_id uuid, created_at timestamptz DEFAULT now(), started_at timestamptz);
+        CREATE TABLE tasks(id uuid PRIMARY KEY, owner_id text NOT NULL, session_id uuid, title text, now_text text,
+          message_id uuid, created_at timestamptz DEFAULT now());
+        CREATE TABLE turn_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), turn_id uuid, type text, summary text DEFAULT '',
+          site text, call_id uuid, created_at timestamptz DEFAULT now());
+        CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text, turn_id uuid, role text, created_at timestamptz DEFAULT now())`);
+      const { createActivity } = await import('../src/server/activity.ts');
+      const owner = 'activity-fixture-owner';
+      const activity = createActivity({ pool, ownerId: owner });
+      const threadId = randomUUID();
+      const chat = randomUUID();
+      const followUp = randomUUID();
+      const message = randomUUID();
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,created_at,started_at) VALUES($1,$2,$3,$3,'user','running',now()-interval '5 minutes',now()-interval '5 minutes')",
+        [chat, owner, threadId],
+      );
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,created_at) VALUES($1,'step','Comparing synthetic prices',now()-interval '4 minutes')",
+        [chat],
+      );
+      await pool.query("INSERT INTO messages(id,owner_id,role) VALUES($1,$2,'user')", [
+        message,
+        owner,
+      ]);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,message_id) VALUES($1,$2,$3,$3,'user','queued',$4)",
+        [followUp, owner, threadId, message],
+      );
+      const live = async () => (await activity.read()).find((item) => item.turnId === chat)!;
+      let item = await live();
+      assert.equal(item.step, 'Comparing synthetic prices');
+      assert.deepEqual(item.receivedMessageIds, [message]);
+      assert.equal(item.doing, 'model');
+      assert.ok(Date.parse(item.quietSince) <= Date.now() - 3 * 60_000);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id) VALUES($1,'tool_start','Open page','example.test',$2)",
+        [chat, randomUUID()],
+      );
+      item = await live();
+      assert.equal(item.doing, 'tool');
+      assert.equal(item.site, 'example.test');
+      assert.ok(Date.parse(item.quietSince) > Date.now() - 60_000);
+      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [followUp]);
+      await pool.query("INSERT INTO turn_events(turn_id,type) VALUES($1,'steered')", [chat]);
+      item = await live();
+      assert.equal(item.step, null);
+      assert.equal(item.received, undefined);
+      const taskSession = randomUUID();
+      const taskTurn = randomUUID();
+      const observerTurn = randomUUID();
+      await pool.query(
+        "INSERT INTO tasks(id,owner_id,session_id,title,now_text) VALUES($1,$2,$1,'Synthetic reply task','Reading the chat')",
+        [taskSession, owner],
+      );
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,started_at) VALUES($1,$2,$3,$4,'event','running',now()),($5,$2,$3,$5,'event','running',now())",
+        [taskTurn, owner, threadId, taskSession, observerTurn],
+      );
+      const items = await activity.read();
+      assert.equal(items.find((entry) => entry.turnId === taskTurn)?.background, true);
+      assert.equal(items.find((entry) => entry.turnId === chat)?.background, undefined);
+      assert.equal(
+        items.some((entry) => entry.turnId === observerTurn),
+        false,
+      );
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);

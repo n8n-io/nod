@@ -316,6 +316,15 @@ export function createOnboardingSuggestions(options: {
   let stale = false;
   let delivering: Promise<void> | undefined;
   let preparingController: AbortController | undefined;
+  let step: string | undefined;
+  const reading = new Map<DiscoveryAccount, string>();
+  const show = (next: string | undefined) => {
+    if (next === step) return;
+    step = next;
+    refresh();
+  };
+  const showReading = () =>
+    show(reading.size ? `Reading ${[...new Set(reading.values())].join(' and ')}` : undefined);
 
   async function discoveryOpen(client?: PoolClient) {
     return Boolean(
@@ -398,7 +407,11 @@ export function createOnboardingSuggestions(options: {
         while (next < accounts.length && !budget.aborted) {
           const account = accounts[next++]!;
           const accountSignal = AbortSignal.any([budget, AbortSignal.timeout(30_000)]);
+          reading.set(account, account.name);
+          showReading();
           await abortable(inspect(account, accountSignal), accountSignal).catch(() => {});
+          reading.delete(account);
+          showReading();
           signal.throwIfAborted();
         }
       }),
@@ -436,6 +449,7 @@ export function createOnboardingSuggestions(options: {
       seen = discovered.seen;
       const briefs = discovered.briefs;
       signal.throwIfAborted();
+      show('Choosing a few ideas');
       const apps = [...new Map(accounts.map(({ slug, name }) => [slug, { slug, name }])).values()];
       const sources = [
         ...new Set([...apps.map((app) => app.slug), 'web', ...(telegram ? ['telegram'] : [])]),
@@ -557,15 +571,26 @@ export function createOnboardingSuggestions(options: {
         for (;;) {
           const controller = new AbortController();
           preparingController = controller;
+          const deadline = AbortSignal.timeout(180_000);
           const signal = AbortSignal.any([
             controller.signal,
-            AbortSignal.timeout(180_000),
+            deadline,
             ...(options.signal ? [options.signal] : []),
           ]);
           try {
             const prepared = await abortable(load(fresh, signal), signal);
             if (!stale) return prepared;
           } catch (error) {
+            if (deadline.aborted && !controller.signal.aborted && !options.signal?.aborted) {
+              logFailure('first_tasks_fallback', error);
+              return {
+                ...fallbackSuggestions({ gmail: false, telegram: false }),
+                accounts: await abortable(
+                  options.discovery.accounts(),
+                  AbortSignal.timeout(10_000),
+                ).catch(() => []),
+              };
+            }
             if (!stale || options.signal?.aborted) throw error;
           }
           stale = false;
@@ -635,6 +660,8 @@ export function createOnboardingSuggestions(options: {
       .catch((error) => logFailure('first_tasks_delivery_failed', error))
       .finally(() => {
         delivering = undefined;
+        reading.clear();
+        step = undefined;
         refresh();
       });
     return delivering;
@@ -712,7 +739,7 @@ export function createOnboardingSuggestions(options: {
     prepare,
     complete,
     delivered: () => delivering ?? Promise.resolve(),
-    planning: () => delivering !== undefined,
+    planning: () => (delivering === undefined ? undefined : (step ?? '')),
     cancel: () => preparingController?.abort(),
     registerRoutes,
   };

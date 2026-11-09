@@ -59,7 +59,7 @@ Only your words carry authority. The checker never reads the web pages or emails
 
 ## Because you said
 
-When the checker runs an action, it quotes the words that allow it, exactly as you wrote them: from your message, the schedule's instruction, your standing instruction or your rules. For an action that only reads or drafts, it says so instead. The server then checks that those words really are in what the checker was shown. A run that quotes nothing, or quotes words you never wrote, asks you instead. The server checks where the words came from, not whether they cover the action: that judgment is still the checker's.
+When the checker runs an action, it quotes the words that allow it, exactly as you wrote them: from your message, the schedule's instruction, your standing instruction or your rules. For an action that only reads or drafts, it says so instead. The server then checks that those words really are in what the checker was shown. A run that quotes nothing, or quotes words you never wrote, asks you instead, or in a scheduled run or background work doesn't run at all. The server checks where the words came from, not whether they cover the action: that judgment is still the checker's.
 
 **Usage** shows the words next to each action and sign-in your words allowed, such as _Gmail: send email · You said "Send Lena the report"_, and _You approved it_ for an action you confirmed. Reads and drafts show no words, and a quote from a message that has since been deleted isn't shown.
 
@@ -80,7 +80,7 @@ flowchart TD
   check -- no --> ask[Ask you]:::accent
 ```
 
-If the checker can't answer, Nod requires confirmation. If the model can't write or check that confirmation, the action stays blocked. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
+If the checker can't answer, Nod requires confirmation. In a scheduled run or background work, nobody is waiting to answer, so the action doesn't run and Nod doesn't ask you; the work gets the reason and can try again. When the checker does answer but your words don't clearly cover the action, Nod still asks you. If the model can't write or check that confirmation, the action stays blocked. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
 
 ## Browser steps
 
@@ -119,7 +119,7 @@ Your standing instruction says what Nod does on its own when something arrives. 
 
 ## The confirmation
 
-Your selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Nod is asking, preserving the material facts in your conversation language. It names the website, account and recipient as the action does, not by what you called them, and adds nothing from the conversation, such as that it repeats an earlier attempt, or guesses about what the action might cause. So a lookalike site can't hide behind the name you used. There are no language-specific confirmation templates or yes/no word lists.
+Your selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Nod is asking, preserving the material facts in your conversation language. When the action comes from one of your schedules or tasks, the question opens with that work and what it's for, from its name and, when available, the words you used to set it up, never from Nod's own reasoning. A question from a recurring schedule also says the schedule waits for your answer. Technical options that don't change your decision, such as result limits, are left out. It names the website, account and recipient as the action does, not by what you called them, and adds nothing from the conversation, such as that it repeats an earlier attempt, or guesses about what the action might cause. So a lookalike site can't hide behind the name you used. There are no language-specific confirmation templates or yes/no word lists.
 
 Before showing it, a separate fact check by your selected model compares the question with those frozen facts without seeing the conversation. The writer and the fact check receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. When the fact check rejects a question, the writer gets one fresh attempt, checked the same way. A second rejection, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
 

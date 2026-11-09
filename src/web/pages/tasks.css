@@ -46,6 +46,9 @@
 .schedule-inactive > .saved-plan-list {
   margin-top: 12px;
 }
+.open-task-list {
+  margin-bottom: 24px;
+}
 .schedule-runs {
   display: grid;
   gap: 12px;
@@ -112,10 +115,6 @@
   background: var(--info-soft);
   color: var(--info);
 }
-.task-status[data-status='stalled'] {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
 .task-status[data-status='done'],
 .task-status[data-status='succeeded'] {
   background: var(--success-soft);
@@ -161,9 +160,6 @@
 }
 .task-preview[data-status='failed'] {
   --task-tone: var(--error);
-}
-.task-preview[data-status='stalled'] {
-  --task-tone: var(--warning);
 }
 .task-preview-head {
   display: grid;
@@ -212,40 +208,6 @@
   display: inline-block;
   margin-right: 4px;
   vertical-align: -2px;
-}
-.task-preview-foot {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-.task-steps-bar {
-  display: flex;
-  flex: 1;
-  gap: 4px;
-  min-width: 0;
-}
-.task-steps-bar > i {
-  flex: 1;
-  height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--surface-inset);
-}
-.task-steps-bar > i[data-state='done'] {
-  background: var(--task-tone);
-}
-.task-steps-bar > i[data-state='current'] {
-  background: color-mix(in srgb, var(--task-tone) 40%, var(--surface-inset));
-}
-.task-preview-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 .task-preview-top > .task-preview-chevron {
   color: var(--muted-foreground);

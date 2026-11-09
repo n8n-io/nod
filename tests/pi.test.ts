@@ -3372,6 +3372,126 @@ test('owner context stays out of the system prompt and compaction summaries and 
   assert.equal(recorded[0].metadata.session_id, execution.sessionId);
 });
 
+test('a turn that crosses the compaction line answers first, then compacts at the lowest effort', async (t) => {
+  const { createServer } = await import('node:http');
+  const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+  const bodies: Array<{ messages: unknown[]; reasoning_effort?: string }> = [];
+  const summary = (body: (typeof bodies)[number]) =>
+    JSON.stringify(body.messages).includes('<conversation>');
+  let agentRequests = 0;
+  const server = createServer((request, response) => {
+    const parts: Buffer[] = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      const body = JSON.parse(Buffer.concat(parts).toString());
+      bodies.push(body);
+      const step = summary(body) ? 0 : ++agentRequests;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        chunk({
+          id: `crossing-${bodies.length}`,
+          choices: [
+            {
+              index: 0,
+              delta:
+                step === 3
+                  ? {
+                      role: 'assistant',
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'inspect-once',
+                          type: 'function',
+                          function: { name: 'inspect_fixture', arguments: '{}' },
+                        },
+                      ],
+                    }
+                  : {
+                      role: 'assistant',
+                      content: step ? `Synthetic answer ${step}` : 'Synthetic summary',
+                    },
+            },
+          ],
+        }) +
+          chunk({
+            id: `crossing-${bodies.length}`,
+            choices: [{ index: 0, delta: {}, finish_reason: step === 3 ? 'tool_calls' : 'stop' }],
+            usage: {
+              prompt_tokens: [50, 1000, 2000, 257_000, 257_200][step],
+              completion_tokens: 2,
+              total_tokens: [50, 1000, 2000, 257_000, 257_200][step] + 2,
+            },
+          }) +
+          'data: [DONE]\n\n',
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
+  const access = smallContextAccess('compatible', 'fixture-large', 300_000);
+  access.effort = 'high';
+  access.read = async () => ({ type: 'endpoint', url });
+  access.definition.choice.efforts = ['low', 'high'];
+  access.definition.spec = {
+    ...access.definition.spec,
+    baseUrl: url,
+    reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, medium: null },
+  };
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-crossing-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const agent = createPiAgent({
+    provider: 'compatible',
+    sessionRoot: directory,
+    resolve: async () => access,
+  });
+  t.after(() => agent.dispose());
+  const execution = fakeExecution(randomUUID());
+  const events: import('../src/ports/agent.ts').AgentEvent[] = [];
+  const open = () =>
+    agent.open({
+      ...execution,
+      restricted: true,
+      systemPrompt: 'Synthetic instructions',
+      workspace: recordingWorkspace().workspace,
+      runTool: async (_name, _params, run) => run(),
+      tools: [
+        {
+          name: 'inspect_fixture',
+          description: 'Inspect the synthetic fixture.',
+          parameters: Type.Object({}),
+          execute: async () => ({ content: [{ type: 'text', text: 'Inspected.' }] }),
+        },
+      ],
+      shouldStop: () => false,
+      onEvent: (event) => events.push(event),
+    });
+  for (const text of [
+    `Older synthetic history: ${'filler words '.repeat(30_000)}`,
+    `Recent synthetic history: ${'filler words '.repeat(30_000)}`,
+    'Inspect the fixture.',
+  ]) {
+    const session = await open();
+    await session.prompt(text, []);
+    await session.dispose();
+  }
+
+  assert.deepEqual(bodies.map(summary), [false, false, false, false, true]);
+  assert.deepEqual(
+    bodies.map((body) => body.reasoning_effort),
+    ['high', 'high', 'high', 'high', 'low'],
+  );
+  const answered = events.findIndex(
+    (event) => event.type === 'final' && event.text === 'Synthetic answer 4',
+  );
+  const compactions = events.flatMap((event, index) =>
+    event.type === 'provider_usage' && event.usage.operation === 'compaction' ? [index] : [],
+  );
+  assert.equal(compactions.length, 1);
+  assert.ok(answered >= 0 && answered < compactions[0]);
+});
+
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');

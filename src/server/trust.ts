@@ -171,6 +171,13 @@ export function createTrust(options: {
         throw new Error('The owner instructions changed while this action was being checked.');
       return { confirm: false, basis };
     }
+    if (
+      ['schedule', 'event'].includes(origin.source) &&
+      (answer as { run?: unknown } | undefined)?.run !== false
+    )
+      throw new Error(
+        "The trust check couldn't decide this action, so it didn't run and the owner wasn't asked. Nothing was sent or changed. You can try again.",
+      );
     return {
       confirm: true,
       reason:

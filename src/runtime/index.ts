@@ -1222,8 +1222,6 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const paused = () =>
         `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
-      if (checkInStopped && status === 'succeeded' && !context.proactivity)
-        throw new Error(paused());
       if (modelError)
         throw new ModelRequestError(
           `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
@@ -1231,7 +1229,7 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
-      if (context.proactivity && status === 'succeeded' && overBudget()) {
+      if (status === 'succeeded' && (context.proactivity ? overBudget() : checkInStopped)) {
         status = 'waiting_user';
         waitingFor = 'question';
         waitingMessage = paused();

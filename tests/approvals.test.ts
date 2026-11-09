@@ -803,6 +803,19 @@ test(
             }
             await finish(update.turnId, 'cancelled');
           }
+          aligned = false;
+          let described: ApprovalDescription | undefined;
+          describe = async (proposal) => {
+            described = proposal;
+            return defaultDescription();
+          };
+          await approvals.request(turn, 'GMAIL_SEND_EMAIL', email('ana@example.test'));
+          describe = defaultDescription;
+          assert.deepEqual(described?.work, {
+            kind: 'task',
+            title: 'Invoice delivery',
+            ownerRequest: 'Email Ana the fixture invoice for EUR 1,200.',
+          });
         },
       );
 
@@ -1074,10 +1087,16 @@ test(
           );
           const instruction = 'Every Monday, move the synthetic standup to 10:00.';
           const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
+          const scheduleId = randomUUID();
+          await db.pool.query(
+            `INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone,kind)
+             VALUES($1,$2,'Synthetic standup','Move the synthetic standup.','0 7 * * 1','Europe/Madrid','recurring')`,
+            [scheduleId, ownerId],
+          );
           await db.pool.query(
             `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
              VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,'2026-10-19T07:00:00Z','Europe/Madrid',$6)`,
-            [randomUUID(), ownerId, randomUUID(), randomUUID(), authorized.turnId, instruction],
+            [randomUUID(), ownerId, scheduleId, randomUUID(), authorized.turnId, instruction],
           );
           aligned = (input) =>
             input.scheduledTaskInstruction === instruction &&
@@ -1092,6 +1111,36 @@ test(
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           assert.equal(reviews.at(-1)?.standingInstruction, undefined);
+          for (const undecided of [
+            () => {
+              throw new Error('Synthetic checker failure.');
+            },
+            () => ({ run: true, because: 'Words the owner never wrote.' }),
+          ]) {
+            aligned = undecided;
+            for (const turn of [event, authorized])
+              await assert.rejects(
+                trust.check(turn, 'GOOGLECALENDAR_EVENTS_LIST', { calendarId: 'primary' }),
+              );
+          }
+          aligned = false;
+          let described: ApprovalDescription | undefined;
+          describe = async (proposal) => {
+            described = proposal;
+            return defaultDescription();
+          };
+          await approvals.request(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {
+            event_id: 'synthetic-standup',
+            start_time: '11:00',
+          });
+          describe = defaultDescription;
+          assert.deepEqual(described?.work, {
+            kind: 'schedule',
+            title: 'Synthetic standup',
+            ownerRequest: instruction,
+            waitsForAnswer: true,
+          });
+          await finish(authorized.turnId, 'cancelled');
           await setRule('');
         },
       );

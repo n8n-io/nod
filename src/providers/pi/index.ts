@@ -6,10 +6,11 @@ import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { getSupportedThinkingLevels, InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { Agent as Connections, Dispatcher1Wrapper, buildConnector } from 'undici';
 import { Compile } from 'typebox/compile';
 import {
+  compact,
   createAgentSession,
   createCodemodeExtension,
   createToolSearchExtension,
@@ -31,6 +32,7 @@ import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } fro
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
+import { lightestEffort } from '../../shared/models.ts';
 import { createSandbox, workspaceOutputs, writeWorkspaceFile } from './sandbox.ts';
 import { untrustedBlock } from '../../shared/untrusted.ts';
 import { isPublicAddress, publicLookup } from '../agent-browser/network.ts';
@@ -524,6 +526,16 @@ export function createPiAgent(options: {
       ];
       const deferred =
         !input.restricted || budget.compact || input.tools.some((tool) => tool.deferred);
+      const settings = SettingsManager.inMemory({
+        compaction: {
+          enabled: true,
+          reserveTokens: budget.reserve,
+          keepRecentTokens: budget.recent,
+        },
+        transport: 'sse',
+        steeringMode: 'all',
+        cacheWarming: input.keepWarm ? 'idle' : 'streaming',
+      });
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
@@ -570,6 +582,34 @@ export function createPiAgent(options: {
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),
+          (pi: ExtensionAPI) =>
+            pi.on('session_before_compact', async ({ preparation, reason, signal }) => {
+              if (
+                reason === 'threshold' &&
+                !budget.compact &&
+                session.agent.state.isStreaming &&
+                preparation.tokensBefore + budget.output + budget.margin <= budget.window &&
+                preparation.tokensBefore <= budget.window - budget.reserve + budget.recent
+              ) {
+                compaction = undefined;
+                return { cancel: true };
+              }
+              const target = session.model ?? model;
+              return {
+                compaction: await compact(
+                  preparation,
+                  target,
+                  undefined,
+                  undefined,
+                  undefined,
+                  signal,
+                  lightestEffort(getSupportedThinkingLevels(target)),
+                  session.agent.streamFunction,
+                  undefined,
+                  settings.getRetrySettings(),
+                ),
+              };
+            }),
           (pi: ExtensionAPI) =>
             pi.on('cache_warming_decision', async () =>
               idle && !(await input.keepWarm?.().catch(() => false))
@@ -715,16 +755,7 @@ export function createPiAgent(options: {
         noTools: 'builtin',
         resourceLoader: resources(systemPrompt, extensions),
         sessionManager: manager,
-        settingsManager: SettingsManager.inMemory({
-          compaction: {
-            enabled: true,
-            reserveTokens: budget.reserve,
-            keepRecentTokens: budget.recent,
-          },
-          transport: 'sse',
-          steeringMode: 'all',
-          cacheWarming: input.keepWarm ? 'idle' : 'streaming',
-        }),
+        settingsManager: settings,
       });
       if (budget.compact)
         session.setActiveToolsByName([...sandboxTools.map((tool) => tool.name), 'nod_tool_search']);
@@ -768,19 +799,19 @@ export function createPiAgent(options: {
       const unsubscribe = session.subscribe((event) => {
         if (event.type === 'compaction_start')
           compaction = { id: randomUUID(), started: performance.now() };
-        if (event.type === 'compaction_end') {
+        if (event.type === 'compaction_end' && compaction) {
           const target = readsNativeAudio(model) ? (connection?.textModel ?? model) : model;
           input.onEvent({
             type: 'provider_usage',
             usage: {
-              id: compaction?.id ?? randomUUID(),
+              id: compaction.id,
               provider: target.provider,
               category: 'agent',
               operation: 'compaction',
               model: target.id,
               turnId: input.turnId,
               status: event.aborted ? 'cancelled' : event.errorMessage ? 'failed' : 'succeeded',
-              durationMs: compaction ? performance.now() - compaction.started : 0,
+              durationMs: performance.now() - compaction.started,
               ...piUsageMetrics(event.result?.usage),
             },
           });

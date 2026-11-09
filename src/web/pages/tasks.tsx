@@ -28,6 +28,7 @@ import { captureAnalytics } from '../lib/analytics';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { post, errorMessage } from '../lib/api';
 import { ScheduleRow } from './schedule';
+import { LiveLine } from '../components/live-line';
 
 const icons = {
   queued: Clock,
@@ -36,11 +37,12 @@ const icons = {
   needs_you: MessageCircle,
   waiting: Hourglass,
   scheduled: CalendarClock,
-  stalled: CircleAlert,
   done: CircleCheck,
   cancelled: CircleSlash,
 };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
+const showMessage = (messageId: string) =>
+  window.dispatchEvent(new window.CustomEvent('nod:focus-message', { detail: { messageId } }));
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
@@ -101,7 +103,7 @@ export function TaskCard({
   onReply?(): void;
 }) {
   const headingId = useId();
-  const stuck = task.status === 'failed' || task.status === 'stalled';
+  const stuck = task.status === 'failed';
   const [expanded, setExpanded] = useState(stuck);
   useEffect(() => {
     if (stuck) setExpanded(true);
@@ -122,10 +124,13 @@ export function TaskCard({
         ? 'current'
         : 'todo';
   const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
+  const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
+  const startMessage = task.messageId;
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
-      : (live?.step ?? taskHeadline(task));
+      : taskHeadline(task);
+  const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
   return (
     <article
       className="task-preview"
@@ -157,31 +162,17 @@ export function TaskCard({
               />
               {taskLabels[task.status]}
             </span>
-            {!steps.length && chevron}
+            {chevron}
           </span>
           <span className="task-preview-line">
-            {live?.site && (
-              <>
-                {live.site.includes('.') && <Globe2 size={14} aria-hidden="true" />}
-                {live.site} ·{' '}
-              </>
+            {showLive ? (
+              <LiveLine item={showLive} />
+            ) : (
+              <Markdown allowedElements={[]} unwrapDisallowed>
+                {line}
+              </Markdown>
             )}
-            <Markdown allowedElements={[]} unwrapDisallowed>
-              {line}
-            </Markdown>
           </span>
-          {steps.length > 0 && (
-            <span className="task-preview-foot">
-              <span className="task-steps-bar" aria-hidden="true">
-                {steps.map((_, index) => (
-                  <i key={index} data-state={state(index)} />
-                ))}
-              </span>
-              <span className="task-preview-count">
-                {completed} of {steps.length} steps {chevron}
-              </span>
-            </span>
-          )}
         </button>
       </h2>
       <div
@@ -273,7 +264,19 @@ export function TaskCard({
               <p className="task-preview-meta">Owner update queued</p>
             )}
             <div className="task-preview-actions">
-              {onReply && (
+              {handoffMessage ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    captureAnalytics('task_action', { action: 'open_browser' });
+                    showMessage(handoffMessage);
+                  }}
+                >
+                  <Globe2 size={16} aria-hidden="true" />
+                  Open browser
+                </Button>
+              ) : onReply ? (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -284,23 +287,20 @@ export function TaskCard({
                 >
                   Reply
                 </Button>
-              )}
-              {!onReply && task.messageId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    captureAnalytics('task_action', { action: 'show_in_chat' });
-                    window.dispatchEvent(
-                      new window.CustomEvent('nod:focus-message', {
-                        detail: { messageId: task.messageId },
-                      }),
-                    );
-                  }}
-                >
-                  <MessageSquare size={16} aria-hidden="true" />
-                  Show in chat
-                </Button>
+              ) : (
+                startMessage && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      captureAnalytics('task_action', { action: 'show_in_chat' });
+                      showMessage(startMessage);
+                    }}
+                  >
+                    <MessageSquare size={16} aria-hidden="true" />
+                    Show in chat
+                  </Button>
+                )
               )}
               <Button
                 variant="ghost"
@@ -372,8 +372,16 @@ function Pending({ label }: { label: string }) {
   );
 }
 
-export function Scheduled({ onAsk }: { onAsk(text: string): void }) {
+export function Scheduled({
+  onAsk,
+  activity = [],
+}: {
+  onAsk(text: string): void;
+  activity?: Activity[];
+}) {
   const schedules = usePageData<Schedule[]>('/api/schedules');
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const open = (tasks.data ?? []).filter((task) => !closed(task));
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
@@ -392,6 +400,20 @@ export function Scheduled({ onAsk }: { onAsk(text: string): void }) {
       </header>
       {schedules.error && (
         <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
+      )}
+      {tasks.error && (
+        <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
+      )}
+      {open.length > 0 && (
+        <div className="saved-plan-list open-task-list">
+          {open.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              live={activity.find((item) => item.taskId === task.id)}
+            />
+          ))}
+        </div>
       )}
       {!schedules.data ? (
         schedules.loading && <Pending label="Loading schedules…" />

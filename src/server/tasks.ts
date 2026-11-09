@@ -8,10 +8,13 @@ import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   abortTurns,
+  activeHandoffSql,
   cancelTurns,
   enqueueTurn,
   insertAssistantMessage,
   lockThread,
+  resumeTurn,
+  wakeThreadAt,
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
@@ -87,6 +90,7 @@ type Row = {
   answered: boolean;
   question: string | null;
   question_message_id: string | null;
+  handoff: boolean;
 };
 
 function failure(message: string, statusCode = 400) {
@@ -101,8 +105,8 @@ function status(row: Row): TaskStatus {
   if (['waiting', 'failed', 'cancelled'].includes(row.turn_status ?? '') && !row.answered)
     return 'needs_you';
   if (row.waiting_for.length) return 'waiting';
-  if (row.next_check && row.next_check.getTime() > Date.now()) return 'scheduled';
-  return 'stalled';
+  if (row.next_check) return 'scheduled';
+  return 'needs_you';
 }
 
 function taskFacts(task: Task, detail: boolean) {
@@ -112,6 +116,7 @@ function taskFacts(task: Task, detail: boolean) {
     status: task.status,
     now: task.now,
     ...(task.question ? { question: task.question } : {}),
+    ...(task.browserHandoff ? { browserHandoff: true } : {}),
     ...(task.result ? { result: task.result } : {}),
     ...(detail
       ? {
@@ -154,6 +159,7 @@ export function createTasks(options: {
            t.created_at,t.updated_at,t.closed_at,COALESCE((SELECT r.status FROM turns r WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'),u.status) AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
              AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
+           COALESCE(${activeHandoffSql},false) AS handoff,
            q.text AS question,q.id AS question_message_id
          FROM ranked t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT m.id,m.text FROM messages m
@@ -190,6 +196,7 @@ export function createTasks(options: {
         status: value,
         question: value === 'needs_you' ? row.question : null,
         questionMessageId: value === 'needs_you' ? row.question_message_id : null,
+        ...(value === 'needs_you' && row.handoff ? { browserHandoff: true } : {}),
         waitingFor: open ? row.waiting_for : [],
         nextCheck:
           open && row.next_check && row.next_check.getTime() > Date.now()
@@ -500,7 +507,37 @@ export function createTasks(options: {
           }),
         );
     }
+    const checkAt = 'nextCheck' in request ? request.nextCheck : undefined;
+    if (checkAt) await wakeThreadAt(client, new Date(checkAt));
     return (await read(client, { id, closed: true }))[0];
+  }
+
+  async function resumeDue(threadId: string) {
+    const { rows } = await pool.query<{ id: string; turn_id: string; next_check: Date }>(
+      `SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+         ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
+       FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
+         AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
+         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+           AND u.status IN ('queued','running','waiting'))`,
+      [ownerId, threadId],
+    );
+    for (const row of rows)
+      await transaction(async (client) => {
+        const due = await client.query(
+          'UPDATE tasks SET next_check=NULL WHERE id=$1 AND owner_id=$2 AND next_check=$3',
+          [row.id, ownerId, row.next_check],
+        );
+        if (due.rowCount)
+          await resumeTurn(
+            row.turn_id,
+            `task-check:${row.id}:${row.next_check.getTime()}`,
+            "This task's planned check is due. Check what changed, then update or finish the task.",
+            false,
+            client,
+          );
+      }, pool);
+    if (rows.length) refresh();
   }
 
   async function inherit(turn: TurnRef) {
@@ -793,6 +830,7 @@ export function createTasks(options: {
     resolveReply,
     chatCommand,
     read: (thread?: string) => read(pool, { closed: true, thread }),
+    resumeDue,
     registerRoutes,
   };
 }

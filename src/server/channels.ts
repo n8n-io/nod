@@ -1284,6 +1284,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   const presence = new Map<string, { at: number; status: string }>();
   const confirmedProgress = new Map<string, string>();
+  const acknowledged = new Set<string>();
   let presenceRunning: Promise<void> | undefined;
   let nextPresence: LiveWork[] | undefined;
   let progressCall: { turnId: string; controller: AbortController } | undefined;
@@ -1477,9 +1478,40 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
+  async function acknowledgeStep(work: LiveWork[]) {
+    const pending = new Set(work.flatMap((item) => item.receivedMessageIds ?? []));
+    const changes: Array<[string, string | null]> = [
+      ...[...pending]
+        .filter((id) => !acknowledged.has(id))
+        .map((id) => [id, '👀'] as [string, string]),
+      ...[...acknowledged]
+        .filter((id) => !pending.has(id))
+        .map((id) => [id, null] as [string, null]),
+    ];
+    for (const [messageId, reaction] of changes) {
+      if (presenceUnavailable()) return;
+      const free = await pool.query(
+        "SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' AND assistant_reaction IS NULL",
+        [messageId, ownerId],
+      );
+      const sent = free.rowCount
+        ? await react(messageId, reaction, AbortSignal.timeout(5000)).then(
+            () => true,
+            (cause) => {
+              logFailure('channel_reaction_failed', cause);
+              return false;
+            },
+          )
+        : true;
+      if (!sent) continue;
+      if (reaction) acknowledged.add(messageId);
+      else acknowledged.delete(messageId);
+    }
+  }
+
   async function requestPresence() {
     if (!options.activity || presenceUnavailable()) return;
-    const work = await options.activity();
+    const work = (await options.activity()).filter((item) => !item.background);
     if (presenceUnavailable()) return;
     nextPresence = work;
     if (progressCall?.turnId && !work.some((item) => item.turnId === progressCall!.turnId))
@@ -1495,6 +1527,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         nextPresence = undefined;
         await progressStep(current);
         if (!nextPresence && !presenceUnavailable()) await presenceStep(current);
+        if (!nextPresence && !presenceUnavailable()) await acknowledgeStep(current);
       }
     })()
       .catch((cause) => logFailure('channel_presence_failed', cause))

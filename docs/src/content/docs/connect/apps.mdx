@@ -13,7 +13,7 @@ During onboarding, connect **Gmail** or **Outlook** so Nod can find emails that 
 
 After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts. While an app signs in, its card shows **Cancel**. You can continue without connecting any tools. A count shows connected tools, excluding email. You can also connect apps later from **Apps**.
 
-Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Nod checks each action before it reaches the connection service. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Nod checks each action before it reaches the connection service. Each installation signs its requests with its own random identity. The connection service stores only the public part, your connected accounts, usage counters, and expiring connection state, so knowing an account ID alone grants no access. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD

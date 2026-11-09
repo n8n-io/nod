@@ -43,6 +43,8 @@ import {
   nativeCatalog,
 } from './model-catalog.ts';
 
+const localModelSilenceMs = 30 * 60_000;
+
 const resource = 'https://api.openai.com/v1';
 const issuer = 'https://auth.openai.com';
 
@@ -1168,7 +1170,10 @@ export async function createPiModelRuntime(
                 ...(access.provider === 'compatible'
                   ? {
                       dispatcher: (endpointConnections ??= new Dispatcher1Wrapper(
-                        new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
+                        new Agent({
+                          headersTimeout: localModelSilenceMs,
+                          bodyTimeout: localModelSilenceMs,
+                        }),
                       )),
                     }
                   : {}),

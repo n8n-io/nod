@@ -102,7 +102,7 @@ export interface AppDependencies {
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
-  planningTasks?: () => boolean;
+  planningTasks?: () => string | undefined;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -255,6 +255,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       thread.id,
       visibleMessages.map((message) => message.turnId).filter((id) => id && !recentIds.has(id)),
     );
+    const planning = dependencies.planningTasks?.();
     return {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
@@ -264,7 +265,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       turns: [...turns.rows, ...olderTurns],
       activity,
       verificationRequests,
-      planningTasks: dependencies.planningTasks?.() ?? false,
+      planningTasks: planning !== undefined,
+      ...(planning ? { planningStep: planning } : {}),
       configuration: publicConfiguration(),
     };
   });
