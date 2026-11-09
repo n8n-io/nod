@@ -247,6 +247,7 @@ export function createAgentRuntime(dependencies: {
     let answered = false;
     let lastNote = '';
     let reported = false;
+    let responded = false;
     let finalDelivered = false;
     let requestRevision = 0;
     const activeToolCalls = new Set<Promise<unknown>>();
@@ -584,6 +585,14 @@ export function createAgentRuntime(dependencies: {
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;
+          const action = String((params as { action?: unknown } | null)?.action);
+          if (
+            name === 'react_to_message' ||
+            name === 'share_file' ||
+            (name === 'browser' && ['download', 'share_screenshot'].includes(action)) ||
+            (name === 'task' && action === 'finish')
+          )
+            responded = true;
           if (!stopped) await context.emit('tool_complete', label, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
@@ -1222,8 +1231,6 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const paused = () =>
         `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
-      if (checkInStopped && status === 'succeeded' && !context.proactivity)
-        throw new Error(paused());
       if (modelError)
         throw new ModelRequestError(
           `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
@@ -1231,13 +1238,20 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
-      if (context.proactivity && status === 'succeeded' && overBudget()) {
+      if (status === 'succeeded' && (context.proactivity ? overBudget() : checkInStopped)) {
         status = 'waiting_user';
         waitingFor = 'question';
         waitingMessage = paused();
       }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
+      if (
+        speaks &&
+        status === 'succeeded' &&
+        !responded &&
+        (replyOwed || (!lastReply && !reported))
+      )
+        throw new Error('The model ended without a reply.');
       if (context.taskContext && taskResult) {
         const checked = await reviewReply(taskResult);
         taskResult = typeof checked === 'string' ? checked : checked.text;

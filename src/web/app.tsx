@@ -202,6 +202,14 @@ function Workspace({
           path={path}
           unreadCount={unread.count}
           unreadPending={unread.pending}
+          presence={
+            state?.turns[0]?.status === 'waiting' ||
+            state?.tasks?.some((task) => task.status === 'needs_you')
+              ? 'waiting'
+              : state?.activity?.some((item) => !item.background)
+                ? 'working'
+                : undefined
+          }
           onToggle={toggleSidebar}
           onNavigate={navigate}
           account={account}
@@ -218,6 +226,7 @@ function Workspace({
                   ownerId={session.user!.id}
                   state={state}
                   streams={streams}
+                  connected={connected}
                   refresh={refresh}
                   initialFocusMessageId={pendingMessageFocus}
                   onReturnToMemory={onReturnToMemory}
@@ -258,7 +267,7 @@ function Workspace({
             )}
             {path === '/apps' && <Apps configuration={state?.configuration} onAsk={askInChat} />}
             {path === '/channels' && <Channels />}
-            {path === '/tasks' && <Scheduled onAsk={askInChat} />}
+            {path === '/tasks' && <Scheduled onAsk={askInChat} activity={state?.activity} />}
             {preparedWorkId(path) && <PreparedWork key={path} id={preparedWorkId(path)!} />}
             {settings}
             {!settingsPage(path) &&

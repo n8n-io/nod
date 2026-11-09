@@ -1615,6 +1615,7 @@ async function initializeApplication(
     });
     await startThreadWorkers({
       present: communication.present,
+      taskChecks: tasks.resumeDue,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
       taskClassification: true,

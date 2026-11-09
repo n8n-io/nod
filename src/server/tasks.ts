@@ -12,6 +12,8 @@ import {
   enqueueTurn,
   insertAssistantMessage,
   lockThread,
+  resumeTurn,
+  wakeThreadAt,
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
@@ -101,8 +103,8 @@ function status(row: Row): TaskStatus {
   if (['waiting', 'failed', 'cancelled'].includes(row.turn_status ?? '') && !row.answered)
     return 'needs_you';
   if (row.waiting_for.length) return 'waiting';
-  if (row.next_check && row.next_check.getTime() > Date.now()) return 'scheduled';
-  return 'stalled';
+  if (row.next_check) return 'scheduled';
+  return 'needs_you';
 }
 
 function taskFacts(task: Task, detail: boolean) {
@@ -500,7 +502,37 @@ export function createTasks(options: {
           }),
         );
     }
+    const checkAt = 'nextCheck' in request ? request.nextCheck : undefined;
+    if (checkAt) await wakeThreadAt(client, new Date(checkAt));
     return (await read(client, { id, closed: true }))[0];
+  }
+
+  async function resumeDue(threadId: string) {
+    const { rows } = await pool.query<{ id: string; turn_id: string; next_check: Date }>(
+      `SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+         ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
+       FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
+         AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
+         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+           AND u.status IN ('queued','running','waiting'))`,
+      [ownerId, threadId],
+    );
+    for (const row of rows)
+      await transaction(async (client) => {
+        const due = await client.query(
+          'UPDATE tasks SET next_check=NULL WHERE id=$1 AND owner_id=$2 AND next_check=$3',
+          [row.id, ownerId, row.next_check],
+        );
+        if (due.rowCount)
+          await resumeTurn(
+            row.turn_id,
+            `task-check:${row.id}:${row.next_check.getTime()}`,
+            "This task's planned check is due. Check what changed, then update or finish the task.",
+            false,
+            client,
+          );
+      }, pool);
+    if (rows.length) refresh();
   }
 
   async function inherit(turn: TurnRef) {
@@ -793,6 +825,7 @@ export function createTasks(options: {
     resolveReply,
     chatCommand,
     read: (thread?: string) => read(pool, { closed: true, thread }),
+    resumeDue,
     registerRoutes,
   };
 }

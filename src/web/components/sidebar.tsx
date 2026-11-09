@@ -16,6 +16,7 @@ export function Sidebar({
   path,
   unreadCount = 0,
   unreadPending = false,
+  presence,
   onToggle,
   onNavigate,
   account,
@@ -24,6 +25,7 @@ export function Sidebar({
   path: string;
   unreadCount?: number;
   unreadPending?: boolean;
+  presence?: 'working' | 'waiting';
   onToggle(): void;
   onNavigate(path: string): void;
   account?: AccountControls;
@@ -39,7 +41,14 @@ export function Sidebar({
           ? `${unreadCount} or more unread messages`
           : 'Checking unread messages'
         : `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`;
-  const chatLabel = unreadCount || unreadPending ? `Chat, ${unreadLabel}` : 'Chat';
+  const chatLabel =
+    unreadCount || unreadPending
+      ? `Chat, ${unreadLabel}`
+      : presence === 'waiting'
+        ? 'Chat, waiting for you'
+        : presence === 'working'
+          ? 'Chat, Nod is working'
+          : 'Chat';
   const unreadBadge =
     unreadCount || unreadPending ? (
       <span className="chat-unread-badge" aria-hidden="true">
@@ -52,6 +61,9 @@ export function Sidebar({
             : unreadCount}
       </span>
     ) : null;
+  const statusDot = presence ? (
+    <span className="chat-status-dot" data-state={presence} aria-hidden="true" />
+  ) : null;
   const mobileTrigger = useRef<HTMLButtonElement>(null);
   const mobileSheet = useRef<HTMLDialogElement>(null);
   const theme = useSyncExternalStore(subscribeTheme, currentTheme, () => 'light');
@@ -251,6 +263,7 @@ export function Sidebar({
                     <span className="nav-icon">
                       <Icon size={20} solid={path === item.path} aria-hidden="true" />
                       {item.path === '/' && unreadBadge}
+                      {item.path === '/' && statusDot}
                     </span>
                     <span className="nav-label">{item.label}</span>
                   </a>
@@ -283,6 +296,7 @@ export function Sidebar({
           <span className="nav-icon">
             <BrandMark />
             {unreadBadge}
+            {statusDot}
           </span>
         </a>
         <div className="mobile-toolbar-actions" ref={actionsRef} />

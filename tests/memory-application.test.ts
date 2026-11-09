@@ -421,13 +421,13 @@ test(
       assert.ok((await view()).skills[0].edited);
 
       const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
-      const startTurn = await ask(routineStart, [], '');
+      const startTurn = await ask(routineStart, [], 'Noted.');
       const routineEnd = 'I also check the synthetic project backlog on Friday afternoons.';
       rememberAnswer = (input) => ({ ops: keep(input, [routineStart, routineEnd], 'routines') });
-      const routineTurn = await ask(routineEnd, [learn()], '');
+      const routineTurn = await ask(routineEnd, [learn()], 'Noted.');
       assert.deepEqual((await savedEntry(routineStart))?.sources, [await sourceOf(startTurn)]);
       assert.deepEqual((await savedEntry(routineEnd))?.sources, [await sourceOf(routineTurn)]);
-      await assertSilent(routineTurn, '');
+      await assertSilent(routineTurn, 'Noted.');
 
       const routinePath = (await view()).notes.find((note) => note.text === routineEnd)!.path;
       const { enqueueTurn } = await import('../src/server/thread.ts');

@@ -74,17 +74,36 @@ async function fixture(
     manage: async () => ({}),
     ...overrides,
   };
+  let delivered = false;
+  const deliver = context.reply;
+  context.reply = (...args) => {
+    delivered = true;
+    return deliver(...args);
+  };
+  const speak = context.createAudio;
+  if (speak)
+    context.createAudio = (...args) => {
+      delivered = true;
+      return speak(...args);
+    };
   const agent: Agent = {
     open: async (options) => {
       return {
         resumed: false,
         prompt: async (request) => {
+          let finished = false;
+          const onEvent = (event: AgentEvent) => {
+            if (event.type === 'final') finished = true;
+            options.onEvent(event);
+          };
           await run(
             new Map(options.tools.map((tool) => [tool.name, tool])),
-            options.onEvent,
-            options,
+            onEvent,
+            { ...options, onEvent },
             request,
           );
+          if (!finished && !delivered && !options.shouldStop())
+            options.onEvent({ type: 'final', text: 'Done.' });
         },
         abort: () => {
           aborted = true;
@@ -486,6 +505,30 @@ test('an owner message steered during final delivery keeps the newer request act
   assert.deepEqual(delivered, ['The first fact.', 'The second fact.']);
 });
 
+test('a turn the owner started never ends without something to show', async () => {
+  await assert.rejects(
+    fixture(async (_tools, emit) => emit({ type: 'final', text: '' })),
+    /without a reply/,
+  );
+  const sent = await fixture(async (tools, emit) => {
+    await call(tools, 'send_message', { text: 'The synthetic result.', intent: 'final' });
+    emit({ type: 'final', text: '' });
+  });
+  assert.equal(sent.result.status, 'succeeded');
+  const queued = [{ id: randomUUID(), text: 'And the second fact?', attachments: [] }];
+  await assert.rejects(
+    fixture(
+      async (tools, emit, options) => {
+        await call(tools, 'send_message', { text: 'The first fact.' });
+        assert.equal((await options.nextMessages!()).length, 1);
+        emit({ type: 'final', text: '' });
+      },
+      { takeMessages: async () => queued.splice(0) },
+    ),
+    /without a reply/,
+  );
+});
+
 test('successful delivery context records reviewed output and invalidates review without recording duplicates', async () => {
   const requested: Presentation = {
     version: 1,
@@ -606,6 +649,7 @@ test('delivery context excludes failed, cancelled and in-flight replies', async 
       },
     );
     if (outcome === 'cancelled') await assert.rejects(pending, /abort/i);
+    else if (outcome === 'failure') await assert.rejects(pending);
     else await pending;
     assert.deepEqual(
       brief.lastDelivery,
@@ -1529,15 +1573,14 @@ test('past the spending check-in a turn stops working but can ask, and one that 
   );
   assert.equal(asked.result.status, 'waiting_user');
   assert.equal(reads.length, 2);
-  await assert.rejects(
-    fixture(
-      async (tools, emit, options) => {
-        emit(usage(6));
-        while (!options.shouldStop()) await read(tools).catch(() => {});
-      },
-      { integration, checkIn },
-    ),
+  const kept = await fixture(
+    async (tools, emit, options) => {
+      emit(usage(6));
+      while (!options.shouldStop()) await read(tools).catch(() => {});
+    },
+    { integration, checkIn },
   );
+  assert.equal(kept.result.status, 'waiting_user');
   assert.equal(reads.length, 2);
   await fixture(
     async (tools, emit) => {
@@ -1827,7 +1870,7 @@ test('an app sign-in pauses only at a valid link', async () => {
       },
       { connections: async () => ({ name: 'Gmail', url, message: 'Continue to Gmail.' }) },
     );
-    assert.deepEqual(result.replies, []);
+    assert.ok(result.replies.every((text) => !text.includes('example.test')));
     assert.equal(result.result.message, undefined);
   }
 });
