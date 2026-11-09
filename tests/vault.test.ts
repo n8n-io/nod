@@ -3518,7 +3518,7 @@ const session={user:{id:'synthetic-native-owner',name:'',email:null,avatarUrl:nu
 let root=createRoot(document.getElementById('root'));
 const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>{completions++;assert.equal(preparationCompleted,true,'No completion before server preparation finishes')}})));
 const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
-const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition())};
+const waitFor=async condition=>{for(let at=0;at<100&&!(await condition());at++)await settle();assert.ok(await condition())};
 const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
 await render();
 assert.equal(window.location.search,'');
@@ -3577,7 +3577,7 @@ failLogin=true;
 const beforeBlocked=saves;
 root=createRoot(document.getElementById('root'));
 await render();
-await waitFor(()=>document.querySelector('main [role="status"]'));
+await waitFor(async()=>(await store.get()).onboardingPreferenceStep==='complete');
 assert.equal(saves,beforeBlocked+1);
 assert.equal((await store.get()).launchAtLogin,false);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
