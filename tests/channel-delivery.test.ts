@@ -224,7 +224,7 @@ test(
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),session_id uuid GENERATED ALWAYS AS (thread_id) STORED,source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,answer_choices jsonb,reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,answer_choices jsonb,reply_to_message_id uuid,delivered_channel text,hidden_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1101,6 +1101,68 @@ test(
     } finally {
       await channels.close();
     }
+  },
+);
+
+test(
+  'retired schedule confirmations do not reach connected channels',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const provider of ['telegram', 'whatsapp'])
+      await t.test(provider, async (t) => {
+        const { pool, posts, receive, turnOf, reply, create } = await outboxFixture(
+          t,
+          undefined,
+          provider,
+        );
+        const channels = await create();
+        try {
+          const inboundId = `retired-${provider}`;
+          receive('111', inboundId, `chat-${provider}`);
+          await channels.drain();
+          const { turn_id: turnId } = await turnOf(inboundId);
+          await pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+            [turnId],
+          );
+
+          const hiddenBeforeEnqueue = randomUUID();
+          await reply(turnId, 'Cancel the synthetic schedule?', hiddenBeforeEnqueue, 0);
+          await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [
+            hiddenBeforeEnqueue,
+          ]);
+          await channels.drain();
+          assert.deepEqual(posts, []);
+          assert.equal(
+            (
+              await pool.query('SELECT 1 FROM channel_outbox WHERE message_id=$1', [
+                hiddenBeforeEnqueue,
+              ])
+            ).rowCount,
+            0,
+          );
+
+          const hiddenAfterEnqueue = randomUUID();
+          await reply(turnId, 'Cancel the synthetic schedule?', hiddenAfterEnqueue, 1);
+          await pool.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
+            hiddenAfterEnqueue,
+            `channel:${provider}:bot:${inboundId}`,
+          ]);
+          await pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [hiddenAfterEnqueue]);
+          await channels.drain();
+          assert.deepEqual(posts, []);
+          assert.equal(
+            (
+              await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+                hiddenAfterEnqueue,
+              ])
+            ).rows[0]?.state,
+            'blocked',
+          );
+        } finally {
+          await channels.close();
+        }
+      });
   },
 );
 

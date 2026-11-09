@@ -118,7 +118,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ];
     const targets = replyIds.length
       ? await pool.query<{ id: string; role: string; text: string; presentation: unknown }>(
-          'SELECT id,role,COALESCE(audio_caption,text) AS text,presentation FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+          'SELECT id,role,COALESCE(audio_caption,text) AS text,presentation FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND hidden_at IS NULL',
           [ownerId, replyIds],
         )
       : { rows: [] };
@@ -225,29 +225,34 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
-    const [messages, turns, pendingChoices, verificationRequests, activity] = await Promise.all([
-      pool.query(
-        `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
-         LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
-        [ownerId, thread.id],
-      ),
-      pool.query(
-        `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
-        [ownerId, thread.id],
-      ),
-      pool.query<{ id: string }>(
-        `SELECT m.id FROM turns waiting JOIN LATERAL (
+    const [messages, hiddenMessages, turns, pendingChoices, verificationRequests, activity] =
+      await Promise.all([
+        pool.query(
+          `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
+         LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
+          [ownerId, thread.id],
+        ),
+        pool.query<{ id: string }>(
+          'SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL',
+          [ownerId, thread.id],
+        ),
+        pool.query(
+          `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
+          [ownerId, thread.id],
+        ),
+        pool.query<{ id: string }>(
+          `SELECT m.id FROM turns waiting JOIN LATERAL (
           SELECT m.* FROM messages m WHERE m.turn_id=waiting.id AND m.owner_id=waiting.owner_id
-            AND m.thread_id=waiting.thread_id AND m.role='assistant'
+            AND m.thread_id=waiting.thread_id AND m.role='assistant' AND m.hidden_at IS NULL
           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
         ) m ON true
         WHERE waiting.owner_id=$1 AND waiting.thread_id=$2 AND waiting.status='waiting'
           AND waiting.waiting_reason='question' AND ${pendingAnswerChoicesSql}`,
-        [ownerId, thread.id],
-      ),
-      dependencies.verification?.pending() ?? [],
-      dependencies.activity?.() ?? [],
-    ]);
+          [ownerId, thread.id],
+        ),
+        dependencies.verification?.pending() ?? [],
+        dependencies.activity?.() ?? [],
+      ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
@@ -260,6 +265,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
+      hiddenMessageIds: hiddenMessages.rows.map(({ id }) => id),
       pendingAnswerChoiceMessageIds: pendingChoices.rows.map(({ id }) => id),
       messages: await messageViews(visibleMessages),
       turns: [...turns.rows, ...olderTurns],
@@ -275,13 +281,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     const { rows } = await pool.query(
       `SELECT ${messageFields},ts_headline('english',m.text,websearch_to_tsquery('english',$3),'StartSel="", StopSel="", MaxWords=35, MinWords=15, ShortWord=0') AS snippet
-       FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id
+       FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL
        LEFT JOIN LATERAL (
          SELECT jsonb_path_query_array(m.presentation,'strict $.** ? (@.type() == "object").keyvalue() ? (@.key != "version" && @.key != "type" && @.key != "id" && @.key != "artifactId" && @.key != "sectionId" && @.key != "from" && @.key != "to" && @.key != "chart").value ? (@.type() == "string" || @.type() == "number")')
            || jsonb_path_query_array(m.presentation,'strict $.** ? (@.type() == "array")[*] ? (@.type() == "string" || @.type() == "number")') AS content
          WHERE m.role='assistant' AND m.presentation->>'version'='1'
        ) visual ON true
-       WHERE m.owner_id=$1 AND m.thread_id=$2 AND (
+       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND (
          to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0
          OR jsonb_to_tsvector('english',visual.content,'["string","numeric"]') @@ websearch_to_tsquery('english',$3)
          OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(visual.content) value WHERE strpos(lower(value),lower($3))>0)
@@ -316,13 +322,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     const hit = (
       await pool.query(
-        'SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
+        'SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND hidden_at IS NULL',
         [id, ownerId, thread.id],
       )
     ).rows[0];
     if (!hit) throw Object.assign(new Error('Message not found.'), { statusCode: 404 });
     const { rows } = await pool.query(
-      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
+      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
       [ownerId, thread.id, hit.created_at, id],
     );
     return messageViews(rows);
@@ -343,8 +349,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       );
     const rows = await pool.query(
       `SELECT ${messageFields} FROM messages m
-      LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id
-      WHERE m.owner_id=$1 AND m.thread_id=$4 AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
+      LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL
+      WHERE m.owner_id=$1 AND m.thread_id=$4 AND m.hidden_at IS NULL AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
       ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 61`,
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );

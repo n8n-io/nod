@@ -926,6 +926,8 @@ async function initializeApplication(
     redact: createErrorRedactor(secrets),
     analytics: captureAnalytics,
   });
+  let retireScheduleConfirmations:
+    ((client: import('pg').PoolClient, id: string) => Promise<void>) | undefined;
   const personal = createPersonalService({
     analytics: captureAnalytics,
     pool,
@@ -933,6 +935,10 @@ async function initializeApplication(
     scheduler: boss,
     enqueueTurn,
     refresh,
+    retireScheduleConfirmations: (client, id) => {
+      if (!retireScheduleConfirmations) throw new Error('Approvals are not ready.');
+      return retireScheduleConfirmations(client, id);
+    },
     memory,
     learnedSkills,
     models: adapters.models,
@@ -1292,6 +1298,7 @@ async function initializeApplication(
     communication.describe,
     captureAnalytics,
   );
+  retireScheduleConfirmations = approvals.retireScheduleConfirmations;
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const reactions = createAgentReactionService({
     pool,

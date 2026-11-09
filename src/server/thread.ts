@@ -317,7 +317,7 @@ async function insertEvent(
 async function assertReplyTarget(client: PoolClient, threadId: string, messageId?: string) {
   if (!messageId) return;
   const target = await client.query(
-    'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
+    'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND hidden_at IS NULL',
     [messageId, ownerId, threadId],
   );
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);

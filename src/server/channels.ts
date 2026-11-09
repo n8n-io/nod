@@ -1001,7 +1001,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
       JOIN channel_inbox i ON i.channel=u.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
         AND (u.channel_source_id IS NULL OR i.source_id=u.channel_source_id)
-      WHERE m.role='assistant' AND m.owner_id=$1 AND i.state='submitted' AND u.channel<>'web'
+      WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted' AND u.channel<>'web'
         AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
       ORDER BY m.id,(i.turn_id IS NOT DISTINCT FROM m.turn_id) DESC,i.received_at DESC,i.source_id
       ON CONFLICT(message_id) DO NOTHING`,
@@ -1017,7 +1017,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   ) {
     const result = await database.query(
       `SELECT 1 FROM messages m JOIN channel_outbox o ON o.message_id=m.id
-       WHERE m.id=$1 AND m.owner_id=$2 AND o.claim_id=$4 AND o.state=$5
+       WHERE m.id=$1 AND m.owner_id=$2 AND m.hidden_at IS NULL AND o.claim_id=$4 AND o.state=$5
        AND m.thread_id IS NOT DISTINCT FROM $3::uuid
        AND (m.answer_choices IS NULL OR ${pendingAnswerChoicesSql})
        AND (m.thread_id IS NULL OR EXISTS (
@@ -1080,6 +1080,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
     if (reason) {
       await block(reason);
+      return true;
+    }
+    if (!(await currentMessage(row, claimId, 'preparing'))) {
+      await block('message_changed');
       return true;
     }
     let attachments: MessagingAttachment[] | undefined;
@@ -1154,7 +1158,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         if (!current.rowCount) return false;
         const result = await client.query(
-          `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
+          `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3 AND m.hidden_at IS NULL
            AND (m.thread_id IS NULL OR EXISTS (
              SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
           [row.message_id, generated, ownerId],
@@ -1175,7 +1179,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const result = await client.query(
         `UPDATE channel_outbox o SET state='sending',updated_at=now() FROM messages m
          WHERE o.message_id=$1 AND o.claim_id=$2 AND o.state='preparing'
-           AND m.id=o.message_id AND m.owner_id=$3
+           AND m.id=o.message_id AND m.owner_id=$3 AND m.hidden_at IS NULL
            AND m.thread_id IS NOT DISTINCT FROM $4::uuid
            AND (m.thread_id IS NULL OR EXISTS (
              SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))

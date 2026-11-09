@@ -74,6 +74,7 @@ export interface ScheduleDependencies {
   stopConsumer?: (id: string) => Promise<void>;
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
+  retireScheduleConfirmations?(client: PoolClient, id: string): Promise<void>;
   now?: () => Date;
   sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
 }
@@ -409,7 +410,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
          LEFT JOIN LATERAL (
            SELECT m.id,left(m.text,4000) AS text FROM messages m
            WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant'
-             AND u.channel='web' AND ${activeThreadSql('m')}
+             AND m.hidden_at IS NULL AND u.channel='web' AND ${activeThreadSql('m')}
            ORDER BY date_trunc('milliseconds',m.created_at),m.id LIMIT 1
          ) m ON true
          WHERE r.owner_id=$1 AND ($2::uuid IS NULL OR r.schedule_id=$2)
@@ -797,13 +798,15 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const timingChanged = ['kind', 'cron', 'runAt', 'timeZone', 'enabled'].some(
         (key) => key in input,
       );
-      return enqueue(
+      const updated = await enqueue(
         client,
         saved,
         !timingChanged && saved.enabled && previous.nextRun
           ? previous.nextRun
           : nextOccurrence(saved),
       );
+      if (input.enabled === false) await dependencies.retireScheduleConfirmations?.(client, id);
+      return updated;
     }, shared);
     afterCommit(shared ?? pool, () => {
       refresh();
@@ -831,6 +834,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
+      await dependencies.retireScheduleConfirmations?.(client, id);
       return row;
     });
     refresh();

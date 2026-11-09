@@ -15,6 +15,9 @@ import { createDecisionModel } from '../src/providers/decisions.ts';
 import { BrowserActionError, type CredentialInput } from '../src/ports/computer.ts';
 import { authenticatorKey } from '../src/shared/authenticator-key.ts';
 import { authenticatorCode } from '../src/server/authenticator.ts';
+import { transaction } from '../src/server/transaction.ts';
+import type { AppState } from '../src/shared/contracts.ts';
+import { mergeMessages } from '../src/web/lib/chat-messages.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -431,7 +434,7 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     const request = (
-      method: 'GET' | 'POST' | 'PATCH',
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
       path: string,
       payload?: Record<string, unknown>,
     ) => application.app.inject({ method, url: path, headers, payload });
@@ -460,13 +463,14 @@ test(
     }
     const approvalsFor = async (id: string) =>
       (await pool.query('SELECT * FROM approvals WHERE turn_id=$1', [id])).rows;
-    async function reminder() {
+    async function reminder(input: Record<string, unknown> = {}) {
       const response = await request('POST', '/api/schedules', {
         title: 'Synthetic cancellation reminder',
         prompt: 'Review the synthetic checklist.',
         kind: 'once',
         runAt: '2099-01-01T09:00:00Z',
         timeZone: 'UTC',
+        ...input,
       });
       assert.equal(response.statusCode, 200, response.body);
       const id = response.json().id as string;
@@ -1175,6 +1179,117 @@ test(
             assert.equal(applied.revision, saved.revision + 1);
             assert.equal(applied.enabled, action !== 'schedule_cancel');
             assert.equal(applied.title, args.title ?? saved.title);
+          }
+        },
+      );
+
+      await t.test(
+        'direct schedule cancellation retires an outstanding chat confirmation',
+        async () => {
+          for (const method of ['PATCH', 'DELETE'] as const) {
+            const schedule = await reminder({
+              kind: 'recurring',
+              cron: '0 0 1 1 *',
+              runAt: null,
+            });
+            const prompt = `Synthetic scheduled cancellation ${randomUUID()}`;
+            const requestedId = method === 'PATCH' ? schedule.id.toUpperCase() : schedule.id;
+            plans.set(prompt, { action: 'schedule_cancel', args: { id: requestedId } });
+            const turn = await transaction(async (client) => {
+              const turnId = await enqueueTurn(prompt, {
+                source: 'schedule',
+                sourceId: `schedule-fixture:${randomUUID()}`,
+                background: true,
+                client,
+              });
+              await client.query(
+                `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+                 VALUES($1,$2,$3,0,$4,$5,$6,$7,'UTC',$8)`,
+                [
+                  randomUUID(),
+                  ownerId,
+                  schedule.id,
+                  randomUUID(),
+                  'Synthetic cancellation reminder',
+                  turnId,
+                  new Date().toISOString(),
+                  'Check the synthetic schedule status.',
+                ],
+              );
+              return turnId;
+            }, pool);
+            await waitFor(turn, 'waiting');
+            const [approval] = await approvalsFor(turn);
+            assert.equal(approval.status, 'pending');
+            assert.equal(approval.action, 'NOD_schedule_cancel');
+            assert.deepEqual(approval.args, { id: requestedId });
+            const before = await request('GET', '/api/state');
+            assert.equal(before.statusCode, 200, before.body);
+            const beforeState = before.json<AppState>();
+            assert.equal(
+              beforeState.messages.find(
+                (message) => message.id === approval.confirmation_message_id,
+              )?.text,
+              confirmationText,
+            );
+            const response = await request(
+              method,
+              `/api/schedules/${schedule.id}`,
+              method === 'PATCH' ? { enabled: false } : undefined,
+            );
+            assert.equal(response.statusCode, 200, response.body);
+            if (method === 'PATCH') await assertCancelled(schedule);
+            else {
+              assert.equal(
+                (
+                  await pool.query('SELECT id FROM schedules WHERE id=$1 AND owner_id=$2', [
+                    schedule.id,
+                    ownerId,
+                  ])
+                ).rowCount,
+                0,
+              );
+              assert.equal(
+                (
+                  await pool.query(`SELECT state FROM ${bossSchema}.job WHERE id=$1`, [
+                    schedule.jobId,
+                  ])
+                ).rows[0].state,
+                'cancelled',
+              );
+            }
+            assert.equal((await approvalsFor(turn))[0].status, 'expired');
+            const waiting = (
+              await pool.query('SELECT status FROM turns WHERE id=$1 AND owner_id=$2', [
+                turn,
+                ownerId,
+              ])
+            ).rows[0];
+            assert.notEqual(waiting.status, 'waiting');
+            const state = await request('GET', '/api/state');
+            assert.equal(state.statusCode, 200, state.body);
+            const afterState = state.json<AppState>();
+            assert.ok(afterState.hiddenMessageIds?.includes(approval.confirmation_message_id));
+            assert.equal(
+              afterState.messages.some(
+                (message) => message.id === approval.confirmation_message_id,
+              ),
+              false,
+            );
+            assert.equal(
+              mergeMessages(
+                beforeState.messages,
+                afterState.messages,
+                new Set(afterState.hiddenMessageIds),
+              ).some((message) => message.id === approval.confirmation_message_id),
+              false,
+            );
+            const staleReply = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: approval.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(staleReply.statusCode, 404, staleReply.body);
           }
         },
       );
