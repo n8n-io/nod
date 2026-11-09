@@ -14,9 +14,14 @@
   box-shadow: var(--shadow-menu);
   font-size: var(--text-control);
 }
-.desktop-update-toast > svg {
+.desktop-update-toast-icon {
+  display: grid;
   flex: none;
-  margin-top: 2px;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
   color: var(--accent);
 }
 .desktop-update-toast-content {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw } from './icons';
+import { ArrowUp } from './icons';
 import { Button } from './ui';
 import {
   desktopUpdateStatus,
@@ -33,7 +33,9 @@ export function DesktopUpdateToast() {
 
   return (
     <aside className="desktop-update-toast" role="status" aria-label="Nod update">
-      <RefreshCw size={20} aria-hidden="true" />
+      <span className="desktop-update-toast-icon" aria-hidden="true">
+        <ArrowUp size={14} />
+      </span>
       <div className="desktop-update-toast-content">
         <strong>Nod {version} is ready</strong>
         <p>Restart to use the new version.</p>
