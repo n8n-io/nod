@@ -436,6 +436,8 @@ async function runningDesktop(
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
     openExternal,
+    quitAndInstall = () => assert.fail('No update should install.'),
+    displays = [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
   } = {},
 ) {
   const storage = storedProfile
@@ -475,6 +477,7 @@ async function runningDesktop(
   const fromPartition = (partition) => {
     if (!appSessions.has(partition)) {
       const appSession = Object.assign(new EventEmitter(), {
+        flushStorageData() {},
         setPermissionCheckHandler: (handler) => {
           permissionCheck = handler;
           appSession.permissionCheck = handler;
@@ -501,6 +504,8 @@ async function runningDesktop(
     appOpenPath,
     app: {
       on: (name, listener) => appEvents.on(name, listener),
+      once: (name, listener) => appEvents.once(name, listener),
+      removeListener: (name, listener) => appEvents.removeListener(name, listener),
       isPackaged: packaged,
       commandLine: { removeSwitch() {} },
       setName() {},
@@ -540,7 +545,14 @@ async function runningDesktop(
       resourcesPath: dirname(storage.path),
     },
     ipcMain: ipc,
+    autoUpdater: Object.assign(new EventEmitter(), {
+      quitAndInstall() {
+        quitAndInstall();
+        appEvents.emit('before-quit', { preventDefault() {} });
+      },
+    }),
     session: { fromPartition },
+    screen: { getAllDisplays: () => displays },
     protocol: { registerSchemesAsPrivileged() {} },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: {
@@ -711,6 +723,13 @@ async function runningDesktop(
       isMinimized() {
         return this.minimized === true;
       }
+      isMaximized() {
+        return this.maximized === true;
+      }
+      maximize() {
+        this.maximized = true;
+        this.visible = true;
+      }
       loadURL(url) {
         const setup = setupResource(url) === 'index.html';
         if (setup) {
@@ -833,6 +852,7 @@ async function runningDesktop(
       checkUpdates: (updater, manual = true, restartReady = false) => { updates = updater; return checkForUpdates(manual, restartReady); },
       registerFiles: () => { ${source.slice(source.indexOf('      disposeArtifactFiles = registerArtifactFileHandlers('), source.indexOf("      ipcMain.handle('nod:renderer-ready'"))} },
       quit,
+      restartForUpdate,
       crash: () => { engine = undefined; enginePreferencesReady = false; },
     };
     })()`,
@@ -2692,6 +2712,80 @@ test('quit removes temporary files and stops downloads before the updater can qu
       assert.equal(installed, true);
       assert.equal(cleanupAttempts, retry ? 2 : 1);
       assert.equal(prompts, retry ? 1 : 0);
+    });
+});
+
+test('an update restart keeps Nod on screen and reopens it as it was', async (t) => {
+  for (const scenario of ['open', 'minimized', 'setup', 'closed', 'offscreen'])
+    await t.test(scenario, async (t) => {
+      let shown;
+      const request = async (url) =>
+        Response.json(
+          new URL(url).pathname === '/api/desktop/status' ? { running: [] } : { ok: true },
+        );
+      const f = await runningDesktop(t, request, {
+        allowStart: true,
+        platform: 'darwin',
+        quitAndInstall: () => {
+          shown = f.windows.filter((window) => window.isVisible());
+        },
+      });
+      t.after(() => f.close());
+      f.crash();
+      assert.equal((await f.prepare()).phase, 'ready');
+      f.showEngine();
+      await new Promise(setImmediate);
+      const chat = f.windows.at(-1);
+      assert.equal(chat.isVisible(), true);
+      chat.bounds = { x: scenario === 'offscreen' ? 4000 : 140, y: 90, width: 1000, height: 760 };
+      chat.maximized = true;
+      chat.webContents.mainFrame.url = `${new URL(chat.url).origin}/usage`;
+      let setup;
+      if (scenario === 'setup') {
+        f.showSettings('general', true);
+        await new Promise(setImmediate);
+        setup = f.windows.at(-1);
+        Object.assign(setup, { bounds: { ...chat.bounds }, maximized: true });
+      }
+      if (scenario === 'closed' || scenario === 'setup') chat.destroy();
+      if (scenario === 'minimized') chat.minimize();
+      await f.restartForUpdate();
+      assert.equal(f.children[0].killed, true);
+      assert.equal(f.status().phase, 'updating');
+      assert.equal(shown.length, 1);
+      if (scenario === 'closed') assert.equal(shown[0].path, '/index.html');
+      else assert.equal(shown[0], setup ?? chat);
+
+      const next = await runningDesktop(t, request, {
+        storedProfile: f.storage,
+        initialState: 'upgrade',
+        allowStart: true,
+        platform: 'darwin',
+      });
+      try {
+        await next.launch();
+        await next.settle();
+        assert.equal(next.children[0].port, f.children[0].port);
+        const reopened = next.windows.find((window) => window.url && window.isVisible());
+        assert.ok(reopened);
+        if (['open', 'minimized', 'setup'].includes(scenario)) {
+          assert.deepEqual(reopened.bounds, chat.bounds);
+          assert.equal(reopened.isMaximized(), true);
+          assert.deepEqual(
+            reopened.sent.find(([channel]) => channel === 'nod:navigate'),
+            scenario === 'setup' ? undefined : ['nod:navigate', '/usage'],
+          );
+        } else {
+          assert.deepEqual(reopened.bounds, { x: 0, y: 0, width: 1200, height: 860 });
+          assert.equal(reopened.isMaximized(), false);
+        }
+        assert.equal(
+          next.windows.some((window) => window.path && !window.isDestroyed()),
+          false,
+        );
+      } finally {
+        await next.close();
+      }
     });
 });
 
@@ -6724,7 +6818,7 @@ test('ready desktop updates share Later across engine windows and reopen for a n
   assert.deepEqual(restarts, []);
 });
 
-test('in-app update restart warns about unsent text, keeps Later safe, and shares one confirmation', async (t) => {
+test('in-app update restart keeps Later safe and shares one confirmation', async (t) => {
   const choice = deferred();
   const shown = deferred();
   const prompts = [];
@@ -6765,7 +6859,6 @@ test('in-app update restart warns about unsent text, keeps Later safe, and share
   assert.equal(status(event).checking, true);
   assert.equal(f.updateMenu.enabled, false);
   assert.match(prompts[0].message, /Nod 0\.5\.2 is ready/);
-  assert.match(prompts[0].detail, /Unsent text in the message box will be lost/);
   assert.deepEqual([...prompts[0].buttons], ['Restart', 'Later']);
   assert.equal(prompts[0].defaultId, 1);
   assert.equal(prompts[0].cancelId, 1);
