@@ -1735,7 +1735,6 @@ async function startEngine({ runtime, signal, pending = false }) {
   if (startup?.isDestroyed() || status.windowError)
     throw new Error('Nod could not open setup. Reopen the window, then try again.');
   const port = await availablePort(resumePort).catch(() => availablePort());
-  resumePort = undefined;
   if (quitting || signal.aborted) throw new Error('Nod is closing.');
   engineBound = false;
   authToken = randomBytes(32).toString('base64url');
