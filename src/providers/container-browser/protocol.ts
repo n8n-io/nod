@@ -292,7 +292,14 @@ export const viewFrame = z
   })
   .strict();
 export const browserInputResult = z.discriminatedUnion('ok', [
-  z.object({ id: z.uuid(), inputId: z.uuid(), ok: z.literal(true) }).strict(),
+  z
+    .object({
+      id: z.uuid(),
+      inputId: z.uuid(),
+      ok: z.literal(true),
+      text: z.string().max(262_144).optional(),
+    })
+    .strict(),
   z
     .object({
       id: z.uuid(),

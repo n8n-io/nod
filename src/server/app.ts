@@ -696,17 +696,22 @@ export async function createApp(dependencies: AppDependencies = {}) {
       .strict()
       .safeParse(request.body);
     if (!body.success)
-      return reply.code(400).send({ error: 'Send pointer, wheel, key or text input.' });
+      return reply.code(400).send({ error: 'Send pointer, wheel, key, text or copy input.' });
     const control = dependencies.computer?.control;
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
     const browserId = await handoffBrowser(body.data.turnId);
     if (!browserId) return reply.code(423).send({ error: handoffClosed });
     try {
+      let copiedText: string | undefined;
       for (const input of body.data.inputs) {
         if ((await handoffBrowser(body.data.turnId)) !== browserId)
           return reply.code(423).send({ error: handoffClosed });
-        await control(browserId, input);
+        const result = await control(browserId, input);
+        if (input.type === 'copy') copiedText = typeof result === 'string' ? result : undefined;
       }
+      if ((await handoffBrowser(body.data.turnId)) !== browserId)
+        return reply.code(423).send({ error: handoffClosed });
+      return { ok: true, ...(copiedText === undefined ? {} : { copiedText }) };
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply.code(409).send({
@@ -715,7 +720,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
           'The browser did not finish that input. Check the page before trying again.',
       });
     }
-    return { ok: true };
   });
   app.post('/api/browser-handoff/done', async (request, reply) => {
     const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);

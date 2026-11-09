@@ -28,7 +28,13 @@ import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
 import type { Agent } from '../../ports/agent.ts';
-import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } from './checkpoint.ts';
+import {
+  closeInterruptedCalls,
+  completeAssistantMessage,
+  keptImages,
+  openLocalSession,
+  removedImage,
+} from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
@@ -244,6 +250,14 @@ function recentImages(pi: ExtensionAPI) {
           : message,
       ),
     };
+  });
+}
+
+function completeAssistantMessages(pi: ExtensionAPI) {
+  pi.on('message_end', ({ message }) => {
+    if (message.role !== 'assistant') return;
+    const complete = completeAssistantMessage(message);
+    if (complete !== message) return { message: complete };
   });
 }
 
@@ -616,6 +630,7 @@ export function createPiAgent(options: {
                 ? { action: 'stop' as const }
                 : undefined,
             ),
+          completeAssistantMessages,
         ],
         noExtensions: true,
         noSkills: true,

@@ -90,6 +90,8 @@ test(
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
+    let copyResponses: Array<string | undefined> = [];
+    let onCopy: (() => Promise<void>) | undefined;
     const app = await createApp({
       configuration: () => configuration(),
       computer: {
@@ -104,6 +106,10 @@ test(
         },
         control: async (id, input) => {
           controls.push([id, input]);
+          if (input.type === 'copy') {
+            await onCopy?.();
+            return copyResponses.length ? copyResponses.shift() : 'Synthetic selected text';
+          }
         },
         clear: async () => {},
         discard: async () => {},
@@ -253,6 +259,36 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
+      const copied = await post('/api/browser-handoff', { inputs: [{ type: 'copy' }] });
+      assert.equal(copied.statusCode, 200);
+      assert.deepEqual(copied.json(), { ok: true, copiedText: 'Synthetic selected text' });
+      assert.deepEqual(controls.pop(), [next.id, { type: 'copy' }]);
+      copyResponses = ['Synthetic selected text', undefined];
+      const unselected = await post('/api/browser-handoff', {
+        inputs: [{ type: 'copy' }, { type: 'copy' }],
+      });
+      assert.equal(unselected.statusCode, 200);
+      assert.deepEqual(unselected.json(), { ok: true });
+      assert.deepEqual(controls.splice(-2), [
+        [next.id, { type: 'copy' }],
+        [next.id, { type: 'copy' }],
+      ]);
+      const copyStarted = deferred();
+      const copyRelease = deferred();
+      onCopy = async () => {
+        copyStarted.resolve();
+        await copyRelease.promise;
+      };
+      const closingCopy = post('/api/browser-handoff', { inputs: [{ type: 'copy' }] });
+      await copyStarted.promise;
+      await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [nextTurnId]);
+      copyRelease.resolve();
+      const lateCopy = await closingCopy;
+      assert.equal(lateCopy.statusCode, 423);
+      assert.equal(lateCopy.body.includes('Synthetic selected text'), false);
+      assert.deepEqual(controls.pop(), [next.id, { type: 'copy' }]);
+      onCopy = undefined;
+      await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [nextTurnId]);
       const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
@@ -282,6 +318,12 @@ test(
         (await post('/api/browser-handoff', { turnId: foreignTurnId, inputs: [click] })).statusCode,
         423,
       );
+      const foreignCopy = await post('/api/browser-handoff', {
+        turnId: foreignTurnId,
+        inputs: [{ type: 'copy' }],
+      });
+      assert.equal(foreignCopy.statusCode, 423);
+      assert.equal(foreignCopy.body.includes('Synthetic selected text'), false);
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt) VALUES($1,$2,$3,$4,'resume','Continued background work')",
         [randomUUID(), ownerId, next.id, backgroundId],
@@ -1386,6 +1428,7 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
       await delay(1, undefined, { signal });
       signal?.throwIfAborted();
       inputs.push(input);
+      if (input.type === 'copy') return 'Synthetic selected text';
     },
     view: async function* (_id, signal) {
       viewSignals.push(signal);
@@ -1404,7 +1447,7 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
       if (frames.length === 1) {
         await Promise.all(
           initialInputs.map(async (input, index) => {
-            await client.control('task', input);
+            assert.equal(await client.control('task', input), undefined);
             assert.deepEqual(inputs[index], input);
           }),
         );
@@ -1426,6 +1469,8 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
     );
     assert.equal(inputs.length, initialInputs.length);
     failInput = false;
+    assert.equal(await client.control('task', { type: 'copy' }), 'Synthetic selected text');
+    assert.deepEqual(inputs.pop(), { type: 'copy' });
     inputStarted = deferred();
     inputAborted = deferred();
     const ready = deferred();
@@ -2028,7 +2073,7 @@ test(
 );
 
 test(
-  'native handoff clicks stay aligned through page zoom, panning and viewport changes',
+  'native handoff clicks stay aligned and copy preserves clipboard contents',
   { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
     const { createCanvas, loadImage } = await import('@napi-rs/canvas');
@@ -2155,6 +2200,179 @@ test(
           controller.abort();
           await frames.return?.();
         }
+      }
+      if (process.platform === 'linux') {
+        const initial = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const source = document.createElement('textarea');
+          source.id = 'copy-source';
+          source.value = 'Before Synthetic selected text After';
+          document.body.append(source);
+          source.focus();
+          source.setSelectionRange(7, 30);
+          return source.value.slice(source.selectionStart, source.selectionEnd);
+        })()`,
+        });
+        assert.equal(initial.result, 'Synthetic selected text');
+        assert.equal(
+          await computer.control!('pointer', { type: 'copy' }),
+          'Synthetic selected text',
+        );
+        await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const previous = document.createElement('textarea');
+          previous.value = 'Prior remote clipboard';
+          previous.addEventListener('copy', event => {
+            window.seededRichCopy = true;
+            event.clipboardData.setData('text/plain', 'Prior remote clipboard');
+            event.clipboardData.setData('text/html', '<strong>Prior remote clipboard</strong>');
+            event.preventDefault();
+          });
+          document.body.append(previous);
+          previous.focus();
+          previous.select();
+        })()`,
+        });
+        await computer.control!('pointer', { type: 'key', key: 'Control+c' });
+        const seeded = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: 'window.seededRichCopy === true',
+        });
+        assert.equal(seeded.result, true);
+        const selected = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const source = document.querySelector('#copy-source');
+          source.focus();
+          source.setSelectionRange(7, 30);
+          return source.value.slice(source.selectionStart, source.selectionEnd);
+        })()`,
+        });
+        assert.equal(selected.result, 'Synthetic selected text');
+        assert.equal(
+          await computer.control!('pointer', { type: 'copy' }),
+          'Synthetic selected text',
+        );
+        const cleared = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const source = document.querySelector('#copy-source');
+          source.setSelectionRange(source.value.length, source.value.length);
+          document.body.tabIndex = -1;
+          document.body.focus();
+          getSelection().removeAllRanges();
+          return source.selectionStart === source.selectionEnd && document.activeElement === document.body && !getSelection().toString();
+        })()`,
+        });
+        assert.equal(cleared.result, true);
+        assert.equal(await computer.control!('pointer', { type: 'copy' }), undefined);
+        await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const destination = document.createElement('div');
+          destination.id = 'copy-destination';
+          destination.contentEditable = 'true';
+          document.body.append(destination);
+          destination.focus();
+        })()`,
+        });
+        await computer.control!('pointer', {
+          type: 'key',
+          key: 'Control+v',
+        });
+        const pasted = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const destination = document.querySelector('#copy-destination');
+          return { text: destination.textContent, rich: Boolean(destination.querySelector('strong')) };
+        })()`,
+        });
+        assert.deepEqual(pasted.result, { text: 'Prior remote clipboard', rich: true });
+        await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const previous = document.createElement('textarea');
+          previous.value = 'Prior rich only';
+          previous.addEventListener('copy', event => {
+            window.seededRichOnly = true;
+            event.clipboardData.setData('text/html', '<strong>Prior rich only</strong>');
+            event.preventDefault();
+          });
+          const replacement = document.createElement('textarea');
+          replacement.value = 'Replacement rich only';
+          replacement.addEventListener('copy', event => {
+            window.copiedRichOnly = true;
+            event.clipboardData.setData('text/html', '<em>Replacement rich only</em>');
+            event.preventDefault();
+          });
+          document.body.append(previous, replacement);
+          previous.focus();
+          previous.select();
+          window.richOnlyReplacement = replacement;
+        })()`,
+        });
+        await computer.control!('pointer', { type: 'key', key: 'Control+c' });
+        await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const probe = document.createElement('div');
+          probe.contentEditable = 'true';
+          probe.addEventListener('paste', event => {
+            window.richOnlyClipboard = {
+              plain: event.clipboardData.getData('text/plain'),
+              types: [...event.clipboardData.types],
+            };
+          });
+          document.body.append(probe);
+          probe.focus();
+        })()`,
+        });
+        await computer.control!('pointer', { type: 'key', key: 'Control+v' });
+        const richOnlySeeded = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          window.richOnlyReplacement.focus();
+          window.richOnlyReplacement.select();
+          return { seeded: window.seededRichOnly === true, clipboard: window.richOnlyClipboard };
+        })()`,
+        });
+        const richOnlyState = richOnlySeeded.result as {
+          seeded: boolean;
+          clipboard: { plain: string; types: string[] };
+        };
+        assert.equal(richOnlyState.seeded, true);
+        assert.equal(richOnlyState.clipboard.plain, '');
+        assert.equal(richOnlyState.clipboard.types.includes('text/html'), true);
+        assert.equal(richOnlyState.clipboard.types.includes('text/plain'), false);
+        assert.equal(await computer.control!('pointer', { type: 'copy' }), undefined);
+        const richOnlyCopied = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {
+          const destination = document.createElement('div');
+          destination.contentEditable = 'true';
+          document.body.append(destination);
+          destination.focus();
+          window.richOnlyDestination = destination;
+          return window.copiedRichOnly === true;
+        })()`,
+        });
+        assert.equal(richOnlyCopied.result, true);
+        await computer.control!('pointer', { type: 'key', key: 'Control+v' });
+        const restoredRichOnly = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => ({
+          text: window.richOnlyDestination.textContent,
+          prior: Boolean(window.richOnlyDestination.querySelector('strong')),
+          replacement: Boolean(window.richOnlyDestination.querySelector('em')),
+        }))()`,
+        });
+        assert.deepEqual(restoredRichOnly.result, {
+          text: 'Prior rich only',
+          prior: true,
+          replacement: false,
+        });
       }
     } finally {
       inspector?.close();
@@ -2747,15 +2965,44 @@ test('browser handoff preserves platform editing chords, text input and paste', 
       URL.createObjectURL = () => 'blob:synthetic-browser-frame';
       URL.revokeObjectURL = () => {};
       const received = [];
+      const clipboardWrites = [];
+      let clipboardText = 'Existing clipboard';
+      let copiedText = 'Synthetic selected text';
+      let copyResponseGate;
+      let copyRequestFails = false;
+      let delayedCopySignal;
+      let nextInputReceived;
+      let closeHandoffStream;
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async text => { clipboardText = text; clipboardWrites.push(text); } },
+      });
       globalThis.fetch = async (path, options) => {
         if (path.startsWith('/api/browser-handoff/stream?'))
           return new Response(new ReadableStream({ start(controller) {
             controller.enqueue(new Uint8Array([0, 0, 0, 1, 0]));
+            closeHandoffStream = () => controller.error(new DOMException('Handoff ended.', 'AbortError'));
             options.signal.addEventListener('abort', () => controller.error(options.signal.reason), { once: true });
           } }));
         assert.equal(path, '/api/browser-handoff');
-        received.push(...JSON.parse(options.body).inputs);
-        return Response.json({ ok: true });
+        const inputs = JSON.parse(options.body).inputs;
+        received.push(...inputs);
+        if (inputs.some(input => input.type === 'text' && input.text === 'x'))
+          nextInputReceived?.();
+        if (inputs.some(input => input.type === 'copy')) {
+          if (copyResponseGate) {
+            delayedCopySignal = options.signal;
+            await copyResponseGate;
+          }
+          if (copyRequestFails)
+            return Response.json({ error: 'Synthetic copy failure' }, { status: 409 });
+        }
+        return Response.json({
+          ok: true,
+          ...(inputs.some(input => input.type === 'copy') && copiedText !== undefined
+            ? { copiedText }
+            : {}),
+        });
       };
       const { createElement, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
@@ -2766,12 +3013,17 @@ test('browser handoff preserves platform editing chords, text input and paste', 
         const frame = document.querySelector('.browser-handoff-screen img');
         assert.equal(frame.src, 'blob:synthetic-browser-frame');
         await act(async () => frame.dispatchEvent(new Event('load')));
-        const screen = document.querySelector('.browser-handoff-screen');
+        let screen = document.querySelector('.browser-handoff-screen');
         assert.equal(screen.getAttribute('aria-disabled'), 'false');
+        let dispatchingKey = false;
         const key = async (key, options = {}) => {
           const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
           if (options.altGraph) Object.defineProperty(event, 'getModifierState', { value: name => name === 'AltGraph' });
-          await act(async () => screen.dispatchEvent(event));
+          await act(async () => {
+            dispatchingKey = true;
+            try { screen.dispatchEvent(event); }
+            finally { dispatchingKey = false; }
+          });
           return event.defaultPrevented;
         };
         for (const platform of ['MacIntel', 'Win32']) {
@@ -2797,6 +3049,18 @@ test('browser handoff preserves platform editing chords, text input and paste', 
           assert.equal(await key('v', primary), false);
           assert.equal(await key('V', { ...primary, shiftKey: true }), false);
           assert.deepEqual(received, []);
+          clipboardWrites.length = 0;
+          assert.equal(await key('c', primary), true);
+          assert.deepEqual(clipboardWrites, ['Synthetic selected text']);
+          assert.deepEqual(received, [{ type: 'copy' }]);
+          received.length = 0;
+          clipboardWrites.length = 0;
+          copiedText = undefined;
+          assert.equal(await key('c', primary), true);
+          assert.deepEqual(clipboardWrites, []);
+          assert.deepEqual(received, [{ type: 'copy' }]);
+          received.length = 0;
+          copiedText = 'Synthetic selected text';
           const pasted = new Event('paste', { bubbles: true, cancelable: true });
           Object.defineProperty(pasted, 'clipboardData', { value: { getData: () => 'First\r\nSecond\n' } });
           await act(async () => screen.dispatchEvent(pasted));
@@ -2813,6 +3077,141 @@ test('browser handoff preserves platform editing chords, text input and paste', 
             assert.equal(received.length, 1);
           }
         }
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+        globalThis.ClipboardItem = class {
+          constructor(data) { this.data = data; }
+        };
+        const nativeItems = [];
+        const nativeWrites = [];
+        let stallNativeWrite = false;
+        navigator.clipboard.write = items => {
+          nativeItems.push({ items, duringKey: dispatchingKey });
+          const data = items[0].data['text/plain'];
+          assert.ok(data instanceof Promise);
+          const stall = stallNativeWrite;
+          const writing = data.then(blob => blob.text()).then(text => {
+            clipboardText = text;
+            clipboardWrites.push(text);
+            if (stall) return new Promise(() => {});
+          });
+          nativeWrites.push(writing.then(() => true, () => false));
+          return writing;
+        };
+        let releaseCopy;
+        copyResponseGate = new Promise(resolve => { releaseCopy = resolve; });
+        received.length = 0;
+        clipboardWrites.length = 0;
+        const beforeCopy = clipboardText;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        assert.equal(nativeItems.at(-1).duringKey, true);
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, beforeCopy);
+        releaseCopy();
+        copyResponseGate = undefined;
+        assert.equal(await nativeWrites.at(-1), true);
+        assert.deepEqual(clipboardWrites, ['Synthetic selected text']);
+        assert.equal(clipboardText, 'Synthetic selected text');
+        stallNativeWrite = true;
+        received.length = 0;
+        clipboardWrites.length = 0;
+        const nextInput = new Promise(resolve => { nextInputReceived = resolve; });
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.equal(await key('x'), true);
+        let inputTimeout;
+        try {
+          await Promise.race([
+            nextInput,
+            new Promise((_, reject) => {
+              inputTimeout = setTimeout(() => reject(new Error('Clipboard write blocked later input.')), 2_000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(inputTimeout);
+          nextInputReceived = undefined;
+        }
+        assert.deepEqual(received, [{ type: 'copy' }, { type: 'text', text: 'x' }]);
+        assert.deepEqual(clipboardWrites, ['Synthetic selected text']);
+        stallNativeWrite = false;
+        clipboardText = 'Existing clipboard';
+        clipboardWrites.length = 0;
+        copiedText = undefined;
+        received.length = 0;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.equal(await nativeWrites.at(-1), false);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, 'Existing clipboard');
+        copyRequestFails = true;
+        received.length = 0;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.equal(await nativeWrites.at(-1), false);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, 'Existing clipboard');
+        copyRequestFails = false;
+        copiedText = 'Stale selected text';
+        let releaseClosedCopy;
+        copyResponseGate = new Promise(resolve => { releaseClosedCopy = resolve; });
+        await act(async () => root.render(createElement(BrowserHandoff, { key: 'closed-state', turnId: 'closed-state' })));
+        const closedFrame = document.querySelector('.browser-handoff-screen img');
+        await act(async () => closedFrame.dispatchEvent(new Event('load')));
+        screen = document.querySelector('.browser-handoff-screen');
+        received.length = 0;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        const closedWrite = nativeWrites.at(-1);
+        const closedSignal = delayedCopySignal;
+        await act(async () => {
+          closeHandoffStream();
+          for (let flush = 0; flush < 6; flush++) await Promise.resolve();
+          releaseClosedCopy();
+          copyResponseGate = undefined;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        });
+        assert.match(document.querySelector('.browser-handoff-feedback').textContent, /ended/);
+        assert.equal(closedSignal.aborted, true);
+        assert.equal(await closedWrite, false);
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, 'Existing clipboard');
+        copiedText = 'Stale selected text';
+        let releaseStaleCopy;
+        copyResponseGate = new Promise(resolve => { releaseStaleCopy = resolve; });
+        await act(async () => root.render(createElement(BrowserHandoff, { key: 'stale-native', turnId: 'stale-native' })));
+        const staleNativeFrame = document.querySelector('.browser-handoff-screen img');
+        await act(async () => staleNativeFrame.dispatchEvent(new Event('load')));
+        screen = document.querySelector('.browser-handoff-screen');
+        received.length = 0;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        const staleNativeWrite = nativeWrites.at(-1);
+        const staleNativeSignal = delayedCopySignal;
+        await act(async () => root.render(createElement('div')));
+        assert.equal(staleNativeSignal.aborted, true);
+        releaseStaleCopy();
+        copyResponseGate = undefined;
+        assert.equal(await staleNativeWrite, false);
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, 'Existing clipboard');
+        globalThis.ClipboardItem = undefined;
+        navigator.clipboard.write = undefined;
+        let releaseStaleFallback;
+        copyResponseGate = new Promise(resolve => { releaseStaleFallback = resolve; });
+        await act(async () => root.render(createElement(BrowserHandoff, { key: 'stale-fallback', turnId: 'stale-fallback' })));
+        const staleFallbackFrame = document.querySelector('.browser-handoff-screen img');
+        await act(async () => staleFallbackFrame.dispatchEvent(new Event('load')));
+        screen = document.querySelector('.browser-handoff-screen');
+        received.length = 0;
+        assert.equal(await key('c', { metaKey: true }), true);
+        assert.deepEqual(received, [{ type: 'copy' }]);
+        const staleFallbackSignal = delayedCopySignal;
+        await act(async () => root.render(createElement('div')));
+        assert.equal(staleFallbackSignal.aborted, true);
+        releaseStaleFallback();
+        copyResponseGate = undefined;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual(clipboardWrites, []);
+        assert.equal(clipboardText, 'Existing clipboard');
       } finally {
         await act(async () => root.unmount());
         dom.window.close();
