@@ -2680,6 +2680,7 @@ async function appsFixture(
       | 'removeActivity'
       | 'admission'
       | 'analytics'
+      | 'paused'
     >
   > = {},
 ) {
@@ -5468,7 +5469,8 @@ test(
   async (t) => {
     const admission = createWorkAdmission();
     admission.pause();
-    const f = await appsFixture(t, {}, { admission });
+    let paused = false;
+    const f = await appsFixture(t, {}, { admission, paused: async () => paused });
     const selected = await f.connect('gmail');
     const metadata = {
       subject: 'Question about the upcoming planning review '.repeat(10),
@@ -5563,6 +5565,36 @@ test(
     await send('667788990011');
     await f.service.drain();
     assert.deepEqual([f.wakes.length, f.settles()], [6, settled + 1]);
+    const count = async () =>
+      (await f.pool.query('SELECT count(*)::int AS n FROM integration_events')).rows[0].n;
+    const received = await count();
+    paused = true;
+    f.provider.pollInbox = async () => ({
+      cursor: 'after-pause',
+      hasMore: false,
+      messages: [message('778899001122')],
+    });
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.equal(await count(), received);
+    await send('889900112233');
+    const quiet = (
+      await f.pool.query('SELECT summary FROM integration_events ORDER BY created_at DESC LIMIT 1')
+    ).rows[0];
+    assert.doesNotMatch(quiet.summary, /planning review|sender@example/);
+    const watched = await f.service.watchState([selected.connectionId!]);
+    assert.ok(watched);
+    assert.equal(await count(), received + 2);
+    assert.equal(await f.service.watchState([selected.connectionId!]), watched);
+    f.provider.pollInbox = async () => ({
+      cursor: 'later',
+      hasMore: false,
+      messages: [message('990011223344')],
+    });
+    assert.notEqual(await f.service.watchState([selected.connectionId!]), watched);
+    assert.equal(await f.service.watchState([randomUUID()]), null);
   },
 );
 

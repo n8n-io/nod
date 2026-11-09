@@ -947,6 +947,8 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
     sessionCosts: ledger.sessionCosts,
     recentTurnCost: ledger.recentTurnCost,
+    watchable: (connectionIds) => integrations.watchable(connectionIds),
+    watchState: (connectionIds) => integrations.watchState(connectionIds),
   });
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({
