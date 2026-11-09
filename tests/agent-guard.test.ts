@@ -122,6 +122,45 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
+test('first-turn context excludes connected-account identity and preserves owner words', async () => {
+  const accountName = 'Synthetic shared mailbox';
+  const accountEmail = 'shared@example.test';
+  for (const prompt of ['Czy mówisz po polsku?', 'Mam na imię Lena. Czy mówisz po polsku?'])
+    await fixture(
+      async (_tools, _emit, options, request) => {
+        for (const context of [options.ownerContext, options.compactInstructions?.ownerContext]) {
+          assert.ok(context);
+          assert.ok(!context.includes(accountName));
+          assert.ok(!context.includes(accountEmail));
+          assert.ok(!context.includes('Lena'));
+        }
+        assert.ok(!request.includes(accountName));
+        assert.ok(!request.includes(accountEmail));
+        const data = JSON.parse(request.split('Request data (JSON):\n')[1].split('\n\n')[0]);
+        assert.equal(data.currentInstruction, prompt);
+        assert.deepEqual(data.recentConversation, []);
+      },
+      {
+        prompt,
+        firstConversationTurn: true,
+        history: [],
+        memory: '',
+        connectedApps: [
+          {
+            slug: 'outlook',
+            name: 'Outlook',
+            status: 'connected',
+            connectionId: randomUUID(),
+            accountName,
+            accountEmail,
+            access: ['api'],
+            triggersEnabled: false,
+          },
+        ],
+      },
+    );
+});
+
 test('answer choices remain ordinary questions with runtime-owned IDs and bounded public options', async () => {
   const choices = [
     { label: 'Work account', description: 'The shared project mailbox' },
