@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { posthogConfig } from '../../../../shared/analytics';
 import { Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
+import { DataSharing } from './data-sharing';
 
 export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShared }: StepProps) {
   const items = [
@@ -21,12 +21,8 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
     ...(usageShared
       ? [
           <Bubble>
-            {traces ? 'I also share' : 'I share'}{' '}
-            <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-              basic usage data
-            </a>
-            , like which screens you open, but never your messages or screen recordings. You can
-            turn it off in Settings.
+            {traces ? 'I also share' : 'I share'} basic usage data, like which screens you open, but
+            never your messages or screen recordings. You can turn it off in Settings.
           </Bubble>,
         ]
       : []),
@@ -58,6 +54,9 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
     <section className="ob-step ob-privacy" onClick={done ? undefined : skip}>
       <Messages revealed={revealed} typing={typing} items={items} />
       <Rise show={done} className="ob-choices">
+        {(usageShared || traces) && (
+          <DataSharing usage={Boolean(usageShared)} traces={traces?.enabled} />
+        )}
         {traces ? (
           <>
             <Button

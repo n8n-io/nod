@@ -504,7 +504,7 @@ export function AccountSettings({
                         <p className="field-hint">
                           Help improve replies.{' '}
                           <a
-                            href="https://nod-docs.pages.dev/trust/conversation-traces/"
+                            href="https://nod.n8n.io/docs/trust/conversation-traces/"
                             target="_blank"
                             rel="noreferrer"
                           >

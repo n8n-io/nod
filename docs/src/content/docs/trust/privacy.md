@@ -13,6 +13,20 @@ Requests go to your model and decision providers, and the apps you choose. Compo
 
 The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback, usage analytics and conversation traces are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
+## What Nod shares with n8n
+
+Nod shares a little data with the Nod team at n8n so they can find where Nod gets stuck and fix it. During setup, select **How Nod uses your data** to see this summary in the app. You can turn either kind of sharing off anytime in **Settings → Privacy & data**.
+
+|                 | Usage data                                                                                                             | Conversation traces                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Starts          | On for new owners                                                                                                      | Off until you select **Share traces** or turn on **Share conversation traces**                                        |
+| What's included | Which screens and features you use, the kinds of tasks you ask for, timings, costs, and failures                       | Your conversations with Nod, including what it reads and does, after it removes the personal details it can recognize |
+| Never included  | Your messages, Nod's replies, what Nod reads, saved passwords and cards, names, email addresses, and screen recordings | Saved passwords and cards, your saved memory, images, and any account or device identifier                            |
+| Where it's kept | n8n's PostHog project in the EU                                                                                        | n8n's LangSmith project in the EU, deleted after 14 days and never used to train AI models                            |
+| Full details    | [Usage analytics](#usage-analytics)                                                                                    | [Conversation traces](/trust/conversation-traces/)                                                                    |
+
+Survey answers you choose to send are the one content exception; see [Usage analytics](#usage-analytics). Personal detail removal is automatic and can miss details written in other forms, so traces are pseudonymised, not anonymous. A server operator can turn either kind of sharing off for everyone or send traces to a different receiver.
+
 ## Where your data lives
 
 |                              | Local desktop assistant                                                                                                          | Local source install                           |
