@@ -13,6 +13,7 @@ import {
   powerMonitor,
   protocol,
   safeStorage,
+  screen,
   session,
   shell,
   Tray,
@@ -102,6 +103,7 @@ app.setPath(
   developmentDataRoot || join(app.getPath('appData'), testInstall ? 'nod Setup Test' : 'nod'),
 );
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
+const resumePath = join(profileRoot, 'update-resume.json');
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'nod', 'updates');
 const settings = createSettingsStore(
   join(profileRoot, 'settings.json'),
@@ -116,6 +118,8 @@ let setupWindow;
 let setupWindowLoaded;
 let engineWindow;
 let engineFocusRequested = false;
+let resumeWindow;
+let resumePort;
 let pendingFeedback = false;
 let engine;
 let engineFailure;
@@ -679,10 +683,11 @@ function showSettings(section = 'general', loading = false) {
       window.webContents.send('nod:status', status);
     });
   }
+  const resumed = resumeWindow;
+  resumeWindow = undefined;
   setupWindow = new BrowserWindow({
     show: false,
-    width: 1200,
-    height: 860,
+    ...(resumed?.bounds ?? { width: 1200, height: 860 }),
     minWidth: 700,
     minHeight: 600,
     title: 'Nod',
@@ -714,7 +719,10 @@ function showSettings(section = 'general', loading = false) {
   waitForRenderer(
     window,
     () => {
-      if (!quitting && !window.isDestroyed()) window.show();
+      if ((!quitting || status.phase === 'updating') && !window.isDestroyed()) {
+        window.show();
+        if (resumed?.maximized) window.maximize();
+      }
       presented();
     },
     failed,
@@ -834,6 +842,7 @@ function showEngine({ focus = true } = {}) {
         else if (startup.isVisible() || waiting) {
           if (startup.isFocused() || waiting) window.show();
           else window.showInactive();
+          if (startup.isMaximized()) window.maximize();
         }
         startup.destroy();
       } else if (!previousSetup || engineFocusRequested) {
@@ -950,11 +959,11 @@ async function captureFeedbackScreenshot(event) {
   return bytes.length && bytes.length <= 2 * 1024 * 1024 ? bytes : null;
 }
 
-function availablePort() {
+function availablePort(preferred = 0) {
   return new Promise((accept, reject) => {
     const socket = createServer();
     socket.once('error', reject);
-    socket.listen(0, '127.0.0.1', () => {
+    socket.listen(preferred, '127.0.0.1', () => {
       const port = socket.address().port;
       socket.close((error) => (error ? reject(error) : accept(port)));
     });
@@ -1508,7 +1517,50 @@ async function preloadUpdateImages(assets, signal) {
 async function restartForUpdate() {
   if (quitting || !(await confirmRestart())) return;
   update({ phase: 'updating', message: 'Updating…' });
+  const window = engineWindow?.isDestroyed() === false ? engineWindow : undefined;
+  if (!window) void showSettings('general', true);
+  await rememberState(window);
   await quit(installUpdate);
+}
+
+async function rememberState(window) {
+  session.fromPartition(clientPartition).flushStorageData();
+  await writeFile(
+    resumePath,
+    JSON.stringify({
+      path: URL.parse(window?.webContents.getURL() ?? '')?.pathname,
+      bounds: window?.getNormalBounds(),
+      maximized: window?.isMaximized(),
+      port: remoteConnection ? undefined : Number(URL.parse(engineOrigin)?.port) || undefined,
+    }),
+    { mode: 0o600 },
+  ).catch(() => {});
+}
+
+async function resumeState() {
+  try {
+    const saved = JSON.parse(await readFile(resumePath, 'utf8'));
+    pendingAppPath ||= appOpenPath(`nod://open${saved.path}`, appPages) || undefined;
+    if (Number.isInteger(saved.port) && saved.port > 1023 && saved.port < 65536)
+      resumePort = saved.port;
+    const { x, y, width, height } = saved.bounds;
+    if (
+      [x, y, width, height].every(Number.isInteger) &&
+      screen
+        .getAllDisplays()
+        .some(
+          ({ workArea: area }) =>
+            x < area.x + area.width &&
+            x + width > area.x &&
+            y < area.y + area.height &&
+            y + height > area.y,
+        )
+    )
+      resumeWindow = { bounds: { x, y, width, height }, maximized: saved.maximized === true };
+  } catch {
+  } finally {
+    await rm(resumePath, { force: true }).catch(() => {});
+  }
 }
 
 async function confirmRestart() {
@@ -1680,7 +1732,8 @@ async function startEngine({ runtime, signal, pending = false }) {
   if (quitting || signal.aborted) throw new Error('Nod is closing.');
   if (startup?.isDestroyed() || status.windowError)
     throw new Error('Nod could not open setup. Reopen the window, then try again.');
-  const port = await availablePort();
+  const port = await availablePort(resumePort).catch(() => availablePort());
+  resumePort = undefined;
   if (quitting || signal.aborted) throw new Error('Nod is closing.');
   engineBound = false;
   authToken = randomBytes(32).toString('base64url');
@@ -1780,8 +1833,10 @@ async function startEngine({ runtime, signal, pending = false }) {
     authToken = '';
     engineRuntimeReady = false;
     update({ engineReady: false });
-    for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
-    engineWindows.clear();
+    if (status.phase !== 'updating') {
+      for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
+      engineWindows.clear();
+    }
     if (!quitting && !closingEngine) {
       engineFailure = failure;
       update({
@@ -2327,6 +2382,7 @@ else {
       });
       try {
         const saved = await settings.get();
+        await resumeState();
         const removeData = Menu.getApplicationMenu?.()?.getMenuItemById('remove-local-data');
         if (removeData) removeData.enabled = !saved.serverUrl;
         onboardingCompleted = Boolean(saved.serverUrl) || saved.onboardingCompleted;
