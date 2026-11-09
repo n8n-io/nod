@@ -3493,6 +3493,172 @@ test('a turn that crosses the compaction line answers first, then compacts at th
   assert.ok(answered >= 0 && answered < compactions[0]);
 });
 
+test('Pi saves complete assistant blocks before post-turn compaction', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-complete-blocks-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let requests = 0;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'synthetic-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model) => {
+        const first = requests++ === 0;
+        const message = {
+          ...fauxAssistantMessage(first ? 'First answer.' : 'Next answer.'),
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          content: first
+            ? ([
+                { type: 'text', text: 'First answer.' },
+                { type: 'text' },
+                { type: 'thinking', thinkingSignature: 'synthetic-signature' },
+              ] as AssistantMessage['content'])
+            : [{ type: 'text' as const, text: 'Next answer.' }],
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'done', reason: 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  t.after(() => agent.dispose());
+  const threadId = randomUUID();
+  const observed: AgentEvent[] = [];
+  const open = () =>
+    agent.open({
+      ...fakeExecution(threadId),
+      restricted: true,
+      systemPrompt: 'Synthetic instructions',
+      workspace: recordingWorkspace().workspace,
+      runTool: async (_name, _params, run) => run(),
+      tools: [],
+      shouldStop: () => false,
+      onEvent: (event) => observed.push(event),
+    });
+  const first = await open();
+  await first.prompt('First request.', []);
+  await first.dispose();
+  const saved = await readPiSessionEntries({ threadId, sessionRoot: directory });
+  const assistant = saved.findLast(
+    (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+  );
+  assert.ok(assistant?.type === 'message' && assistant.message.role === 'assistant');
+  assert.deepEqual(assistant.message.content, [
+    { type: 'text', text: 'First answer.' },
+    { type: 'text', text: '' },
+    { type: 'thinking', thinking: '', thinkingSignature: 'synthetic-signature' },
+  ]);
+  const second = await open();
+  await second.prompt('Continue.', []);
+  await second.dispose();
+  assert.equal(requests, 2);
+  assert.ok(observed.some((event) => event.type === 'final' && event.text === 'Next answer.'));
+});
+
+test('Anthropic continues a rebased Pi session with incomplete assistant blocks', async (t) => {
+  const { createServer } = await import('node:http');
+  const bodies: Array<{ messages: unknown[] }> = [];
+  const paths: string[] = [];
+  const events = [
+    {
+      type: 'message_start',
+      message: {
+        id: 'synthetic-recovery',
+        type: 'message',
+        role: 'assistant',
+        model: 'fixture-anthropic',
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 0 },
+      },
+    },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Recovered.' } },
+    { type: 'content_block_stop', index: 0 },
+    {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 2 },
+    },
+    { type: 'message_stop' },
+  ];
+  const server = createServer((request, response) => {
+    const parts: Buffer[] = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      paths.push(request.url ?? '');
+      bodies.push(JSON.parse(Buffer.concat(parts).toString()));
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        events
+          .map((event) => 'event: ' + event.type + '\ndata: ' + JSON.stringify(event) + '\n\n')
+          .join(''),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port;
+  const access = smallContextAccess('compatible', 'fixture-anthropic', 200_000);
+  access.provider = 'anthropic';
+  access.read = async () => ({ type: 'api_key', key: 'synthetic-key' });
+  access.definition.spec = {
+    ...access.definition.spec,
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    baseUrl: url,
+  };
+  const directory = await mkdtemp(join(tmpdir(), 'nod-anthropic-recovery-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const execution = fakeExecution(randomUUID());
+  const saved = join(directory, execution.sessionId);
+  await mkdir(saved, { recursive: true });
+  const manager = SessionManager.create(saved, saved);
+  manager.appendMessage({ role: 'user', content: 'Earlier owner request.', timestamp: 1 });
+  manager.appendMessage({
+    ...fauxAssistantMessage([{ type: 'text', text: 'Earlier answer.' }]),
+    api: 'anthropic-messages',
+    provider: 'anthropic',
+    model: 'fixture-anthropic',
+    content: [
+      { type: 'text', text: 'Earlier answer.' },
+      { type: 'text' },
+      { type: 'thinking', thinkingSignature: 'synthetic-signature' },
+    ] as AssistantMessage['content'],
+  });
+  manager.appendCustomEntry('synthetic-padding', { value: 'x'.repeat(8 * 1024 * 1024) });
+  const agent = createPiAgent({
+    provider: 'anthropic',
+    sessionRoot: directory,
+    resolve: async () => access,
+  });
+  t.after(() => agent.dispose());
+  const observed: AgentEvent[] = [];
+  const session = await agent.open({
+    ...execution,
+    restricted: true,
+    systemPrompt: 'Synthetic instructions',
+    workspace: recordingWorkspace().workspace,
+    runTool: async (_name, _params, run) => run(),
+    tools: [],
+    shouldStop: () => false,
+    onEvent: (event) => observed.push(event),
+  });
+  await session.prompt('Continue.', []);
+  await session.dispose();
+  assert.ok(bodies.length > 0);
+  assert.equal(new URL(paths[0], url).pathname, '/v1/messages');
+  assert.ok(observed.some((event) => event.type === 'final' && event.text === 'Recovered.'));
+  const sent = JSON.stringify(bodies[0]);
+  assert.ok(sent.includes('Earlier answer.'));
+  assert.ok(sent.includes('synthetic-signature'));
+});
+
 test('full 32k Pi sessions distinguish context exhaustion from output truncation on continue', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
