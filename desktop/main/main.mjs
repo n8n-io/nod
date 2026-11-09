@@ -1527,16 +1527,15 @@ async function restartForUpdate() {
 
 async function rememberState(window) {
   session.fromPartition(clientPartition).flushStorageData();
-  await writeFile(
-    resumePath,
-    JSON.stringify({
-      path: URL.parse(window?.webContents.getURL() ?? '')?.pathname,
-      bounds: window?.getNormalBounds(),
-      maximized: window?.isMaximized(),
-      port: remoteConnection ? undefined : Number(URL.parse(engineOrigin)?.port) || undefined,
-    }),
-    { mode: 0o600 },
-  ).catch(() => {});
+  const state = JSON.stringify({
+    path: URL.parse(window?.webContents.getURL() ?? '')?.pathname,
+    bounds: window?.getNormalBounds(),
+    maximized: window?.isMaximized(),
+    port: remoteConnection ? undefined : Number(URL.parse(engineOrigin)?.port) || undefined,
+  });
+  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
+    .then(() => writeFile(resumePath, state, { mode: 0o600 }))
+    .catch(() => {});
 }
 
 async function resumeState() {
