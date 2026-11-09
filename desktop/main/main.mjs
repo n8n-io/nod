@@ -1517,8 +1517,8 @@ async function preloadUpdateImages(assets, signal) {
 async function restartForUpdate() {
   if (quitting || !(await confirmRestart())) return;
   update({ phase: 'updating', message: 'Updating…' });
-  const window = engineWindow?.isDestroyed() === false ? engineWindow : undefined;
-  if (!window) void showSettings('general', true);
+  const window = [engineWindow, setupWindow].find((item) => item && !item.isDestroyed());
+  if (!engineWindow || engineWindow.isDestroyed()) void showSettings('general', true);
   await rememberState(window);
   await quit(installUpdate);
 }
