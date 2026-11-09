@@ -27,6 +27,8 @@ Open **Scheduled** to review open tasks and upcoming schedules. Open tasks appea
 
 ![The Scheduled page with a working task and a task that needs you above two recurring schedules.](../../../assets/screens/scheduled-open-tasks.png)
 
+Select **Rules** to ask Nod in chat to show the rules that apply to every task. Tell Nod in chat what to change.
+
 ## What a card shows
 
 | Part           | What it tells you                                                                 |

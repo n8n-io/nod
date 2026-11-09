@@ -193,6 +193,12 @@
   .secondary-heading-actions {
     gap: 0;
   }
+  .tasks-page .secondary-heading {
+    flex-wrap: wrap;
+  }
+  .tasks-page .secondary-heading-actions {
+    margin-left: auto;
+  }
   .saved-plan {
     padding: 16px;
   }
