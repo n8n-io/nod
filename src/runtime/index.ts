@@ -206,7 +206,7 @@ export function createAgentRuntime(dependencies: {
     const sites = new Map<string, string>();
     let stopped = false;
     let modelError: string | undefined;
-    let modelIncomplete = false;
+    let modelIncomplete: 'output' | 'context' | undefined;
     let completed = false;
     let lastReply = '';
     let lastPresentation = '';
@@ -1138,9 +1138,10 @@ export function createAgentRuntime(dependencies: {
           if (event.type === 'message_end') {
             if (event.status === 'succeeded') {
               modelError = undefined;
-              modelIncomplete = false;
+              modelIncomplete = undefined;
             }
-            if (event.status === 'incomplete') modelIncomplete = true;
+            if (event.status === 'incomplete')
+              modelIncomplete = event.contextExhausted ? 'context' : 'output';
             flushText();
             const text = streamSubmitted || stopped ? '' : streamedText.trim();
             if (
@@ -1170,7 +1171,7 @@ export function createAgentRuntime(dependencies: {
           if (event.type === 'error') modelError = event.message;
           if (event.type === 'final') {
             modelError = undefined;
-            modelIncomplete = false;
+            modelIncomplete = undefined;
             if (context.taskContext) taskResult = event.text;
             answered ||= Boolean(event.text.trim());
           }
@@ -1227,7 +1228,11 @@ export function createAgentRuntime(dependencies: {
           `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
         );
       if (modelIncomplete && status === 'succeeded')
-        throw new Error('The model response was incomplete. Say continue to try again.');
+        throw new Error(
+          modelIncomplete === 'context'
+            ? 'The model response was cut off because its context is full. Start a new conversation or choose a model with a larger context.'
+            : 'The model response was incomplete. Say continue to try again.',
+        );
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
       if (status === 'succeeded' && (context.proactivity ? overBudget() : checkInStopped)) {
         status = 'waiting_user';
