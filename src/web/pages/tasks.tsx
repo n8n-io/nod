@@ -8,6 +8,7 @@ import {
   CircleCheck,
   CircleSlash,
   Clock,
+  Globe2,
   Hourglass,
   LoaderCircle,
   MessageCircle,
@@ -40,6 +41,8 @@ const icons = {
   cancelled: CircleSlash,
 };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
+const showMessage = (messageId: string) =>
+  window.dispatchEvent(new window.CustomEvent('nod:focus-message', { detail: { messageId } }));
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
@@ -121,6 +124,8 @@ export function TaskCard({
         ? 'current'
         : 'todo';
   const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
+  const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
+  const startMessage = task.messageId;
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
@@ -259,7 +264,19 @@ export function TaskCard({
               <p className="task-preview-meta">Owner update queued</p>
             )}
             <div className="task-preview-actions">
-              {onReply && (
+              {handoffMessage ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    captureAnalytics('task_action', { action: 'open_browser' });
+                    showMessage(handoffMessage);
+                  }}
+                >
+                  <Globe2 size={16} aria-hidden="true" />
+                  Open browser
+                </Button>
+              ) : onReply ? (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -270,23 +287,20 @@ export function TaskCard({
                 >
                   Reply
                 </Button>
-              )}
-              {!onReply && task.messageId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    captureAnalytics('task_action', { action: 'show_in_chat' });
-                    window.dispatchEvent(
-                      new window.CustomEvent('nod:focus-message', {
-                        detail: { messageId: task.messageId },
-                      }),
-                    );
-                  }}
-                >
-                  <MessageSquare size={16} aria-hidden="true" />
-                  Show in chat
-                </Button>
+              ) : (
+                startMessage && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      captureAnalytics('task_action', { action: 'show_in_chat' });
+                      showMessage(startMessage);
+                    }}
+                  >
+                    <MessageSquare size={16} aria-hidden="true" />
+                    Show in chat
+                  </Button>
+                )
               )}
               <Button
                 variant="ghost"

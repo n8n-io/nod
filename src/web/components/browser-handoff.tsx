@@ -28,6 +28,7 @@ const buttons = ['left', 'middle', 'right'] as const;
 const batchBytes = 64 * 1024;
 const textPiece = 2000;
 const encoder = new TextEncoder();
+const revealed = new Set<string>();
 
 async function post(path: string, body: unknown) {
   try {
@@ -309,6 +310,17 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       release();
     };
   }, [turnId, attempt, closed, expanded, unavailable]);
+
+  useEffect(() => {
+    if (!shown || revealed.has(turnId)) return;
+    revealed.add(turnId);
+    dialog.current?.scrollIntoView({
+      block: 'nearest',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
+    });
+  }, [shown, turnId]);
 
   useEffect(() => {
     if (closed || live || failures >= 3) return;

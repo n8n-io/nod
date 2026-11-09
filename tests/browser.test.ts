@@ -2743,6 +2743,7 @@ test('browser handoff preserves platform editing chords, text input and paste', 
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollIntoView = () => {};
       URL.createObjectURL = () => 'blob:synthetic-browser-frame';
       URL.revokeObjectURL = () => {};
       const received = [];

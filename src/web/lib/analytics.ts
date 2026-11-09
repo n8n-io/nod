@@ -72,7 +72,9 @@ type AnalyticsEvents = {
     kind: 'image' | 'pdf' | 'other';
     count: '1' | '2-5' | '6+';
   };
-  task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
+  task_action: {
+    action: 'expand' | 'stop' | 'show_in_chat' | 'open_browser' | 'show_activity' | 'reply';
+  };
   tab_viewed: { page: 'apps'; tab: 'all' | 'connected' };
   ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
@@ -180,7 +182,9 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     kind: ['image', 'pdf', 'other'],
     count: ['1', '2-5', '6+'],
   },
-  task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
+  task_action: {
+    action: ['expand', 'stop', 'show_in_chat', 'open_browser', 'show_activity', 'reply'],
+  },
   tab_viewed: {
     page: ['apps'],
     tab: ['all', 'connected'],

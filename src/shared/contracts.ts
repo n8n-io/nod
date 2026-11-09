@@ -275,6 +275,7 @@ export interface Task {
   status: TaskStatus;
   question: string | null;
   questionMessageId?: string | null;
+  browserHandoff?: boolean;
   waitingFor: TaskWait[];
   nextCheck: string | null;
   createdAt: string;

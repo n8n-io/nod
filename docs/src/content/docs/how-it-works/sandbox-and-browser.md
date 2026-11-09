@@ -117,6 +117,7 @@ sequenceDiagram
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
 - **Return to Nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
+- The panel scrolls into view once, when its first frame arrives. While it is open, the task ledger marks its task `browserHandoff`. With the full prompt, not the compact one for small context windows, the coordinator then points you to the panel instead of forwarding a message, because a task reply closes the handoff.
 - One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.

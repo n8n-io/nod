@@ -8,6 +8,7 @@ import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   abortTurns,
+  activeHandoffSql,
   cancelTurns,
   enqueueTurn,
   insertAssistantMessage,
@@ -89,6 +90,7 @@ type Row = {
   answered: boolean;
   question: string | null;
   question_message_id: string | null;
+  handoff: boolean;
 };
 
 function failure(message: string, statusCode = 400) {
@@ -114,6 +116,7 @@ function taskFacts(task: Task, detail: boolean) {
     status: task.status,
     now: task.now,
     ...(task.question ? { question: task.question } : {}),
+    ...(task.browserHandoff ? { browserHandoff: true } : {}),
     ...(task.result ? { result: task.result } : {}),
     ...(detail
       ? {
@@ -156,6 +159,7 @@ export function createTasks(options: {
            t.created_at,t.updated_at,t.closed_at,COALESCE((SELECT r.status FROM turns r WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'),u.status) AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
              AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
+           COALESCE(${activeHandoffSql},false) AS handoff,
            q.text AS question,q.id AS question_message_id
          FROM ranked t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT m.id,m.text FROM messages m
@@ -192,6 +196,7 @@ export function createTasks(options: {
         status: value,
         question: value === 'needs_you' ? row.question : null,
         questionMessageId: value === 'needs_you' ? row.question_message_id : null,
+        ...(value === 'needs_you' && row.handoff ? { browserHandoff: true } : {}),
         waitingFor: open ? row.waiting_for : [],
         nextCheck:
           open && row.next_check && row.next_check.getTime() > Date.now()

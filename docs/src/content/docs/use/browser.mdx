@@ -27,11 +27,13 @@ When Nod needs you on a page, it pauses the task and opens its live browser in c
 
 <Steps>
 
-1. Open Nod on the desktop or the web. The panel says **You have control** when it is ready. The live page appears under Nod's message.
+1. Open Nod on the desktop or the web. The live page appears in a **Browser** panel under Nod's message, and the chat scrolls to it. The panel says **You have control** when it is ready.
 2. Click, type and scroll on the page. Use **Back** and **Reload** if you need them, or **Enlarge browser** for a bigger view.
 3. When you're finished, select **Return to Nod**. Nod looks at the page to see what you did and carries on. Returning control does not post a message for you.
 
 </Steps>
+
+A task that is waiting for you in its browser shows **Open browser** on its card. If you can't find the panel, ask Nod in chat. A reply to the task closes the panel, and the task continues from what you wrote.
 
 Nod doesn't watch or act while you have the browser. If you started on Telegram or WhatsApp, open Nod to take over, because chat apps can't show the page.
 
@@ -63,7 +65,7 @@ flowchart LR
   chat[Chat]:::accent --> b1[Chat browser]
   sub[Subagents] --> b2[A browser each]
   run[Scheduled run] --> b3[Its own browser]
-  b1 -- Take control --> you([You]):::accent
+  b1 -- Hands over --> you([You]):::accent
 ```
 
 When you ask for several independent things, such as prices from three shops, Nod can split the work between subagents that browse at the same time, then combine what they found.
