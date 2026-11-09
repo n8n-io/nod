@@ -172,7 +172,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     collect(
       'messages',
       `SELECT id,turn_id,role,created_at,char_length(text) AS characters,
-       CASE WHEN octet_length(text)<=65536 THEN text ELSE '[message omitted: content limit]' END AS text,
+       CASE WHEN text IS NULL THEN NULL WHEN octet_length(text)<=65536 THEN text ELSE '[message omitted: content limit]' END AS text,
        CASE WHEN jsonb_typeof(attachments)='array' THEN jsonb_array_length(attachments) ELSE 0 END AS attachment_count,
        reply_to_message_id IS NOT NULL AS has_reply
        FROM messages WHERE owner_id=$1 AND created_at BETWEEN $2 AND $3 ORDER BY created_at DESC,id DESC`,
@@ -193,7 +193,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       'turns',
       `SELECT id,parent_turn_id,session_id,source,channel,status,background,waiting_reason,
        error IS NOT NULL AS error_present,
-       CASE WHEN octet_length(error)<=65536 THEN error ELSE '[error omitted: content limit]' END AS error,
+       CASE WHEN error IS NULL THEN NULL WHEN octet_length(error)<=65536 THEN error ELSE '[error omitted: content limit]' END AS error,
        created_at,started_at,finished_at
        FROM turns WHERE owner_id=$1 AND created_at BETWEEN $2 AND $3 ORDER BY created_at DESC,id DESC`,
       (row) => ({
