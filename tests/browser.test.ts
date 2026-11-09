@@ -6814,6 +6814,179 @@ test('chat removes a cached older reply quote when its target becomes hidden', a
   assert.equal(result.exitCode, 0, result.stdout + result.stderr);
 });
 
+test('chat resumes history after a failed focus check and cancels pending focus on Return', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement',
+        'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [rect];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [rect];
+      document.hasFocus = () => true;
+      const replyTarget = {
+        id: '00000000-0000-4000-8000-000000000861', role: 'assistant',
+        text: 'Recent synthetic message', attachments: [],
+        turnId: 'synthetic-recent-turn', createdAt: '2026-10-26T12:00:00Z',
+      };
+      const focusTarget = {
+        id: '00000000-0000-4000-8000-000000000862', role: 'assistant',
+        text: 'Older synthetic message', attachments: [],
+        turnId: 'synthetic-focus-turn', createdAt: '2026-10-25T12:00:00Z',
+      };
+      const earlier = {
+        id: '00000000-0000-4000-8000-000000000863', role: 'assistant',
+        text: 'Earlier synthetic page', attachments: [],
+        turnId: 'synthetic-earlier-turn', createdAt: '2026-10-24T12:00:00Z',
+      };
+      const threadId = '00000000-0000-4000-8000-000000000864';
+      const draft = 'Synthetic reply draft';
+      const draftKey = 'nod.chat-draft.synthetic-owner.' + threadId;
+      localStorage.setItem(draftKey, JSON.stringify({
+        version: 1, text: draft, reply: null, attachments: [], missing: [],
+      }));
+      const hiddenIds = Array.from({ length: 150 }, (_, index) =>
+        '00000000-0000-4000-8000-' + String(6000 + index).padStart(12, '0'));
+      let state = {
+        threadId, turns: [], activity: [], tasks: [], verificationRequests: [],
+        configuration: { llmReady: true }, messages: [replyTarget], hasEarlierMessages: true,
+        hiddenMessageCount: 151, hiddenMessageIds: hiddenIds,
+      };
+      let visible = true, focusChecks = 0, historyChecks = 0;
+      globalThis.fetch = async path => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: true });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        if (path === '/api/messages/around/' + focusTarget.id) {
+          focusChecks++;
+          if (focusChecks === 1) return Response.json([focusTarget]);
+          throw new TypeError('Synthetic focus validation offline');
+        }
+        if (String(path).startsWith('/api/messages?')) {
+          historyChecks++;
+          return Response.json(historyChecks === 1
+            ? { messages: [], hasMore: true }
+            : { messages: [earlier], hasMore: false });
+        }
+        throw new Error('Unexpected request: ' + path);
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      let root = createRoot(document.getElementById('root'));
+      const render = () => act(async () => root.render(createElement(Chat, {
+        ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {}, visible,
+      })));
+      const settle = async check => {
+        for (let attempt = 0; attempt < 100 && !check(); attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected focus navigation to settle');
+      };
+      const messageVisible = id => Boolean(document.querySelector('[data-message-id="' + id + '"]'));
+      const hasDraft = () => document.querySelector('[contenteditable]')?.textContent === draft;
+      const pageFromTop = async check => {
+        const scroll = document.querySelector('.conversation-scroll');
+        Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 100 });
+        Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 200 });
+        for (let attempt = 0; attempt < 30 && !check(); attempt++)
+          await act(async () => {
+            scroll.scrollTop = 0;
+            scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 10));
+          });
+        assert.ok(check(), 'Expected ordinary history pagination');
+      };
+      try {
+        await render();
+        await settle(hasDraft);
+        visible = false;
+        await render();
+        await act(async () => window.dispatchEvent(new CustomEvent('nod:focus-message', {
+          detail: { messageId: focusTarget.id },
+        })));
+        await settle(() => focusChecks === 1 && messageVisible(focusTarget.id));
+        const reply = document.querySelector(
+          '[data-message-id="' + focusTarget.id + '"] [aria-label="Reply to message"]');
+        assert.ok(reply);
+        await act(async () => reply.click());
+        await settle(() => JSON.parse(localStorage.getItem(draftKey)).reply?.id === focusTarget.id);
+        state = { ...state, hiddenMessageCount: 152 };
+        await render();
+        await settle(() => focusChecks === 2 && historyChecks >= 1 &&
+          document.querySelector('[role="alert"]')?.textContent.includes('offline'));
+        visible = true;
+        await render();
+        await pageFromTop(() => historyChecks >= 2 && messageVisible(earlier.id));
+        assert.ok(hasDraft());
+        assert.ok(document.querySelector('.composer-reply button[aria-label="Retry reply availability"]'));
+        assert.equal(JSON.parse(localStorage.getItem(draftKey)).reply.id, focusTarget.id);
+
+        await act(async () => root.unmount());
+        root = createRoot(document.getElementById('root'));
+        const pendingTarget = { ...focusTarget,
+          id: '00000000-0000-4000-8000-000000000865' };
+        const returnedPage = { ...earlier,
+          id: '00000000-0000-4000-8000-000000000866' };
+        let releaseFocus = null, returnedHistory = 0;
+        state = { ...state,
+          threadId: '00000000-0000-4000-8000-000000000867',
+          messages: [replyTarget], hiddenMessageCount: 0, hiddenMessageIds: [],
+        };
+        globalThis.fetch = async path => {
+          if (path === '/api/apps') return Response.json([]);
+          if (path === '/api/trust') return Response.json({});
+          if (path === '/api/speech') return Response.json({ transcription: true });
+          if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+          if (path === '/api/messages/around/' + pendingTarget.id)
+            return new Promise(resolve => { releaseFocus = resolve; });
+          if (String(path).startsWith('/api/messages?')) {
+            returnedHistory++;
+            return Response.json({ messages: [returnedPage], hasMore: false });
+          }
+          throw new Error('Unexpected request: ' + path);
+        };
+        await render();
+        await act(async () => window.dispatchEvent(new CustomEvent('nod:focus-message', {
+          detail: { messageId: pendingTarget.id },
+        })));
+        const returnButton = () => Array.from(document.querySelectorAll('.chat-jump-actions button'))
+          .find(button => button.textContent.includes('Return to previous position'));
+        await settle(() => releaseFocus && returnButton());
+        await act(async () => returnButton().click());
+        assert.equal(returnButton(), undefined);
+        await act(async () => releaseFocus(Response.json([pendingTarget])));
+        await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+        assert.equal(messageVisible(pendingTarget.id), false);
+        await pageFromTop(() => returnedHistory >= 1 && messageVisible(returnedPage.id));
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
 test('chat shows pending sends and active work before a model step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

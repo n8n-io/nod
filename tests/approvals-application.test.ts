@@ -18,7 +18,7 @@ import { authenticatorKey } from '../src/shared/authenticator-key.ts';
 import { authenticatorCode } from '../src/server/authenticator.ts';
 import { transaction } from '../src/server/transaction.ts';
 import { createChannels } from '../src/server/channels.ts';
-import type { AppState } from '../src/shared/contracts.ts';
+import type { AppState, Task } from '../src/shared/contracts.ts';
 import { mergeMessages } from '../src/web/lib/chat-messages.ts';
 
 test(
@@ -1296,6 +1296,120 @@ test(
         },
       );
 
+      await t.test(
+        'retiring a schedule confirmation leaves its saved task open with a reply target',
+        async () => {
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const taskId = randomUUID();
+          const parentId = randomUUID();
+          const ownerMessageId = randomUUID();
+          const prompt = `Synthetic saved task cancellation ${randomUUID()}`;
+          const threadId = (await request('GET', '/api/state')).json<AppState>().threadId;
+          plans.set(prompt, { action: 'schedule_cancel', args: { id: schedule.id } });
+          const turn = await transaction(async (client) => {
+            await client.query(
+              `INSERT INTO turns(id,owner_id,thread_id,session_id,source,message_id,prompt,status,finished_at)
+               VALUES($1,$2,$3,$3,'user',$4,$5,'succeeded',now())`,
+              [parentId, ownerId, threadId, ownerMessageId, 'Cancel the synthetic reminder.'],
+            );
+            await client.query(
+              `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text)
+               VALUES($1,$2,$3,$4,'user',$5)`,
+              [ownerMessageId, ownerId, threadId, parentId, 'Cancel the synthetic reminder.'],
+            );
+            const id = await enqueueTurn(prompt, {
+              source: 'task',
+              sessionId: taskId,
+              parentTurnId: parentId,
+              background: true,
+              client,
+            });
+            await client.query(
+              `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,title,done_when,now_text,applied_revision)
+               VALUES($1,$2,$3,$1,$4,'Synthetic saved task','Other work completed','Waiting for approval',1)`,
+              [taskId, ownerId, id, ownerMessageId],
+            );
+            await client.query('UPDATE turns SET task_id=$1,task_revision=1 WHERE id=$2', [
+              taskId,
+              id,
+            ]);
+            return id;
+          }, pool);
+          await waitFor(turn, 'waiting');
+          const [approval] = await approvalsFor(turn);
+          assert.equal(approval.status, 'pending');
+          assert.equal(approval.action, 'NOD_schedule_cancel');
+          const before = (await request('GET', '/api/tasks'))
+            .json<Task[]>()
+            .find((task) => task.id === taskId);
+          assert.ok(before);
+          assert.equal(before.status, 'needs_you');
+          assert.equal(before.question, confirmationText);
+          assert.equal(before.messageId, null);
+          const turnCount = (
+            await pool.query(
+              'SELECT count(*)::int AS count FROM turns WHERE owner_id=$1 AND session_id=$2',
+              [ownerId, taskId],
+            )
+          ).rows[0].count;
+          const paused = await request('PATCH', `/api/schedules/${schedule.id}`, {
+            enabled: false,
+          });
+          assert.equal(paused.statusCode, 200, paused.body);
+          assert.equal((await approvalsFor(turn))[0].status, 'expired');
+          assert.equal(
+            (await pool.query('SELECT status FROM turns WHERE id=$1', [turn])).rows[0].status,
+            'cancelled',
+          );
+          assert.equal(
+            (
+              await pool.query(
+                'SELECT count(*)::int AS count FROM turns WHERE owner_id=$1 AND session_id=$2',
+                [ownerId, taskId],
+              )
+            ).rows[0].count,
+            turnCount,
+          );
+          const detail = (await request('GET', `/api/tasks/${taskId}`)).json<{
+            task: Task;
+            events: Array<{ type: string; summary: string }>;
+          }>();
+          assert.equal(detail.task.status, 'needs_you');
+          assert.match(detail.task.question ?? '', /This task is still open/);
+          assert.ok(detail.task.questionMessageId);
+          assert.notEqual(detail.task.questionMessageId, approval.confirmation_message_id);
+          assert.equal(
+            detail.events.some((event) => event.summary === confirmationText),
+            false,
+          );
+          assert.ok(detail.events.some((event) => event.summary === detail.task.question));
+          const state = (await request('GET', '/api/state')).json<AppState>();
+          assert.equal(
+            state.messages.some((message) => message.id === approval.confirmation_message_id),
+            false,
+          );
+          assert.ok(state.messages.some((message) => message.id === detail.task.questionMessageId));
+          const reply = await request('POST', '/api/messages', {
+            text: 'Continue the remaining synthetic work.',
+            replyToMessageId: detail.task.questionMessageId,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(reply.statusCode, 200, reply.body);
+          await waitFor(reply.json().turnId, 'succeeded');
+          const resumed = (
+            await pool.query('SELECT session_id,parent_turn_id,task_id FROM turns WHERE id=$1', [
+              reply.json().turnId,
+            ])
+          ).rows[0];
+          assert.deepEqual(resumed, {
+            session_id: taskId,
+            parent_turn_id: turn,
+            task_id: taskId,
+          });
+          assert.equal((await approvalsFor(turn))[0].status, 'expired');
+        },
+      );
+
       await t.test('state counts all hidden messages while bounding recent IDs', async () => {
         const beforeResponse = await request('GET', '/api/state');
         assert.equal(beforeResponse.statusCode, 200, beforeResponse.body);
@@ -1419,6 +1533,19 @@ test(
           const [approval] = await approvalsFor(turn);
           assert.equal(approval.status, 'pending');
           const messageId = approval.confirmation_message_id as string;
+          const taskId = randomUUID();
+          await transaction(async (client) => {
+            await client.query(
+              `INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision)
+               VALUES($1,$2,$3,$3,'Synthetic channel task','Synthetic work finished','Waiting for approval',1)`,
+              [taskId, ownerId, turn],
+            );
+            await client.query('UPDATE turns SET task_id=$1 WHERE id=$2 AND owner_id=$3', [
+              taskId,
+              turn,
+              ownerId,
+            ]);
+          }, pool);
           const channelPool = new pg.Pool({
             connectionString: process.env.DATABASE_URL,
             max: 1,
@@ -1508,14 +1635,31 @@ test(
             releasePost();
             const response = await pausing;
             await sending;
+            await channels.drain();
             assert.equal(response.statusCode, 200, response.body);
             await assertCancelled(schedule);
             assert.equal((await approvalsFor(turn))[0].status, 'expired');
-            assert.deepEqual(posts, [{ threadId: 'synthetic-chat', text: confirmationText }]);
+            assert.equal(posts.length, 2);
+            assert.deepEqual(posts[0], { threadId: 'synthetic-chat', text: confirmationText });
+            assert.equal(posts[1]?.threadId, 'synthetic-chat');
+            assert.match(posts[1]?.text ?? '', /This task is still open/);
+            assert.notEqual(posts[1]?.text, confirmationText);
+            const noticeId = (
+              await pool.query('SELECT continuation_message_id FROM tasks WHERE id=$1', [taskId])
+            ).rows[0].continuation_message_id as string;
+            assert.ok(noticeId);
             assert.deepEqual(
               (
                 await channelPool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
                   messageId,
+                ])
+              ).rows,
+              [{ state: 'sent' }],
+            );
+            assert.deepEqual(
+              (
+                await channelPool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+                  noticeId,
                 ])
               ).rows,
               [{ state: 'sent' }],

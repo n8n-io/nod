@@ -952,6 +952,7 @@ export function Chat({
         unreadPositioned.current = 'target';
         returnPosition.current = scrollPosition(scroll.current);
         cancelHistory();
+        setFocusTarget(null);
         focusLoading.current = true;
         setCanReturn(true);
         const expectedThread = threadRef.current;
@@ -1017,7 +1018,9 @@ export function Chat({
     ).find((element) => element.dataset.messageId === focusTarget.id);
     if (target) {
       stickToBottom.current = false;
+      const version = focusRequest.current;
       requestAnimationFrame(() => {
+        if (version !== focusRequest.current || !target.isConnected) return;
         target.scrollIntoView({ block: 'center', behavior: 'instant' });
         target.focus({ preventScroll: true });
         target.classList.add('message-focused');
@@ -1558,6 +1561,7 @@ export function Chat({
     );
     if (!unchecked.length) return;
     const controller = new AbortController();
+    const focusVersion = focusRequest.current;
     for (const id of unchecked)
       void api<Message[]>(`/api/messages/around/${encodeURIComponent(id)}`, {
         signal: controller.signal,
@@ -1574,7 +1578,10 @@ export function Chat({
             return;
           }
           confirmReplyTarget(id, historyEpoch);
-          if (focusTarget?.id === id || replyTo?.id === id)
+          if (
+            (focusTarget?.id === id && focusRequest.current === focusVersion) ||
+            replyTo?.id === id
+          )
             setHistoryPage((current) => ({
               threadId,
               epoch: historyEpoch,
@@ -1600,14 +1607,17 @@ export function Chat({
             return;
           if (cause instanceof ApiError && cause.status === 404) {
             retireReplyTarget(id);
-            if (focusTarget?.id === id) {
+            if (focusTarget?.id === id && focusRequest.current === focusVersion) {
               setFocusTarget((current) => (current?.id === id ? null : current));
               setCanReturn(false);
               returnPosition.current = null;
             }
           } else {
             if (replyTo?.id === id) setFailedReplyValidation({ threadId, epoch: historyEpoch, id });
-            if (focusTarget?.id === id) setError(errorMessage(cause));
+            if (focusTarget?.id === id && focusRequest.current === focusVersion) {
+              setFocusTarget((current) => (current?.id === id ? null : current));
+              setError(errorMessage(cause));
+            }
           }
         });
     return () => controller.abort();
@@ -1807,6 +1817,15 @@ export function Chat({
   function cancelReturn() {
     returning.current = false;
     unreadPositioned.current = currentUnreadVisit.current;
+  }
+  function cancelFocusedMessage() {
+    focusRequest.current++;
+    focusLoading.current = false;
+    setFocusTarget(null);
+    cancelHistory();
+    returnPosition.current = null;
+    unreadPositioned.current = currentUnreadVisit.current;
+    setCanReturn(false);
   }
   function reportRead() {
     const element = scroll.current;
@@ -2212,7 +2231,7 @@ export function Chat({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setCanReturn(false);
+                    cancelFocusedMessage();
                     onReturnToMemory();
                   }}
                 >
@@ -2230,7 +2249,7 @@ export function Chat({
                       stickToBottom.current = false;
                       restoreScrollPosition(scroll.current, returnPosition.current);
                     }
-                    setCanReturn(false);
+                    cancelFocusedMessage();
                   }}
                 >
                   <CornerUpLeft size={16} />

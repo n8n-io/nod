@@ -125,7 +125,7 @@ export function TaskCard({
         : 'todo';
   const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
   const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
-  const startMessage = task.messageId;
+  const startMessage = task.questionMessageId ?? task.messageId;
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'

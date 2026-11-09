@@ -859,8 +859,10 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
     navigator: dom.window.navigator,
     HTMLElement: dom.window.HTMLElement,
     HTMLButtonElement: dom.window.HTMLButtonElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
     Element: dom.window.Element,
     Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
     Event: dom.window.Event,
     CustomEvent: dom.window.CustomEvent,
     MutationObserver: dom.window.MutationObserver,
@@ -903,9 +905,15 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
       reads++;
       return Response.json(current ? [current] : []);
     }
-    if (options.method === 'PATCH')
-      assert.deepEqual(JSON.parse(String(options.body)), { enabled: false, expectedRevision: 1 });
-    else assert.equal(options.method, 'DELETE');
+    if (options.method === 'PATCH') {
+      const body = JSON.parse(String(options.body));
+      assert.deepEqual(
+        body,
+        'title' in body
+          ? { title: 'My unsaved title', expectedRevision: 1 }
+          : { enabled: false, expectedRevision: 1 },
+      );
+    } else assert.equal(options.method, 'DELETE');
     attempts.push(options.method);
     const signal = options.signal;
     const held = holdNextMutation;
@@ -945,7 +953,7 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
   const { act, createElement, Fragment } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
-  const { PauseSwitch, PlanToast, useDirectChange } =
+  const { PauseSwitch, PlanToast, ScheduleEditor, useDirectChange } =
     await import('../src/web/components/plan-controls.tsx');
   const { DeletePlan } = await import('../src/web/components/delete-plan.tsx');
   pageDataCache.clear();
@@ -961,7 +969,12 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
   });
   function Controls() {
     const change = useDirectChange(schedule.id);
-    return createElement(PauseSwitch, { schedule, change });
+    return createElement(
+      Fragment,
+      null,
+      createElement(PauseSwitch, { schedule, change }),
+      createElement(ScheduleEditor, { schedule, change }),
+    );
   }
   await act(async () =>
     root.render(
@@ -1167,4 +1180,27 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
   await release();
   assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE', 'PATCH', 'DELETE']);
   assert.equal(attempts.filter((method) => method === 'DELETE').length, 5);
+  current = { ...schedule, title: 'Changed elsewhere', revision: 2 };
+  holdNextMutation = true;
+  await click('button[aria-label="Edit schedule Delayed schedule"]');
+  const title = dom.window.document.querySelector<HTMLInputElement>('.schedule-editor-form input');
+  assert.ok(title);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!.call(
+      title,
+      'My unsaved title',
+    );
+    title.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  });
+  await clickButton('Save changes');
+  await waitFor(
+    () =>
+      dom.window.document
+        .querySelector('.schedule-editor-dialog')
+        ?.textContent?.includes('The schedule changed.') === true,
+    'editor conflict',
+  );
+  assert.equal(title.value, 'My unsaved title');
+  assert.ok(dom.window.document.querySelector('.schedule-editor-dialog'));
+  assert.deepEqual(mutations, ['PATCH', 'DELETE', 'PATCH', 'DELETE', 'DELETE', 'PATCH', 'DELETE']);
 });

@@ -159,15 +159,12 @@ export function useDirectChange(id: string) {
     const current = result.schedules?.find((schedule) => schedule.id === id);
     const expectedRevision = change.body.expectedRevision;
     if (current && typeof expectedRevision === 'number' && current.revision > expectedRevision) {
+      const conflict = 'The schedule changed. Review its current settings before trying again.';
       pending.current = null;
       setUncertain(false);
       setRetryable(false);
-      showToast({
-        id: Date.now(),
-        text: 'The schedule changed. Review its current settings before trying again.',
-        kind: 'info',
-      });
-      return;
+      showToast({ id: Date.now(), text: conflict, kind: 'info' });
+      return conflict;
     }
     const canRetry = checked && current?.revision === expectedRevision;
     pending.current = change;
