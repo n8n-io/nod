@@ -153,7 +153,11 @@ export interface Computer {
     signal?: AbortSignal,
   ): Promise<BrowserObservation>;
   screenshot(threadId: string, signal?: AbortSignal): Promise<Buffer | null>;
-  control(threadId: string, input: BrowserHandoffInput, signal?: AbortSignal): Promise<void>;
+  control(
+    threadId: string,
+    input: BrowserHandoffInput,
+    signal?: AbortSignal,
+  ): Promise<string | void>;
   view(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
   screenStatus(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';

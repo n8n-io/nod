@@ -63,7 +63,10 @@ export function createBridgeComputer(options: {
   >();
   const pending = new Map<Promise<unknown>, string | undefined>();
   const cancellations = new Map<() => void, string | undefined>();
-  const views = new Map<string, Set<(input: unknown, signal?: AbortSignal) => Promise<void>>>();
+  const views = new Map<
+    string,
+    Set<(input: unknown, signal?: AbortSignal) => Promise<string | void>>
+  >();
   let disposing: Promise<void> | undefined;
   const recovering = new Map<string, Promise<void>>();
   const reopenNotice =
@@ -285,7 +288,10 @@ export function createBridgeComputer(options: {
     let exited = false;
     let latest: Buffer | undefined;
     let wake = () => {};
-    const inputs = new Map<string, { resolve(): void; reject(error: Error): void }>();
+    const inputs = new Map<
+      string,
+      { resolve(value: string | void): void; reject(error: Error): void }
+    >();
     const open = views.get(threadId) ?? new Set();
     const write = (frame: unknown) => {
       if (closed) return;
@@ -315,7 +321,7 @@ export function createBridgeComputer(options: {
       const timer = setTimeout(cancel, options.timeoutMs ?? 30_000);
       inputSignal?.addEventListener('abort', cancel, { once: true });
       try {
-        await new Promise<void>((resolve, reject) => {
+        return await new Promise<string | void>((resolve, reject) => {
           inputs.set(inputId, { resolve, reject });
           write({ type: 'input', id: request.id, inputId, input });
         });
@@ -351,7 +357,7 @@ export function createBridgeComputer(options: {
           } else {
             const input = inputs.get(result.inputId);
             inputs.delete(result.inputId);
-            if (result.ok) input?.resolve();
+            if (result.ok) input?.resolve(result.text);
             else
               input?.reject(
                 result.error
@@ -421,7 +427,7 @@ export function createBridgeComputer(options: {
     control: async (id, input, signal) => {
       const send = [...(views.get(threadIdentity(id)) ?? [])].at(-1);
       if (!send) throw new Error('The browser view is not open.');
-      await send(input, signal);
+      return await send(input, signal);
     },
     view,
     upload: async (id, input, signal) => {
