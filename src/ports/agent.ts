@@ -110,7 +110,7 @@ export interface RuntimeContext {
       owner: Record<string, unknown>,
       signal: AbortSignal,
       canContinue?: () => boolean,
-    ): Promise<boolean>;
+    ): Promise<boolean | unknown[]>;
   };
   threadId: string;
   turnId: string;

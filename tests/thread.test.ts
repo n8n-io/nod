@@ -6566,7 +6566,7 @@ test(
               }
             });
             await t.test(
-              'screening ends a quiet batch, and an escalated batch goes back unread to the full check',
+              'screening ends a quiet batch and hands an escalated batch with its reads to the full check',
               async () => {
                 await reset();
                 let verdict = false;
@@ -6632,24 +6632,33 @@ test(
                     );
                   const context = (await screening.context(checkTurn))!;
                   rotateSource = rotate;
-                  const quiet = await context.screen!(
+                  const result = await context.screen!(
                     owner,
                     new AbortController().signal,
                     () => allowed,
                   );
+                  const quiet = Array.isArray(result) ? 'handed' : result;
+                  if (Array.isArray(result))
+                    assert.ok(
+                      (result as Array<{ result: { records: Array<{ id: string }> } }>).every(
+                        ({ result }) => result.records.map(({ id }) => id).join() === 'thread1',
+                      ),
+                    );
                   const { dirty } = (
                     await db.pool.query(
                       'SELECT signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
                       [ownerId, sourceId],
                     )
                   ).rows[0];
-                  let status = fullStatus ?? (quiet ? 'succeeded' : 'failed');
+                  let status = fullStatus ?? (quiet === true ? 'succeeded' : 'failed');
                   try {
-                    if (fullStatus)
-                      await context.read(
+                    if (fullStatus) {
+                      const full = (await context.read(
                         { sourceId, ...(tools ? { tool: 'fixture_read', args: {} } : {}) },
                         new AbortController().signal,
-                      );
+                      )) as { remainingReads: number };
+                      assert.equal(full.remainingReads, 11);
+                    }
                     if (fullStatus && saveMode) {
                       const draft = proposal({ matterKey: 'screened-native-cache' });
                       if (saveMode === 'changed') {
@@ -6688,19 +6697,19 @@ test(
                 await preferences.update({
                   notificationRule: 'Prepare current synthetic commitments.',
                 });
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 assert.equal(checks, firstChecks + 1);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, firstChecks + 2);
                 owner = { memory: 'The owner needs a synthetic draft for each current item.' };
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 curatorId = 'fixture-replaced';
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 const beforeRace = checks;
@@ -6714,22 +6723,22 @@ test(
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, beforeRetry + 1);
                 verdict = true;
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
                 const afterFull = checks;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, afterFull);
                 saveMode = 'same';
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
                 assert.deepEqual(await screen(false), [true, false]);
                 await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
                 saveMode = 'changed';
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 saveMode = undefined;
                 for (const status of ['failed', 'cancelled'] as const) {
-                  assert.deepEqual(await screen(true, false, status), [false, true]);
+                  assert.deepEqual(await screen(true, false, status), ['handed', false]);
                   const afterFailure = checks;
-                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.deepEqual(await screen(false), ['handed', false]);
                   assert.equal(checks, afterFailure + 1);
                 }
                 verdict = false;
@@ -6741,14 +6750,14 @@ test(
                   );
                   verdict = true;
                   const beforeRecovery = checks;
-                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.deepEqual(await screen(false), ['handed', false]);
                   assert.equal(checks, beforeRecovery + 1);
                   verdict = false;
                   assert.deepEqual(await screen(false), [true, false]);
                 }
                 sourceRevision = 'screening-new-revision';
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 sourceRevision = undefined;
                 await preferences.update({ notificationRule });
                 verdict = false;
@@ -6764,7 +6773,7 @@ test(
                 stopAfterCheck = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
-                assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
                 tools = true;
                 await db.pool.query(
                   'UPDATE proactive_sources SET reads=$3::jsonb WHERE owner_id=$1 AND source_id=$2',
@@ -6773,11 +6782,11 @@ test(
                 verdict = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
-                assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
                 verdict = false;
                 await save({ matterKey: 'screened-matter' });
-                assert.deepEqual(await screen(), [false, true]);
-                assert.deepEqual(await screen(false, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
+                assert.deepEqual(await screen(false, false, 'succeeded'), ['handed', false]);
                 assert.deepEqual(await screen(false), [true, false]);
                 issueDue = true;
                 assert.deepEqual(await screen(false), [false, true]);
@@ -6799,7 +6808,7 @@ test(
                 ).rows[0].next_poll as Date;
                 assert.ok(held.getTime() > Date.now() + 3_600_000);
                 urgent = true;
-                assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
                 await preferences.update({ quietHoursEnabled: false });
                 screening.release(turnId);
               },

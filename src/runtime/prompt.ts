@@ -295,13 +295,25 @@ export function firstInstruction(
   return `${parts.preamble}${JSON.stringify({ ...parts.stable, ...parts.volatile })}${parts.guide}`;
 }
 
-export function observerInstruction(context: RuntimeContext, resumed: boolean, time: string) {
+export function observerInstruction(
+  context: RuntimeContext,
+  resumed: boolean,
+  time: string,
+  sourceReads?: string,
+) {
   const parts = requestParts(context, resumed, new Set());
   const prefix = (value: object) => `${parts.preamble}${JSON.stringify(value).slice(0, -1)},`;
-  const { recentConversation, ...tail } = parts.volatile;
+  const { recentConversation, currentInstruction, ...tail } = parts.volatile;
+  const request = {
+    ...parts.stable,
+    recentConversation,
+    ...tail,
+    ...(sourceReads ? { sourceReads } : {}),
+    currentInstruction,
+  };
   return {
     stable: [prefix(parts.stable), prefix({ ...parts.stable, recentConversation })],
-    text: `${parts.preamble}${JSON.stringify({ ...parts.stable, recentConversation, ...tail })}\n${time}`,
+    text: `${parts.preamble}${JSON.stringify(request)}\n${time}`,
   };
 }
 
