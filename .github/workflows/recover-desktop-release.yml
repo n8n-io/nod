@@ -31,7 +31,6 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
       NOD_RELEASE_PLAN: .local/desktop-release-plan.json
       NOD_PUBLISH_RELEASE: 'true'
     steps:
@@ -107,7 +106,21 @@ jobs:
           const date = new Date(`${plan.date}T00:00:00Z`);
           assert(Number.isFinite(date.getTime()));
           date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
-          appendFileSync(process.env.GITHUB_ENV, `NOD_RELEASE_SOURCE=${plan.source}\nNOD_RELEASE_PLAN_SHA256=${createHash('sha256').update(bytes).digest('hex')}\nNOD_RUNTIME_REFRESH=${date.toISOString().slice(0, 10)}\n`);
+          const updateSources = [
+            'dist/desktop/arm64/release.json',
+            'dist/desktop/x64/release.json',
+            'dist/desktop/win32-x64/release-win32-x64.json',
+          ].map((path) => JSON.parse(readFileSync(path, 'utf8')).updateSourceUrl);
+          assert(updateSources.every((value) => value === updateSources[0]));
+          const updateSource = updateSources[0] ?? '';
+          assert.equal(typeof updateSource, 'string');
+          assert(!/[\r\n]/.test(updateSource));
+          appendFileSync(process.env.GITHUB_ENV, [
+            `NOD_RELEASE_SOURCE=${plan.source}`,
+            `NOD_RELEASE_PLAN_SHA256=${createHash('sha256').update(bytes).digest('hex')}`,
+            `NOD_RUNTIME_REFRESH=${date.toISOString().slice(0, 10)}`,
+            `NOD_DESKTOP_UPDATE_SOURCE_URL=${updateSource}`,
+          ].join('\n') + '\n');
           JS
       - name: Select the original build provenance
         id: provenance

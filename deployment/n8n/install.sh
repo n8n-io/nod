@@ -4,7 +4,8 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 umask 077
 
-base='https://internal.users.n8n.cloud/webhook/nod/desktop'
+releases='https://github.com/n8n-io/nod/releases'
+legacy_update_source='https://internal.users.n8n.cloud/webhook/nod/desktop'
 certificate='82e4c9de30d80541d1c59c0d590537e4c0abf4a04cc34fde6217a0f9e47e1e2d'
 temporary=''
 mounted=false
@@ -48,14 +49,6 @@ download() {
 
 hash() {
   shasum -a 256 "$1" | awk '{print $1}'
-}
-
-check_asset_url() {
-  case "$1" in
-    "$base/releases/$release_id/assets/"*) relative=${1#"$base/releases/$release_id/assets/"} ;;
-    *) fail 'Release download URL is invalid.' ;;
-  esac
-  printf '%s\n' "$relative" | grep -Eq "^[1-9][0-9]*/$2$" || fail 'Release download URL is invalid.'
 }
 
 check_stopped() {
@@ -117,15 +110,19 @@ check_app() {
   [ "$(field "$package" version string)" = "$version" ] || fail 'The Nod package version does not match the release.'
   [ "$(field "$package" nodBuild.source string)" = "$source" ] || fail 'The Nod app source does not match the release.'
   [ "$(field "$package" nodBuild.modified bool)" = false ] || fail 'The Nod app was not built from a clean release.'
-  [ "$(field "$package" nodBuild.updateSourceUrl string)" = "$base" ] || fail 'The Nod update service does not match.'
+  if [ -n "$update_source" ]; then
+    [ "$(field "$package" nodBuild.updateSourceUrl string)" = "$update_source" ] || fail 'The Nod update service does not match.'
+  elif plutil -extract nodBuild.updateSourceUrl raw -o - "$package" >/dev/null 2>&1; then
+    fail 'The Nod update service does not match.'
+  fi
   file -b "$candidate/Contents/MacOS/nod" | grep -q "Mach-O 64-bit executable $machine_arch" || fail 'The Nod app architecture does not match this Mac.'
 }
 
 [ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to /Applications/Nod.app.'
 [ "$(uname -s)" = Darwin ] || fail 'Nod requires macOS 14 or later.'
 case "$(uname -m)" in
-  arm64) arch=arm64; machine_arch=arm64; manifest_name='release\.json'; installer_query='installer=true' ;;
-  x86_64) arch=x64; machine_arch=x86_64; manifest_name='release-darwin-x64\.json'; installer_query='installer=true&platform=darwin-x64' ;;
+  arm64) arch=arm64; machine_arch=arm64; manifest_name='release.json' ;;
+  x86_64) arch=x64; machine_arch=x86_64; manifest_name='release-darwin-x64.json' ;;
   *) fail 'This Mac architecture is unsupported.' ;;
 esac
 [ "$(id -u)" -ne 0 ] || fail 'Run this installer as your normal user, without sudo.'
@@ -163,28 +160,35 @@ if [ -d "$target" ]; then
 fi
 
 printf 'Finding the latest Nod release…\n'
-download "$base/releases?$installer_query" "$temporary/latest.json" 2097152
-[ "$(field "$temporary/latest.json" schema integer)" = 1 ] || fail 'The installer metadata format is unsupported.'
-version=$(field "$temporary/latest.json" version string)
-valid_version "$version" || fail 'The release version is invalid.'
+status=$(curl -q --proto '=https' --tlsv1.2 --head --silent --show-error \
+  --max-time 30 --max-redirs 0 --dump-header "$temporary/latest.headers" \
+  --output /dev/null --write-out '%{http_code}' \
+  "$releases/latest/download/$manifest_name") || fail 'The latest Nod release is unavailable.'
+[ "$status" = 302 ] || fail 'The latest Nod release is unavailable.'
+redirect=$(awk 'tolower($1)=="location:" { sub(/\r$/, "", $2); print $2 }' "$temporary/latest.headers" | tail -n 1)
+case "$redirect" in
+  "$releases/download/nod-v"*"/$manifest_name") tag=${redirect#"$releases/download/"}; tag=${tag%"/$manifest_name"} ;;
+  *) fail 'The latest Nod release tag is invalid.' ;;
+esac
+version=${tag#nod-v}
+printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || fail 'The latest Nod release tag is invalid.'
+download "$releases/download/$tag/$manifest_name" "$temporary/release.json" 2097152
+manifest="$temporary/release.json"
+[ "$(field "$manifest" version string)" = "$version" ] || fail 'The release version does not match its tag.'
 if [ -n "$current_version" ] && newer_than "$current_version" "$version"; then fail 'A newer Nod version is already installed. Your app was kept.'; fi
-release_id=$(field "$temporary/latest.json" releaseId integer)
-printf '%s\n' "$release_id" | grep -Eq '^[1-9][0-9]*$' || fail 'The release identity is invalid.'
-disk_url=$(field "$temporary/latest.json" disk.url string)
-bytes=$(field "$temporary/latest.json" disk.bytes integer)
-digest=$(field "$temporary/latest.json" disk.sha256 string)
-manifest_url=$(field "$temporary/latest.json" manifestUrl string)
+disk_url="$releases/download/$tag/nod-$arch.dmg"
+bytes=$(field "$manifest" disk.bytes integer)
+digest=$(field "$manifest" disk.sha256 string)
 printf '%s\n' "$bytes" | grep -Eq '^[1-9][0-9]{0,9}$' || fail 'The download size is invalid.'
 [ "$bytes" -le 2147483648 ] || fail 'The download exceeds the installer limit.'
 printf '%s\n' "$digest" | grep -Eq '^[a-f0-9]{64}$' || fail 'The download hash is invalid.'
-check_asset_url "$disk_url" "nod-$arch\.dmg"
-check_asset_url "$manifest_url" "$manifest_name"
-download "$manifest_url" "$temporary/release.json" 2097152
-manifest="$temporary/release.json"
-[ "$(field "$manifest" version string)" = "$version" ] || fail 'The release versions do not match.'
 [ "$(field "$manifest" platform string)" = "darwin-$arch" ] || fail 'The release platform is unsupported.'
 [ "$(field "$manifest" disk.file string)" = "nod-$arch.dmg" ] || fail 'The release filename is invalid.'
-[ "$(field "$manifest" disk.bytes integer)" = "$bytes" ] && [ "$(field "$manifest" disk.sha256 string)" = "$digest" ] || fail 'The release download metadata does not match.'
+update_source=''
+if plutil -extract updateSourceUrl raw -o - "$manifest" >/dev/null 2>&1; then
+  update_source=$(field "$manifest" updateSourceUrl string)
+  [ "$update_source" = "$legacy_update_source" ] || fail 'The Nod update service does not match.'
+fi
 [ "$(field "$manifest" signing.certificateSha256 string)" = "$certificate" ] || fail 'The release signing identity does not match.'
 source=$(field "$manifest" source string)
 printf '%s\n' "$source" | grep -Eq '^[a-f0-9]{40}$' || fail 'The release source is invalid.'

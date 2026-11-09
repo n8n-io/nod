@@ -572,38 +572,71 @@ function publishRelease(repository, tag) {
 
 async function verifyDelivery(tag, version) {
   const sourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
-  if (!sourceUrl) return;
   const { createUpdateSource } = await import('../../desktop/main/updates.mjs');
   const get = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
   let target;
   try {
+    if (!sourceUrl && api(`repos/${releaseRepository}`, releaseRepository)?.private !== false)
+      throw new Error(
+        'the GitHub release is not public and no private update source is configured',
+      );
     for (target of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
       const [os, arch] = target.split('-');
       let update;
       for (let attempt = 0; update?.version !== version; attempt++) {
         if (attempt === 6) throw new Error(`it does not list Nod ${version}`);
         if (attempt) await new Promise((resolve) => setTimeout(resolve, 10_000));
-        update = await createUpdateSource({ sourceUrl, os, arch }).latest('0.0.0');
+        try {
+          update = await createUpdateSource({
+            sourceUrl,
+            repository: releaseRepository,
+            os,
+            arch,
+          }).latest('0.0.0');
+        } catch (error) {
+          if (
+            sourceUrl ||
+            error.message !== 'The latest desktop release is invalid.' ||
+            attempt === 5
+          )
+            throw error;
+        }
       }
-      const response = await get(`${sourceUrl}/releases?installer=true&platform=${target}`);
-      const installer = response.ok ? await response.json() : {};
-      const downloads =
-        os === 'win32'
-          ? [installer.installer?.url, installer.runtime?.url]
-          : [installer.disk?.url, update.downloadUrl];
-      const statuses = [];
-      for (const url of downloads) {
-        const download = await get(url, { redirect: 'manual' });
-        await download.body?.cancel();
-        statuses.push(download.status);
+      if (sourceUrl) {
+        const response = await get(`${sourceUrl}/releases?installer=true&platform=${target}`);
+        const installer = response.ok ? await response.json() : {};
+        const downloads =
+          os === 'win32'
+            ? [installer.installer?.url, installer.runtime?.url]
+            : [installer.disk?.url, update.downloadUrl];
+        const statuses = [];
+        for (const url of downloads) {
+          const download = await get(url, { redirect: 'manual' });
+          await download.body?.cancel();
+          statuses.push(download.status);
+        }
+        if (installer.version !== version || statuses.some((status) => status !== 302))
+          throw new Error('its installer, runtime or update is unavailable');
       }
       const feed = update.feedUrl && (await get(update.feedUrl));
       if (
-        installer.version !== version ||
-        statuses.some((status) => status !== 302) ||
-        (feed && (!feed.ok || (await feed.json()).name !== `nod ${version}`))
+        feed &&
+        (!feed.ok || (await feed.json()).name !== `${sourceUrl ? 'nod' : 'Nod'} ${version}`)
       )
-        throw new Error('its installer, runtime or update is unavailable');
+        throw new Error('its update feed is unavailable');
+    }
+    if (!sourceUrl) {
+      target = 'release assets';
+      const release = releaseByTag(releaseRepository, tag);
+      if (!release?.assets?.length) throw new Error('the GitHub release has no assets');
+      for (const asset of release.assets) {
+        const url = `https://github.com/${releaseRepository}/releases/download/${tag}/${encodeURIComponent(asset.name)}`;
+        const response = await get(url, { method: 'HEAD' });
+        await response.body?.cancel();
+        const length = response.headers.get('content-length');
+        if (!response.ok || (length !== null && Number(length) !== asset.size))
+          throw new Error(`the GitHub asset ${asset.name} is unavailable`);
+      }
     }
   } catch (error) {
     gh(
@@ -611,7 +644,7 @@ async function verifyDelivery(tag, version) {
       releaseRepository,
     );
     throw new Error(
-      `Nod ${version} is a draft again because ${sourceUrl} cannot deliver ${target}: ${error.message}`,
+      `Nod ${version} is a draft again because ${sourceUrl || 'GitHub releases'} cannot deliver ${target || 'the release'}: ${error.message}`,
     );
   }
 }
@@ -961,6 +994,10 @@ async function draftAll({ stageOnly = false } = {}) {
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const sum = join(windows, 'SHA256SUMS-win32-x64');
   await copyFile(join(windows, 'SHA256SUMS'), sum);
+  const installers = join(root, '.local/desktop-release-installers');
+  await mkdir(installers, { recursive: true });
+  await copyFile(join(root, 'deployment/n8n/install.sh'), join(installers, 'nod-install.sh'));
+  await copyFile(join(root, 'deployment/n8n/install.ps1'), join(installers, 'nod-install.ps1'));
   const files = [
     ...appFiles.values(),
     ...['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json'].map((name) =>
@@ -968,6 +1005,8 @@ async function draftAll({ stageOnly = false } = {}) {
     ),
     sum,
     windowsManifest,
+    join(installers, 'nod-install.sh'),
+    join(installers, 'nod-install.ps1'),
   ];
   if (stageOnly) {
     await writeFile(
@@ -1005,6 +1044,8 @@ async function draftAll({ stageOnly = false } = {}) {
     'release-win32-x64.json',
     'nod-Runtime-win32-x64.tar.gz',
     basename(windowsManifest),
+    'nod-install.sh',
+    'nod-install.ps1',
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
     throw new Error('All three platform bundles are required before publication.');

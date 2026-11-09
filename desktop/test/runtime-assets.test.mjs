@@ -649,6 +649,9 @@ async function releaseFixture(
     fileURLToPath(new URL('../../.github/scripts/prepare-desktop-release.mjs', import.meta.url)),
     join(scripts, 'prepare-desktop-release.mjs'),
   );
+  await mkdir(join(root, 'deployment/n8n'), { recursive: true });
+  await writeFile(join(root, 'deployment/n8n/install.sh'), 'exit 0\n');
+  await writeFile(join(root, 'deployment/n8n/install.ps1'), 'Write-Output "Synthetic"\n');
   if (plan) {
     const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
     const input = await runtimeInputs();
@@ -918,10 +921,17 @@ const broker = (state, url, source) => {
 globalThis.fetch = async (url, options = {}) => {
   const file = process.env.FIXTURE_STATE;
   const state = JSON.parse(readFileSync(file, 'utf8'));
-  state.calls.push(['fetch', options.method || 'GET', String(url)]);
+  state.calls.push(['fetch', options.method || 'GET', String(url), new Headers(options.headers).has('authorization')]);
   writeFileSync(file, JSON.stringify(state));
   const source = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
   if (source && String(url).startsWith(source + '/')) return broker(state, new URL(url), source);
+  const address = new URL(url);
+  if (address.origin === 'https://github.com' && address.pathname.startsWith('/synthetic/nod/releases/latest/download/')) {
+    const release = Object.values(state.releases).find(entry => !entry.draft);
+    const name = address.pathname.slice('/synthetic/nod/releases/latest/download/'.length);
+    if (!release || !state.contents[release.tag_name + '/' + name]) return new Response(null, { status: 404 });
+    return new Response(null, { status: 302, headers: { location: 'https://github.com/synthetic/nod/releases/download/' + release.tag_name + '/' + name } });
+  }
   const match = String(url).match(/^https:\/\/github\.com\/synthetic\/nod\/releases\/download\/([^/]+)\/([^/]+)$/);
   if (!match) throw new Error('Unexpected network access');
   const [, tag, name] = match;
@@ -1299,186 +1309,248 @@ test('one official release waits for verified runtime and downloaded app bytes',
 });
 
 test('all three checked bundles publish together as one regular Nod release', async (t) => {
-  const f = await releaseFixture(t, {
-    plan: true,
-    publish: true,
-    updateSourceUrl: 'https://releases.example.invalid/nod',
-  });
-  const target = join(f.root, 'dist/desktop');
-  const arm = join(target, 'arm64');
-  const intel = join(target, 'x64');
-  const windows = join(target, 'win32-x64');
-  const names = [
-    'release.json',
-    'runtime-release.json',
-    'update.json',
-    'SHA256SUMS',
-    'signing.cer',
-    'nod-arm64.dmg',
-    'nod-arm64.zip',
-  ];
-  for (const directory of [arm, intel, windows]) await mkdir(directory, { recursive: true });
-  for (const name of names) await copyFile(join(f.output, name), join(arm, name));
-  const fingerprint = JSON.parse(
-    (
-      await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
-        cwd: f.root,
-        env: {
-          NOD_DESKTOP_TARGET: 'darwin-x64',
-          NOD_SIGNING_MODE: 'self-signed',
-          NOD_SIGNING_IDENTITY: 'Synthetic Nod Signing',
-          NOD_SIGNING_CERTIFICATE_SHA256: f.metadata.signing.certificateSha256,
-        },
-      })
-    ).stdout,
-  ).fingerprint;
-  const runtime = {
-    ...f.release,
-    platform: 'darwin-x64',
-    fingerprint,
-    archive: { ...f.release.archive, file: f.release.archive.file.replace('arm64', 'x64') },
-  };
-  const metadata = {
-    ...f.metadata,
-    platform: 'darwin-x64',
-    runtime: { fingerprint, id: runtime.id, archive: runtime.archive },
-    disk: { ...f.metadata.disk, file: 'nod-x64.dmg' },
-    update: { ...f.metadata.update, file: 'nod-x64.zip' },
-  };
-  await writeFile(join(intel, 'release.json'), JSON.stringify(metadata));
-  await writeFile(join(intel, 'runtime-release.json'), JSON.stringify(runtime));
-  await writeFile(
-    join(intel, 'update.json'),
-    JSON.stringify({ ...f.feed, url: f.feed.url.replace('arm64', 'x64') }),
-  );
-  await writeFile(
-    join(intel, 'SHA256SUMS'),
-    `${metadata.disk.sha256}  nod-x64.dmg\n${metadata.update.sha256}  nod-x64.zip\n`,
-  );
-  for (const [old, next] of [
-    ['signing.cer', 'signing.cer'],
-    ['nod-arm64.dmg', 'nod-x64.dmg'],
-    ['nod-arm64.zip', 'nod-x64.zip'],
-  ])
-    await copyFile(join(arm, old), join(intel, next));
-  await mkdir(join(f.assets, 'x64'), { recursive: true });
-  await copyFile(
-    join(f.assets, f.release.archive.file),
-    join(f.assets, 'x64', runtime.archive.file),
-  );
-  const installer = Buffer.from('Synthetic Windows installer');
-  const pack = Buffer.from('Synthetic Windows runtime');
-  const win = {
-    platform: 'win32-x64',
-    version: f.metadata.version,
-    source: f.source,
-    updateSourceUrl: f.metadata.updateSourceUrl,
-    signing: { mode: 'artifact-signing' },
-    installer: { file: 'nod-Setup-x64.exe', bytes: installer.length, sha256: f.digest(installer) },
-    runtime: { file: 'nod-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
-  };
-  await writeFile(join(windows, win.installer.file), installer);
-  await writeFile(join(windows, win.runtime.file), pack);
-  await writeFile(join(windows, 'release-win32-x64.json'), JSON.stringify(win));
-  const windowsFingerprint = JSON.parse(
-    (
-      await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
-        cwd: f.root,
-        env: { NOD_DESKTOP_TARGET: 'win32-x64' },
-      })
-    ).stdout,
-  ).fingerprint;
-  const windowsManifest = `runtime-win32-x64-${windowsFingerprint}.json`;
-  const windowsRuntime = {
-    version: 1,
-    platform: 'win32-x64',
-    images: [],
-    guest: { file: 'guest.tar.gz', bytes: pack.length, sha256: win.runtime.sha256 },
-    fingerprint: windowsFingerprint,
-  };
-  await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
-  const receipt = Object.fromEntries(
-    [
-      'installed',
-      'signatures',
-      'engine',
-      'wsl',
-      'application',
-      'browser',
-      'workspaceFiles',
-      'reopened',
-    ].map((key) => [key, true]),
-  );
-  await writeFile(
-    join(windows, 'SHA256SUMS'),
-    `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
-  );
-  for (const missing of ['reopened', 'signatures']) {
-    await writeFile(
-      join(windows, 'windows-check.json'),
-      JSON.stringify({ ...receipt, [missing]: false }),
-    );
-    await assert.rejects(f.invoke('draft-all'));
-    assert.equal((await f.readState()).created, 0);
-  }
-  await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
-  await f.invoke('stage-all');
-  assert.equal((await f.readState()).created, 0);
-  const subjects = await readFile(join(f.root, '.local/release-SHA256SUMS'), 'utf8');
-  assert(subjects.includes(`${win.installer.sha256}  ${win.installer.file}\n`));
-  assert(subjects.includes(`${win.runtime.sha256}  ${win.runtime.file}\n`));
-  await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
-  await assert.rejects(f.invoke('draft-all'));
-  assert.equal((await f.readState()).created, 0);
-  assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
-  await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
-  await writeFile(
-    join(windows, windowsManifest),
-    JSON.stringify({
-      ...windowsRuntime,
-      guest: { ...windowsRuntime.guest, sha256: win.installer.sha256 },
-    }),
-  );
-  await assert.rejects(f.invoke('draft-all'), /Windows runtime does not match/);
-  await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
-  for (const name of [
-    'nod-arm64.dmg',
-    'nod-arm64.zip',
-    'nod-x64.dmg',
-    'nod-x64.zip',
-    win.installer.file,
-    win.runtime.file,
+  for (const { isPublic, updateSourceUrl, recovery = false } of [
+    { isPublic: false, updateSourceUrl: 'https://releases.example.invalid/nod' },
+    { isPublic: true },
+    { isPublic: true, updateSourceUrl: 'https://releases.example.invalid/nod', recovery: true },
   ]) {
-    await f.writeState({ ...(await f.readState()), corruptDownload: name });
-    await assert.rejects(f.invoke('draft-all'), /failed its checksum/);
-    assert.equal((await f.readState()).releases[f.appTag].draft, true);
+    const f = await releaseFixture(t, {
+      isPublic,
+      plan: true,
+      publish: true,
+      updateSourceUrl,
+    });
+    const target = join(f.root, 'dist/desktop');
+    const arm = join(target, 'arm64');
+    const intel = join(target, 'x64');
+    const windows = join(target, 'win32-x64');
+    const names = [
+      'release.json',
+      'runtime-release.json',
+      'update.json',
+      'SHA256SUMS',
+      'signing.cer',
+      'nod-arm64.dmg',
+      'nod-arm64.zip',
+    ];
+    for (const directory of [arm, intel, windows]) await mkdir(directory, { recursive: true });
+    for (const name of names) await copyFile(join(f.output, name), join(arm, name));
+    const fingerprint = JSON.parse(
+      (
+        await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+          cwd: f.root,
+          env: {
+            NOD_DESKTOP_TARGET: 'darwin-x64',
+            NOD_SIGNING_MODE: f.release.signing.mode,
+            NOD_SIGNING_IDENTITY: 'Synthetic Nod Signing',
+            NOD_SIGNING_CERTIFICATE_SHA256: f.metadata.signing.certificateSha256,
+          },
+        })
+      ).stdout,
+    ).fingerprint;
+    const runtime = {
+      ...f.release,
+      platform: 'darwin-x64',
+      fingerprint,
+      archive: { ...f.release.archive, file: f.release.archive.file.replace('arm64', 'x64') },
+      ...(isPublic ? { url: f.release.url.replace('arm64', 'x64') } : {}),
+    };
+    const metadata = {
+      ...f.metadata,
+      platform: 'darwin-x64',
+      runtime: { fingerprint, id: runtime.id, archive: runtime.archive },
+      disk: { ...f.metadata.disk, file: 'nod-x64.dmg' },
+      update: { ...f.metadata.update, file: 'nod-x64.zip' },
+    };
+    await writeFile(join(intel, 'release.json'), JSON.stringify(metadata));
+    await writeFile(join(intel, 'runtime-release.json'), JSON.stringify(runtime));
+    await writeFile(
+      join(intel, 'update.json'),
+      JSON.stringify({ ...f.feed, url: f.feed.url.replace('arm64', 'x64') }),
+    );
+    await writeFile(
+      join(intel, 'SHA256SUMS'),
+      `${metadata.disk.sha256}  nod-x64.dmg\n${metadata.update.sha256}  nod-x64.zip\n`,
+    );
+    for (const [old, next] of [
+      ['signing.cer', 'signing.cer'],
+      ['nod-arm64.dmg', 'nod-x64.dmg'],
+      ['nod-arm64.zip', 'nod-x64.zip'],
+    ])
+      await copyFile(join(arm, old), join(intel, next));
+    await mkdir(join(f.assets, 'x64'), { recursive: true });
+    await copyFile(
+      join(f.assets, f.release.archive.file),
+      join(f.assets, 'x64', runtime.archive.file),
+    );
+    const installer = Buffer.from('Synthetic Windows installer');
+    const pack = Buffer.from('Synthetic Windows runtime');
+    const win = {
+      platform: 'win32-x64',
+      version: f.metadata.version,
+      source: f.source,
+      updateSourceUrl: f.metadata.updateSourceUrl,
+      signing: { mode: 'artifact-signing' },
+      installer: {
+        file: 'nod-Setup-x64.exe',
+        bytes: installer.length,
+        sha256: f.digest(installer),
+      },
+      runtime: { file: 'nod-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
+    };
+    await writeFile(join(windows, win.installer.file), installer);
+    await writeFile(join(windows, win.runtime.file), pack);
+    await writeFile(join(windows, 'release-win32-x64.json'), JSON.stringify(win));
+    const windowsFingerprint = JSON.parse(
+      (
+        await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+          cwd: f.root,
+          env: { NOD_DESKTOP_TARGET: 'win32-x64' },
+        })
+      ).stdout,
+    ).fingerprint;
+    const windowsManifest = `runtime-win32-x64-${windowsFingerprint}.json`;
+    const windowsRuntime = {
+      version: 1,
+      platform: 'win32-x64',
+      images: [],
+      guest: { file: 'guest.tar.gz', bytes: pack.length, sha256: win.runtime.sha256 },
+      fingerprint: windowsFingerprint,
+    };
+    await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
+    const receipt = Object.fromEntries(
+      [
+        'installed',
+        'signatures',
+        'engine',
+        'wsl',
+        'application',
+        'browser',
+        'workspaceFiles',
+        'reopened',
+      ].map((key) => [key, true]),
+    );
+    await writeFile(
+      join(windows, 'SHA256SUMS'),
+      `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
+    );
+    await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
+    if (!recovery) {
+      for (const missing of ['reopened', 'signatures']) {
+        await writeFile(
+          join(windows, 'windows-check.json'),
+          JSON.stringify({ ...receipt, [missing]: false }),
+        );
+        await assert.rejects(f.invoke('draft-all'));
+        assert.equal((await f.readState()).created, 0);
+      }
+      await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
+      await f.invoke('stage-all');
+      assert.equal((await f.readState()).created, 0);
+      const subjects = await readFile(join(f.root, '.local/release-SHA256SUMS'), 'utf8');
+      assert(subjects.includes(`${win.installer.sha256}  ${win.installer.file}\n`));
+      assert(subjects.includes(`${win.runtime.sha256}  ${win.runtime.file}\n`));
+      assert(subjects.includes('nod-install.sh'));
+      assert(subjects.includes('nod-install.ps1'));
+      await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
+      await assert.rejects(f.invoke('draft-all'));
+      assert.equal((await f.readState()).created, 0);
+      assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
+      await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
+      await writeFile(
+        join(windows, windowsManifest),
+        JSON.stringify({
+          ...windowsRuntime,
+          guest: { ...windowsRuntime.guest, sha256: win.installer.sha256 },
+        }),
+      );
+      await assert.rejects(f.invoke('draft-all'), /Windows runtime does not match/);
+      await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
+      for (const name of [
+        'nod-arm64.dmg',
+        'nod-arm64.zip',
+        'nod-x64.dmg',
+        'nod-x64.zip',
+        win.installer.file,
+        win.runtime.file,
+      ]) {
+        await f.writeState({ ...(await f.readState()), corruptDownload: name });
+        await assert.rejects(f.invoke('draft-all'), /failed its checksum/);
+        assert.equal((await f.readState()).releases[f.appTag].draft, true);
+      }
+      await f.writeState({ ...(await f.readState()), corruptDownload: undefined });
+      if (isPublic) {
+        await f.writeState({ ...(await f.readState()), failPublicDownload: true });
+        await assert.rejects(f.invoke('draft-all'));
+        assert.equal((await f.readState()).releases[f.appTag].draft, true);
+        await f.writeState({ ...(await f.readState()), failPublicDownload: false });
+      } else {
+        for (const hidden of [runtime.archive.file, win.runtime.file]) {
+          await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
+          await assert.rejects(f.invoke('draft-all'));
+          assert.equal((await f.readState()).releases[f.appTag].draft, true);
+        }
+        await f.writeState({ ...(await f.readState()), brokerHides: [] });
+      }
+    }
+    await f.invoke('draft-all');
+    const completed = await f.readState();
+    assert.equal(completed.created, 1);
+    assert.equal(completed.releases[f.appTag].draft, false);
+    assert.equal(completed.releases[f.appTag].prerelease, false);
+    assert.deepEqual(
+      completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
+      Array(recovery ? 1 : isPublic ? 2 : 3).fill(f.appTag),
+    );
+    for (const name of [
+      'nod-arm64.dmg',
+      'nod-x64.dmg',
+      'nod-Setup-x64.exe',
+      runtime.archive.file,
+      f.release.archive.file,
+      win.runtime.file,
+      windowsManifest,
+      'nod-install.sh',
+      'nod-install.ps1',
+    ])
+      assert(completed.releases[f.appTag].assets.some((asset) => asset.name === name));
+    if (isPublic && !updateSourceUrl) {
+      assert(
+        completed.calls.some(
+          (call) =>
+            call[0] === 'fetch' &&
+            call[1] === 'GET' &&
+            call[2].includes('/releases/latest/download/release.json'),
+        ),
+      );
+      assert(
+        !completed.calls.some(
+          (call) => call[0] === 'fetch' && call[2].startsWith('https://api.github.com/'),
+        ),
+      );
+      assert(
+        completed.calls.every(
+          (call) =>
+            call[0] !== 'fetch' ||
+            !call[2].startsWith('https://github.com/synthetic/nod/') ||
+            call[3] === false,
+        ),
+      );
+      const checkedAssets = completed.calls
+        .filter((call) => call[0] === 'fetch' && call[1] === 'HEAD' && call[3] === false)
+        .map((call) => call[2].split('/').at(-1));
+      assert.deepEqual(
+        new Set(checkedAssets),
+        new Set(completed.releases[f.appTag].assets.map((asset) => asset.name)),
+      );
+    }
+    if (recovery)
+      assert(
+        completed.calls.some(
+          (call) => call[0] === 'fetch' && call[2].startsWith(`${updateSourceUrl}/releases`),
+        ),
+      );
   }
-  await f.writeState({ ...(await f.readState()), corruptDownload: undefined });
-  for (const hidden of [runtime.archive.file, win.runtime.file]) {
-    await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
-    await assert.rejects(f.invoke('draft-all'));
-    assert.equal((await f.readState()).releases[f.appTag].draft, true);
-  }
-  await f.writeState({ ...(await f.readState()), brokerHides: [] });
-  await f.invoke('draft-all');
-  const completed = await f.readState();
-  assert.equal(completed.created, 1);
-  assert.equal(completed.releases[f.appTag].draft, false);
-  assert.equal(completed.releases[f.appTag].prerelease, false);
-  assert.deepEqual(
-    completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
-    [f.appTag, f.appTag, f.appTag],
-  );
-  for (const name of [
-    'nod-arm64.dmg',
-    'nod-x64.dmg',
-    'nod-Setup-x64.exe',
-    runtime.archive.file,
-    f.release.archive.file,
-    win.runtime.file,
-    windowsManifest,
-  ])
-    assert(completed.releases[f.appTag].assets.some((asset) => asset.name === name));
 });
 
 test('a reused Windows runtime must match its published manifest and asset digest', async (t) => {
