@@ -61,6 +61,7 @@ interface ComposerProps {
   privateReply?: boolean;
   restoreReply?(reply: Message['replyTo']): void;
   ready: boolean;
+  busy?: boolean;
   text: string;
   setText(value: string): void;
   replyTo: Message['replyTo'];
@@ -74,6 +75,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   {
     active = true,
     ready,
+    busy = false,
     text,
     setText,
     replyTo,
@@ -146,11 +148,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
   });
+  const placeholder = busy ? 'Send another message to Nod…' : 'Message Nod…';
+  const currentPlaceholder = useRef(placeholder);
+  currentPlaceholder.current = placeholder;
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         submit: () => actions.current.submit(),
         upload: (files) => actions.current.upload(files, 'paste'),
+        placeholder: () => currentPlaceholder.current,
       }),
     [],
   );
@@ -173,6 +179,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setText(value);
     },
   });
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr);
+  }, [editor, placeholder]);
   function focus() {
     if (editor && !editor.isDestroyed) editor.commands.focus(undefined, { scrollIntoView: false });
   }

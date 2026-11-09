@@ -6450,17 +6450,31 @@ test('chat shows pending sends and active work before a model step', async () =>
         state = { ...state, activity: [activity] };
         await act(async () => releaseRefresh());
         await render();
-        assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
+        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
         const stop = document.querySelector('[aria-label="Stop all work"]');
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
         assert.equal(stops, 1);
-        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, 'Thinking…'], [{ title: 'Synthetic task', taskId: 'synthetic-task' }, 'Synthetic taskWorking…'], [{ step: '   ' }, 'Working…'], [{ doing: 'model' }, 'Thinking…']]) {
+        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null]]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
-          assert.equal(document.querySelector('.thinking')?.textContent, line);
+          if (line) assert.equal(document.querySelector('.thinking')?.textContent, line);
+          else {
+            assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+            assert.ok(document.querySelector('.thinking .working-text [aria-hidden="true"]')?.textContent.trim());
+          }
           assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         }
+        const task = { ...activity, turnId: 'synthetic-task-turn', taskId: 'synthetic-task', title: 'Synthetic task',
+          step: 'Checking hotel availability' };
+        state = { ...state, activity: [task] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.ok(document.querySelector('[aria-label="Stop all work"]'));
+        state = { ...state, activity: [activity, task] };
+        await render();
+        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+        assert.ok(!document.querySelector('.thinking').textContent.includes('hotel'));
         state = { ...state, activity: [{ ...activity, doing: 'tool', site: 'example.test', step: 'Comparing prices',
           quietSince: new Date(Date.now() - 150_000).toISOString(), received: true }] };
         await render();
@@ -6470,12 +6484,12 @@ test('chat shows pending sends and active work before a model step', async () =>
         await render();
         assert.equal(Boolean(document.querySelector('.thinking')), false);
         assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
-        state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',
-          title: 'Synthetic task', step: 'Comparing **flight prices**' }] };
+        state = { ...state, activity: [{ ...activity, step: 'Comparing **flight prices**' }, task] };
         await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });
         assert.equal(document.querySelectorAll('.thinking .working-text').length, 1);
         assert.match(document.querySelector('.thinking').textContent, /Comparing flight prices/);
         assert.ok(!document.querySelector('.thinking').textContent.includes('**'));
+        assert.ok(!document.querySelector('.thinking').textContent.includes('hotel'));
         state = { ...state, activity: [{ ...activity, step: 'Checking the return journey' }] };
         await render();
         assert.equal(document.querySelector('.thinking').textContent, 'Checking the return journey');

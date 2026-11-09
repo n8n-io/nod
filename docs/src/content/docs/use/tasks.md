@@ -40,7 +40,7 @@ Select **Rules** to ask Nod in chat to show the rules that apply to every task. 
 | **Next check** | When Nod will look again                                                          |
 | **Done when**  | What finished looks like                                                          |
 
-A compact task preview appears in chat with its title, status and current activity. While a task works, its line is the chat's live line: the current step, the website or app it's working in, and how long it has been quiet.
+A compact task preview appears in chat with its title, status and current activity. While a task works, its card has its own live line: the current step, the website or app it's working in, and how long it has been quiet. The chat's status line stays with your messages. While it works, a pulsing dot just above the top-right corner of the message box stands for it, and a pink dot with a question mark shows when it needs you. Hover over or focus the dot to see the task's title, or select it to open the card.
 
 Select the preview to see its controls and, when it has planned steps, its plan as a checklist; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
 

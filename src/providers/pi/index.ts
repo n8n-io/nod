@@ -53,6 +53,12 @@ function isFinalAnswer(signature: string | undefined) {
   }
 }
 
+function thinkingTitles(text: string) {
+  return [...text.matchAll(/(?:^|\n)[ \t]*\*\*([^*\n]{2,80})\*\*[ \t]*(?=\n)/g)].map((match) =>
+    match[1]!.trim(),
+  );
+}
+
 function resources(
   systemPrompt: string,
   extensions: ReturnType<ResourceLoader['getExtensions']>,
@@ -799,6 +805,7 @@ export function createPiAgent(options: {
         return result ?? undefined;
       };
       let textBlock: number | undefined;
+      let thinking = { index: -1, text: '', scanned: 0 };
       let compaction: { id: string; started: number } | undefined;
       const auxiliarySeen = new Set(manager.getEntries().map((entry) => entry.id));
       const observeUsage = createPiUsageTracker({
@@ -856,6 +863,7 @@ export function createPiAgent(options: {
         }
         if (event.type === 'message_start' && event.message.role === 'assistant') {
           textBlock = undefined;
+          thinking = { index: -1, text: '', scanned: 0 };
           input.onEvent({ type: 'message_start' });
         }
         if (event.type === 'turn_start') input.onEvent({ type: 'turn_start' });
@@ -870,6 +878,18 @@ export function createPiAgent(options: {
           }
           if (update.type === 'text_delta')
             input.onEvent({ type: 'text_delta', text: update.delta });
+          if (update.type === 'thinking_delta' || update.type === 'thinking_end') {
+            if (thinking.index !== update.contentIndex)
+              thinking = { index: update.contentIndex, text: '', scanned: 0 };
+            thinking.text =
+              update.type === 'thinking_end' ? `${update.content}\n` : thinking.text + update.delta;
+            const end = thinking.text.lastIndexOf('\n') + 1;
+            if (end > thinking.scanned) {
+              for (const title of thinkingTitles(thinking.text.slice(thinking.scanned, end)))
+                input.onEvent({ type: 'thinking', title });
+              thinking.scanned = end;
+            }
+          }
         }
         if (event.type === 'message_end' && event.message.role === 'assistant') {
           const usage = observeUsage(event.message);
