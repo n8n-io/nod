@@ -368,7 +368,7 @@ jobs:
           path: .local/desktop-runtime-release/*.tar.gz
           include-hidden-files: true
           compression-level: 0
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
       - name: Download the reused runtime descriptors
         if: matrix.runtime_reused == 'true'

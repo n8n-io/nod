@@ -61,6 +61,11 @@ function api(route, repository = sourceRepository) {
   return result === undefined ? undefined : JSON.parse(result);
 }
 
+function requireUpdateSourceVisibility(sourceUrl) {
+  if (api(`repos/${releaseRepository}`, releaseRepository)?.private !== Boolean(sourceUrl))
+    throw new Error('The desktop update source does not match repository visibility.');
+}
+
 function releaseByTag(repository, tag) {
   const published = api(`repos/${repository}/releases/tags/${tag}`, repository);
   if (published) return published;
@@ -583,10 +588,7 @@ async function verifyDelivery(tag, version) {
   };
   let target;
   try {
-    if (!sourceUrl && api(`repos/${releaseRepository}`, releaseRepository)?.private !== false)
-      throw new Error(
-        'the GitHub release is not public and no private update source is configured',
-      );
+    requireUpdateSourceVisibility(sourceUrl);
     for (target of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
       const [os, arch] = target.split('-');
       let update;
@@ -1060,8 +1062,16 @@ async function draftAll({ stageOnly = false } = {}) {
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
     throw new Error('All three platform bundles are required before publication.');
+  if (
+    !isDeepStrictEqual(
+      release.assets.map((asset) => asset.name).sort(),
+      verifiedFiles.map((file) => basename(file)).sort(),
+    )
+  )
+    throw new Error('The release draft contains assets outside the checked build.');
   await verifyDownloads(tag, [...appAssets, metadata.installer, metadata.runtime]);
   if (process.env.NOD_PUBLISH_RELEASE === 'true') {
+    requireUpdateSourceVisibility(process.env.NOD_DESKTOP_UPDATE_SOURCE_URL);
     publishRelease(releaseRepository, tag);
     await verifyDelivery(tag, version);
     release = releaseByTag(releaseRepository, tag);

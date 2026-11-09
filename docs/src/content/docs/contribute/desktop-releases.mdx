@@ -168,7 +168,7 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
-If only the final publisher fails, fix the publisher, then run **Recover desktop release** on `main` with the failed run ID. It requires all platform builds and checks, and CI on their exact source, to have passed. It uses the current publisher with the original signed files and saved release context, plus the release plan for automatic releases. It verifies their source and hashes, then publishes without rebuilding the apps. If repository visibility changed since the build, start a new release build instead.
+If only the final publisher fails, fix the publisher, then run **Recover desktop release** on `main` with the failed run ID within three days, while its artifacts are retained. It requires all platform builds and checks, and CI on their exact source, to have passed. It uses the current publisher with the original signed files and saved release context, plus the release plan for automatic releases. It verifies their source and hashes, then publishes without rebuilding the apps. If repository visibility changed since the build, start a new release build instead.
 
 The container images, Windows runtime, Mac signing, Mac update checks, and publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon. The Intel app uses x64 Node under Rosetta. Windows jobs use GitHub's Windows runners because the installer check needs WSL 2.
 

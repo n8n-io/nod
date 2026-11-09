@@ -1067,6 +1067,7 @@ if (args[1] === 'create') {
       release.draft = false;
       release.published_at = '2026-10-04T12:00:00Z';
       release.html_url = 'https://github.com/synthetic/nod/releases/tag/' + tag;
+      if (state.publicOnPublish) state.private = false;
     }
     if (args.includes('--draft=true')) release.draft = true;
     if (args.includes('--prerelease=false')) release.prerelease = false;
@@ -1080,6 +1081,7 @@ if (args[1] === 'create') {
       release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
       state.contents[tag + '/' + name] = bytes.toString('base64');
     }
+    if (state.publicOnUpload) state.private = false;
   } else if (args[1] === 'download') {
     mkdirSync(flag('--dir'), { recursive: true });
     for (const name of args.filter((value, index) => args[index - 1] === '--pattern')) {
@@ -1751,6 +1753,53 @@ test('all three checked bundles publish together as one regular Nod release', as
       assert.equal((await f.readState()).releases[f.appTag].draft, true);
       await f.writeState({ ...(await f.readState()), missingHead: undefined });
     }
+    if (isPublic && !reusedRuntime) {
+      const staleName = 'stale-unverified-runtime.tar.gz';
+      const staleBytes = Buffer.from('Old draft asset');
+      const state = await f.readState();
+      const publishCount = state.calls.filter((call) => call.includes('--draft=false')).length;
+      state.assetIds = (state.assetIds || 0) + 1;
+      state.releases[f.appTag].assets.push({
+        id: state.assetIds,
+        name: staleName,
+        size: staleBytes.length,
+        digest: `sha256:${f.digest(staleBytes)}`,
+        state: 'uploaded',
+      });
+      state.contents[`${f.appTag}/${staleName}`] = staleBytes.toString('base64');
+      await f.writeState(state);
+      await assert.rejects(f.invoke('draft-all'), /outside the checked build/);
+      const rejected = await f.readState();
+      assert.equal(rejected.releases[f.appTag].draft, true);
+      assert.equal(
+        rejected.calls.filter((call) => call.includes('--draft=false')).length,
+        publishCount,
+      );
+      rejected.releases[f.appTag].assets = rejected.releases[f.appTag].assets.filter(
+        (asset) => asset.name !== staleName,
+      );
+      delete rejected.contents[`${f.appTag}/${staleName}`];
+      await f.writeState(rejected);
+    }
+    if (!isPublic) {
+      for (const [transition, published] of [
+        ['publicOnUpload', 0],
+        ['publicOnPublish', 1],
+      ]) {
+        const state = await f.readState();
+        const publishCount = state.calls.filter((call) => call.includes('--draft=false')).length;
+        await f.writeState({ ...state, [transition]: true });
+        await assert.rejects(f.invoke('draft-all'), /does not match repository visibility/);
+        const rejected = await f.readState();
+        assert.equal(rejected.releases[f.appTag].draft, true);
+        assert.equal(rejected.private, false);
+        assert.equal(
+          rejected.calls.filter((call) => call.includes('--draft=false')).length,
+          publishCount + published,
+        );
+        await f.writeState({ ...rejected, private: true, [transition]: false });
+      }
+    }
     await f.invoke('draft-all');
     const completed = await f.readState();
     assert.equal(completed.created, 1);
@@ -1758,7 +1807,7 @@ test('all three checked bundles publish together as one regular Nod release', as
     assert.equal(completed.releases[f.appTag].prerelease, false);
     assert.deepEqual(
       completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
-      Array(isPublic ? 2 : 3).fill(f.appTag),
+      Array(isPublic ? 2 : 4).fill(f.appTag),
     );
     for (const name of [
       'nod-arm64.dmg',
