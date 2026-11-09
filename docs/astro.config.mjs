@@ -6,8 +6,8 @@ import mermaid from 'astro-mermaid';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
-const site = process.env.DOCS_SITE || 'https://nod-docs.pages.dev';
-const base = process.env.DOCS_BASE ?? '/';
+const site = 'https://nod.n8n.io';
+const base = '/docs/';
 const prefix = base.replace(/\/$/, '');
 const withBase = (url) =>
   prefix && url.startsWith('/') && !url.startsWith('//') && !url.startsWith(`${prefix}/`)

@@ -981,7 +981,7 @@ async function draftAll({ stageOnly = false } = {}) {
   const verifiedFiles = await withProvenance(files);
   const download = (file) =>
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
-  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://nod-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://nod.n8n.io/docs/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,

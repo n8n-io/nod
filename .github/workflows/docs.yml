@@ -49,9 +49,6 @@ jobs:
       - name: Install locked docs dependencies
         run: pnpm --dir docs install --frozen-lockfile
       - name: Build the docs under /docs/ and validate every internal link
-        env:
-          DOCS_SITE: https://nod.n8n.io
-          DOCS_BASE: /docs/
         run: pnpm --dir docs build
       - name: Put the landing page and the 404 page at the root
         run: |
