@@ -828,6 +828,14 @@ test(
             authority_instruction: 'Remind me in a minute.',
             authority_source_message_id: origin.sourceMessageId,
           });
+          const repeated = (await createRouted(provenance)) as Schedule & { existing?: boolean };
+          assert.equal(repeated.id, schedule.id);
+          assert.equal(repeated.existing, true);
+          const other = await createRouted(provenance, {
+            title: 'Another synthetic reminder',
+            prompt: 'Send another synthetic reminder.',
+          });
+          assert.notEqual(other.id, schedule.id);
           for (const sourceOwner of [ownerId, 'foreign-source']) {
             const sourceThread = randomUUID();
             const sourceTurn = randomUUID();
