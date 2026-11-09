@@ -47,7 +47,17 @@ Nod counts installations by default. Two installations count as two; a shared in
 | Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
 | Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
-The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the installation ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and `onboarding_`-prefixed properties for scope, each role and task choice, who-for, and company size. Fixed `skipped` and `not_asked` values distinguish unanswered questions. Separate consent lets Nod add `email` and the consent flag, time, and version to that profile.
+The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the installation ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and one property per question:
+
+| Person property           | Value                                                                |
+| ------------------------- | -------------------------------------------------------------------- |
+| `onboarding_scope`        | Fixed choice or `skipped`                                            |
+| `onboarding_roles`        | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
+| `onboarding_who_for`      | Fixed choice, `skipped`, or `not_asked`                              |
+| `onboarding_company_size` | Fixed choice, `skipped`, or `not_asked`                              |
+| `onboarding_jobs`         | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
+
+The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same profile.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 

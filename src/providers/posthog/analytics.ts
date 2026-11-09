@@ -75,7 +75,11 @@ export function createPostHogAnalytics(): ProductAnalytics {
               api_key: posthogConfig.key,
               event: '$set',
               distinct_id: input.distinctId,
-              properties: { $set: input.properties, $geoip_disable: true },
+              properties: {
+                $set: input.properties,
+                ...(input.unset?.length ? { $unset: input.unset } : {}),
+                $geoip_disable: true,
+              },
             }),
           });
           if (response.status !== 200) {

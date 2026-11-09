@@ -7,7 +7,10 @@ import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 import { apiKeyModelProviders } from '../shared/models.ts';
-import { onboardingPersonProperties } from '../shared/onboarding-analytics.ts';
+import {
+  legacyOnboardingChoiceProperties,
+  onboardingPersonProperties,
+} from '../shared/onboarding-analytics.ts';
 import type { OnboardingProfile } from '../shared/onboarding.ts';
 
 import {
@@ -250,13 +253,14 @@ export async function createAnalytics(options: {
   async function setOwnerPersonProperties(
     owner: string,
     properties: Record<string, string | number | boolean | string[]>,
+    unset?: readonly string[],
   ) {
     const current = consent(owner);
     const distinctId = configuration(owner).distinctId;
     if (!personProfileAvailable || !current.enabled || !distinctId) return false;
     try {
       const sent = await options.provider?.setPersonProperties?.(
-        { distinctId, properties },
+        { distinctId, properties, ...(unset?.length ? { unset } : {}) },
         current.signal,
       );
       return Boolean(sent && !current.signal.aborted && current.version === consent(owner).version);
@@ -265,7 +269,11 @@ export async function createAnalytics(options: {
     }
   }
   function setOnboardingProfileAnswers(owner: string, profile: OnboardingProfile) {
-    return setOwnerPersonProperties(owner, onboardingPersonProperties(profile));
+    return setOwnerPersonProperties(
+      owner,
+      onboardingPersonProperties(profile),
+      legacyOnboardingChoiceProperties,
+    );
   }
   function setResearchContactEmail(owner: string, email: string) {
     return setOwnerPersonProperties(owner, {

@@ -1,4 +1,27 @@
-import { profileBusinessRoles, type OnboardingProfile } from './onboarding.ts';
+import {
+  profileBusinessRoles,
+  profileJobs,
+  profileRoles,
+  type OnboardingProfile,
+} from './onboarding.ts';
+
+export const legacyOnboardingChoiceProperties = [
+  ...profileRoles.map(({ id }) => `onboarding_role_${id}`),
+  'onboarding_role_other',
+  ...profileJobs.map(({ id }) => `onboarding_job_${id}`),
+  'onboarding_job_follow_ups',
+  'onboarding_job_other',
+];
+
+function selectedChoices<T extends string>(
+  options: readonly { id: T }[],
+  selected: readonly T[],
+  other: boolean,
+) {
+  const values: string[] = options.filter(({ id }) => selected.includes(id)).map(({ id }) => id);
+  if (other) values.push('other');
+  return values.length ? values : ['skipped'];
+}
 
 export function onboardingProfileAnswers(profile: OnboardingProfile) {
   const hasRole = (role: OnboardingProfile['roles'][number]) => profile.roles.includes(role);
@@ -32,13 +55,13 @@ export function onboardingProfileAnswers(profile: OnboardingProfile) {
 export type OnboardingProfileAnswers = ReturnType<typeof onboardingProfileAnswers>;
 
 export function onboardingPersonProperties(profile: OnboardingProfile) {
+  const answers = onboardingProfileAnswers(profile);
   return {
     onboarding_profile_completed: true,
-    ...Object.fromEntries(
-      Object.entries(onboardingProfileAnswers(profile)).map(([key, value]) => [
-        `onboarding_${key}`,
-        value,
-      ]),
-    ),
+    onboarding_scope: answers.scope,
+    onboarding_roles: selectedChoices(profileRoles, profile.roles, answers.role_other),
+    onboarding_who_for: answers.who_for,
+    onboarding_company_size: answers.company_size,
+    onboarding_jobs: selectedChoices(profileJobs, profile.jobs, answers.job_other),
   };
 }

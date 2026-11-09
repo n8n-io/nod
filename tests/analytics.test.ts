@@ -12,6 +12,7 @@ import { analyticsEvent } from '../src/server/analytics-events.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { profileJobs, profileRoles, type OnboardingProfile } from '../src/shared/onboarding.ts';
 import {
+  legacyOnboardingChoiceProperties,
   onboardingPersonProperties,
   onboardingProfileAnswers,
 } from '../src/shared/onboarding-analytics.ts';
@@ -144,13 +145,13 @@ test('server analytics ignore obsolete replay links while preserving permitted e
   }
 });
 
-test('each About you choice maps independently to the event and person profile', () => {
+test('About you keeps event choices independent and groups person answers by question', () => {
   const all: OnboardingProfile = {
     scope: 'personal',
-    roles: profileRoles.map(({ id }) => id),
+    roles: profileRoles.map(({ id }) => id).reverse(),
     roleText: 'SYNTHETIC_PRIVATE_ROLE',
     whoFor: 'both',
-    jobs: profileJobs.map(({ id }) => id),
+    jobs: profileJobs.map(({ id }) => id).reverse(),
     jobsText: 'SYNTHETIC_PRIVATE_JOB',
   };
   const event = onboardingProfileAnswers(all);
@@ -166,17 +167,32 @@ test('each About you choice maps independently to the event and person profile',
     Object.keys(event).filter((key) => key.startsWith('job_')).length,
     jobKeys.length + 1,
   );
-  assert.equal(Object.keys(person).length, Object.keys(event).length + 1);
+  assert.deepEqual(
+    Object.keys(person).sort(),
+    [
+      'onboarding_profile_completed',
+      'onboarding_scope',
+      'onboarding_roles',
+      'onboarding_who_for',
+      'onboarding_company_size',
+      'onboarding_jobs',
+    ].sort(),
+  );
   for (const key of [...roleKeys, ...jobKeys, 'role_other', 'job_other']) {
     assert.equal(event[key as keyof typeof event], true, key);
-    assert.equal(person[`onboarding_${key}`], true, key);
   }
-  for (const [key, value] of Object.entries(event))
-    assert.equal(person[`onboarding_${key}`], value, key);
+  assert.equal(person.onboarding_profile_completed, true);
+  assert.equal(person.onboarding_scope, 'personal');
+  assert.deepEqual(person.onboarding_roles, [...profileRoles.map(({ id }) => id), 'other']);
+  assert.equal(person.onboarding_who_for, 'both');
+  assert.equal(person.onboarding_company_size, 'not_asked');
+  assert.deepEqual(person.onboarding_jobs, [...profileJobs.map(({ id }) => id), 'other']);
   assert.ok(!JSON.stringify({ event, person }).includes('SYNTHETIC_PRIVATE'));
 
   for (const selected of profileRoles) {
-    const answer = onboardingProfileAnswers({ scope: 'personal', roles: [selected.id], jobs: [] });
+    const profile: OnboardingProfile = { scope: 'personal', roles: [selected.id], jobs: [] };
+    const answer = onboardingProfileAnswers(profile);
+    assert.deepEqual(onboardingPersonProperties(profile).onboarding_roles, [selected.id]);
     for (const option of profileRoles)
       assert.equal(
         answer[`role_${option.id}` as keyof typeof answer],
@@ -185,7 +201,9 @@ test('each About you choice maps independently to the event and person profile',
       );
   }
   for (const selected of profileJobs) {
-    const answer = onboardingProfileAnswers({ roles: [], jobs: [selected.id] });
+    const profile: OnboardingProfile = { roles: [], jobs: [selected.id] };
+    const answer = onboardingProfileAnswers(profile);
+    assert.deepEqual(onboardingPersonProperties(profile).onboarding_jobs, [selected.id]);
     for (const option of profileJobs)
       assert.equal(
         answer[`job_${option.id}` as keyof typeof answer],
@@ -199,6 +217,7 @@ test('onboarding answers and research contact update one profile only while usag
   const profiles: Array<{
     distinctId: string;
     properties: Record<string, string | number | boolean | string[]>;
+    unset?: readonly string[];
   }> = [];
   let waitForOptOut = false;
   const installationId = randomUUID();
@@ -238,21 +257,20 @@ test('onboarding answers and research contact update one profile only while usag
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), true);
     assert.equal(profiles.length, 1);
     assert.equal(profiles[0]?.distinctId, 'local:' + installationId);
+    assert.deepEqual(profiles[0]?.unset, legacyOnboardingChoiceProperties);
     assert.equal(profiles[0]?.properties.onboarding_profile_completed, true);
     assert.equal(profiles[0]?.properties.onboarding_scope, 'work');
-    assert.equal(profiles[0]?.properties.onboarding_role_agency, true);
-    assert.equal(profiles[0]?.properties.onboarding_role_engineering, true);
-    assert.equal(profiles[0]?.properties.onboarding_role_other, true);
+    assert.deepEqual(profiles[0]?.properties.onboarding_roles, ['agency', 'engineering', 'other']);
     assert.equal(profiles[0]?.properties.onboarding_who_for, 'clients');
     assert.equal(profiles[0]?.properties.onboarding_company_size, '2_10');
-    assert.equal(profiles[0]?.properties.onboarding_job_email, true);
-    assert.equal(profiles[0]?.properties.onboarding_job_other, true);
+    assert.deepEqual(profiles[0]?.properties.onboarding_jobs, ['email', 'meetings', 'other']);
     assert.equal(profiles[0]?.properties.email, undefined);
     assert.equal(profiles[0]?.properties.nod_research_contact_consent, undefined);
     assert.ok(!JSON.stringify(profiles[0]).includes('SYNTHETIC_PRIVATE'));
     assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), true);
     assert.equal(profiles.length, 2);
     assert.equal(profiles[1]?.distinctId, 'local:' + installationId);
+    assert.equal(profiles[1]?.unset, undefined);
     assert.equal(profiles[1]?.properties.email, 'owner@example.test');
     assert.equal(profiles[1]?.properties.nod_research_contact_consent, true);
     assert.equal(profiles[1]?.properties.nod_research_contact_consent_version, 1);
@@ -268,16 +286,17 @@ test('onboarding answers and research contact update one profile only while usag
       true,
     );
     assert.equal(profiles[2]?.properties.onboarding_scope, 'personal');
-    assert.equal(profiles[2]?.properties.onboarding_role_agency, false);
-    assert.equal(profiles[2]?.properties.onboarding_role_other, false);
+    assert.deepEqual(profiles[2]?.properties.onboarding_roles, ['skipped']);
     assert.equal(profiles[2]?.properties.onboarding_who_for, 'not_asked');
     assert.equal(profiles[2]?.properties.onboarding_company_size, 'not_asked');
-    assert.equal(profiles[2]?.properties.onboarding_job_email, false);
-    assert.equal(profiles[2]?.properties.onboarding_job_other, false);
+    assert.deepEqual(profiles[2]?.properties.onboarding_jobs, ['skipped']);
+    assert.deepEqual(profiles[2]?.unset, legacyOnboardingChoiceProperties);
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, { roles: [], jobs: [] }), true);
     assert.equal(profiles[3]?.properties.onboarding_scope, 'skipped');
+    assert.deepEqual(profiles[3]?.properties.onboarding_roles, ['skipped']);
     assert.equal(profiles[3]?.properties.onboarding_who_for, 'not_asked');
     assert.equal(profiles[3]?.properties.onboarding_company_size, 'skipped');
+    assert.deepEqual(profiles[3]?.properties.onboarding_jobs, ['skipped']);
     assert.equal(
       await analytics.setResearchContactEmail('another-owner', 'other@example.test'),
       false,
@@ -306,6 +325,7 @@ import {JSDOM} from 'jsdom';
 import {createAnalytics} from './src/server/analytics.ts';
 import {createPostHogAnalytics} from './src/providers/posthog/analytics.ts';
 import {posthogConfig} from './src/shared/analytics.ts';
+import {legacyOnboardingChoiceProperties} from './src/shared/onboarding-analytics.ts';
 
 const dom=new JSDOM('<!doctype html>',{url:'https://app.example/onboarding'});
 Object.assign(globalThis,{window:dom.window,document:dom.window.document});
@@ -394,16 +414,29 @@ try{
   assert.equal(personRequests.length,3);
   assert.ok(personRequests.every(request=>request.event==='$set'));
   assert.deepEqual(personRequests.map(request=>request.distinct_id),[firstId,firstId,secondId]);
-  for(const [key,value] of Object.entries(fullAnswers))
-    assert.equal(personRequests[0].properties.$set['onboarding_'+key],value,key);
+  const personKeys=[
+    'onboarding_profile_completed','onboarding_scope','onboarding_roles',
+    'onboarding_who_for','onboarding_company_size','onboarding_jobs',
+  ];
+  assert.deepEqual(Object.keys(personRequests[0].properties.$set).sort(),personKeys.sort());
   assert.equal(personRequests[0].properties.$set.onboarding_profile_completed,true);
+  assert.equal(personRequests[0].properties.$set.onboarding_scope,'work');
+  assert.deepEqual(personRequests[0].properties.$set.onboarding_roles,['owner','engineering','other']);
+  assert.equal(personRequests[0].properties.$set.onboarding_who_for,'clients');
+  assert.equal(personRequests[0].properties.$set.onboarding_company_size,'2_10');
+  assert.deepEqual(personRequests[0].properties.$set.onboarding_jobs,['email','calendar','meetings','research','other']);
+  assert.deepEqual(personRequests[0].properties.$unset,legacyOnboardingChoiceProperties);
   assert.equal(personRequests[0].properties.$set.email,undefined);
   assert.equal(personRequests[0].properties.$set.nod_research_contact_consent,undefined);
   assert.equal(personRequests[1].properties.$set.email,'researcher-a@example.test');
   assert.equal(personRequests[1].properties.$set.nod_research_contact_consent,true);
-  assert.equal(personRequests[2].properties.$set.onboarding_role_agency,true);
+  assert.equal(personRequests[1].properties.$unset,undefined);
+  assert.equal(personRequests[2].properties.$set.onboarding_scope,'work');
+  assert.deepEqual(personRequests[2].properties.$set.onboarding_roles,['agency','engineering']);
   assert.equal(personRequests[2].properties.$set.onboarding_who_for,'me');
   assert.equal(personRequests[2].properties.$set.onboarding_company_size,'11_100');
+  assert.deepEqual(personRequests[2].properties.$set.onboarding_jobs,['email','meetings','research','routines']);
+  assert.deepEqual(personRequests[2].properties.$unset,legacyOnboardingChoiceProperties);
   assert.equal(personRequests[2].properties.$set.email,undefined);
   assert.equal(personRequests[2].properties.$set.nod_research_contact_consent,undefined);
   assert.equal(JSON.stringify(captured).includes('example.test'),false);

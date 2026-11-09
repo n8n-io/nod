@@ -14,6 +14,7 @@ export interface ProductAnalytics {
     input: {
       distinctId: string;
       properties: Record<string, string | number | boolean | string[]>;
+      unset?: readonly string[];
     },
     signal: AbortSignal,
   ): Promise<boolean>;
