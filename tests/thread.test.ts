@@ -6570,6 +6570,7 @@ test(
               async () => {
                 await reset();
                 let verdict = false;
+                let urgent = true;
                 let tools = false;
                 let sourceRevision: string | undefined;
                 let checks = 0;
@@ -6599,11 +6600,11 @@ test(
                       return curatorId;
                     },
                     configured: true,
-                    curate: async () => {
+                    curate: async ({ input }) => {
                       checks++;
                       if (fail) throw new Error('Synthetic failed check');
                       if (stopAfterCheck) allowed = false;
-                      return { attention: verdict };
+                      return 'quietEnd' in (input as object) ? { urgent } : { attention: verdict };
                     },
                   },
                 });
@@ -6780,6 +6781,26 @@ test(
                 assert.deepEqual(await screen(false), [true, false]);
                 issueDue = true;
                 assert.deepEqual(await screen(false), [false, true]);
+                issueDue = false;
+                const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
+                await preferences.update({
+                  timeZone: null,
+                  quietHoursEnabled: true,
+                  quietStart: clock(Date.now() - 60_000),
+                  quietEnd: clock(Date.now() + 2 * 3_600_000),
+                });
+                urgent = false;
+                assert.deepEqual(await screen(), [true, true]);
+                const held = (
+                  await db.pool.query(
+                    'SELECT next_poll FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0].next_poll as Date;
+                assert.ok(held.getTime() > Date.now() + 3_600_000);
+                urgent = true;
+                assert.deepEqual(await screen(), [false, true]);
+                await preferences.update({ quietHoursEnabled: false });
                 screening.release(turnId);
               },
             );
