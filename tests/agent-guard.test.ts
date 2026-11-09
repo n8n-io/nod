@@ -4,8 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import type { Pool } from 'pg';
 import { Compile } from 'typebox/compile';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
@@ -35,9 +37,12 @@ import { BrowserActionError } from '../src/ports/computer.ts';
 import { createMailCheck } from '../src/server/mail-check.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { MemoryBrief } from '../src/ports/memory-recall.ts';
+import { createMemoryRecall } from '../src/server/memory-recall.ts';
+import { createMemoryService } from '../src/server/memory.ts';
 import { presentationText, type Presentation } from '../src/shared/presentation.ts';
 import { appToolArgs, type AppTool } from '../src/server/app-reads.ts';
 import { withoutSchemaPatterns } from '../src/shared/json-schema.ts';
+import { memoryObjectStore } from './fixtures/object-store.ts';
 
 async function fixture(
   run: (
@@ -3457,6 +3462,78 @@ test('Stop ends a memory check that ignores cancellation without delivering its 
   );
   assert.deepEqual(replies, []);
 });
+
+test(
+  'slow memory planning preserves explicit recall without delaying a simple request',
+  { timeout: 30_000 },
+  async (t) => {
+    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
+    const ownerId = 'memory-latency-owner';
+    const memory = createMemoryService({ pool, ownerId, store: memoryObjectStore() });
+    const fact = 'Prefers amber light.';
+    const path = await memory.add({ area: 'preferences', text: fact });
+    for (const explicit of [true, false]) {
+      await t.test(
+        explicit ? 'explicit recall retains the relevant fact' : 'simple request starts promptly',
+        async () => {
+          const recall = createMemoryRecall({
+            pool,
+            ownerId,
+            memory,
+            curator: {
+              id: 'fixture',
+              configured: true,
+              async curate({ input }, signal) {
+                if ('mode' in input) return { paths: [path], messages: [] };
+                await delay(10_000, undefined, { signal });
+                return {
+                  mode: explicit ? 'recall' : 'none',
+                  paths: explicit ? [path] : [],
+                  queries: [],
+                };
+              },
+            },
+          });
+          let preparationStartedAt = 0;
+          let agentStartedAt: number | undefined;
+          const { result, replies } = await fixture(
+            async (_tools, emit, options) => {
+              if (explicit)
+                assert.ok(
+                  options.ownerContext?.includes(fact),
+                  'Explicit recall must reach the main agent.',
+                );
+              emit({ type: 'final', text: 'Synthetic answer.' });
+            },
+            {
+              prompt: explicit ? 'What light do I prefer?' : 'what can you help me with?',
+              history: [{ role: 'user', text: 'I prefer amber light.' }],
+              emit: async (type) => {
+                if (type === 'agent_start') agentStartedAt = performance.now();
+              },
+            },
+            {
+              prepareMemory: (context, _execution, canContinue) => {
+                preparationStartedAt = performance.now();
+                return recall.prepare(context, canContinue);
+              },
+            },
+          );
+          assert.equal(result.status, 'succeeded');
+          assert.deepEqual(replies, ['Synthetic answer.']);
+          assert.ok(agentStartedAt !== undefined);
+          if (!explicit) {
+            const preparationMs = agentStartedAt - preparationStartedAt;
+            assert.ok(
+              preparationMs < 2_000,
+              `Optional memory preparation delayed agent_start by ${Math.round(preparationMs)} ms; expected less than 2000 ms.`,
+            );
+          }
+        },
+      );
+    }
+  },
+);
 
 test('memory selection spend reaches the session check-in before the agent opens', async () => {
   let opened = false;
