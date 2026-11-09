@@ -24,7 +24,7 @@ import {
   type FeedbackReceipt,
   type FeedbackSubmission,
 } from '../src/shared/feedback.ts';
-import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
+import { ModelRequestError, type RuntimeContext, type RuntimeResult } from '../src/ports/agent.ts';
 import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
@@ -426,6 +426,7 @@ test(
 
     let limitReached = false;
     const interruptedText = 'Synthetic interrupted turn.';
+    const modelErrors = new Map<string, string>();
     let beforeRuntimeFailure = async (_context: RuntimeContext) => {};
     let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
       interruptedText;
@@ -629,6 +630,8 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
+        const modelError = modelErrors.get(context.prompt);
+        if (modelError) throw new ModelRequestError(modelError);
         if (context.prompt === 'runtime-failure') {
           await beforeRuntimeFailure(context);
           throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
@@ -1830,6 +1833,104 @@ test(
         assert.equal(await turnStatus(background), 'failed');
         assert.equal(ran(background), undefined);
       });
+
+      await t.test(
+        'model provider limits show concise recovery guidance in failed turns',
+        async () => {
+          const previousPresenter = presentInterruption;
+          presentInterruption = async () => '';
+          const nestedQuota =
+            'The model request failed: ' +
+            JSON.stringify({
+              error: {
+                code: 429,
+                status: 'Too Many Requests',
+                message: {
+                  error: {
+                    code: 429,
+                    status: 'RESOURCE_EXHAUSTED',
+                    message: 'You exceeded your current quota. Please retry in 14s.',
+                    details: [
+                      {
+                        quotaMetric:
+                          'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count',
+                        quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier',
+                        detail: 'synthetic-private-provider-detail',
+                      },
+                    ],
+                  },
+                },
+              },
+            });
+          const cases = [
+            { prompt: 'model-gemini-quota-fixture', error: nestedQuota, guidance: /quota/i },
+            {
+              prompt: 'model-plain-rate-limit-fixture',
+              error: 'The model request failed: 429 Too Many Requests',
+              guidance: /rate limit/i,
+            },
+            {
+              prompt: 'model-rate-limit-code-fixture',
+              error: 'The model request failed: rate_limit_error',
+              guidance: /rate limit/i,
+            },
+            {
+              prompt: 'model-unavailable-fixture',
+              error: 'The model request failed: 503 Service Unavailable',
+              guidance: undefined,
+            },
+          ];
+          try {
+            for (const item of cases) modelErrors.set(item.prompt, item.error);
+            for (const item of cases) {
+              const submitted = await thread.submitUserMessage(item.prompt);
+              await waitFor(settled(submitted.turnId));
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await db.pool.query(
+                      "SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+                      [submitted.turnId, `failure:${submitted.turnId}`],
+                    )
+                  ).rowCount,
+                ),
+              );
+              const turn = (
+                await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [
+                  submitted.turnId,
+                ])
+              ).rows[0] as { status: string; error: string };
+              const shown = (
+                await db.pool.query(
+                  "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+                  [submitted.turnId, `failure:${submitted.turnId}`],
+                )
+              ).rows[0].text as string;
+              assert.equal(turn.status, 'failed');
+              assert.ok(shown.endsWith(turn.error));
+              if (item.guidance) {
+                assert.ok(turn.error.length < 240);
+                assert.match(turn.error, item.guidance);
+                assert.match(turn.error, /wait|retry|try again/i);
+                if (item.prompt === 'model-gemini-quota-fixture') {
+                  assert.match(turn.error, /HTTP 429/);
+                  assert.match(turn.error, /14 seconds/);
+                }
+                for (const text of [turn.error, shown])
+                  assert.doesNotMatch(
+                    text,
+                    /RESOURCE_EXHAUSTED|quotaMetric|synthetic-private-provider-detail/,
+                  );
+              } else {
+                assert.equal(turn.error, item.error);
+              }
+            }
+          } finally {
+            for (const item of cases) modelErrors.delete(item.prompt);
+            presentInterruption = previousPresenter;
+          }
+        },
+      );
 
       await t.test(
         'analytics separate automatic work from owner requests across resumed sessions',
