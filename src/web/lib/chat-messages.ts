@@ -25,13 +25,28 @@ export function messagesAreGrouped(
   );
 }
 
-export function mergeMessages(known: Message[], incoming: Message[]) {
-  const byId = new Map(known.map((message) => [message.id, message]));
-  for (const message of incoming) byId.set(message.id, message);
-  return [...byId.values()].sort(
-    (a, b) =>
-      Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+function messageOrder(a: Message, b: Message) {
+  return (
+    Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   );
+}
+
+export function mergeMessages(
+  known: Message[],
+  incoming: Message[],
+  authoritative?: { messages: Message[]; hasEarlier: boolean; retractedIds?: readonly string[] },
+) {
+  const ids = new Set(authoritative?.messages.map((message) => message.id));
+  const retractedIds = new Set(authoritative?.retractedIds);
+  const oldest = authoritative?.messages[0];
+  const retained = (message: Message) =>
+    !retractedIds.has(message.id) &&
+    (!authoritative ||
+      ids.has(message.id) ||
+      (authoritative.hasEarlier && (!oldest || messageOrder(message, oldest) < 0)));
+  const byId = new Map(known.filter(retained).map((message) => [message.id, message]));
+  for (const message of incoming) if (retained(message)) byId.set(message.id, message);
+  return [...byId.values()].sort(messageOrder);
 }
 
 export function collapseScreenshotMessages(messages: Message[]) {

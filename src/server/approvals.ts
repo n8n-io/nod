@@ -111,8 +111,10 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
       time_zone: string;
       title: string;
       kind: string | null;
+      schedule_id: string;
+      schedule_revision: number;
     }>(
-      `SELECT r.authority_instruction,r.authority_source_message_id,r.scheduled_for,r.time_zone,r.title,s.kind
+      `SELECT r.authority_instruction,r.authority_source_message_id,r.scheduled_for,r.time_zone,r.title,s.kind,r.schedule_id,r.schedule_revision
        FROM schedule_runs r LEFT JOIN schedules s ON s.id=r.schedule_id AND s.owner_id=r.owner_id
        WHERE r.turn_id=$1 AND r.owner_id=$2`,
       [turnId, ownerId],
@@ -246,10 +248,13 @@ export async function createApprovals(
   );
     ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
       ADD COLUMN IF NOT EXISTS expected_revision integer,
-      ADD COLUMN IF NOT EXISTS details jsonb;
+      ADD COLUMN IF NOT EXISTS details jsonb,
+      ADD COLUMN IF NOT EXISTS retracted_message_id uuid;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
+    CREATE INDEX IF NOT EXISTS approvals_retracted_message ON approvals(owner_id,thread_id,retracted_message_id)
+      WHERE retracted_message_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='NOD_memory_save';
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
@@ -301,6 +306,16 @@ export async function createApprovals(
       let authorMessageId: string | null;
       const schedule =
         origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
+      if (schedule) {
+        const currentSchedule = (
+          await client.query<{ revision: number }>(
+            'SELECT revision FROM schedules WHERE id=$1 AND owner_id=$2 FOR SHARE',
+            [schedule.schedule_id, ownerId],
+          )
+        ).rows[0];
+        if (currentSchedule?.revision !== schedule.schedule_revision)
+          throw conflict('This schedule changed. Review it before asking again.');
+      }
       if (steering) {
         authorMessageId = steering.id;
       } else if (origin.source === 'event') {

@@ -225,29 +225,42 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
-    const [messages, turns, pendingChoices, verificationRequests, activity] = await Promise.all([
-      pool.query(
-        `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
+    const [messages, turns, pendingChoices, verificationRequests, activity, retractedMessages] =
+      await Promise.all([
+        pool.query(
+          `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
-        [ownerId, thread.id],
-      ),
-      pool.query(
-        `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
-        [ownerId, thread.id],
-      ),
-      pool.query<{ id: string }>(
-        `SELECT m.id FROM turns waiting JOIN LATERAL (
+          [ownerId, thread.id],
+        ),
+        pool.query(
+          `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
+          [ownerId, thread.id],
+        ),
+        pool.query<{ id: string }>(
+          `SELECT m.id FROM turns waiting JOIN LATERAL (
           SELECT m.* FROM messages m WHERE m.turn_id=waiting.id AND m.owner_id=waiting.owner_id
             AND m.thread_id=waiting.thread_id AND m.role='assistant'
           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
         ) m ON true
         WHERE waiting.owner_id=$1 AND waiting.thread_id=$2 AND waiting.status='waiting'
           AND waiting.waiting_reason='question' AND ${pendingAnswerChoicesSql}`,
-        [ownerId, thread.id],
-      ),
-      dependencies.verification?.pending() ?? [],
-      dependencies.activity?.() ?? [],
-    ]);
+          [ownerId, thread.id],
+        ),
+        dependencies.verification?.pending() ?? [],
+        dependencies.activity?.() ?? [],
+        (async () => {
+          const exists = await pool.query<{ name: string | null }>(
+            "SELECT to_regclass('approvals') AS name",
+          );
+          return exists.rows[0]?.name
+            ? pool.query<{ id: string }>(
+                `SELECT retracted_message_id AS id FROM approvals
+               WHERE owner_id=$1 AND thread_id=$2 AND retracted_message_id IS NOT NULL`,
+                [ownerId, thread.id],
+              )
+            : { rows: [] as Array<{ id: string }> };
+        })(),
+      ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
@@ -261,6 +274,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
       pendingAnswerChoiceMessageIds: pendingChoices.rows.map(({ id }) => id),
+      retractedMessageIds: retractedMessages.rows.map(({ id }) => id),
       messages: await messageViews(visibleMessages),
       turns: [...turns.rows, ...olderTurns],
       activity,

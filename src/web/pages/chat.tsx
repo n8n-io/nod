@@ -504,6 +504,11 @@ export function Chat({
     const merged = mergeMessages(
       known.current.threadId === threadId ? known.current.messages : [],
       [...(historyPage.threadId === threadId ? historyPage.messages : []), ...state.messages],
+      {
+        messages: state.messages,
+        hasEarlier: state.hasEarlierMessages === true,
+        retractedIds: state.retractedMessageIds,
+      },
     );
     const pending = state.pendingAnswerChoiceMessageIds
       ? new Set(state.pendingAnswerChoiceMessageIds)
@@ -524,6 +529,8 @@ export function Chat({
     threadId,
     historyPage,
     state.messages,
+    state.hasEarlierMessages,
+    state.retractedMessageIds,
     state.pendingAnswerChoiceMessageIds,
     unavailableQuestions,
   ]);

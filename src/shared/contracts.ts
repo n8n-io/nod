@@ -242,6 +242,7 @@ export interface AppState {
   threadId: string;
   hasEarlierMessages?: boolean;
   pendingAnswerChoiceMessageIds?: string[];
+  retractedMessageIds?: string[];
   verificationRequests?: VerificationRequest[];
   planningTasks?: boolean;
   planningStep?: string;

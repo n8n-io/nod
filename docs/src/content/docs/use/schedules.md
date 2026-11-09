@@ -28,7 +28,7 @@ Open **Scheduled**. Select **New schedule** to start a conversation with Nod, wh
 - Select **See details** to read the instruction, any saved baseline, and that schedule's runs.
 - Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
-- Select **Delete schedule**. Future runs stop, and past activity stays in [Usage](/use/spending/).
+- Select **Delete schedule** and confirm in the Scheduled-page dialog. Nod stops active and future runs without asking again in chat; an unanswered web-chat confirmation for that schedule disappears. Past activity stays in [Usage](/use/spending/).
 
 You can also tell Nod in chat, for example "stop the morning summary".
 

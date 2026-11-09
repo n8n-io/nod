@@ -4,13 +4,14 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
+import { cancellationTransaction } from './db.ts';
 import type {
   Schedule,
   ScheduleObservation,
   ScheduleRun,
   TurnStatus,
 } from '../shared/contracts.ts';
-import type { enqueueTurn } from './thread.ts';
+import { cancelTurns, type enqueueTurn, type TurnSource } from './thread.ts';
 import { activeThreadSql } from './history.ts';
 import { supersededSql } from './turn-chain.ts';
 import type { WorkConsumers } from './work-admission.ts';
@@ -72,6 +73,7 @@ export interface ScheduleDependencies {
     'createQueue' | 'work' | 'send' | 'cancel' | 'getJobById' | 'previewSchedule'
   >;
   stopConsumer?: (id: string) => Promise<void>;
+  clearBrowser?: (id: string) => Promise<void>;
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
   now?: () => Date;
@@ -821,7 +823,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   async function remove(id: string) {
     z.uuid().parse(id);
-    const row = await transaction(async (client) => {
+    const staged = await transaction(async (client) => {
       const row = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -830,14 +832,145 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       ).rows[0];
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
-      await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
-      return row;
+      const paused = (
+        await client.query<{ revision: number }>(
+          'UPDATE schedules SET enabled=false,job_id=NULL,next_run_at=NULL,revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING revision',
+          [id, ownerId],
+        )
+      ).rows[0]!;
+      return { row, revision: paused.revision };
     });
+    let browserSessions: string[] = [];
+    try {
+      browserSessions = await cancellationTransaction(async (client) => {
+        const sessions = (
+          await client.query<{ threadId: string; sessionId: string }>(
+            `SELECT DISTINCT origin.thread_id AS "threadId",origin.session_id AS "sessionId"
+             FROM schedule_runs r
+             JOIN turns origin ON origin.id=r.turn_id AND origin.owner_id=r.owner_id
+             WHERE r.owner_id=$1 AND r.schedule_id=$2 AND (
+               EXISTS (SELECT 1 FROM turns active WHERE active.owner_id=origin.owner_id
+                 AND active.session_id=origin.session_id AND active.status IN ('queued','running','waiting'))
+               OR EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id=origin.owner_id
+                 AND t.session_id=origin.session_id AND t.state='open')
+             )`,
+            [ownerId, id],
+          )
+        ).rows;
+        if ((await client.query("SELECT to_regclass('approvals') AS name")).rows[0]?.name) {
+          const pending = (
+            await client.query<{
+              id: string;
+              confirmationMessageId: string | null;
+              channel: string;
+              action: string;
+              source: string;
+            }>(
+              `UPDATE approvals a SET status='expired' FROM turns u
+               WHERE a.owner_id=$1 AND a.status='pending' AND u.id=a.turn_id AND u.owner_id=a.owner_id
+                 AND EXISTS (
+                   SELECT 1 FROM schedule_runs r
+                   JOIN turns origin ON origin.id=r.turn_id AND origin.owner_id=r.owner_id
+                   WHERE r.owner_id=$1 AND r.schedule_id=$2 AND origin.session_id=u.session_id
+                 )
+               RETURNING a.id,a.confirmation_message_id AS "confirmationMessageId",u.channel,a.action,u.source`,
+              [ownerId, id],
+            )
+          ).rows;
+          for (const approval of pending) {
+            if (!['user', 'schedule', 'event', 'resume', 'task'].includes(approval.source))
+              continue;
+            afterCommit(client, () =>
+              dependencies.analytics?.({
+                event: 'confirmation_changed',
+                properties: {
+                  status: 'expired',
+                  action_kind:
+                    approval.action === 'NOD_browser'
+                      ? 'browser'
+                      : approval.action === 'NOD_vault_allow'
+                        ? 'sign_in'
+                        : approval.action.startsWith('NOD_memory_')
+                          ? 'memory'
+                          : approval.action.startsWith('NOD_')
+                            ? 'settings'
+                            : 'app',
+                  source: approval.source as TurnSource,
+                },
+              }),
+            );
+          }
+          const questions = pending
+            .filter((approval) => approval.channel === 'web' && approval.confirmationMessageId)
+            .map((approval) => approval.confirmationMessageId!);
+          if (questions.length) {
+            const deleted = await client.query<{ id: string }>(
+              `DELETE FROM messages m WHERE m.owner_id=$1 AND m.id=ANY($2::uuid[])
+                 AND NOT EXISTS (SELECT 1 FROM messages reply WHERE reply.owner_id=m.owner_id
+                   AND reply.reply_to_message_id=m.id) RETURNING m.id`,
+              [ownerId, questions],
+            );
+            const deletedIds = new Set(deleted.rows.map((message) => message.id));
+            for (const approval of pending)
+              if (approval.confirmationMessageId && deletedIds.has(approval.confirmationMessageId))
+                await client.query(
+                  'UPDATE approvals SET retracted_message_id=$3 WHERE id=$1 AND owner_id=$2',
+                  [approval.id, ownerId, approval.confirmationMessageId],
+                );
+          }
+        }
+        for (const session of sessions) {
+          const cancelled = await cancelTurns(
+            client,
+            session.threadId,
+            { sessionId: session.sessionId },
+            dependencies.analytics,
+            'owner',
+            ownerId,
+          );
+          if (cancelled.tasks.length)
+            await cancelTurns(
+              client,
+              session.threadId,
+              { sessionId: session.sessionId },
+              dependencies.analytics,
+              'owner',
+              ownerId,
+            );
+        }
+        return sessions
+          .filter((session) => session.sessionId !== session.threadId)
+          .map((session) => session.sessionId);
+      }, pool);
+      await transaction(async (client) => {
+        const deleted = await client.query(
+          'DELETE FROM schedules WHERE id=$1 AND owner_id=$2 AND revision=$3',
+          [id, ownerId, staged.revision],
+        );
+        if (!deleted.rowCount)
+          throw Object.assign(new Error('The schedule changed while it was being deleted.'), {
+            statusCode: 409,
+          });
+      });
+    } catch (cause) {
+      refresh();
+      if (cause && typeof cause === 'object' && 'statusCode' in cause) throw cause;
+      throw Object.assign(
+        new Error('The schedule was paused, but deletion did not finish. Try again.'),
+        { statusCode: 503, cause },
+      );
+    }
     refresh();
     dependencies.analytics?.({
       event: 'schedule_changed',
-      properties: { operation: 'delete', ...scheduleAnalytics(row), actor: 'user' },
+      properties: { operation: 'delete', ...scheduleAnalytics(staged.row), actor: 'user' },
     });
+    const clearBrowser = dependencies.clearBrowser;
+    if (clearBrowser)
+      for (const sessionId of browserSessions)
+        void Promise.resolve()
+          .then(() => clearBrowser(sessionId))
+          .catch((cause) => logFailure('schedule_browser_cleanup_failed', cause, { sessionId }));
     return { ok: true };
   }
 

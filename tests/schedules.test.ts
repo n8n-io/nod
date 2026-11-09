@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
-import type { Schedule, ScheduleHistory, TaskDetail } from '../src/shared/contracts.ts';
+import type { AnalyticsEvent } from '../src/server/analytics.ts';
+import type { Message, Schedule, ScheduleHistory, TaskDetail } from '../src/shared/contracts.ts';
+import { mergeMessages } from '../src/web/lib/chat-messages.ts';
 import {
   readSchedule,
   scheduleExpression,
@@ -24,6 +26,13 @@ test(
     const bossSchema = `test_schedules_boss_${suffix}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
+    const previousAuthToken = process.env.NOD_AUTH_TOKEN;
+    const testAuthToken = randomBytes(32).toString('base64url');
+    process.env.NOD_AUTH_TOKEN = testAuthToken;
+    t.after(() => {
+      if (previousAuthToken === undefined) delete process.env.NOD_AUTH_TOKEN;
+      else process.env.NOD_AUTH_TOKEN = previousAuthToken;
+    });
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
@@ -40,6 +49,9 @@ test(
       throw new Error('Schedule worker was not registered.');
     };
     let failAfterTask = false;
+    const clearedBrowsers: string[] = [];
+    const analyticsEvents: AnalyticsEvent[] = [];
+    let browserClearDelay: Promise<void> | null = null;
     const personal = createPersonalService({
       pool: db.pool,
       ownerId: 'local-development',
@@ -50,6 +62,13 @@ test(
         const id = await thread.enqueueTurn(...args);
         if (failAfterTask) throw new Error('Synthetic failure after turn creation.');
         return id;
+      },
+      clearBrowser: async (id) => {
+        clearedBrowsers.push(id);
+        await browserClearDelay;
+      },
+      analytics: (event) => {
+        analyticsEvents.push(event);
       },
       refresh() {},
     });
@@ -190,6 +209,337 @@ test(
       });
       await personal.initialize();
       await tasks.initialize();
+
+      await t.test(
+        'deleting a schedule stops its active run and removes its pending question',
+        async () => {
+          const before = clock;
+          const clearedBefore = clearedBrowsers.length;
+          let otherId: string | undefined;
+          let finishBrowserClear: (() => void) | undefined;
+          try {
+            const schedule = await create({ cron: '*/15 * * * *' });
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            const [run] = await runs(schedule.id);
+            assert.ok(run);
+            await db.pool.query("UPDATE turns SET status='running',started_at=now() WHERE id=$1", [
+              run.turnId,
+            ]);
+            const { createApprovals } = await import('../src/server/approvals.ts');
+            const approvals = await createApprovals(
+              async () => null,
+              undefined,
+              undefined,
+              async () => 'Cancel the synthetic watch?',
+            );
+            const current = await thread.activeThread(db.pool, ownerId);
+            await approvals.request(
+              { threadId: current.id, turnId: run.turnId },
+              'NOD_schedule_cancel',
+              { id: schedule.id },
+              { expectedRevision: schedule.revision },
+            );
+            const [approval] = (
+              await db.pool.query(
+                'SELECT id,confirmation_message_id,status FROM approvals WHERE owner_id=$1 AND turn_id=$2',
+                [ownerId, run.turnId],
+              )
+            ).rows;
+            assert.equal(approval.status, 'pending');
+            assert.ok(approval.confirmation_message_id);
+            const other = await create({ cron: '*/15 * * * *' });
+            otherId = other.id;
+            const otherJob = await jobFor(other.id);
+            clock = new Date(otherJob.data.scheduledFor);
+            await deliver([otherJob]);
+            const [otherRun] = await runs(other.id);
+            assert.ok(otherRun);
+            await db.pool.query("UPDATE turns SET status='running',started_at=now() WHERE id=$1", [
+              otherRun.turnId,
+            ]);
+            await approvals.request(
+              { threadId: current.id, turnId: otherRun.turnId },
+              'NOD_schedule_cancel',
+              { id: other.id },
+              { expectedRevision: other.revision },
+            );
+            browserClearDelay = new Promise<void>((resolve) => {
+              finishBrowserClear = resolve;
+            });
+            const analyticsBefore = analyticsEvents.length;
+            let deleteTimeout: ReturnType<typeof setTimeout> | undefined;
+            const deleted = await Promise.race([
+              request('DELETE', `/api/schedules/${schedule.id}`),
+              new Promise<never>((_resolve, reject) => {
+                deleteTimeout = setTimeout(
+                  () => reject(new Error('Schedule deletion waited for browser cleanup.')),
+                  5_000,
+                );
+              }),
+            ]).finally(() => clearTimeout(deleteTimeout));
+            assert.equal(deleted.statusCode, 200, deleted.body);
+            assert.deepEqual(
+              analyticsEvents
+                .slice(analyticsBefore)
+                .filter((event) => event.event === 'confirmation_changed'),
+              [
+                {
+                  event: 'confirmation_changed',
+                  properties: {
+                    status: 'expired',
+                    action_kind: 'settings',
+                    source: 'schedule',
+                  },
+                },
+              ],
+            );
+            const turn = (
+              await db.pool.query('SELECT status FROM turns WHERE id=$1 AND owner_id=$2', [
+                run.turnId,
+                ownerId,
+              ])
+            ).rows[0];
+            const savedApproval = (
+              await db.pool.query(
+                'SELECT status,retracted_message_id FROM approvals WHERE id=$1 AND owner_id=$2',
+                [approval.id, ownerId],
+              )
+            ).rows[0];
+            const question = await db.pool.query(
+              'SELECT id FROM messages WHERE id=$1 AND owner_id=$2',
+              [approval.confirmation_message_id, ownerId],
+            );
+            assert.deepEqual(
+              {
+                turn: turn.status,
+                approval: savedApproval.status,
+                questionVisible: Boolean(question.rowCount),
+                retractedMessageId: savedApproval.retracted_message_id,
+              },
+              {
+                turn: 'cancelled',
+                approval: 'expired',
+                questionVisible: false,
+                retractedMessageId: approval.confirmation_message_id,
+              },
+            );
+            const { createApp } = await import('../src/server/app.ts');
+            const { publicOrigin } = await import('../src/server/config.ts');
+            const stateApp = await createApp();
+            try {
+              const state = await stateApp.inject({
+                method: 'GET',
+                url: '/api/state',
+                headers: {
+                  host: new URL(publicOrigin).host,
+                  authorization: `Bearer ${testAuthToken}`,
+                },
+              });
+              assert.equal(state.statusCode, 200, state.body);
+              assert.deepEqual(
+                state.json<{ retractedMessageIds: string[] }>().retractedMessageIds,
+                [approval.confirmation_message_id],
+              );
+            } finally {
+              await stateApp.close();
+            }
+            const ownSession = (
+              await db.pool.query('SELECT session_id FROM turns WHERE id=$1 AND owner_id=$2', [
+                run.turnId,
+                ownerId,
+              ])
+            ).rows[0].session_id;
+            assert.deepEqual(clearedBrowsers.slice(clearedBefore), [ownSession]);
+            assert.deepEqual(
+              (
+                await db.pool.query(
+                  `SELECT u.status,a.status AS approval_status,a.retracted_message_id,m.id AS question_id FROM turns u
+                   JOIN approvals a ON a.turn_id=u.id AND a.owner_id=u.owner_id
+                   JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id
+                   WHERE u.id=$1 AND u.owner_id=$2`,
+                  [otherRun.turnId, ownerId],
+                )
+              ).rows.map((row) => ({
+                turn: row.status,
+                approval: row.approval_status,
+                retractedMessageId: row.retracted_message_id,
+              })),
+              [{ turn: 'running', approval: 'pending', retractedMessageId: null }],
+            );
+            const earlier: Message = {
+              id: randomUUID(),
+              role: 'user',
+              text: 'A synthetic earlier message.',
+              turnId: null,
+              createdAt: '2035-10-26T12:00:00.000Z',
+              attachments: [],
+            };
+            const withdrawn: Message = {
+              id: approval.confirmation_message_id,
+              role: 'assistant',
+              text: 'Cancel the synthetic watch?',
+              turnId: run.turnId,
+              createdAt: '2035-10-26T12:01:00.000Z',
+              attachments: [],
+            };
+            assert.deepEqual(
+              mergeMessages([earlier, withdrawn], [earlier], {
+                messages: [earlier],
+                hasEarlier: false,
+              }).map((message) => message.id),
+              [earlier.id],
+            );
+            const history = {
+              ...earlier,
+              id: randomUUID(),
+              createdAt: '2035-10-26T11:59:00.000Z',
+            };
+            assert.deepEqual(
+              mergeMessages([history, earlier, withdrawn], [history, earlier], {
+                messages: [earlier],
+                hasEarlier: true,
+              }).map((message) => message.id),
+              [history.id, earlier.id],
+            );
+            assert.deepEqual(
+              mergeMessages(
+                [{ ...withdrawn, createdAt: '2035-10-26T11:58:00.000Z' }, history, earlier],
+                [history, earlier],
+                {
+                  messages: [earlier],
+                  hasEarlier: true,
+                  retractedIds: [withdrawn.id],
+                },
+              ).map((message) => message.id),
+              [history.id, earlier.id],
+            );
+          } finally {
+            finishBrowserClear?.();
+            browserClearDelay = null;
+            if (otherId) await request('DELETE', `/api/schedules/${otherId}`);
+            clock = before;
+          }
+        },
+      );
+
+      await t.test(
+        'a changed schedule cannot start a new confirmation from an old run',
+        async () => {
+          const before = clock;
+          try {
+            const schedule = await create({ cron: '*/15 * * * *' });
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            const [run] = await runs(schedule.id);
+            assert.ok(run);
+            await db.pool.query("UPDATE turns SET status='running',started_at=now() WHERE id=$1", [
+              run.turnId,
+            ]);
+            const { createApprovals } = await import('../src/server/approvals.ts');
+            const approvals = await createApprovals(
+              async () => null,
+              undefined,
+              undefined,
+              async () => 'Confirm a synthetic action?',
+            );
+            const changed = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              enabled: false,
+            });
+            assert.equal(changed.statusCode, 200, changed.body);
+            const current = await thread.activeThread(db.pool, ownerId);
+            await assert.rejects(
+              approvals.request({ threadId: current.id, turnId: run.turnId }, 'NOD_limits_update', {
+                monthlyUsd: 10,
+              }),
+              /This schedule changed/,
+            );
+            assert.equal(
+              (
+                await db.pool.query('SELECT id FROM approvals WHERE owner_id=$1 AND turn_id=$2', [
+                  ownerId,
+                  run.turnId,
+                ])
+              ).rowCount,
+              0,
+            );
+            assert.equal(
+              (await request('DELETE', `/api/schedules/${schedule.id}`)).statusCode,
+              200,
+            );
+          } finally {
+            clock = before;
+          }
+        },
+      );
+
+      await t.test('deleting a schedule closes its idle task continuation', async () => {
+        const before = clock;
+        const clearedBefore = clearedBrowsers.length;
+        try {
+          const schedule = await create({ cron: '*/15 * * * *' });
+          const job = await jobFor(schedule.id);
+          clock = new Date(job.data.scheduledFor);
+          await deliver([job]);
+          const [run] = await runs(schedule.id);
+          assert.ok(run);
+          await db.pool.query("UPDATE turns SET status='running',started_at=now() WHERE id=$1", [
+            run.turnId,
+          ]);
+          const current = await thread.activeThread(db.pool, ownerId);
+          await tasks.execute(
+            { threadId: current.id, turnId: run.turnId },
+            {
+              action: 'start',
+              title: 'Synthetic scheduled task',
+              message: 'The synthetic task is underway.',
+              doneWhen: 'The synthetic result is ready.',
+              now: 'Waiting for the next check.',
+              nextCheck: new Date(Date.now() - 1_000).toISOString(),
+            },
+            null,
+          );
+          await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
+            run.turnId,
+          ]);
+          const task = (
+            await db.pool.query(
+              'SELECT id,session_id,state FROM tasks WHERE owner_id=$1 AND turn_id=$2',
+              [ownerId, run.turnId],
+            )
+          ).rows[0];
+          assert.equal(task.state, 'open');
+          const turnsBefore = (
+            await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE session_id=$1', [
+              task.session_id,
+            ])
+          ).rows[0].count;
+          assert.equal((await request('DELETE', `/api/schedules/${schedule.id}`)).statusCode, 200);
+          assert.equal(
+            (
+              await db.pool.query('SELECT state FROM tasks WHERE id=$1 AND owner_id=$2', [
+                task.id,
+                ownerId,
+              ])
+            ).rows[0].state,
+            'cancelled',
+          );
+          assert.deepEqual(clearedBrowsers.slice(clearedBefore), [task.session_id]);
+          await tasks.resumeDue(current.id);
+          assert.equal(
+            (
+              await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE session_id=$1', [
+                task.session_id,
+              ])
+            ).rows[0].count,
+            turnsBefore,
+          );
+        } finally {
+          clock = before;
+        }
+      });
 
       await t.test('completed tasks produce isolated, reviewable schedule drafts', async (t) => {
         const seed = async (

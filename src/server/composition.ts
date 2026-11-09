@@ -938,6 +938,7 @@ async function initializeApplication(
     models: adapters.models,
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
+    clearBrowser: (id) => adapters.computer.clear(id),
     sessionCosts: ledger.sessionCosts,
   });
   await personal.initialize({ workers: options.workers });

@@ -1089,8 +1089,8 @@ test(
           const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
           const scheduleId = randomUUID();
           await db.pool.query(
-            `INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone,kind)
-             VALUES($1,$2,'Synthetic standup','Move the synthetic standup.','0 7 * * 1','Europe/Madrid','recurring')`,
+            `INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone,kind,revision)
+             VALUES($1,$2,'Synthetic standup','Move the synthetic standup.','0 7 * * 1','Europe/Madrid','recurring',1)`,
             [scheduleId, ownerId],
           );
           await db.pool.query(

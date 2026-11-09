@@ -731,9 +731,10 @@ export async function cancelTurns(
   scope: { sessionId?: string; background?: boolean } = {},
   analytics?: CaptureAnalytics,
   actor: 'owner' | 'agent' = 'owner',
+  owner = ownerId,
 ) {
   const capture = snapshotAnalytics(analytics);
-  const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
+  const values = [threadId, owner, scope.sessionId ?? null, scope.background ?? false];
   const candidates = await client.query<{ id: string }>(
     "SELECT id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting')",
     values,
@@ -755,7 +756,7 @@ export async function cancelTurns(
     ? (
         await client.query(
           "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title,session_id",
-          [taskIds, ownerId],
+          [taskIds, owner],
         )
       ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
     : [];

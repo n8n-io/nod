@@ -525,7 +525,7 @@ export function createTasks(options: {
     for (const row of rows)
       await transaction(async (client) => {
         const due = await client.query(
-          'UPDATE tasks SET next_check=NULL WHERE id=$1 AND owner_id=$2 AND next_check=$3',
+          "UPDATE tasks SET next_check=NULL WHERE id=$1 AND owner_id=$2 AND next_check=$3 AND state='open'",
           [row.id, ownerId, row.next_check],
         );
         if (due.rowCount)
