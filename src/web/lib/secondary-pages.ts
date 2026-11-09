@@ -10,7 +10,11 @@ export function connectionGroups(connections: Connection[], catalog: Connection[
       const service = catalogServices.get(connection.slug);
       return connection.connectionId || !service
         ? connection
-        : { ...service, ...integrationMetadata(connection.slug, service, connection) };
+        : {
+            ...service,
+            ...integrationMetadata(connection.slug, service, connection),
+            ...(connection.direct ? { direct: true } : {}),
+          };
     }),
     ...catalog.filter((service) => !knownServices.has(service.slug)),
   ]) {

@@ -2940,6 +2940,28 @@ test('app groups retain service metadata and account identity when catalog data 
   assert.equal(available.service.description, notes.description);
   const [described] = connectionGroups([notes], [{ ...catalog, description: 'Catalog purpose.' }]);
   assert.equal(described.service.description, 'Catalog purpose.');
+  const officialNotion: AppConnection = {
+    slug: 'notion',
+    name: 'Notion',
+    status: 'disconnected',
+    direct: true,
+    triggersEnabled: false,
+  };
+  const legacyNotion: AppConnection = {
+    slug: 'notion_mcp',
+    name: 'Notion MCP',
+    status: 'disconnected',
+    connectionId: 'legacy-notion',
+    reconnectRequired: true,
+    triggersEnabled: false,
+  };
+  const [notionGroup] = connectionGroups(
+    [officialNotion, legacyNotion],
+    [{ slug: 'notion', name: 'Notion', status: 'disconnected', triggersEnabled: false }],
+  );
+  assert.equal(notionGroup.service.slug, 'notion');
+  assert.equal(notionGroup.service.direct, true);
+  assert.deepEqual(notionGroup.accounts, [legacyNotion]);
 });
 
 test(
@@ -8137,6 +8159,9 @@ test(
       next_cursor: null,
     }));
     const provider = createComposioProvider({ proxy: composioProxyFixture(client, owner) });
+    const removedManaged = t.mock.method(client.connectedAccounts, 'delete', async (id: string) => {
+      assert.equal(id, 'synthetic-managed-notion');
+    });
     const mcpCalls: Array<{ name: string; input: Record<string, unknown> }> = [];
     const request: typeof safeRemoteFetch = async (input, init) => {
       const value = new Request(input, init);
@@ -8262,7 +8287,15 @@ test(
       url: `/api/apps/callback?state=${authorization.searchParams.get('state')}&code=synthetic-code`,
     });
     assert.equal(new URL(callback.headers.location!).searchParams.get('connection'), 'connected');
-    const connected = (await integrations.list(owner, { refresh: false })).find(
+    const afterConnect = await integrations.list(owner, { refresh: false });
+    const legacyAfterConnect = afterConnect.find(
+      (account) => account.connectionId === managed.rows[0].id,
+    );
+    assert.equal(legacyAfterConnect?.slug, 'notion_mcp');
+    assert.equal(legacyAfterConnect?.accountId, 'synthetic-managed-notion');
+    assert.equal(legacyAfterConnect?.status, 'disconnected');
+    assert.equal(legacyAfterConnect?.canReconnect, false);
+    const connected = afterConnect.find(
       (account) => account.slug === 'notion' && account.status === 'connected',
     );
     assert.ok(connected?.connectionId);
@@ -8291,6 +8324,24 @@ test(
     });
     assert.deepEqual(read, { content: [{ type: 'text', text: 'Synthetic Notion page content' }] });
     assert.deepEqual(mcpCalls, [{ name: 'notion-fetch', input: { id: 'synthetic-page-id' } }]);
+    const removal = await app.inject({
+      method: 'POST',
+      url: `/api/apps/notion_mcp/accounts/${managed.rows[0].id}/disconnect`,
+    });
+    assert.equal(removal.statusCode, 200, removal.body);
+    assert.equal(removedManaged.mock.callCount(), 1);
+    const afterRemoval = await integrations.list(owner, { refresh: false });
+    assert.equal(
+      afterRemoval.some((account) => account.connectionId === managed.rows[0].id),
+      false,
+    );
+    assert.equal(
+      afterRemoval.some(
+        (account) =>
+          account.connectionId === connected.connectionId && account.status === 'connected',
+      ),
+      true,
+    );
   },
 );
 
