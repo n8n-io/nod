@@ -158,6 +158,16 @@
   padding-bottom: 0;
   border-bottom: 0;
 }
+.account-settings-body .account-community .field-hint a {
+  display: inline;
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.account-settings-body .account-community .field-hint a:hover {
+  color: var(--link-hover);
+  background: none;
+}
 .account-region h2,
 .account-region h3 {
   margin: 0 0 12px;

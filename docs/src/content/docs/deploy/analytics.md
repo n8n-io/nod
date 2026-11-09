@@ -9,7 +9,7 @@ Nod shares bounded product events so the team can understand usage, reliability,
 
 Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, and credentials are excluded from analytics events. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the only content exception. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
+Messages, generated content, connected-app results, and credentials are excluded from analytics events. About you sends only fixed choices and stores them on an installation profile so the team can filter usage by those answers. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the content exception. If you enter an email address for Nod research invitations and tick the separate checkbox in onboarding, Nod also stores that address on the same PostHog profile. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
 ## Turn usage sharing on or off
 
@@ -36,18 +36,28 @@ Opt-out drops unsent events. Turning sharing back on doesn't revive events from 
 
 ### Stop sharing or delete past data
 
-Turning sharing off doesn't delete past PostHog data. Use **Send feedback** to request deletion from the Nod team.
+Turning sharing off stops new analytics events and person-profile updates. It doesn't delete past PostHog data, including About you answers and an email address already stored on a profile. An email submission already in flight may still reach PostHog when sharing is turned off. Use **Send feedback** to request deletion from the Nod team.
 
 ## Identity and environments
 
-Nod counts installations, not people. Two installations count as two; a shared installation counts as one. Clients connected to one server share its pseudonymous `local:<installation UUID>` identity.
+Nod counts installations by default. Two installations count as two; a shared installation counts as one. Clients connected to one server share its pseudonymous `local:<installation UUID>` identity. The About you profile can link this installation's events to its fixed choices. If you submit an email address in onboarding, PostHog can link that usage to the address too.
 
 | Runtime                      | Identity storage               | Collection available by default |
 | ---------------------------- | ------------------------------ | ------------------------------- |
 | Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
 | Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
-The owner's sharing choice still applies. Nod disables IP geolocation. Events don't create PostHog person profiles or add names and contact details.
+The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the installation ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and one property per question:
+
+| Person property           | Value                                                                |
+| ------------------------- | -------------------------------------------------------------------- |
+| `onboarding_scope`        | Fixed choice or `skipped`                                            |
+| `onboarding_roles`        | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
+| `onboarding_who_for`      | Fixed choice, `skipped`, or `not_asked`                              |
+| `onboarding_company_size` | Fixed choice, `skipped`, or `not_asked`                              |
+| `onboarding_jobs`         | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
+
+The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same profile.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 
@@ -55,7 +65,7 @@ Packaged release builds with a plain `x.y.z` version report `production`. Local 
 
 - Messages, replies, task titles, summaries, quotes, and answer-choice text.
 - Tool arguments and results, app records, web pages, file contents, file names, and paths.
-- Names, contact details, account names, and private owner, thread, turn, and message IDs.
+- Names, other contact details, account names, and private owner, thread, turn, and message IDs. A separately consented onboarding email is the exception.
 - Website domains, URLs, endpoint addresses, private hostnames, and IP addresses.
 - Vault values and login inventories, payment amounts and currencies, card details, codes, keys, and order details.
 - Raw errors, console output, and network headers or bodies.
@@ -73,7 +83,7 @@ UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Serve
 
 Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
-The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`).
+The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Ordinary events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`). Explicit `$set` calls add the fixed About you choices and, after separate consent, `email` and consent metadata under the installation's distinct ID.
 
 Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating execution mode. The separate `task_type` describes the request's purpose. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
@@ -87,30 +97,33 @@ Model events use one `provider` property. Onboarding completion and execution st
 
 ### Setup and app interaction
 
-| Event                                             | What it records                                                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `$pageview`                                       | Normalized app route. URLs use the placeholder `https://app.example` host.                                   |
-| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `brain`, `privacy`) and direction. Native Welcome isn't observed.                  |
-| `onboarding_step_skipped`                         | Skipped `email` step.                                                                                        |
-| `onboarding_completed`                            | First saved completion and selected model provider, when available.                                          |
-| `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                     |
-| `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                  |
-| `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.         |
-| `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source. |
-| `chat_stop_requested`                             | Stop requested in the app.                                                                                   |
-| `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                       |
-| `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                        |
-| `browser_handoff_action`                          | Successful done, back, reload, expand, or collapse operation.                                                |
-| `message_reaction_changed`, `message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                |
-| `attachment_added`                                | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                 |
-| `app_connect_clicked`, `app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                               |
-| `model_selected`                                  | Provider, settings/onboarding entry, and whether the recommendation was chosen.                              |
-| `ui_error`                                        | Fixed area and action, without error text.                                                                   |
-| `feedback_sent`                                   | Bug/feature/other category and attachment/report booleans, without feedback content.                         |
+| Event                                             | What it records                                                                                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$pageview`                                       | Normalized app route. URLs use the placeholder `https://app.example` host.                                                                          |
+| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `about`, `brain`, `privacy`, `join`) and direction. Native Welcome isn't observed.                                        |
+| `onboarding_step_skipped`                         | Skipped `email` step.                                                                                                                               |
+| `onboarding_profile_answered`                     | Finished About you: scope, one true/false per role and task, conditional who-for answer, company size, and fixed skip/other markers. No typed text. |
+| `onboarding_community_opened`                     | Discord or forum opened from Join us.                                                                                                               |
+| `onboarding_research_contact_submitted`           | Research contact email accepted by PostHog after separate consent, without the address in this event.                                               |
+| `onboarding_completed`                            | First saved completion and selected model provider, when available.                                                                                 |
+| `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                                                            |
+| `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                         |
+| `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.                                                |
+| `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source.                                        |
+| `chat_stop_requested`                             | Stop requested in the app.                                                                                                                          |
+| `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                                                              |
+| `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                                                               |
+| `browser_handoff_action`                          | Successful done, back, reload, expand, or collapse operation.                                                                                       |
+| `message_reaction_changed`, `message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                                                       |
+| `attachment_added`                                | Picker/drop/paste, first-file category, and count bucket (`1`, `2-5`, `6+`).                                                                        |
+| `app_connect_clicked`, `app_connection_completed` | Entry point and whether access setup was needed, or completed connection flow.                                                                      |
+| `model_selected`                                  | Provider, settings/onboarding entry, and whether the recommendation was chosen.                                                                     |
+| `ui_error`                                        | Fixed area and action, without error text.                                                                                                          |
+| `feedback_sent`                                   | Bug/feature/other category and attachment/report booleans, without feedback content.                                                                |
 
 Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
-Connecting email is optional. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
+Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the installation's PostHog person profile, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for research invitations in the final step does not send it until the separate checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately; the Nod team may contact the owner later with research invitations. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
 ### Runs, models, and connected services
 

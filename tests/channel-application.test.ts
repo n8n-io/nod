@@ -14,6 +14,7 @@ import type { MessagingAttachment } from '../src/ports/messaging.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
+import { posthogConfig } from '../src/shared/analytics.ts';
 import { accessCookie } from '../src/server/access.ts';
 import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
@@ -437,7 +438,8 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
 });
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
-  const received: { distinct_id: string; event: string }[] = [];
+  const received: { distinct_id: string; event: string; properties: Record<string, unknown> }[] =
+    [];
   t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
     const raw =
       typeof options.body === 'string'
@@ -467,6 +469,7 @@ test('analytics drops revoked owner queues while preserving another owner and re
     received.map((event) => [event.distinct_id, event.event]),
     [[local, 'chat_stopped']],
   );
+  assert.equal(received[0]?.properties.$process_person_profile, false);
 
   received.length = 0;
   const ownerBound = createPostHogAnalytics();
@@ -481,6 +484,67 @@ test('analytics drops revoked owner queues while preserving another owner and re
     received.map((event) => event.distinct_id),
     [local],
   );
+});
+
+test('person properties use an awaited PostHog update independent of event capture', async (t) => {
+  const requests: { url: string; options: RequestInit }[] = [];
+  let status = 200;
+  let responseBody = '{"status":"Ok"}';
+  let waitForAbort = false;
+  t.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
+    requests.push({ url: String(url), options });
+    if (waitForAbort)
+      return new Promise<Response>((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+          once: true,
+        });
+      });
+    return new Response(responseBody, { status });
+  });
+  const analytics = createPostHogAnalytics();
+  t.after(() => analytics.shutdown());
+  assert.ok(analytics.setPersonProperties);
+  const profile = {
+    distinctId: 'local:synthetic-installation',
+    properties: { email: 'owner@example.test', onboarding_focus: 'mostly_work' },
+  };
+  assert.equal(await analytics.setPersonProperties(profile, new AbortController().signal), true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.url, `${posthogConfig.host}/i/v0/e/`);
+  assert.equal(requests[0]?.options.method, 'POST');
+  assert.equal(new Headers(requests[0]?.options.headers).get('content-type'), 'application/json');
+  assert.equal(requests[0]?.options.redirect, 'error');
+  assert.deepEqual(JSON.parse(String(requests[0]?.options.body)), {
+    api_key: posthogConfig.key,
+    event: '$set',
+    distinct_id: profile.distinctId,
+    properties: { $set: profile.properties, $geoip_disable: true },
+  });
+
+  status = 503;
+  assert.equal(await analytics.setPersonProperties(profile, new AbortController().signal), false);
+  assert.equal(requests.length, 2);
+
+  status = 200;
+  responseBody = '{"status":"Ok","quota_limited":["events"]}';
+  assert.equal(await analytics.setPersonProperties(profile, new AbortController().signal), false);
+  responseBody = '{"status":"Failed"}';
+  assert.equal(await analytics.setPersonProperties(profile, new AbortController().signal), false);
+  responseBody = '{"status":';
+  assert.equal(await analytics.setPersonProperties(profile, new AbortController().signal), false);
+  assert.equal(requests.length, 5);
+
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await analytics.setPersonProperties(profile, aborted.signal), false);
+  assert.equal(requests.length, 5);
+
+  waitForAbort = true;
+  const inFlight = new AbortController();
+  const update = analytics.setPersonProperties(profile, inFlight.signal);
+  inFlight.abort();
+  assert.equal(await update, false);
+  assert.equal(requests.length, 6);
 });
 
 test(

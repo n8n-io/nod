@@ -13,7 +13,7 @@ Change the event schema, collectors, privacy checks, and dashboards together.
 
 - **Honor both switches.** New owners share usage by default; existing choices remain. The deployment gate and owner's saved preference must both allow capture.
 - **Use the capture boundary.** Server events use `CaptureAnalytics` from [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts). UI events use `captureAnalytics`, and surveys use `captureSurvey`, from [`src/web/lib/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics.ts). Don't call PostHog directly.
-- **Exclude private content.** No conversations, tool arguments/results, names, contact details, private IDs, URLs/domains, file names/paths, purchase amounts, or raw errors. Answers the owner chooses to submit in a [survey](#surveys) are the only content exception.
+- **Exclude private content.** No conversations, tool arguments/results, names, contact details, private IDs, URLs/domains, file names/paths, purchase amounts, or raw errors. Answers the owner chooses to submit in a [survey](#surveys) are the content exception. Survey text is sent as entered, so it can contain personal details. A separately consented onboarding email is the only contact detail Nod asks for and goes on a PostHog person profile, not an event.
 - **Use bounded facts.** Prefer enums, booleans, counts, and milliseconds. Public model/app names require catalog validation; custom values become `custom`.
 - **Count the observed result.** Save/change events follow committed writes or successful responses. Record clicks and requests separately when those are the actual measurement.
 - **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning. Survey events retain PostHog's required names and properties.
@@ -56,6 +56,16 @@ Cache classification results by owned origin, taxonomy version, and consent revi
 5. For a new page, add a normalized route to [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts).
 
 Events fired while sharing is off are lost. Don't replay them when sharing turns on. Native Welcome is outside app analytics.
+
+### Onboarding person properties and research contact email
+
+When an owner submits About you, set its bounded fixed choices on a PostHog person profile under the same installation distinct ID as the events. Do this for every installation with the deployment gate and **Share usage data** enabled, whether or not the owner later volunteers an email.
+
+Store one property per question: `onboarding_scope`, `onboarding_roles`, `onboarding_who_for`, `onboarding_company_size`, and `onboarding_jobs`. Roles and jobs are arrays of fixed choice IDs, with `other` for a typed **Something else** answer or `skipped` when unanswered. The single-choice properties use fixed `skipped` and `not_asked` markers. Set `onboarding_profile_completed=true`. Never send the text entered under **Something else**. The `onboarding_profile_answered` event keeps its per-option booleans for event-time analysis. A new About submission replaces any old per-option person properties; existing profiles are not changed until resubmitted.
+
+If the person update fails while sharing is still enabled, return a retryable error rather than confirming submission. When sharing is off or the person provider is unavailable, local About you memory can still be saved. Ordinary events still do not create or update profiles. They use `$process_person_profile=false`, so their event-time person properties are empty even after the profile update. Filter linked events by **current** person properties instead. In PostHog Activity, choose **Property filters → SQL expression** and use `pdi.person.properties.onboarding_scope = 'work'` for a single answer or `has(pdi.person.properties.onboarding_roles, 'freelance')` for a selected role. PostHog also supports `hasAny` and `hasAll` for multi-select searches ([array filter guide](https://posthog.com/tutorials/array-filter-breakdown)). Earlier events then reflect the profile's current answers if those answers change.
+
+Only after the owner enters an email address and ticks the separate checkbox for Nod research invitations may Nod set its PostHog `email` person property and contact consent flag, time, and version. Require the deployment gate and **Share usage data** at submission time. Don't send an email address when either gate is off. The consented address joins the existing onboarding profile under the same installation ID. Submission sends no email immediately; the Nod team may contact the owner later with research invitations. Opt-out stops later data sends; deleting an address or answers already stored in PostHog requires a request to the Nod team.
 
 ### Outputs
 
@@ -132,7 +142,7 @@ Internal/test exclusions are off for these dashboards. The production sample int
 - **Memory and Vault:** Changes and import batches measure writes. They don't establish inventory, reading, successful sign-in, or usefulness.
 - **Interaction reach:** Distinct installations using reactions, copy/reply, task and browser controls, starter cards, feedback, browser notifications, or voice input. Rows overlap; reactions and feedback reports aren't satisfaction scores.
 
-These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. Audience characteristics such as role, company size, AI experience, and preferred tools are not collected. Survey answers are separate, voluntary observations; they don't make usage events a measure of satisfaction or reasons for leaving. Use independent operational checks and user research for those questions.
+These events don't establish uptime, task quality, satisfaction, reasons for leaving, trust, security incidents, offline demand, or company-paid cost. About you collects fixed, self-reported role, company-size, and initial-task choices while sharing is enabled; AI experience and preferred tools are not collected here. Survey answers are separate, voluntary observations; they don't make usage events a measure of satisfaction or reasons for leaving. Use independent operational checks and user research for those questions.
 
 The pre-mortem's named-group retention, NPS, and departure-reason questions need audience information and a sufficient response sample. Survey collection alone doesn't answer them. A fresh cohort needs 35 days before its complete W4 window can be read. Model costs exclude independent browser and integration bills, and execution duration isn't time to the first useful answer.
 

@@ -25,6 +25,9 @@ import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { createLearnedSkills } from '../src/server/learned-skills.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import Fastify from 'fastify';
+import { createOnboardingProfile } from '../src/server/onboarding-profile.ts';
+import type { OnboardingProfile } from '../src/shared/onboarding.ts';
 
 type Step = {
   tool: string;
@@ -1994,3 +1997,286 @@ test(
     );
   },
 );
+
+test('onboarding answers update memory and profile analytics while research contact requires consent', async () => {
+  const memory = createMemoryService({
+    pool: {
+      query: async (sql: string) => ({
+        rows: sql.startsWith('SELECT to_char(now()') ? [{ now: new Date().toISOString() }] : [],
+      }),
+    } as unknown as pg.Pool,
+    ownerId: 'profile-owner',
+    store: memoryObjectStore(),
+  });
+  const sent: string[] = [];
+  const profiles: OnboardingProfile[] = [];
+  let profileAnalyticsFail = false;
+  let profileAnalyticsReturnFalse = false;
+  let enabled = true;
+  let accepted = true;
+  let disableDuringSubmit = false;
+  let disableProfileDuringSubmit = false;
+  const researchContact = {
+    enabled: () => enabled,
+    submit: async (email: string) => {
+      sent.push(email);
+      if (disableDuringSubmit) enabled = false;
+      return accepted;
+    },
+  };
+  const profileAnalytics = {
+    enabled: () => enabled,
+    submit: async (profile: OnboardingProfile) => {
+      profiles.push(profile);
+      if (disableProfileDuringSubmit) enabled = false;
+      if (profileAnalyticsFail) throw new Error('Synthetic PostHog failure');
+      if (profileAnalyticsReturnFalse) return false;
+      return true;
+    },
+  };
+  const app = Fastify();
+  createOnboardingProfile({ memory, profileAnalytics, researchContact }).registerRoutes(app);
+  const unconfigured = Fastify();
+  createOnboardingProfile({ memory }).registerRoutes(unconfigured);
+  const notes = async () =>
+    (await memory.load()).entries.filter((entry) => entry.slug === 'onboarding');
+
+  const first = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: {
+      scope: 'work',
+      roles: ['agency', 'engineering'],
+      whoFor: 'clients',
+      companySize: '2_10',
+      jobs: ['email', 'meetings'],
+      jobsText: 'Chase unpaid invoices',
+    },
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(profiles.length, 1);
+  assert.deepEqual(profiles[0], {
+    scope: 'work',
+    roles: ['agency', 'engineering'],
+    whoFor: 'clients',
+    companySize: '2_10',
+    jobs: ['email', 'meetings'],
+    jobsText: 'Chase unpaid invoices',
+  });
+  assert.deepEqual(
+    (await notes()).map(({ area, origin, text }) => ({ area, origin, text })),
+    [
+      {
+        area: 'about',
+        origin: 'stated',
+        text: 'Where they want Nod’s help: Mostly work. What they do: Agency; Engineering. Who it’s for: For my clients. Company size: 2–10. What they want off their plate first: Stay on top of email and Slack; Prep my meetings and day; Chase unpaid invoices.',
+      },
+    ],
+  );
+
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: {
+      scope: 'personal',
+      roles: [],
+      roleText: 'Retired teacher',
+      jobs: [],
+      jobsText: 'Pay with 4242 4242 4242 4242',
+    },
+  });
+  const current = await notes();
+  assert.equal(current.length, 1);
+  assert.equal(
+    current[0]!.text,
+    'Where they want Nod’s help: Mostly personal life. What they do: Retired teacher.',
+  );
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'both', roles: [], roleText: '4242 4242 4242', jobs: [], jobsText: '4242' },
+  });
+  assert.deepEqual(
+    (await notes()).map((entry) => entry.text),
+    ['Where they want Nod’s help: Both.'],
+  );
+  await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { roles: [], roleText: '4242 4242 4242', jobs: [], jobsText: '4242' },
+  });
+  assert.deepEqual(await notes(), []);
+  assert.equal(profiles.length, 4);
+  for (const payload of [
+    { roles: ['astronaut'], jobs: [] },
+    { scope: 'work', roles: ['student'], jobs: [] },
+    { scope: 'personal', roles: [], companySize: '2_10', jobs: [] },
+    { scope: 'work', roles: [], whoFor: 'clients', jobs: [] },
+    { scope: 'work', roles: ['agency', 'agency'], jobs: [] },
+    { scope: 'work', roles: [], jobs: ['email', 'email'] },
+  ]) {
+    const rejected = await app.inject({ method: 'POST', url: '/api/onboarding/profile', payload });
+    assert.notEqual(rejected.statusCode, 200);
+  }
+  assert.deepEqual(await notes(), []);
+  assert.equal(profiles.length, 4);
+
+  const disabledMemory = Fastify();
+  createOnboardingProfile({
+    memory: { ...memory, enabled: async () => false },
+    profileAnalytics,
+  }).registerRoutes(disabledMemory);
+  const savedWithoutMemory = await disabledMemory.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'personal', roles: ['student'], jobs: ['research'] },
+  });
+  assert.equal(savedWithoutMemory.statusCode, 200);
+  assert.equal(profiles.length, 5);
+  assert.deepEqual(await notes(), []);
+
+  const failingMemory = Fastify();
+  createOnboardingProfile({
+    memory: {
+      ...memory,
+      restate: async () => {
+        throw new Error('Synthetic memory failure');
+      },
+    },
+    profileAnalytics,
+  }).registerRoutes(failingMemory);
+  const rejectedMemory = await failingMemory.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: ['agency'], jobs: [] },
+  });
+  assert.equal(rejectedMemory.statusCode, 500);
+  assert.equal(profiles.length, 5);
+
+  profileAnalyticsFail = true;
+  const failedAnalytics = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(failedAnalytics.statusCode, 502);
+  assert.match(failedAnalytics.json().error, /continue without sharing them/);
+  assert.equal(profiles.length, 6);
+  profileAnalyticsFail = false;
+  const retriedAnalytics = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(retriedAnalytics.statusCode, 200);
+  assert.equal(profiles.length, 7);
+  profileAnalyticsReturnFalse = true;
+  const rejectedAnalytics = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(rejectedAnalytics.statusCode, 502);
+  assert.equal(profiles.length, 8);
+  profileAnalyticsReturnFalse = false;
+
+  enabled = false;
+  const optedOutProfile = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(optedOutProfile.statusCode, 200);
+  assert.equal(profiles.length, 8);
+  enabled = true;
+  profileAnalyticsFail = true;
+  disableProfileDuringSubmit = true;
+  const revokedDuringProfileSubmit = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(revokedDuringProfileSubmit.statusCode, 200);
+  assert.equal(profiles.length, 9);
+  enabled = true;
+  profileAnalyticsFail = false;
+  disableProfileDuringSubmit = false;
+  const unavailableAnalytics = await unconfigured.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(unavailableAnalytics.statusCode, 200);
+  assert.equal(profiles.length, 9);
+
+  assert.equal(
+    (
+      await unconfigured.inject({
+        method: 'POST',
+        url: '/api/onboarding/research-contact',
+        payload: { email: 'owner@example.test', consent: true },
+      })
+    ).statusCode,
+    404,
+  );
+  const remembered = JSON.stringify(await memory.load());
+  for (const payload of [
+    { email: 'owner@example.test' },
+    { email: 'owner@example.test', consent: false },
+    { email: 'owner@example.test', consent: true, extra: 'ignored' },
+  ]) {
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/research-contact',
+      payload,
+    });
+    assert.notEqual(rejected.statusCode, 200);
+  }
+  assert.deepEqual(sent, []);
+  enabled = false;
+  const optedOut = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/research-contact',
+    payload: { email: 'owner@example.test', consent: true },
+  });
+  assert.equal(optedOut.statusCode, 403);
+  assert.deepEqual(sent, []);
+  enabled = true;
+  const subscribed = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/research-contact',
+    payload: { email: 'owner@example.test', consent: true },
+  });
+  assert.equal(subscribed.statusCode, 200);
+  assert.deepEqual(sent, ['owner@example.test']);
+  assert.equal(JSON.stringify(await memory.load()), remembered);
+  disableDuringSubmit = true;
+  const revokedDuringSubmit = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/research-contact',
+    payload: { email: 'owner@example.test', consent: true },
+  });
+  assert.equal(revokedDuringSubmit.statusCode, 409);
+  assert.match(revokedDuringSubmit.json().error, /may already have been saved/);
+  assert.deepEqual(sent, ['owner@example.test', 'owner@example.test']);
+  enabled = true;
+  disableDuringSubmit = false;
+  accepted = false;
+  const failed = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/research-contact',
+    payload: { email: 'owner@example.test', consent: true },
+  });
+  assert.equal(failed.statusCode, 502);
+  assert.deepEqual(sent, ['owner@example.test', 'owner@example.test', 'owner@example.test']);
+  assert.notEqual(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/onboarding/research-contact',
+        payload: { email: 'not an address', consent: true },
+      })
+    ).statusCode,
+    200,
+  );
+});

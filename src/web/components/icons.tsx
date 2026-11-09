@@ -103,6 +103,7 @@ export const Copy = n8n('copy');
 export const CornerUpLeft = n8n('arrow-u-up-left');
 export const Database = n8n('database');
 export const Download = n8n('arrow-circle-down');
+export const Envelope = n8n('envelope');
 export const Ellipsis = n8n('dots-horizontal');
 export const ExternalLink = n8n('arrow-square-out');
 export const Eye = n8n('eyes');

@@ -3507,6 +3507,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
  if(path==='/api/configuration')return delayApps?new Promise(()=>{}):Response.json({integrationsReady:true});
  if(path==='/api/apps'||path==='/api/apps/catalog')return delayApps?new Promise(()=>{}):Response.json([]);
  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
+ if(path==='/api/onboarding/profile')return Response.json({ok:true});
  throw new Error('Unexpected request '+path);
 };
 const {createElement,act}=await import('react');
@@ -3604,7 +3605,12 @@ await waitFor(()=>document.querySelector('[data-step="email"]'));
 assert.ok(rendererReady>0,'The email screen must become visible before account discovery finishes');
 assert.equal(button('Skip for now').disabled,false);
 await act(async()=>button('Skip for now').click());
+await waitFor(()=>document.querySelector('[data-step="about"]'));
+for(let at=0;at<10&&!document.querySelector('[data-step="privacy"]');at++){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1000))});if(button('Not now'))await act(async()=>button('Not now').click())}
 await waitFor(()=>document.querySelector('[data-step="privacy"]'));
+assert.ok(calls.includes('/api/onboarding/profile'));
+await act(async()=>button('Continue').click());
+await waitFor(()=>document.querySelector('[data-step="join"]'));
 await act(async()=>button('Continue').click());
 await waitFor(()=>document.querySelector('.setup-progress [role="status"]'));
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');

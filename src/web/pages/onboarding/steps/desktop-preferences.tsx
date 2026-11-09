@@ -46,7 +46,7 @@ export function DesktopPreferencesSetup({
   }, [retry]);
 
   return (
-    <OnboardingFrame step="privacy" steps={steps}>
+    <OnboardingFrame step="join" steps={steps}>
       <section className="ob-step">
         <Messages items={[]} typing={!error} />
         {error && (
