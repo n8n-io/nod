@@ -10,5 +10,12 @@ export interface ProductAnalytics {
     },
     signal: AbortSignal,
   ): void;
+  setPersonProperties?(
+    input: {
+      distinctId: string;
+      properties: Record<string, string | number | boolean | string[]>;
+    },
+    signal: AbortSignal,
+  ): Promise<boolean>;
   shutdown(): Promise<void>;
 }

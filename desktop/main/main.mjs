@@ -984,8 +984,6 @@ function baseEnvironment() {
       'NOD_FEEDBACK_RECEIPT_URL_PREFIX',
       'NOD_TRACES_URL',
       'NOD_TRACES_TOKEN',
-      'NOD_UPDATES_URL',
-      'NOD_UPDATES_TOKEN',
       'OTEL_EXPORTER_OTLP_ENDPOINT',
     ]
       .filter((key) => typeof process.env[key] === 'string')
@@ -1701,7 +1699,6 @@ async function startEngine({ runtime, signal, pending = false }) {
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.NOD_FEEDBACK_TOKEN) knownSecrets.add(process.env.NOD_FEEDBACK_TOKEN);
-  if (process.env.NOD_UPDATES_TOKEN) knownSecrets.add(process.env.NOD_UPDATES_TOKEN);
   const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   const tracesToken =
     typeof nodBuild?.tracesToken === 'string' ? nodBuild.tracesToken : process.env.NOD_TRACES_TOKEN;

@@ -10,6 +10,11 @@ import {
 } from '../src/server/analytics.ts';
 import { analyticsEvent } from '../src/server/analytics-events.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
+import { profileJobs, profileRoles, type OnboardingProfile } from '../src/shared/onboarding.ts';
+import {
+  onboardingPersonProperties,
+  onboardingProfileAnswers,
+} from '../src/shared/onboarding-analytics.ts';
 
 test('usage sharing captures bounded events without recording screens or reviving old consent', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
@@ -137,6 +142,282 @@ test('server analytics ignore obsolete replay links while preserving permitted e
   } finally {
     await analytics.shutdown();
   }
+});
+
+test('each About you choice maps independently to the event and person profile', () => {
+  const all: OnboardingProfile = {
+    scope: 'personal',
+    roles: profileRoles.map(({ id }) => id),
+    roleText: 'SYNTHETIC_PRIVATE_ROLE',
+    whoFor: 'both',
+    jobs: profileJobs.map(({ id }) => id),
+    jobsText: 'SYNTHETIC_PRIVATE_JOB',
+  };
+  const event = onboardingProfileAnswers(all);
+  const person: Record<string, unknown> = onboardingPersonProperties(all);
+  const roleKeys = profileRoles.map(({ id }) => `role_${id}`);
+  const jobKeys = profileJobs.map(({ id }) => `job_${id}`);
+
+  assert.equal(
+    Object.keys(event).filter((key) => key.startsWith('role_')).length,
+    roleKeys.length + 1,
+  );
+  assert.equal(
+    Object.keys(event).filter((key) => key.startsWith('job_')).length,
+    jobKeys.length + 1,
+  );
+  assert.equal(Object.keys(person).length, Object.keys(event).length + 1);
+  for (const key of [...roleKeys, ...jobKeys, 'role_other', 'job_other']) {
+    assert.equal(event[key as keyof typeof event], true, key);
+    assert.equal(person[`onboarding_${key}`], true, key);
+  }
+  for (const [key, value] of Object.entries(event))
+    assert.equal(person[`onboarding_${key}`], value, key);
+  assert.ok(!JSON.stringify({ event, person }).includes('SYNTHETIC_PRIVATE'));
+
+  for (const selected of profileRoles) {
+    const answer = onboardingProfileAnswers({ scope: 'personal', roles: [selected.id], jobs: [] });
+    for (const option of profileRoles)
+      assert.equal(
+        answer[`role_${option.id}` as keyof typeof answer],
+        option.id === selected.id,
+        `${selected.id} → ${option.id}`,
+      );
+  }
+  for (const selected of profileJobs) {
+    const answer = onboardingProfileAnswers({ roles: [], jobs: [selected.id] });
+    for (const option of profileJobs)
+      assert.equal(
+        answer[`job_${option.id}` as keyof typeof answer],
+        option.id === selected.id,
+        `${selected.id} → ${option.id}`,
+      );
+  }
+});
+
+test('onboarding answers and research contact update one profile only while usage sharing is enabled', async () => {
+  const profiles: Array<{
+    distinctId: string;
+    properties: Record<string, string | number | boolean | string[]>;
+  }> = [];
+  let waitForOptOut = false;
+  const installationId = randomUUID();
+  const analytics = await createAnalytics({
+    provider: {
+      capture: () => {},
+      setPersonProperties: async (input, signal) => {
+        profiles.push(input);
+        if (waitForOptOut)
+          return new Promise<boolean>((resolve) => {
+            signal.addEventListener('abort', () => resolve(false), { once: true });
+          });
+        return !signal.aborted;
+      },
+      shutdown: async () => {},
+    },
+    environment: 'development',
+    dataRoot: '.',
+    installationId,
+  });
+  try {
+    const owner = 'synthetic-owner';
+    const full: OnboardingProfile = {
+      scope: 'work',
+      roles: ['agency', 'engineering'],
+      roleText: 'SYNTHETIC_PRIVATE_ROLE',
+      whoFor: 'clients',
+      companySize: '2_10',
+      jobs: ['email', 'meetings'],
+      jobsText: 'SYNTHETIC_PRIVATE_JOB',
+    };
+    assert.equal(analytics.personProfileAvailable, true);
+    assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
+    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), false);
+    assert.equal(profiles.length, 0);
+    analytics.setUsageData(owner, true);
+    assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), true);
+    assert.equal(profiles.length, 1);
+    assert.equal(profiles[0]?.distinctId, 'local:' + installationId);
+    assert.equal(profiles[0]?.properties.onboarding_profile_completed, true);
+    assert.equal(profiles[0]?.properties.onboarding_scope, 'work');
+    assert.equal(profiles[0]?.properties.onboarding_role_agency, true);
+    assert.equal(profiles[0]?.properties.onboarding_role_engineering, true);
+    assert.equal(profiles[0]?.properties.onboarding_role_other, true);
+    assert.equal(profiles[0]?.properties.onboarding_who_for, 'clients');
+    assert.equal(profiles[0]?.properties.onboarding_company_size, '2_10');
+    assert.equal(profiles[0]?.properties.onboarding_job_email, true);
+    assert.equal(profiles[0]?.properties.onboarding_job_other, true);
+    assert.equal(profiles[0]?.properties.email, undefined);
+    assert.equal(profiles[0]?.properties.nod_research_contact_consent, undefined);
+    assert.ok(!JSON.stringify(profiles[0]).includes('SYNTHETIC_PRIVATE'));
+    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), true);
+    assert.equal(profiles.length, 2);
+    assert.equal(profiles[1]?.distinctId, 'local:' + installationId);
+    assert.equal(profiles[1]?.properties.email, 'owner@example.test');
+    assert.equal(profiles[1]?.properties.nod_research_contact_consent, true);
+    assert.equal(profiles[1]?.properties.nod_research_contact_consent_version, 1);
+    assert.ok(
+      !Number.isNaN(Date.parse(String(profiles[1]?.properties.nod_research_contact_consent_at))),
+    );
+    assert.equal(
+      await analytics.setOnboardingProfileAnswers(owner, {
+        scope: 'personal',
+        roles: [],
+        jobs: [],
+      }),
+      true,
+    );
+    assert.equal(profiles[2]?.properties.onboarding_scope, 'personal');
+    assert.equal(profiles[2]?.properties.onboarding_role_agency, false);
+    assert.equal(profiles[2]?.properties.onboarding_role_other, false);
+    assert.equal(profiles[2]?.properties.onboarding_who_for, 'not_asked');
+    assert.equal(profiles[2]?.properties.onboarding_company_size, 'not_asked');
+    assert.equal(profiles[2]?.properties.onboarding_job_email, false);
+    assert.equal(profiles[2]?.properties.onboarding_job_other, false);
+    assert.equal(await analytics.setOnboardingProfileAnswers(owner, { roles: [], jobs: [] }), true);
+    assert.equal(profiles[3]?.properties.onboarding_scope, 'skipped');
+    assert.equal(profiles[3]?.properties.onboarding_who_for, 'not_asked');
+    assert.equal(profiles[3]?.properties.onboarding_company_size, 'skipped');
+    assert.equal(
+      await analytics.setResearchContactEmail('another-owner', 'other@example.test'),
+      false,
+    );
+    assert.equal(await analytics.setOnboardingProfileAnswers('another-owner', full), false);
+    assert.equal(profiles.length, 4);
+    waitForOptOut = true;
+    const pending = analytics.setOnboardingProfileAnswers(owner, full);
+    analytics.setUsageData(owner, false);
+    assert.equal(await pending, false);
+    assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
+    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), false);
+    assert.equal(profiles.length, 5);
+  } finally {
+    await analytics.shutdown();
+  }
+});
+
+test('onboarding answers and consented contact stay queryable by separate installation identities', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {JSDOM} from 'jsdom';
+import {createAnalytics} from './src/server/analytics.ts';
+import {createPostHogAnalytics} from './src/providers/posthog/analytics.ts';
+import {posthogConfig} from './src/shared/analytics.ts';
+
+const dom=new JSDOM('<!doctype html>',{url:'https://app.example/onboarding'});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document});
+const {setAnalyticsClient,configureAnalytics,captureAnalytics}=await import('./src/web/lib/analytics.ts');
+const captured=[];
+const personRequests=[];
+globalThis.fetch=async (url,options)=>{
+  assert.equal(String(url),posthogConfig.host+'/i/v0/e/');
+  personRequests.push(JSON.parse(String(options.body)));
+  return Response.json({status:'Ok'});
+};
+const client={
+  init(_key,options){this.options=options;this.distinctId=options.bootstrap.distinctID;options.loaded?.()},
+  capture(event,properties={}){
+    const value=this.options.before_send({event,properties:{...properties,distinct_id:this.distinctId}});
+    if(value)this._send_request({url:this.options.api_host+'/e/',data:[value]});
+  },
+  _send_request(request){captured.push(...request.data)},
+  _retryQueue:{retriableRequest(){},unload(){},resume(){}},
+  _requestQueue:{unload(){}},
+  reset(options){this.distinctId=options.bootstrap.distinctID},
+  set_config(options){this.options={...this.options,...options}},
+};
+setAnalyticsClient(client);
+const ids=[randomUUID(),randomUUID(),randomUUID()];
+const owners=['synthetic-with-email','synthetic-without-email','synthetic-opted-out'];
+const analytics=await Promise.all(ids.map(installationId=>createAnalytics({
+  provider:createPostHogAnalytics(),environment:'development',dataRoot:'.',installationId,
+})));
+const [withEmail,withoutEmail,optedOut]=analytics;
+withEmail.setUsageData(owners[0],true);
+withoutEmail.setUsageData(owners[1],true);
+const fullAnswers={
+  scope:'work',role_owner:true,role_freelance:false,role_agency:false,
+  role_engineering:true,role_product:false,role_gtm:false,role_manager:false,
+  role_student:false,role_not_working:false,role_other:true,who_for:'clients',
+  company_size:'2_10',job_email:true,job_calendar:true,job_meetings:true,
+  job_errands:false,job_research:true,job_routines:false,job_other:true,
+};
+const fullProfile={
+  scope:'work',roles:['owner','engineering'],roleText:'SYNTHETIC_PRIVATE_ROLE',
+  whoFor:'clients',companySize:'2_10',jobs:['email','calendar','meetings','research'],
+  jobsText:'SYNTHETIC_PRIVATE_JOB',
+};
+const noEmailProfile={
+  scope:'work',roles:['agency','engineering'],whoFor:'me',companySize:'11_100',
+  jobs:['email','meetings','research','routines'],
+};
+try{
+  configureAnalytics(withEmail.configuration(owners[0]),'web');
+  assert.equal(await withEmail.setOnboardingProfileAnswers(owners[0],fullProfile),true);
+  captureAnalytics('onboarding_profile_answered',{
+    ...fullAnswers,email:'private@example.test',roleText:'SYNTHETIC_PRIVATE_ROLE',
+    jobsText:'SYNTHETIC_PRIVATE_JOB',
+  });
+  assert.equal(await withEmail.setResearchContactEmail(owners[0],'researcher-a@example.test'),true);
+  captureAnalytics('onboarding_research_contact_submitted');
+
+  configureAnalytics(withoutEmail.configuration(owners[1]),'web');
+  assert.equal(await withoutEmail.setOnboardingProfileAnswers(owners[1],noEmailProfile),true);
+  captureAnalytics('onboarding_profile_answered',{
+    ...fullAnswers,role_owner:false,role_agency:true,role_other:false,
+    who_for:'me',company_size:'11_100',job_calendar:false,job_routines:true,job_other:false,
+  });
+
+  configureAnalytics(optedOut.configuration(owners[2]),'web');
+  captureAnalytics('onboarding_profile_answered',fullAnswers);
+  assert.equal(await optedOut.setOnboardingProfileAnswers(owners[2],fullProfile),false);
+  assert.equal(await optedOut.setResearchContactEmail(owners[2],'researcher-c@example.test'),false);
+
+  const eventsById=Map.groupBy(captured,event=>event.properties.distinct_id);
+  const [firstId,secondId,thirdId]=ids.map(id=>'local:'+id);
+  assert.deepEqual([...eventsById.keys()],[firstId,secondId]);
+  const first=eventsById.get(firstId);
+  const second=eventsById.get(secondId);
+  assert.deepEqual(first.map(event=>event.event),[
+    'onboarding_profile_answered','onboarding_research_contact_submitted',
+  ]);
+  assert.deepEqual(second.map(event=>event.event),['onboarding_profile_answered']);
+  for(const [key,value] of Object.entries(fullAnswers))
+    assert.equal(first[0].properties[key],value,key);
+  assert.equal(second[0].properties.role_agency,true);
+  assert.equal(second[0].properties.who_for,'me');
+  assert.equal(second[0].properties.company_size,'11_100');
+  assert.equal(eventsById.has(thirdId),false);
+  assert.equal(personRequests.length,3);
+  assert.ok(personRequests.every(request=>request.event==='$set'));
+  assert.deepEqual(personRequests.map(request=>request.distinct_id),[firstId,firstId,secondId]);
+  for(const [key,value] of Object.entries(fullAnswers))
+    assert.equal(personRequests[0].properties.$set['onboarding_'+key],value,key);
+  assert.equal(personRequests[0].properties.$set.onboarding_profile_completed,true);
+  assert.equal(personRequests[0].properties.$set.email,undefined);
+  assert.equal(personRequests[0].properties.$set.nod_research_contact_consent,undefined);
+  assert.equal(personRequests[1].properties.$set.email,'researcher-a@example.test');
+  assert.equal(personRequests[1].properties.$set.nod_research_contact_consent,true);
+  assert.equal(personRequests[2].properties.$set.onboarding_role_agency,true);
+  assert.equal(personRequests[2].properties.$set.onboarding_who_for,'me');
+  assert.equal(personRequests[2].properties.$set.onboarding_company_size,'11_100');
+  assert.equal(personRequests[2].properties.$set.email,undefined);
+  assert.equal(personRequests[2].properties.$set.nod_research_contact_consent,undefined);
+  assert.equal(JSON.stringify(captured).includes('example.test'),false);
+  assert.equal(JSON.stringify(captured).includes('SYNTHETIC_PRIVATE'),false);
+  assert.equal(JSON.stringify(personRequests).includes('SYNTHETIC_PRIVATE'),false);
+  assert.equal(JSON.stringify(personRequests).includes(thirdId),false);
+}finally{
+  configureAnalytics(undefined);
+  await Promise.all(analytics.map(entry=>entry.shutdown()));
+  dom.window.close();
+}
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
 });
 
 test('turn analytics keep the actual agent provider and remove stale model details', async (t) => {

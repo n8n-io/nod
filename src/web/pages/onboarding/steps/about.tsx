@@ -7,44 +7,77 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  profileBusinessRoles,
   profileCompanySizes,
   profileJobs,
   profileRoles,
   profileScopes,
   profileTextChars,
+  profileWhoFor,
   type OnboardingProfile,
   type ProfileJob,
+  type ProfileRole,
 } from '../../../../shared/onboarding';
-import { ArrowRight, Check, Pencil, X } from '../../../components/icons';
+import { onboardingProfileAnswers } from '../../../../shared/onboarding-analytics';
+import { Check, Pencil, X } from '../../../components/icons';
 import { prefersReducedMotion, Rise } from '../../../components/motion';
-import { api } from '../../../lib/api';
+import { Notice } from '../../../components/ui';
+import { api, ApiError, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
-import { cn } from '../../../lib/utils';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
 import { readStored, writeStored } from '../storage';
 
-type Question = 'scope' | 'role' | 'size' | 'jobs';
+type Question = 'scope' | 'roles' | 'whoFor' | 'size' | 'jobs';
 type State = {
   current: Question | 'done';
   seen: Question[];
   profile: OnboardingProfile;
-  editing: 'role' | 'jobs' | null;
+  editing: 'roles' | 'jobs' | null;
 };
 
 const prompts: Record<Question, string> = {
   scope: 'Where would you like my help?',
-  role: 'What do you do?',
+  roles: 'What do you do?',
+  whoFor: 'Who is it for?',
   size: 'How big is your company?',
   jobs: 'What would you like to take off your plate?',
 };
 
-const fresh: State = { current: 'scope', seen: [], profile: { jobs: [] }, editing: null };
+const fresh: State = {
+  current: 'scope',
+  seen: [],
+  profile: { roles: [], jobs: [] },
+  editing: null,
+};
 
 function questions(profile: OnboardingProfile): Question[] {
-  return profile.scope === 'personal'
-    ? ['scope', 'role', 'jobs']
-    : ['scope', 'role', 'size', 'jobs'];
+  const items: Question[] = ['scope', 'roles'];
+  if (profile.roles.some((role) => profileBusinessRoles.includes(role))) items.push('whoFor');
+  if (profile.scope !== 'personal') items.push('size');
+  items.push('jobs');
+  return items;
+}
+
+function applicable(profile: OnboardingProfile): OnboardingProfile {
+  const roles =
+    profile.scope === 'personal'
+      ? profile.roles
+      : profile.roles.filter((role) => role !== 'student' && role !== 'not_working');
+  return {
+    ...profile,
+    roles,
+    whoFor: roles.some((role) => profileBusinessRoles.includes(role)) ? profile.whoFor : undefined,
+    companySize: profile.scope === 'personal' ? undefined : profile.companySize,
+  };
+}
+
+function trimmed(profile: OnboardingProfile): OnboardingProfile {
+  return applicable({
+    ...profile,
+    roleText: profile.roleText?.trim() || undefined,
+    jobsText: profile.jobsText?.trim() || undefined,
+  });
 }
 
 function label(list: readonly { id: string; label: string }[], id?: string) {
@@ -53,7 +86,13 @@ function label(list: readonly { id: string; label: string }[], id?: string) {
 
 function answer(question: Question, profile: OnboardingProfile) {
   if (question === 'scope') return label(profileScopes, profile.scope);
-  if (question === 'role') return profile.roleText || label(profileRoles, profile.role);
+  if (question === 'roles')
+    return (
+      [...profile.roles.map((role) => label(profileRoles, role)), profile.roleText]
+        .filter(Boolean)
+        .join(', ') || undefined
+    );
+  if (question === 'whoFor') return label(profileWhoFor, profile.whoFor);
   if (question === 'size') return label(profileCompanySizes, profile.companySize);
   return (
     [...profile.jobs.map((job) => label(profileJobs, job)), profile.jobsText]
@@ -64,9 +103,27 @@ function answer(question: Question, profile: OnboardingProfile) {
 
 function restore(): State | undefined {
   const stored = readStored<State>('about');
-  return stored?.profile && Array.isArray(stored.seen) && Array.isArray(stored.profile.jobs)
-    ? { ...stored, editing: null }
-    : undefined;
+  if (
+    !stored?.profile ||
+    !Array.isArray(stored.seen) ||
+    !Array.isArray(stored.profile.roles) ||
+    !Array.isArray(stored.profile.jobs)
+  )
+    return;
+  const profile = trimmed(stored.profile);
+  const list = questions(profile);
+  const seen = stored.seen.filter((question) => list.includes(question));
+  return {
+    current:
+      stored.current === 'done' && list.every((question) => seen.includes(question))
+        ? 'done'
+        : list.includes(stored.current as Question)
+          ? stored.current
+          : (list.find((question) => !seen.includes(question)) ?? 'scope'),
+    seen,
+    profile,
+    editing: null,
+  };
 }
 
 function Chip({
@@ -95,7 +152,6 @@ function Chip({
 function Other({
   open,
   value,
-  submit,
   onOpen,
   onChange,
   onEnter,
@@ -103,7 +159,6 @@ function Other({
 }: {
   open: boolean;
   value: string;
-  submit: boolean;
   onOpen(): void;
   onChange(value: string): void;
   onEnter(): void;
@@ -129,25 +184,34 @@ function Other({
         data-analytics-private
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event: KeyboardEvent) => {
-          if (event.key === 'Enter') onEnter();
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onEnter();
+          }
         }}
       />
       <button
         type="button"
-        className={cn('ob-chip-action', submit && 'ob-chip-send')}
-        aria-label={submit ? 'Send' : 'Close'}
+        className="ob-chip-action"
+        aria-label="Clear something else"
         onClick={onAction}
       >
-        {submit ? <ArrowRight size={18} aria-hidden="true" /> : <X size={16} aria-hidden="true" />}
+        <X size={16} aria-hidden="true" />
       </button>
     </span>
   );
 }
 
-function Reply({ text, onEdit }: { text: string; onEdit(): void }) {
+function Reply({ text, onEdit, disabled }: { text: string; onEdit(): void; disabled?: boolean }) {
   return (
     <div className="ob-reply">
-      <button type="button" className="ob-reply-edit" aria-label="Edit answer" onClick={onEdit}>
+      <button
+        type="button"
+        className="ob-reply-edit"
+        aria-label="Edit answer"
+        onClick={onEdit}
+        disabled={disabled}
+      >
         <Pencil size={16} aria-hidden="true" />
       </button>
       <div className="ob-bubble ob-user-bubble" data-analytics-private>
@@ -157,18 +221,20 @@ function Reply({ text, onEdit }: { text: string; onEdit(): void }) {
   );
 }
 
-export function About({ arrived, quiet, onNext, onBack }: StepProps) {
+export function About({ arrived, quiet, onNext, onBack, usageShared }: StepProps) {
   const [restored] = useState(restore);
   const [state, setState] = useState<State>(() => restored ?? fresh);
-  const [draft, setDraft] = useState(() => restored?.profile.roleText ?? '');
   const [typing, setTyping] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [canContinue, setCanContinue] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const end = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
-  const intro = useReveal([{ typing: 450 }, { wait: 200 }, { wait: 200 }], {
-    enabled: arrived === 'forward' && !quiet && !restored,
-  });
+  const intro = useReveal(
+    [{ typing: 450 }, { wait: 200 }, ...(usageShared ? [{ wait: 200 }] : []), { wait: 200 }],
+    { enabled: arrived === 'forward' && !quiet && !restored },
+  );
   const { profile, current, editing } = state;
   const list = questions(profile);
   const has = (job: ProfileJob) => profile.jobs.includes(job);
@@ -181,13 +247,26 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       block: 'end',
       behavior: prefersReducedMotion() ? 'auto' : 'smooth',
     });
-  }, [current, typing]);
+  }, [current, typing, error]);
 
   function settle(question: Question, next: OnboardingProfile) {
-    const seen = state.seen.includes(question) ? state.seen : [...state.seen, question];
-    const upcoming = questions(next).find((item) => !seen.includes(item)) ?? 'done';
-    setState({ current: upcoming, seen, profile: next, editing: null });
-    if (upcoming === 'done') return void finish(next);
+    const profile = trimmed(next);
+    const list = questions(profile);
+    let seen = (state.seen.includes(question) ? state.seen : [...state.seen, question]).filter(
+      (item) => list.includes(item),
+    );
+    if (
+      question === 'scope' &&
+      state.profile.roles.some((role) => !profile.roles.includes(role)) &&
+      !profile.roles.length &&
+      !profile.roleText
+    )
+      seen = seen.filter((item) => item !== 'roles');
+    const upcoming = list.find((item) => !seen.includes(item)) ?? 'done';
+    setError('');
+    setCanContinue(false);
+    setState({ current: upcoming, seen, profile, editing: null });
+    if (upcoming === 'done') return void finish(profile);
     if (prefersReducedMotion()) return;
     window.clearTimeout(timer.current);
     setTyping(true);
@@ -197,23 +276,49 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
   function edit(question: Question) {
     window.clearTimeout(timer.current);
     setTyping(false);
+    setError('');
+    setCanContinue(false);
     setState((value) => ({ ...value, current: question, editing: null }));
   }
 
-  function sendRole() {
-    const text = draft.trim();
-    if (text) settle('role', { ...profile, role: undefined, roleText: text });
+  function skip(question: Question) {
+    if (question === 'scope') return settle(question, { ...profile, scope: undefined });
+    if (question === 'roles')
+      return settle(question, { ...profile, roles: [], roleText: undefined, whoFor: undefined });
+    if (question === 'whoFor') return settle(question, { ...profile, whoFor: undefined });
+    if (question === 'size') return settle(question, { ...profile, companySize: undefined });
+    return settle(question, { ...profile, jobs: [], jobsText: undefined });
   }
 
-  function trimmed(value: OnboardingProfile): OnboardingProfile {
-    return { ...value, jobsText: value.jobsText?.trim() || undefined };
+  function sendRoles() {
+    if (profile.roles.length || profile.roleText?.trim()) settle('roles', profile);
   }
 
   function sendJobs() {
-    settle('jobs', trimmed(profile));
+    if (profile.jobs.length || profile.jobsText?.trim()) settle('jobs', profile);
   }
 
-  function toggle(job: ProfileJob) {
+  function toggleRole(role: ProfileRole) {
+    setError('');
+    setState((value) => {
+      const profile = applicable({
+        ...value.profile,
+        roles: value.profile.roles.includes(role)
+          ? value.profile.roles.filter((item) => item !== role)
+          : [...value.profile.roles, role],
+      });
+      return {
+        ...value,
+        seen: profile.roles.some((item) => profileBusinessRoles.includes(item))
+          ? value.seen
+          : value.seen.filter((item) => item !== 'whoFor'),
+        profile,
+      };
+    });
+  }
+
+  function toggleJob(job: ProfileJob) {
+    setError('');
     setState((value) => ({
       ...value,
       profile: {
@@ -228,30 +333,21 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
   async function finish(final: OnboardingProfile) {
     if (saving) return;
     setSaving(true);
+    setError('');
+    setCanContinue(false);
     const capture = analyticsForCurrentSession();
-    const asked = questions(final);
-    const saved: OnboardingProfile = {
-      ...final,
-      companySize: asked.includes('size') ? final.companySize : undefined,
-    };
-    const chose = (job: ProfileJob) => final.jobs.includes(job);
-    capture('onboarding_profile_answered', {
-      scope: final.scope ?? 'skipped',
-      role: final.roleText ? 'other' : (final.role ?? 'skipped'),
-      company_size: asked.includes('size') ? (final.companySize ?? 'skipped') : 'not_asked',
-      job_email: chose('email'),
-      job_calendar: chose('calendar'),
-      job_follow_ups: chose('follow_ups'),
-      job_errands: chose('errands'),
-      job_research: chose('research'),
-      job_routines: chose('routines'),
-      job_other: Boolean(final.jobsText),
-    });
-    await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) }).catch(
-      () => capture('ui_error', { area: 'onboarding', action: 'save' }),
-    );
-    setSaving(false);
-    onNext();
+    const saved = trimmed(final);
+    try {
+      await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) });
+      capture('onboarding_profile_answered', onboardingProfileAnswers(saved));
+      onNext();
+    } catch (cause) {
+      capture('ui_error', { area: 'onboarding', action: 'save' });
+      setError(errorMessage(cause));
+      setCanContinue(cause instanceof ApiError && cause.status === 502);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function choices(question: Question) {
@@ -275,33 +371,51 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
           {option.label}
         </Chip>
       ));
-    if (question === 'role')
+    if (question === 'whoFor')
+      return profileWhoFor.map((option) => (
+        <Chip
+          key={option.id}
+          on={profile.whoFor === option.id}
+          onClick={() => settle('whoFor', { ...profile, whoFor: option.id })}
+        >
+          {option.label}
+        </Chip>
+      ));
+    if (question === 'roles')
       return [
         ...profileRoles
           .filter((option) => !('personal' in option) || profile.scope === 'personal')
           .map((option) => (
             <Chip
               key={option.id}
-              on={!profile.roleText && profile.role === option.id}
-              onClick={() => settle('role', { ...profile, role: option.id, roleText: undefined })}
+              check
+              on={profile.roles.includes(option.id)}
+              onClick={() => toggleRole(option.id)}
             >
               {option.label}
             </Chip>
           )),
         <Other
           key="other"
-          open={editing === 'role'}
-          value={draft}
-          submit
-          onOpen={() => setState((value) => ({ ...value, editing: 'role' }))}
-          onChange={setDraft}
-          onEnter={sendRole}
-          onAction={sendRole}
+          open={editing === 'roles' || Boolean(profile.roleText)}
+          value={profile.roleText ?? ''}
+          onOpen={() => setState((value) => ({ ...value, editing: 'roles' }))}
+          onChange={(roleText) =>
+            setState((value) => ({ ...value, profile: { ...value.profile, roleText } }))
+          }
+          onEnter={sendRoles}
+          onAction={() =>
+            setState((value) => ({
+              ...value,
+              editing: null,
+              profile: { ...value.profile, roleText: undefined },
+            }))
+          }
         />,
       ];
     return [
       ...profileJobs.map((option) => (
-        <Chip key={option.id} check on={has(option.id)} onClick={() => toggle(option.id)}>
+        <Chip key={option.id} check on={has(option.id)} onClick={() => toggleJob(option.id)}>
           {option.label}
         </Chip>
       )),
@@ -309,7 +423,6 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
         key="other"
         open={editing === 'jobs' || Boolean(profile.jobsText)}
         value={profile.jobsText ?? ''}
-        submit={false}
         onOpen={() => setState((value) => ({ ...value, editing: 'jobs' }))}
         onChange={(jobsText) =>
           setState((value) => ({ ...value, profile: { ...value.profile, jobsText } }))
@@ -344,11 +457,19 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
                   Can you tell me a bit about yourself? The more I know about you, the more useful I
                   can be from day one.
                 </Bubble>,
+                ...(usageShared
+                  ? [
+                      <Bubble>
+                        With Share usage data on, the Nod team can see the fixed choices you pick
+                        here in analytics. What you type in Something else isn’t included.
+                      </Bubble>,
+                    ]
+                  : []),
               ]
             : []),
           <Bubble>
             <strong>{prompts[question]}</strong>
-            {question === 'jobs' && ' Pick as many as you like.'}
+            {(question === 'roles' || question === 'jobs') && ' Pick as many as you like.'}
           </Bubble>,
         ]}
       />,
@@ -366,6 +487,7 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
         key={`${question}-answered`}
         text={answer(question, profile) ?? 'Skipped'}
         onEdit={() => edit(question)}
+        disabled={saving}
       />,
     );
   }
@@ -376,8 +498,8 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       ? () => void finish(profile)
       : current === 'jobs' && (profile.jobs.length || profile.jobsText?.trim())
         ? sendJobs
-        : current === 'role' && editing === 'role' && draft.trim()
-          ? sendRole
+        : current === 'roles' && (profile.roles.length || profile.roleText?.trim())
+          ? sendRoles
           : undefined;
 
   return (
@@ -387,11 +509,16 @@ export function About({ arrived, quiet, onNext, onBack }: StepProps) {
       onClick={intro.done ? undefined : intro.skip}
     >
       {turns}
+      {error && (
+        <div className="ob-about-error">
+          <Notice>{error}</Notice>
+        </div>
+      )}
       <div ref={end} />
       <Footer
         onBack={onBack}
-        onSkip={current === 'done' ? undefined : () => settle(current, trimmed(profile))}
-        skipLabel="Not now"
+        onSkip={current === 'done' ? (canContinue ? onNext : undefined) : () => skip(current)}
+        skipLabel={current === 'done' ? 'Continue anyway' : 'Not now'}
         onNext={ready}
         busy={saving}
       />

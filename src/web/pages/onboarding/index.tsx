@@ -39,7 +39,7 @@ export type StepProps = {
   onSkip?(): void;
   nextLabel?: string;
   usageShared?: boolean;
-  updates?: boolean;
+  researchContact?: boolean;
   traces?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
 };
 
@@ -63,7 +63,7 @@ export function Onboarding({
   onComplete,
   onFeedback,
   usageShared = false,
-  updates = false,
+  researchContact = false,
   traces,
   onTraces,
 }: {
@@ -71,7 +71,7 @@ export function Onboarding({
   onComplete(): Promise<void>;
   onFeedback?(): void;
   usageShared?: boolean;
-  updates?: boolean;
+  researchContact?: boolean;
   traces?: boolean;
   onTraces?(enabled: boolean): Promise<void>;
 }) {
@@ -416,7 +416,7 @@ export function Onboarding({
           onSkip={skipped}
           nextLabel={!desktop && step === 'join' ? 'Start chatting' : undefined}
           usageShared={usageShared}
-          updates={updates}
+          researchContact={researchContact}
           traces={
             step === 'privacy' && traces !== undefined && onTraces
               ? { enabled: traces, onChange: onTraces }

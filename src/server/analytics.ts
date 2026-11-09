@@ -7,6 +7,8 @@ import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 import { apiKeyModelProviders } from '../shared/models.ts';
+import { onboardingPersonProperties } from '../shared/onboarding-analytics.ts';
+import type { OnboardingProfile } from '../shared/onboarding.ts';
 
 import {
   analyticsEvent,
@@ -127,6 +129,7 @@ export async function createAnalytics(options: {
     ? await installationId(options.dataRoot, options.installationId).catch(() => null)
     : null;
   const available = Boolean(options.provider && localId);
+  const personProfileAvailable = Boolean(options.provider?.setPersonProperties && localId);
   const states = new Map<
     string,
     { enabled: boolean; version: number; revision?: string; controller: AbortController }
@@ -244,6 +247,34 @@ export async function createAnalytics(options: {
       );
     } catch {}
   }
+  async function setOwnerPersonProperties(
+    owner: string,
+    properties: Record<string, string | number | boolean | string[]>,
+  ) {
+    const current = consent(owner);
+    const distinctId = configuration(owner).distinctId;
+    if (!personProfileAvailable || !current.enabled || !distinctId) return false;
+    try {
+      const sent = await options.provider?.setPersonProperties?.(
+        { distinctId, properties },
+        current.signal,
+      );
+      return Boolean(sent && !current.signal.aborted && current.version === consent(owner).version);
+    } catch {
+      return false;
+    }
+  }
+  function setOnboardingProfileAnswers(owner: string, profile: OnboardingProfile) {
+    return setOwnerPersonProperties(owner, onboardingPersonProperties(profile));
+  }
+  function setResearchContactEmail(owner: string, email: string) {
+    return setOwnerPersonProperties(owner, {
+      email,
+      nod_research_contact_consent: true,
+      nod_research_contact_consent_at: new Date().toISOString(),
+      nod_research_contact_consent_version: 1,
+    });
+  }
   function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
     const current = state(owner);
     if (current.enabled === enabled && current.revision === revision) return;
@@ -260,6 +291,9 @@ export async function createAnalytics(options: {
   return {
     configuration,
     consent,
+    personProfileAvailable,
+    setOnboardingProfileAnswers,
+    setResearchContactEmail,
     withRun<T>(owner: string, operation: () => T): T {
       return runs.run({ owner, id: randomUUID(), consent: consent(owner) }, operation);
     },

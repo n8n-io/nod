@@ -133,6 +133,7 @@ def finish(frame):
  sys.exit(frame['type']!='exit')
 def members():
  found=[]
+ if not os.path.isdir('/proc'): return found
  for name in os.listdir('/proc'):
   if not name.isdigit(): continue
   try:
@@ -142,6 +143,7 @@ def members():
  return found
 def descendants():
  table={}
+ if not os.path.isdir('/proc'): return []
  for name in os.listdir('/proc'):
   if not name.isdigit(): continue
   try:

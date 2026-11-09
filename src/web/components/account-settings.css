@@ -158,6 +158,14 @@
   padding-bottom: 0;
   border-bottom: 0;
 }
+.account-community a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.account-community a:hover {
+  color: var(--link-hover);
+}
 .account-region h2,
 .account-region h3 {
   margin: 0 0 12px;

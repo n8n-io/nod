@@ -3,7 +3,7 @@ import type { Connection } from './contracts.ts';
 export const onboardingSteps = ['welcome', 'email', 'about', 'brain', 'privacy', 'join'] as const;
 export const onboardingEmailProviders = ['gmail', 'outlook'] as const;
 export const onboardingCalendarProviders = ['googlecalendar', 'outlook'] as const;
-export const onboardingVersion = 4;
+export const onboardingVersion = 5;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 
 export const profileScopes = [
@@ -22,17 +22,22 @@ export const profileRoles = [
   { id: 'student', label: 'Student', personal: true },
   { id: 'not_working', label: 'Not working right now', personal: true },
 ] as const;
+export const profileWhoFor = [
+  { id: 'me', label: 'For me' },
+  { id: 'clients', label: 'For my clients' },
+  { id: 'both', label: 'Both' },
+] as const;
 export const profileCompanySizes = [
   { id: 'solo', label: 'Just me' },
-  { id: '2_10', label: '2–10 people' },
-  { id: '11_100', label: '11–100 people' },
-  { id: '101_1000', label: '101–1,000 people' },
-  { id: '1000_plus', label: '1,000+ people' },
+  { id: '2_10', label: '2–10' },
+  { id: '11_100', label: '11–100' },
+  { id: '101_1000', label: '101–1,000' },
+  { id: '1000_plus', label: '1,000+' },
 ] as const;
 export const profileJobs = [
-  { id: 'email', label: 'Stay on top of email' },
+  { id: 'email', label: 'Stay on top of email and Slack' },
   { id: 'calendar', label: 'Manage my calendar' },
-  { id: 'follow_ups', label: 'Make sure nothing slips' },
+  { id: 'meetings', label: 'Prep my meetings and day' },
   { id: 'errands', label: 'Handle bookings and errands online' },
   { id: 'research', label: 'Research things for me' },
   { id: 'routines', label: 'Take care of recurring tasks' },
@@ -40,12 +45,15 @@ export const profileJobs = [
 export const profileTextChars = 200;
 export type ProfileScope = (typeof profileScopes)[number]['id'];
 export type ProfileRole = (typeof profileRoles)[number]['id'];
+export type ProfileWhoFor = (typeof profileWhoFor)[number]['id'];
 export type ProfileCompanySize = (typeof profileCompanySizes)[number]['id'];
 export type ProfileJob = (typeof profileJobs)[number]['id'];
+export const profileBusinessRoles: readonly ProfileRole[] = ['owner', 'freelance', 'agency'];
 export type OnboardingProfile = {
   scope?: ProfileScope;
-  role?: ProfileRole;
+  roles: ProfileRole[];
   roleText?: string;
+  whoFor?: ProfileWhoFor;
   companySize?: ProfileCompanySize;
   jobs: ProfileJob[];
   jobsText?: string;

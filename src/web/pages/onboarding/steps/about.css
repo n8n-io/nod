@@ -98,13 +98,6 @@
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
-.ob-chip-send {
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-.ob-chip-send:hover {
-  background: var(--primary-hover);
-}
 .ob-reply {
   display: flex;
   align-self: flex-end;
@@ -140,79 +133,13 @@
 .ob-reply-edit:focus-visible {
   opacity: 1;
 }
-.ob-join-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.ob-about-error {
   margin-left: 44px;
 }
-.ob-join-updates {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: var(--surface);
-}
-.ob-join-consent {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  cursor: pointer;
-}
-.ob-join-consent > .checkbox {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  cursor: pointer;
-}
-.ob-join-consent > .checkbox[aria-invalid='true'] {
-  outline: 2px solid var(--error);
-  outline-offset: 1px;
-}
-.ob-join-note {
-  margin: 0;
-  color: var(--error);
-  font-size: var(--text-control);
-}
-.ob-join-links {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-.ob .ob-join-links a.ob-join-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-  min-height: 44px;
-  padding: 8px 14px 8px 20px;
-  border-radius: 8px;
-  color: var(--foreground);
-  text-decoration: none;
-}
-.ob .ob-join-links a.ob-join-link:hover {
-  background: var(--muted);
-  color: var(--foreground);
-}
-.ob-join-link:hover > span {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.ob-join-link > svg {
-  flex-shrink: 0;
-  margin-left: -8px;
-  color: var(--muted-foreground);
-}
-.ob-join-logo {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
+@media (max-width: 640px) {
+  .ob-about-error {
+    margin-left: 0;
+  }
 }
 @media (hover: none) {
   .ob-reply-edit {
@@ -222,8 +149,5 @@
 @media (max-width: 640px) {
   .ob-chips {
     padding-left: 0;
-  }
-  .ob-join-body {
-    margin-left: 0;
   }
 }
