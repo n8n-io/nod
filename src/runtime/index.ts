@@ -32,7 +32,7 @@ import {
   systemPrompt,
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { currentUserTime } from './time-context.ts';
+import { currentUserTime, localResultTimes } from './time-context.ts';
 import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { ReplyDelivery, Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
@@ -478,6 +478,14 @@ export function createAgentRuntime(dependencies: {
                 ? context.timeZone
                 : undefined,
             );
+          else if (!nested && output !== confirmationNotice) {
+            const times = localResultTimes(
+              result.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+              context.timeZone,
+            );
+            if (times)
+              result = { ...result, content: [{ type: 'text', text: times }, ...result.content] };
+          }
           end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
