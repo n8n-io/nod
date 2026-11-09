@@ -122,6 +122,50 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
+test('LAB-878: a first reply uses an owner name only when the owner supplied it', async (t) => {
+  const question = 'Czy mówisz po polsku?';
+  const answer = 'Tak, mogę rozmawiać po polsku.';
+  const salutation = `Cześć, Lena! ${answer}`;
+  for (const [label, prompt, draft, ownerSuppliedName] of [
+    ['invented name', question, salutation, false],
+    ['nameless reply', question, answer, false],
+    ['owner-supplied name', `Mam na imię Lena. ${question}`, salutation, true],
+  ] as const)
+    await t.test(label, async () => {
+      const { result, replies } = await fixture(
+        async (_tools, emit, options) => {
+          assert.ok(!options.ownerContext?.includes('Lena'));
+          emit({ type: 'final', text: draft });
+        },
+        {
+          prompt,
+          firstConversationTurn: true,
+          history: [],
+          memory: '',
+          connectedApps: [
+            {
+              slug: 'outlook',
+              name: 'Outlook',
+              status: 'connected',
+              connectionId: randomUUID(),
+              accountName: 'Synthetic shared mailbox',
+              accountEmail: 'shared@example.test',
+              access: ['api'],
+              triggersEnabled: false,
+            },
+          ],
+        },
+      );
+      assert.equal(result.status, 'succeeded');
+      assert.equal(replies.length, 1);
+      assert.equal(
+        replies.some((text) => /\bLena\b/u.test(text)),
+        ownerSuppliedName,
+        'The first reply must not address the owner by a name absent from their messages.',
+      );
+    });
+});
+
 test('answer choices remain ordinary questions with runtime-owned IDs and bounded public options', async () => {
   const choices = [
     { label: 'Work account', description: 'The shared project mailbox' },
