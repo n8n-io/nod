@@ -79,7 +79,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 - **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
 - **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
-- **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops everything.
+- **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops source checks, nudges, new tasks Nod would start, planned checks of tasks it started, and the email checks on new Gmail mail. Schedules and tasks you started keep running.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.
 
@@ -95,7 +95,7 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 ## Cost
 
-Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it.
+Preparation has no budget of its own. Its model use counts toward your monthly spending limit in **Usage**, like everything else. Unchanged Gmail, Calendar and saved work start no model call. Apps without their own reader are checked every 30 minutes, backing off to every 4 hours while nothing changes, and cost a private run only when their results changed. A due matter is checked once at its time; that check decides when to look again. "Pause preparation" stops all of it, including the email checks on new Gmail mail and the planned checks of tasks Nod started.
 
 Source checks also count toward the observer's task check-in, before the full observer starts. At the limit, Nod stops new source reads and checks and asks whether to continue. A quiet result cannot skip this check-in.
 

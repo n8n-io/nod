@@ -39,6 +39,7 @@ function month({ view, timeZone, locale }: UsageReport) {
     month.planUsd > 0 &&
       ` Your ChatGPT plan covered about ${dollars(month.planUsd)}${month.spentUsd > 0 ? ' more' : ''} at API prices.`,
     month.unpriced && ' Some usage has no price in Nod, such as a local or free model.',
+    month.backgroundUsd > 0 && ` Background work cost ${dollars(month.backgroundUsd)}.`,
   ]
     .filter(Boolean)
     .join('');

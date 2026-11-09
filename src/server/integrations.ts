@@ -174,6 +174,7 @@ type IntegrationOptions = {
   browserConnections?: (client?: PoolClient) => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
+  paused?(): Promise<boolean>;
 };
 
 function browserService(origin: string) {
@@ -2077,6 +2078,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (closed || !provider.configured || !provider.pollInbox) return Promise.resolve();
     if (polling) return polling;
     polling = (async () => {
+      if (await options.paused?.()) return;
       const { rows } = await pool.query<ConnectionRow>(
         `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug='gmail'
          AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
@@ -2691,7 +2693,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         if (!event.id || event.id.length > 200)
           return reply.code(400).send({ error: 'The webhook event has no valid identity.' });
         const messageId = slug.data === 'gmail' && messageIdentity(event.data, 'message');
-        const summary = `Source connectionId: ${row.id}.\n${await eventOverview(slug.data, event.trigger, event.data, mailCheck)}`;
+        const summary = `Source connectionId: ${row.id}.\n${
+          (await options.paused?.())
+            ? `Connected-app event from ${slug.data}; trigger ${event.trigger}. Read the source for its current state.`
+            : await eventOverview(slug.data, event.trigger, event.data, mailCheck)
+        }`;
         await pool.query(
           'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING',
           [

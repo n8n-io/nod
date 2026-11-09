@@ -946,6 +946,7 @@ async function initializeApplication(
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
     sessionCosts: ledger.sessionCosts,
+    recentTurnCost: ledger.recentTurnCost,
   });
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({
@@ -1022,6 +1023,7 @@ async function initializeApplication(
   const icon = previews ? cachedIcons((origin) => previews.icon(origin)) : undefined;
   const integrations = await createIntegrations(pool, {
     mailCheck,
+    paused: async () => (await speechPreferences.get()).proactivePaused,
     analytics: captureAnalytics,
     analyticsConsent,
     admission,

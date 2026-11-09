@@ -1817,6 +1817,35 @@ test(
         const resumed = (await check())!;
         assert.equal(resumed.parent_turn_id, turnId);
         await waitFor(settled(resumed.id));
+        const started = randomUUID();
+        const startedTurn = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'event','Synthetic prepared follow-up','succeeded',true)",
+          [startedTurn, ownerId, threadId, started],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic prepared follow-up','Synthetic reply arrived','Waiting',1,$4,date_trunc('milliseconds',now())-interval '1 minute')",
+          [started, ownerId, startedTurn, `${threadId}:synthetic`],
+        );
+        t.after(() => db.pool.query('DELETE FROM tasks WHERE id=$1', [started]));
+        await db.pool.query(
+          'INSERT INTO preferences(owner_id,proactive_paused) VALUES($1,true) ON CONFLICT(owner_id) DO UPDATE SET proactive_paused=true',
+          [ownerId],
+        );
+        const followUps = async () =>
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source='resume'",
+              [started],
+            )
+          ).rows[0].n;
+        await tasks.resumeDue(threadId);
+        assert.equal(await followUps(), 0);
+        await db.pool.query('UPDATE preferences SET proactive_paused=false WHERE owner_id=$1', [
+          ownerId,
+        ]);
+        await tasks.resumeDue(threadId);
+        await waitFor(async () => (await followUps()) === 1, 20_000);
       });
 
       await t.test('consecutive messages run as turns on the same thread', async (t) => {
@@ -8311,7 +8340,7 @@ test(
     const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
     await f.pool.query(`
       CREATE TABLE messages(id uuid,owner_id text,turn_id uuid,role text,text text,attachments jsonb DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz,proactive boolean);
       CREATE TABLE turn_events(id uuid,turn_id uuid,run_id uuid,parent_run_id uuid,session_id uuid,call_id uuid,type text,summary text,created_at timestamptz DEFAULT now());
       CREATE TABLE model_usage(id text,owner_id text,turn_id uuid,session_id uuid,run_id uuid,parent_run_id uuid,cost_usd double precision,details jsonb,created_at timestamptz DEFAULT now());
       CREATE TABLE tasks(id uuid,owner_id text,turn_id uuid,session_id uuid,state text,step_index integer,steps jsonb,revision integer,applied_revision integer,updated_at timestamptz DEFAULT now());
@@ -8385,6 +8414,7 @@ test(
       [childRun, mainRun, 'tool_complete', 'web search'],
       [childRun, mainRun, 'tool_failed', privateText],
       [childRun, mainRun, 'agent_failed', privateText],
+      [mainRun, null, 'source_screened', ''],
     ])
       await f.pool.query(
         'INSERT INTO turn_events(id,turn_id,session_id,run_id,parent_run_id,call_id,type,summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -8593,7 +8623,8 @@ test(
     assert.equal(report.turns[0].queueMs, 60_000);
     assert.equal(report.turns[0].durationMs, 60_000);
     assert.equal(report.turns[0].errorPresent, true);
-    assert.equal(report.execution.length, 7);
+    assert.equal(report.turns[0].screened, true);
+    assert.equal(report.execution.length, 8);
     assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
     assert.ok(report.execution.some((row: any) => row.tool === 'web'));
     const child = report.execution.find(

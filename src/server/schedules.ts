@@ -78,6 +78,7 @@ export interface ScheduleDependencies {
   retireScheduleConfirmations?(client: PoolClient, id: string, waitForSend: boolean): Promise<void>;
   now?: () => Date;
   sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
+  recentTurnCost?(turnId?: string): Promise<number | null>;
 }
 
 interface ScheduleRow {
@@ -501,31 +502,43 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return result;
   }
 
-  async function monthlyCosts(rows: ScheduleRow[]) {
+  async function monthlyCosts(rows: ScheduleRow[], turnId?: string) {
     const recurring = rows.filter((row) => row.kind === 'recurring' && row.enabled && row.cron);
     const monthly = new Map<string, number>();
     if (!recurring.length || !dependencies.sessionCosts) return monthly;
     const runs = (
-      await pool.query<{ schedule_id: string; turn_id: string }>(
-        `SELECT schedule_id,turn_id FROM (
+      await pool.query<{ schedule_id: string; turn_id: string; latest: boolean }>(
+        `SELECT schedule_id,turn_id,latest FROM (
            SELECT r.schedule_id,r.turn_id,
-             row_number() OVER (PARTITION BY r.schedule_id ORDER BY r.scheduled_for DESC) AS recent
+             row_number() OVER (PARTITION BY r.schedule_id ORDER BY r.scheduled_for DESC) AS recent,
+             row_number() OVER (ORDER BY r.scheduled_for DESC)<=10 AS latest
            FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-           WHERE r.schedule_id=ANY($1::uuid[]) AND r.owner_id=$2
-             AND u.status NOT IN ('queued','running','waiting')) runs
-         WHERE recent<=10`,
+           WHERE r.owner_id=$2 AND u.status NOT IN ('queued','running','waiting')) runs
+         WHERE (recent<=10 AND schedule_id=ANY($1::uuid[])) OR latest`,
         [recurring.map((row) => row.id), ownerId],
       )
     ).rows;
     const costs = await dependencies.sessionCosts(runs.map((run) => run.turn_id));
+    const pricedRuns = (keep: (run: (typeof runs)[number]) => boolean) =>
+      runs.flatMap((run) => {
+        const cost = keep(run) ? costs[run.turn_id] : undefined;
+        return typeof cost === 'number' && cost > 0 ? [cost] : [];
+      });
+    const recent = pricedRuns((run) => run.latest);
+    let fallback: Promise<number | null> | undefined;
     const from = now();
     const month = 30 * 86_400_000;
     for (const row of recurring) {
-      const priced = runs.flatMap((run) => {
-        const cost = run.schedule_id === row.id ? costs[run.turn_id] : undefined;
-        return typeof cost === 'number' && cost > 0 ? [cost] : [];
-      });
-      if (!priced.length) continue;
+      const own = pricedRuns((run) => run.schedule_id === row.id);
+      const priced = own.length
+        ? own
+        : recent.length
+          ? recent
+          : [
+              (await (fallback ??=
+                dependencies.recentTurnCost?.(turnId) ?? Promise.resolve(null))) ?? 0,
+            ];
+      if (!priced.some((cost) => cost > 0)) continue;
       const upcoming = scheduler.previewSchedule(row.cron!, { tz: row.timeZone, count: 200, from });
       const last = upcoming.at(-1)?.getTime();
       const count =
@@ -537,7 +550,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return monthly;
   }
 
-  async function value(row: ScheduleRow, monthly?: Map<string, number>): Promise<Schedule> {
+  async function value(
+    row: ScheduleRow,
+    monthly?: Map<string, number>,
+    turnId?: string,
+  ): Promise<Schedule> {
     return {
       id: row.id,
       title: row.title,
@@ -551,7 +568,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       nextRun: row.nextRun?.toISOString() ?? null,
       lastRun: (await history({ limit: 1, scheduleId: row.id }, false)).runs[0] ?? null,
       baselineObservation: row.baselineObservation,
-      monthlyUsd: (monthly ?? (await monthlyCosts([row]))).get(row.id) ?? null,
+      monthlyUsd: (monthly ?? (await monthlyCosts([row], turnId))).get(row.id) ?? null,
     };
   }
 
@@ -747,7 +764,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         },
       });
     });
-    return value(row);
+    return value(row, undefined, provenance?.turnId);
   }
 
   async function update(
@@ -827,7 +844,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         },
       });
     });
-    return value(row);
+    return value(row, undefined, provenance?.turnId);
   }
 
   async function remove(id: string) {

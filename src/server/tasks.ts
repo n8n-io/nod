@@ -520,6 +520,7 @@ export function createTasks(options: {
       `SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
          ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
        FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
+         AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))
          AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
          AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
            AND u.status IN ('queued','running','waiting'))`,

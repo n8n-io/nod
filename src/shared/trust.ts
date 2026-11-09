@@ -1,4 +1,9 @@
-export type TrustSource = 'chat' | 'task' | 'schedule' | 'event' | 'check' | 'resume';
+export type TrustSource = 'chat' | 'task' | 'started' | 'schedule' | 'event' | 'check' | 'resume';
+
+export interface TrustOutside {
+  kind: 'email' | 'memory' | 'style' | 'ideas' | 'other';
+  costUsd: number;
+}
 
 export type TrustBecause =
   { kind: 'message' | 'schedule' | 'standing' | 'rule'; text: string } | { kind: 'approved' };
@@ -45,6 +50,8 @@ export interface TrustView extends TrustPage {
     daily: number[];
     unpriced: boolean;
     planUsage: boolean;
+    backgroundUsd: number;
+    outside: TrustOutside[];
   };
   limit: { monthlyUsd: number; reached: boolean } | null;
   taskUsd: number | null;

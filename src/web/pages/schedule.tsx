@@ -61,6 +61,7 @@ export function ScheduleRow({
           <span>Next {date(schedule.nextRun)}</span>
         )}
         {schedule.timeZone !== dateFormat.timeZone && <span>{schedule.timeZone}</span>}
+        {schedule.monthlyUsd !== null && <span>≈{money(schedule.monthlyUsd)} a month</span>}
       </p>
       <PlanDetails
         label={schedule.title}

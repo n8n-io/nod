@@ -8701,6 +8701,7 @@ test(
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
+        CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,activity_key text);
         CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
           turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now())`);
@@ -8955,10 +8956,10 @@ test(
         "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('extra','owner',NULL,0.5)",
       );
       assert.equal(await ledger.limitReached(), true);
-      assert.deepEqual((await app.inject('/api/trust')).json().limit, {
-        monthlyUsd: 1,
-        reached: true,
-      });
+      const limited = (await app.inject('/api/trust')).json();
+      assert.deepEqual(limited.limit, { monthlyUsd: 1, reached: true });
+      assert.equal(Math.round(limited.month.backgroundUsd * 100) / 100, 0.6);
+      assert.deepEqual(limited.month.outside, [{ kind: 'other', costUsd: 0.5 }]);
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);
       await limit(1.16);
