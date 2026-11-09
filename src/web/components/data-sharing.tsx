@@ -75,8 +75,8 @@ export function DataSharing({
           )}
           {traces !== undefined && (
             <Item icon={MessageSquareText} title="Conversation traces" state={state(traces)}>
-              Your chats with Nod, after it removes the personal details it can recognize. Deleted
-              after 14 days and never used to train AI.
+              Your chats with Nod, after it removes the personal details it can recognize. It can
+              miss some. Deleted after 14 days and never used to train AI.
             </Item>
           )}
           <Item icon={LockKeyhole} title="Never shared">

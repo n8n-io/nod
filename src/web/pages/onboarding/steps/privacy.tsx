@@ -54,13 +54,11 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
     <section className="ob-step ob-privacy" onClick={done ? undefined : skip}>
       <Messages revealed={revealed} typing={typing} items={items} />
       <Rise show={done} className="ob-choices">
-        {(usageShared || traces) && (
-          <DataSharing
-            className="ob-link ob-data-sharing"
-            usage={usageShared || undefined}
-            traces={traces?.enabled}
-          />
-        )}
+        <DataSharing
+          className="ob-link ob-data-sharing"
+          usage={Boolean(usageShared)}
+          traces={traces?.enabled}
+        />
         {traces ? (
           <>
             <Button
