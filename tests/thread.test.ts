@@ -1862,7 +1862,15 @@ test(
                 },
               },
             });
-          const cases = [
+          const usageCap = (error: Record<string, unknown>) =>
+            'The model request failed: 429 Too Many Requests: ' +
+            JSON.stringify({ error: { ...error, detail: 'synthetic-private-provider-detail' } });
+          const cases: Array<{
+            prompt: string;
+            error: string;
+            guidance?: RegExp;
+            terminal?: 'account' | 'workplace';
+          }> = [
             { prompt: 'model-gemini-quota-fixture', error: nestedQuota, guidance: /quota/i },
             {
               prompt: 'model-plain-rate-limit-fixture',
@@ -1873,6 +1881,48 @@ test(
               prompt: 'model-rate-limit-code-fixture',
               error: 'The model request failed: rate_limit_error',
               guidance: /rate limit/i,
+            },
+            {
+              prompt: 'model-go-usage-cap-fixture',
+              error: usageCap({
+                type: 'GoUsageLimitError',
+                message: 'Monthly usage limit reached',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-free-usage-cap-fixture',
+              error: usageCap({
+                type: 'FreeUsageLimitError',
+                message: 'Free usage allowance exhausted',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-subscription-usage-cap-fixture',
+              error: usageCap({
+                code: 'subscription_sharing_usage_limit_exceeded',
+                message: 'Shared subscription allowance exhausted',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-workplace-usage-cap-fixture',
+              error: usageCap({
+                code: 'subscription_sharing_workplace_individual_usage_limit_exceeded',
+                message: 'Workspace allowance exhausted',
+              }),
+              guidance: /usage limit/i,
+              terminal: 'workplace',
+            },
+            {
+              prompt: 'model-zai-usage-cap-fixture',
+              error: usageCap({ code: 1308, message: 'Plan allowance exhausted' }),
+              guidance: /quota/i,
+              terminal: 'account',
             },
             {
               prompt: 'model-unavailable-fixture',
@@ -1911,11 +1961,21 @@ test(
               if (item.guidance) {
                 assert.ok(turn.error.length < 240);
                 assert.match(turn.error, item.guidance);
-                assert.match(turn.error, /wait|retry|try again/i);
                 if (item.prompt === 'model-gemini-quota-fixture') {
                   assert.match(turn.error, /HTTP 429/);
                   assert.match(turn.error, /14 seconds/);
                 }
+                if (item.terminal) {
+                  assert.match(turn.error, /HTTP 429/);
+                  assert.doesNotMatch(
+                    turn.error,
+                    /try again shortly|try again in about \d+ seconds/i,
+                  );
+                  if (item.terminal === 'workplace') {
+                    assert.match(turn.error, /admin/i);
+                    assert.doesNotMatch(turn.error, /billing/i);
+                  } else assert.match(turn.error, /check|reset|billing|upgrade|enable/i);
+                } else assert.match(turn.error, /wait|retry|try again/i);
                 for (const text of [turn.error, shown])
                   assert.doesNotMatch(
                     text,
