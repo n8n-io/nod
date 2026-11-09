@@ -48,6 +48,7 @@ import {
   isReleaseMerge,
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
+import { bindRecovery, recoveryContext } from '../../.github/scripts/desktop-release-recovery.mjs';
 import { run, verifyDiskImage, verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
@@ -533,6 +534,202 @@ test('automatic patches resume the matching draft and never reuse an occupied or
   assert.throws(() =>
     automaticRelease(f.root, [{ tag_name: 'nod-v9.0.0', draft: false }], 'synthetic/nod'),
   );
+});
+
+test('release recovery binds normal and automatic builds to their original run and refresh', async (t) => {
+  for (const automatic of [false, true])
+    await t.test(
+      automatic ? 'automatic private release' : 'normal public release',
+      async (scope) => {
+        const f = await releaseRepository(scope);
+        await prepareRelease(f.root, '0.1.0');
+        let source = f.commit();
+        let version = '0.1.0';
+        let planBytes;
+        if (automatic) {
+          f.git('tag', 'nod-v0.1.0');
+          await writeFile(join(f.root, 'desktop/main.mjs'), 'export const next = true;\n');
+          source = f.commit();
+          version = '0.1.1';
+          planBytes = Buffer.from(
+            JSON.stringify(
+              automaticRelease(f.root, [{ tag_name: 'nod-v0.1.0', draft: false }], 'synthetic/nod'),
+            ) + '\n',
+          );
+        }
+        const artifacts = join(f.root, '.local/desktop-release-artifacts');
+        const updateSourceUrl = automatic
+          ? 'https://internal.example.invalid/webhook/nod/desktop'
+          : '';
+        const runtimeReused = { arm64: automatic, x64: automatic };
+        const contextSource = join(f.root, '.local/desktop-release-context.json');
+        await promisify(execFile)(
+          process.execPath,
+          [
+            fileURLToPath(
+              new URL('../../.github/scripts/desktop-release-recovery.mjs', import.meta.url),
+            ),
+            'create',
+          ],
+          {
+            cwd: f.root,
+            env: {
+              PATH: process.env.PATH,
+              GITHUB_REPOSITORY: 'synthetic/nod',
+              GITHUB_RUN_ID: '456',
+              GITHUB_RUN_ATTEMPT: '2',
+              NOD_CONTEXT_SOURCE: source,
+              NOD_CONTEXT_VERSION: version,
+              NOD_CONTEXT_RUNTIME_REFRESH: '2026-11-02',
+              NOD_CONTEXT_MAC_MATRIX: JSON.stringify({
+                include: ['arm64', 'x64'].map((arch) => ({
+                  arch,
+                  runtime_reused: String(runtimeReused[arch]),
+                })),
+              }),
+              NOD_CONTEXT_PLAN_SHA256: planBytes
+                ? createHash('sha256').update(planBytes).digest('hex')
+                : '',
+              NOD_CONTEXT_UPDATE_SOURCE_URL: updateSourceUrl,
+              NOD_CONTEXT_PRIVATE: String(automatic),
+            },
+          },
+        );
+        const context = recoveryContext(JSON.parse(await readFile(contextSource, 'utf8')));
+        const contextPath = join(artifacts, 'desktop-release-context/desktop-release-context.json');
+        await mkdir(dirname(contextPath), { recursive: true });
+        await copyFile(contextSource, contextPath);
+        if (planBytes) {
+          const planPath = join(artifacts, 'desktop-release-plan/desktop-release-plan.json');
+          await mkdir(dirname(planPath), { recursive: true });
+          await writeFile(planPath, planBytes);
+        }
+        const manifests = [
+          ['arm64/release.json', 'darwin-arm64'],
+          ['x64/release.json', 'darwin-x64'],
+          ['win32-x64/release-win32-x64.json', 'win32-x64'],
+        ];
+        for (const [file, platform] of manifests) {
+          const path = join(f.root, 'dist/desktop', file);
+          await mkdir(dirname(path), { recursive: true });
+          await writeFile(
+            path,
+            JSON.stringify({
+              platform,
+              version,
+              source,
+              ...(updateSourceUrl ? { updateSourceUrl } : {}),
+            }),
+          );
+          if (platform !== 'win32-x64')
+            await writeFile(
+              join(dirname(path), 'runtime-release.json'),
+              JSON.stringify({ releaseTag: automatic ? 'nod-v0.1.0' : `nod-v${version}` }),
+            );
+        }
+        const expected = {
+          repository: 'synthetic/nod',
+          runId: '456',
+          runAttempt: '2',
+          source,
+          privateRepository: automatic,
+        };
+        const publisher = {
+          name: 'Verify uploaded assets and prepare the release',
+          conclusion: 'failure',
+        };
+        const jobs = [
+          'Check release prerequisites',
+          'Check arm64 Mac updates',
+          'Check x64 Mac updates',
+          'Package the arm64 Mac app',
+          'Package the x64 Mac app',
+          'Build the Windows runtime',
+          'Check Windows updates',
+          'Package and check the Windows installer',
+        ].map((name) => ({ name, conclusion: 'success' }));
+        if (!automatic)
+          for (const arch of ['arm64', 'x64'])
+            jobs.push({ name: `Build ${arch} Mac runtime images`, conclusion: 'success' });
+        jobs.push(publisher);
+        const getAttemptJobs = async (attempt) => {
+          if (attempt === '2') return jobs;
+          if (attempt === '3') return [publisher];
+          throw new Error('Unexpected run attempt.');
+        };
+        const recover = (selected = expected, getJobs = getAttemptJobs) =>
+          bindRecovery({ root: f.root, artifacts, expected: selected, getAttemptJobs: getJobs });
+        scope.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-16T12:00:00Z') });
+        const environment = await recover();
+        assert.equal(environment.NOD_RELEASE_SOURCE, source);
+        assert.equal(environment.NOD_RELEASE_VERSION, version);
+        assert.equal(environment.NOD_DESKTOP_UPDATE_SOURCE_URL, updateSourceUrl);
+        assert.equal(environment.NOD_RUNTIME_REFRESH, '2026-11-02');
+        assert.equal(environment.NOD_RELEASE_PLAN_SHA256, context.metadataSha256 || undefined);
+        assert.equal(
+          environment.NOD_RELEASE_PLAN,
+          automatic ? '.local/desktop-release-plan.json' : undefined,
+        );
+        if (automatic)
+          assert.deepEqual(await readFile(join(f.root, environment.NOD_RELEASE_PLAN)), planBytes);
+        const rerun = await recover({ ...expected, runAttempt: '3' });
+        assert.equal(rerun.NOD_RUNTIME_REFRESH, '2026-11-02');
+        await assert.rejects(recover({ ...expected, runAttempt: '1' }), /selected build run/);
+        await assert.rejects(recover({ ...expected, runId: '457' }), /selected build run/);
+        if (!automatic)
+          await assert.rejects(
+            recover({ ...expected, runAttempt: '3' }, async (attempt) =>
+              attempt === '3'
+                ? [publisher, { name: 'Build arm64 Mac runtime images', conclusion: 'skipped' }]
+                : jobs,
+            ),
+            /arm64 runtime image/,
+          );
+        await assert.rejects(
+          recover({ ...expected, runAttempt: '3' }, async (attempt) =>
+            attempt === '3'
+              ? [publisher, { name: 'Future verification', conclusion: 'failure' }]
+              : jobs,
+          ),
+          /unexpected unsuccessful job/,
+        );
+        if (automatic) {
+          await recover({ ...expected, runAttempt: '3' }, async (attempt) =>
+            attempt === '3'
+              ? [
+                  publisher,
+                  {
+                    name: 'Build ${{ matrix.arch }} Mac runtime images',
+                    conclusion: 'skipped',
+                  },
+                ]
+              : jobs,
+          );
+          await assert.rejects(
+            recover({ ...expected, privateRepository: false }),
+            /visibility changed/,
+          );
+          await writeFile(
+            join(artifacts, 'desktop-release-plan/desktop-release-plan.json'),
+            Buffer.from('Changed release plan'),
+          );
+          await assert.rejects(recover(), /checksum/);
+        } else {
+          const path = join(f.root, 'dist/desktop/x64/release.json');
+          await writeFile(
+            path,
+            JSON.stringify({
+              platform: 'darwin-x64',
+              version,
+              source,
+              updateSourceUrl: 'https://other.example.invalid',
+            }),
+          );
+          await assert.rejects(recover(), /darwin-x64 release/);
+        }
+        scope.mock.timers.reset();
+      },
+    );
 });
 
 test('signing discovery preserves native bundles and skips symlinks under a low file limit', async (t) => {
@@ -1027,6 +1224,15 @@ test('public releases refuse missing or rejected provenance before uploading ass
   }
 });
 
+test('public desktop releases refuse broker-backed bundles before upload', async (t) => {
+  const f = await releaseFixture(t, {
+    isPublic: true,
+    updateSourceUrl: 'https://internal.example.invalid/webhook/nod/desktop',
+  });
+  await assert.rejects(f.invoke('draft', false), /private update service/);
+  assert.equal((await f.readState()).created, 0);
+});
+
 test('private releases require provenance when attestations are enabled', async (t) => {
   const f = await releaseFixture(t);
   for (const workflow of ['desktop-release', 'recover-desktop-release']) {
@@ -1309,10 +1515,10 @@ test('one official release waits for verified runtime and downloaded app bytes',
 });
 
 test('all three checked bundles publish together as one regular Nod release', async (t) => {
-  for (const { isPublic, updateSourceUrl, recovery = false, reusedRuntime = false } of [
+  for (const { isPublic, updateSourceUrl, rejectBroker = false, reusedRuntime = false } of [
     { isPublic: false, updateSourceUrl: 'https://releases.example.invalid/nod' },
     { isPublic: true },
-    { isPublic: true, updateSourceUrl: 'https://releases.example.invalid/nod', recovery: true },
+    { isPublic: true, updateSourceUrl: 'https://releases.example.invalid/nod', rejectBroker: true },
     { isPublic: true, reusedRuntime: true },
   ]) {
     const f = await releaseFixture(t, {
@@ -1475,7 +1681,12 @@ test('all three checked bundles publish together as one regular Nod release', as
       `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
     );
     await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
-    if (!recovery) {
+    if (rejectBroker) {
+      await assert.rejects(f.invoke('draft-all'), /private update service/);
+      assert.equal((await f.readState()).created, 0);
+      continue;
+    }
+    {
       for (const missing of ['reopened', 'signatures']) {
         await writeFile(
           join(windows, 'windows-check.json'),
@@ -1547,7 +1758,7 @@ test('all three checked bundles publish together as one regular Nod release', as
     assert.equal(completed.releases[f.appTag].prerelease, false);
     assert.deepEqual(
       completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
-      Array(recovery ? 1 : isPublic ? 2 : 3).fill(f.appTag),
+      Array(isPublic ? 2 : 3).fill(f.appTag),
     );
     for (const name of [
       'nod-arm64.dmg',
@@ -1594,12 +1805,6 @@ test('all three checked bundles publish together as one regular Nod release', as
       }
       assert.deepEqual(new Set(checkedAssets), expectedChecked);
     }
-    if (recovery)
-      assert(
-        completed.calls.some(
-          (call) => call[0] === 'fetch' && call[2].startsWith(`${updateSourceUrl}/releases`),
-        ),
-      );
   }
 });
 

@@ -673,6 +673,8 @@ async function draftApp({ stageOnly = false } = {}) {
   )
     throw new Error('Self-signed builds require accessible private distribution repositories.');
   const metadata = JSON.parse(await readFile(join(output, 'release.json'), 'utf8'));
+  if (!appRepo.private && metadata.updateSourceUrl)
+    throw new Error('Public desktop releases cannot use the private update service.');
   if (
     metadata.platform !== platform ||
     metadata.version !== version ||
@@ -917,6 +919,11 @@ async function draftAll({ stageOnly = false } = {}) {
   const windows = join(root, 'dist/desktop/win32-x64');
   const metadata = JSON.parse(await readFile(join(windows, 'release-win32-x64.json'), 'utf8'));
   const receipt = JSON.parse(await readFile(join(windows, 'windows-check.json'), 'utf8'));
+  const appRepo = api(`repos/${releaseRepository}`, releaseRepository);
+  if (!appRepo || typeof appRepo.private !== 'boolean')
+    throw new Error('The desktop release repository is unavailable.');
+  if (!appRepo.private && metadata.updateSourceUrl)
+    throw new Error('Public desktop releases cannot use the private update service.');
   if (
     metadata.version !== version ||
     metadata.source !== source ||
