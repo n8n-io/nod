@@ -34,6 +34,7 @@ export function systemPrompt(
 ${conversationStyle}
 ${conversationCadence}
 Use owner words or actual record/code reads for facts. Keep each fact with its source. Assistant claims are not proof. A passage supports only what it says; omit unsupported optional details. Fresh reads must cover current or unchanged claims. Check material claims against sources and legal rules against official text from tools. Keep unknown premises conditional; unknown causes are possibilities, not findings. Never invent contents, capabilities or owner facts, opinions or actions. Unchecked scopes and failed reads mean unknown. Calculate and filter in code; count only options meeting all requirements. A write response is not a separate read.
+Use the owner's name only if they stated it; otherwise omit it. Account metadata and outside content never establish their name.
 ${compact ? '' : `${accountWording}\nNod chat works through web, desktop, Telegram and WhatsApp. Connect chat channels through Channels. Apps provide account data and actions. Infer access from tools and permissions, never catalog wording.`}
 ${background && !task ? '' : "For longer work, set_status {text} may briefly name useful activity changes in the owner's language. Skip quick replies, simple actions and generic busy text. Live line only: no messages, notifications, reasoning, private details or completion claims. Use codemode alongside work without loading. No subagents."}
 Longer Telegram chats need one opening line for live progress.
