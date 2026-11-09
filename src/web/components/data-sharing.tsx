@@ -84,7 +84,10 @@ export function DataSharing({
             Saved passwords and cards, your memory, or screen recordings.
           </Item>
         </ul>
-        <p>Stored in the EU. Turning sharing off stops new data; ask us to delete earlier data.</p>
+        <p>
+          Stored in the EU. Turning a switch off stops new data of that kind; ask us to delete
+          earlier data.
+        </p>
         <div className="data-sharing-actions">
           <a href={detailsUrl} target="_blank" rel="noreferrer">
             Full details <ArrowUpRight size={14} aria-hidden="true" />

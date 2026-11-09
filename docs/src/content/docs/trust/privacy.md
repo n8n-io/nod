@@ -56,14 +56,14 @@ The trace also includes Nod's instructions, the model name, token counts, and co
 
 ### What each switch shares
 
-|           | Usage data                                                                                                                                                        |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default   | On                                                                                                                                                                |
-| Includes  | Screens and features you use, fixed About you choices, kinds of tasks, timings, costs, failures, basic device details, and survey answers you choose to send      |
-| Excludes  | Your messages, Nod's replies, what Nod reads, passwords, cards, names, and contact details. A separately consented research email is the contact-detail exception |
-| Stored in | n8n's PostHog project in the EU                                                                                                                                   |
-| Switch    | **Share usage data**                                                                                                                                              |
-| Details   | [Analytics](/deploy/analytics/)                                                                                                                                   |
+|           | Usage data                                                                                                                                                                                                                 |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default   | On                                                                                                                                                                                                                         |
+| Includes  | Screens and features you use, fixed About you choices, kinds of tasks, timings, costs, failures, basic device details such as browser, OS and screen size, pseudonymous session IDs, and survey answers you choose to send |
+| Excludes  | Your messages, Nod's replies, what Nod reads, passwords, cards, names, contact details, and screen recordings or session replays. A separately consented research email is the contact-detail exception                    |
+| Stored in | n8n's PostHog project in the EU                                                                                                                                                                                            |
+| Switch    | **Share usage data**                                                                                                                                                                                                       |
+| Details   | [Analytics](/deploy/analytics/)                                                                                                                                                                                            |
 
 |                | Conversation traces                                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------- |
