@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { communityLinks } from '../../../../shared/onboarding';
-import { Envelope } from '../../../components/icons';
+import { ArrowUpRight } from '../../../components/icons';
 import { Rise } from '../../../components/motion';
 import { ServiceLogo } from '../../../components/service-logo';
-import { Button, Input } from '../../../components/ui';
+import { Checkbox, Input } from '../../../components/ui';
 import { api, errorMessage } from '../../../lib/api';
 import { captureAnalytics } from '../../../lib/analytics';
 import type { StepProps } from '..';
@@ -11,30 +11,48 @@ import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const privacyUrl = 'https://nod-docs.pages.dev/trust/privacy/#email-updates';
 
+type Notice = { kind: 'hint' | 'error'; text: string };
+
 export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps) {
   const { revealed, typing, done, skip } = useReveal([{ typing: 450 }, { wait: 200 }], {
     enabled: arrived === 'forward',
   });
+  const field = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [error, setError] = useState('');
+  const [agreed, setAgreed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
-  async function subscribe() {
+  async function finish() {
     const address = email.trim();
-    if (!address || status !== 'idle') return;
-    setStatus('saving');
-    setError('');
+    if (!updates || !address || notice) return onNext();
+    if (!agreed)
+      return setNotice({
+        kind: 'hint',
+        text: 'Tick the box to get updates, or select Start chatting again to continue without them.',
+      });
+    if (field.current && !field.current.checkValidity())
+      return setNotice({
+        kind: 'error',
+        text: 'Check the email address, or select Start chatting again to continue without updates.',
+      });
+    setSaving(true);
     try {
       await api('/api/onboarding/updates', {
         method: 'POST',
         body: JSON.stringify({ email: address }),
       });
       captureAnalytics('onboarding_updates_subscribed');
-      setStatus('saved');
+      onNext();
     } catch (cause) {
-      setError(errorMessage(cause));
-      setStatus('idle');
+      setNotice({ kind: 'error', text: errorMessage(cause) });
+    } finally {
+      setSaving(false);
     }
+  }
+
+  function edited() {
+    setNotice(null);
   }
 
   return (
@@ -44,103 +62,99 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
         typing={typing}
         items={[
           <Bubble>
-            <strong>Want to stay up to date on Nod?</strong> Join the community, share your ideas,
-            or get occasional updates.
+            {updates ? (
+              <>
+                <strong>Want occasional updates on Nod?</strong> Leave your email below, or join the
+                community.
+              </>
+            ) : (
+              <>
+                <strong>Want to stay up to date on Nod?</strong> Join the community.
+              </>
+            )}
           </Bubble>,
         ]}
       />
-      <Rise show={done} className="ob-join-group">
-        <div className="ob-join-row">
-          <ServiceLogo slug="discord" logoUrl="/logos/discord.svg" size={24} />
-          <span className="ob-join-title">Chat with the Nod team and community</span>
-          <Button variant="outline" asChild>
-            <a
-              href={communityLinks.discord}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() =>
-                captureAnalytics('onboarding_community_opened', { channel: 'discord' })
-              }
-            >
-              Join Discord
-            </a>
-          </Button>
-        </div>
-        <div className="ob-join-divider" aria-hidden="true" />
-        <div className="ob-join-row">
-          <ServiceLogo slug="n8n" logoUrl="/logos/n8n.svg" size={24} />
-          <span className="ob-join-title">Share ideas and help shape Nod</span>
-          <Button variant="outline" asChild>
-            <a
-              href={communityLinks.forum}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => captureAnalytics('onboarding_community_opened', { channel: 'forum' })}
-            >
-              Open forum
-            </a>
-          </Button>
-        </div>
+      <Rise show={done} className="ob-join-body">
         {updates && (
-          <>
-            <div className="ob-join-divider" aria-hidden="true" />
-            <div className="ob-join-updates">
-              <div className="ob-join-row">
-                <Envelope size={24} aria-hidden="true" />
-                <label className="ob-join-title" htmlFor="ob-join-email">
-                  Be the first to hear what’s new
-                </label>
-              </div>
-              <form
-                className="ob-join-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void subscribe();
+          <div className="ob-join-updates">
+            <label className="sr-only" htmlFor="ob-join-email">
+              Email
+            </label>
+            <Input
+              ref={field}
+              id="ob-join-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              data-analytics-private
+              onChange={(event) => {
+                setEmail(event.target.value);
+                edited();
+              }}
+            />
+            <label className="ob-join-consent">
+              <Checkbox
+                checked={agreed}
+                onChange={(event) => {
+                  setAgreed(event.target.checked);
+                  edited();
                 }}
+              />
+              <span>
+                I agree to get occasional emails about Nod and to the{' '}
+                <a href={privacyUrl} target="_blank" rel="noreferrer">
+                  privacy policy
+                </a>
+                . Unsubscribe anytime.
+              </span>
+            </label>
+            {notice && (
+              <p
+                className="ob-join-note"
+                data-kind={notice.kind}
+                role={notice.kind === 'error' ? 'alert' : 'status'}
               >
-                <Input
-                  id="ob-join-email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  data-analytics-private
-                  onChange={(event) => {
-                    setEmail(event.target.value);
-                    if (status === 'saved') setStatus('idle');
-                  }}
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  disabled={!email.trim() || status !== 'idle'}
-                  aria-busy={status === 'saving'}
-                >
-                  Subscribe
-                </Button>
-              </form>
-              <p className="ob-join-note" role={error ? 'alert' : undefined}>
-                {error ||
-                  (status === 'saved' ? (
-                    'Thanks! We’ll be in touch.'
-                  ) : (
-                    <>
-                      Occasional emails about Nod. Unsubscribe anytime.{' '}
-                      <a href={privacyUrl} target="_blank" rel="noreferrer">
-                        Privacy policy
-                      </a>
-                    </>
-                  ))}
+                {notice.text}
               </p>
-            </div>
-          </>
+            )}
+          </div>
         )}
+        <div className="ob-join-links">
+          <a
+            className="ob-join-link"
+            href={communityLinks.discord}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => captureAnalytics('onboarding_community_opened', { channel: 'discord' })}
+          >
+            <span className="ob-join-logo">
+              <ServiceLogo slug="discord" logoUrl="/logos/discord.svg" size={20} />
+            </span>
+            <span>Chat with the Nod team and community on Discord</span>
+            <ArrowUpRight size={16} aria-hidden="true" />
+          </a>
+          <a
+            className="ob-join-link"
+            href={communityLinks.forum}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => captureAnalytics('onboarding_community_opened', { channel: 'forum' })}
+          >
+            <span className="ob-join-logo">
+              <ServiceLogo slug="n8n" logoUrl="/logos/n8n.svg" size={24} />
+            </span>
+            <span>Share ideas and help shape Nod on the forum</span>
+            <ArrowUpRight size={16} aria-hidden="true" />
+          </a>
+        </div>
       </Rise>
       <Footer
         onBack={onBack}
-        onNext={onNext}
+        onNext={() => void finish()}
         nextLabel={nextLabel ?? 'Continue'}
-        busy={status === 'saving'}
+        busy={saving}
       />
     </section>
   );
