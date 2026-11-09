@@ -20,6 +20,7 @@ import { createAssistantMessageEventStream, type AssistantMessage } from '@earen
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import {
   appConfirmation,
+  type AgentEvent,
   type AgentSessionOptions,
   type RuntimeContext,
 } from '../src/ports/agent.ts';
@@ -3490,6 +3491,188 @@ test('a turn that crosses the compaction line answers first, then compacts at th
   );
   assert.equal(compactions.length, 1);
   assert.ok(answered >= 0 && answered < compactions[0]);
+});
+
+test('full 32k Pi sessions distinguish context exhaustion from output truncation on continue', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-context-exhaustion-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bodies: Array<{
+    messages: Array<{ role: string; content: unknown }>;
+    tools?: unknown[];
+    max_tokens: number;
+  }> = [];
+  let fullContext = false;
+  let requestedTool = false;
+  const server = createServer((request, response) => {
+    const parts: Buffer[] = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      if (request.url === '/v1/models') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        return response.end(
+          JSON.stringify({ data: [{ id: 'fixture-qwen', context_length: 32_768 }] }),
+        );
+      }
+      if (request.url !== '/v1/chat/completions') {
+        response.writeHead(404, { 'content-type': 'application/json' });
+        return response.end('{}');
+      }
+      const body: (typeof bodies)[number] = JSON.parse(Buffer.concat(parts).toString());
+      bodies.push(body);
+      const summarizing = !body.tools?.length;
+      const tool = fullContext && !summarizing && !requestedTool;
+      if (tool) requestedTool = true;
+      const promptTokens = fullContext && !tool && !summarizing ? 32_750 : 1000;
+      const outputTokens = fullContext || summarizing ? 17 : body.max_tokens;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        chunk({
+          id: `fixture-cutoff-${bodies.length}`,
+          choices: [
+            {
+              index: 0,
+              delta: tool
+                ? {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'fixture-calendar-read',
+                        type: 'function',
+                        function: {
+                          name: 'bash',
+                          arguments: JSON.stringify({ command: 'fixture-list-calendars' }),
+                        },
+                      },
+                    ],
+                  }
+                : {
+                    role: 'assistant',
+                    content: summarizing
+                      ? 'The owner wants the remaining synthetic calendars included in the answer. The calendar read already finished.'
+                      : 'The remaining synthetic calendars are',
+                  },
+            },
+          ],
+        }) +
+          chunk({
+            id: `fixture-cutoff-${bodies.length}`,
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: tool ? 'tool_calls' : summarizing ? 'stop' : 'length',
+              },
+            ],
+            usage: {
+              prompt_tokens: promptTokens,
+              completion_tokens: outputTokens,
+              total_tokens: promptTokens + outputTokens,
+            },
+          }) +
+          'data: [DONE]\n\n',
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${port}/v1` };
+  const [definition] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+  assert.equal(definition.choice.contextWindow, 32_768);
+  const agent = createPiAgent({
+    provider: 'compatible',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => ({
+      provider: 'compatible',
+      method: 'api_key',
+      definition,
+      effort: 'off',
+      read: async () => credential,
+    }),
+  });
+  const events: AgentEvent[] = [];
+  const { workspace, scripts } = recordingWorkspace();
+  const runtime = createAgentRuntime({
+    agent: {
+      ...agent,
+      open: (input) =>
+        agent.open({
+          ...input,
+          onEvent: (event) => {
+            events.push(event);
+            input.onEvent(event);
+          },
+        }),
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  t.after(() => runtime.dispose());
+  const turn = async (sessionId: string, prompt: string) => {
+    events.length = 0;
+    let result: Awaited<ReturnType<typeof runtime.runTurn>> | undefined;
+    let failure: { name: string; message: string } | undefined;
+    try {
+      result = await runtime.runTurn({
+        ...context(directory),
+        sessionId,
+        turnId: randomUUID(),
+        prompt,
+        history:
+          prompt === 'yes'
+            ? [
+                { role: 'user', text: 'Summarize the events across my synthetic calendars.' },
+                {
+                  role: 'assistant',
+                  text: 'Should I include the remaining synthetic calendars in the answer?',
+                },
+              ]
+            : [],
+      });
+    } catch (error) {
+      assert.ok(error instanceof Error);
+      failure = { name: error.name, message: error.message };
+    }
+    return {
+      outcome: { result, failure },
+      ending: events.findLast((event) => event.type === 'message_end'),
+      usage: events.filter((event) => event.type === 'model_usage'),
+    };
+  };
+  const outputLimit = await turn('fixture-output-limit', 'List the synthetic calendars.');
+  assert.ok(outputLimit.outcome.failure);
+  assert.deepEqual(outputLimit.ending, { type: 'message_end', status: 'incomplete' });
+  assert.equal(bodies.length, 1);
+  assert.equal(outputLimit.usage[0].outputTokens, bodies[0].max_tokens);
+  assert.ok(outputLimit.usage[0].totalTokens < 32_768);
+
+  fullContext = true;
+  const exhausted = [];
+  for (const prompt of ['yes', 'continue', 'continue'])
+    exhausted.push(await turn('fixture-full-context', prompt));
+  assert.equal(scripts.length, 1);
+  assert.ok(scripts[0].includes('fixture-list-calendars'));
+  for (const attempt of exhausted)
+    assert.ok(
+      attempt.usage.some((usage) => usage.inputTokens === 32_750 && usage.outputTokens === 17),
+    );
+  for (const attempt of exhausted) {
+    assert.ok(attempt.outcome.failure);
+    assert.notDeepEqual(
+      attempt.outcome,
+      outputLimit.outcome,
+      'A full context must not offer the same unchanged-context retry as an output-limit cutoff.',
+    );
+    assert.deepEqual(attempt.ending, {
+      type: 'message_end',
+      status: 'incomplete',
+      contextExhausted: true,
+    });
+  }
 });
 
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {

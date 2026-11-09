@@ -103,6 +103,8 @@ Each model request uses at most the output limit of its target model. Text reque
 
 Before sending a small-window model request, Nod estimates the complete serialized payload at one token per three UTF-8 bytes. It leaves a safety margin and limits output to at most a quarter of the window. A request that leaves fewer than 128 output tokens fails before it reaches the provider. This estimate includes tool schemas. Images use Pi's estimate of 1,200 tokens each, instead of counting their encoded bytes as text. The provider's actual text and image token counts can differ. Nod does not cut the current owner instruction or rules to make a request fit.
 
+When a cut-off response's reported token use reaches the context safety margin, Nod reports a full context. It asks you to start a new conversation or choose a model with more context. Other output-limit cutoffs still offer “continue”. Nod does not replay the turn or its tools.
+
 When a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
 
 ## Tools

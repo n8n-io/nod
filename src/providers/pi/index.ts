@@ -881,7 +881,16 @@ export function createPiAgent(options: {
                 : event.message.stopReason === 'aborted'
                   ? 'cancelled'
                   : undefined;
-          input.onEvent({ type: 'message_end', ...(status ? { status } : {}) });
+          const tokens = event.message.usage;
+          const contextExhausted =
+            status === 'incomplete' &&
+            tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output >=
+              budget.window - budget.margin;
+          input.onEvent({
+            type: 'message_end',
+            ...(status ? { status } : {}),
+            ...(contextExhausted ? { contextExhausted: true } : {}),
+          });
         }
       });
       const close = async () => {
