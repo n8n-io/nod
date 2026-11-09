@@ -54,6 +54,10 @@ function categoryLabel(value: string) {
   );
 }
 
+function hasCurrentAccount(group: { accounts: Connection[] }) {
+  return group.accounts.some((account) => account.slug !== 'notion_mcp');
+}
+
 export function Apps({
   configuration,
   onAsk,
@@ -155,9 +159,9 @@ export function Apps({
         selectedCategories.includes(categoryKey(category)),
       ),
   );
-  const connected = filtered.filter((group) => group.accounts.length);
-  const available = filtered.filter((group) => !group.accounts.length);
-  const connectedCount = groups.filter((group) => group.accounts.length).length;
+  const connected = filtered.filter(hasCurrentAccount);
+  const available = filtered.filter((group) => !hasCurrentAccount(group));
+  const connectedCount = groups.filter(hasCurrentAccount).length;
   const hasFilters = Boolean(search || selectedCategories.length);
   const empty =
     view === 'connected' ? !connected.length : !filtered.length && !catalogLoading && !catalogError;
@@ -509,9 +513,20 @@ export function Apps({
             accounts.find(
               (account) => account.slug === service.slug && account.status !== 'not_configured',
             ) ??
+            (service.direct ? service : undefined) ??
             accounts.find((account) => account.status !== 'not_configured') ??
             service;
-          const issue = accounts.some((account) => connectionIssue(account));
+          const usableNotion =
+            service.slug === 'notion' &&
+            accounts.some((account) => account.slug === 'notion' && !connectionIssue(account));
+          const issue = accounts.some(
+            (account) =>
+              !(usableNotion && account.slug === 'notion_mcp') && connectionIssue(account),
+          );
+          const connectLabel =
+            service.slug === 'notion' && !usableNotion
+              ? `Connect ${service.name}`
+              : `Connect another ${service.name} account`;
           return (
             <IntegrationCard
               key={key}
@@ -560,8 +575,8 @@ export function Apps({
                       <Button
                         variant="outline"
                         size="icon"
-                        aria-label={`Connect another ${service.name} account`}
-                        title={`Connect another ${service.name} account`}
+                        aria-label={connectLabel}
+                        title={connectLabel}
                         disabled={locked || addAccount.status === 'not_configured'}
                         onClick={() => void connect(addAccount, 'apps', true)}
                       >
