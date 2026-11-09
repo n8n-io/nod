@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
+import { parseIntoClientConfig } from 'pg-connection-string';
 import type { Agent, RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
 import type { Artifact, AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
@@ -65,11 +66,12 @@ test(
     const threads = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
+    const { createTasks } = await import('../src/server/tasks.ts');
     const { createArtifactService, localArtifacts } = await import('../src/server/artifacts.ts');
     const { transaction } = await import('../src/server/transaction.ts');
     cleanup.push(() => localArtifacts.close());
-    const { ownerId, port } = await import('../src/server/config.ts');
-    const app = await createApp();
+    const { configuration, ownerId, port } = await import('../src/server/config.ts');
+    const app = await createApp({ configuration: () => ({ ...configuration(), llmReady: true }) });
     cleanup.push(() => app.close());
     const headers = {
       host: `localhost:${port}`,
@@ -86,8 +88,10 @@ test(
       string,
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
+    const publicationOperations: Promise<unknown>[] = [];
     let completedTurns = 0;
     let stagingCompletion: Promise<unknown> | undefined;
+    let publicationRead: { started(): void; resume: Promise<void> } | undefined;
     cleanup.push(async () => {
       const results = await Promise.allSettled(
         [...runtimes.values()].map((runtime) => runtime.dispose()),
@@ -153,6 +157,89 @@ test(
     );
     try {
       await db.initializeDatabase();
+      await t.test(
+        'control transactions write only through the supplied discrete database settings',
+        async (t) => {
+          const controlSchema = `test_control_${suffix}`;
+          await admin.query(`CREATE SCHEMA ${controlSchema}`);
+          t.after(() => admin.query(`DROP SCHEMA ${controlSchema} CASCADE`));
+          await db.pool.query('CREATE TABLE cancellation_control_marks(value text)');
+          await admin.query(`CREATE TABLE ${controlSchema}.cancellation_control_marks(value text)`);
+          const parameters = parseIntoClientConfig(database.href);
+          const ssl = Boolean(new pg.Client(parameters).ssl);
+          const target = new pg.Pool({
+            ...parameters,
+            password: parameters.password,
+            options: `-c search_path=${controlSchema}`,
+            application_name: 'synthetic-cancellation-control',
+            max: 4,
+          });
+          t.after(() => target.end());
+          assert.equal(target.options.connectionString, undefined);
+          await db.cancellationTransaction(async (client) => {
+            assert.equal(
+              (await client.query('SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()')).rows[0]
+                .ssl,
+              ssl,
+            );
+            await client.query('INSERT INTO cancellation_control_marks(value) VALUES ($1)', [
+              'owned-fixture',
+            ]);
+          }, target);
+          assert.deepEqual(
+            (await db.pool.query('SELECT value FROM cancellation_control_marks')).rows,
+            [],
+          );
+          assert.deepEqual(
+            (await target.query('SELECT value FROM cancellation_control_marks')).rows,
+            [{ value: 'owned-fixture' }],
+          );
+        },
+      );
+      await t.test(
+        'concurrent cancellation requests use one control connection at a time',
+        async () => {
+          const target = new pg.Pool({ ...db.pool.options, max: 4 });
+          const opened = new Set<pg.Pool>();
+          const connect = pg.Pool.prototype.connect;
+          const observed = t.mock.method(
+            pg.Pool.prototype,
+            'connect',
+            function (this: pg.Pool, ...args: unknown[]) {
+              if (this !== db.pool) opened.add(this);
+              return Reflect.apply(connect, this, args) as Promise<pg.PoolClient>;
+            },
+          );
+          let started!: () => void;
+          const entered = new Promise<void>((resolve) => {
+            started = resolve;
+          });
+          let resume!: () => void;
+          const blocked = new Promise<void>((resolve) => {
+            resume = resolve;
+          });
+          const work = Array.from({ length: 8 }, (_, index) =>
+            db.cancellationTransaction(async (client) => {
+              await client.query('SELECT 1');
+              started();
+              await blocked;
+              if (index === 0) throw new Error('Synthetic control transaction failure.');
+            }, target),
+          );
+          let results: PromiseSettledResult<unknown>[] = [];
+          try {
+            await entered;
+            assert.equal(opened.size, 1);
+          } finally {
+            resume();
+            results = await Promise.allSettled(work);
+            observed.mock.restore();
+            await target.end();
+          }
+          assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 7);
+          assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
+        },
+      );
       await threads.initializeThreads();
       await createPersonalService({
         pool: db.pool,
@@ -161,6 +248,9 @@ test(
         enqueueTurn: threads.enqueueTurn,
         refresh() {},
       }).initialize({ workers: false });
+      const tasks = createTasks({ pool: db.pool, ownerId });
+      await tasks.initialize();
+      tasks.registerRoutes(app);
       await t.test(
         'publication and upload retention reuse a one-connection caller transaction',
         async () => {
@@ -281,8 +371,11 @@ test(
           if (event === 'turn_completed') completedTurns += 1;
         },
         browserStep: async () => 'run',
-        readArtifact: async (threadId, path) =>
-          readFile(join(dataRoot, 'workspaces', threadId, path)),
+        readArtifact: async (threadId, path) => {
+          publicationRead?.started();
+          await publicationRead?.resume;
+          return readFile(join(dataRoot, 'workspaces', threadId, path));
+        },
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
           signal?.throwIfAborted();
@@ -316,7 +409,19 @@ test(
           }
           const runtime = runtimes.get(context.prompt);
           assert.ok(runtime, 'A turn must use its assigned synthetic runtime.');
-          return runtime.runTurn(context);
+          return runtime.runTurn({
+            ...context,
+            reply(...args) {
+              const operation = context.reply(...args);
+              publicationOperations.push(operation);
+              return operation;
+            },
+            publish(...args) {
+              const operation = context.publish(...args);
+              publicationOperations.push(operation);
+              return operation;
+            },
+          });
         },
         speech: { synthesize: forbidden },
         requestCredential: forbidden,
@@ -496,6 +601,242 @@ test(
         await waitFor(() => held.has(submitted.turnId));
         return submitted;
       };
+      await t.test(
+        'Stop completes while a workspace file publication is still reading',
+        async (t) => {
+          for (const mode of ['reply', 'share_file'])
+            await t.test(mode, async () => {
+              const prompt = `Stop a blocked ${mode} publication`;
+              const threadId = (await threads.activeThread()).id;
+              await mkdir(join(dataRoot, 'workspaces', threadId), { recursive: true });
+              await writeFile(
+                join(dataRoot, 'workspaces', threadId, 'stopped.txt'),
+                'Synthetic file',
+              );
+              let started!: () => void;
+              const reading = new Promise<void>((resolve) => {
+                started = resolve;
+              });
+              let resume!: () => void;
+              publicationRead = {
+                started,
+                resume: new Promise<void>((resolve) => {
+                  resume = resolve;
+                }),
+              };
+              const runtime = createAgentRuntime({
+                computer: fakeComputer(),
+                workspace: fakeWorkspace(),
+                agent: {
+                  open: async (input) => ({
+                    resumed: false,
+                    async prompt() {
+                      const tool = input.tools.find(
+                        (tool) => tool.name === (mode === 'reply' ? 'send_message' : mode),
+                      )!;
+                      await tool.execute(
+                        mode === 'reply'
+                          ? {
+                              text: `Read [the file](/workspace/${threadId}/stopped.txt).`,
+                              intent: 'final',
+                            }
+                          : { path: 'stopped.txt' },
+                      );
+                    },
+                    abort() {},
+                    dispose() {},
+                  }),
+                  dispose() {},
+                },
+              });
+              runtimes.set(prompt, runtime);
+              const submitted = await app.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers,
+                payload: { text: prompt },
+              });
+              assert.equal(submitted.statusCode, 200, submitted.body);
+              const { turnId } = submitted.json<{ turnId: string }>();
+              let stop: Promise<unknown> | undefined;
+              const completedBeforeStop = completedTurns;
+              try {
+                await reading;
+                const stopping = app.inject({ method: 'POST', url: '/api/thread/stop', headers });
+                stop = stopping;
+                const stopped = await Promise.race([
+                  stopping.then(() => true),
+                  delay(1000).then(() => false),
+                ]);
+                assert.equal(stopped, true, 'Stop waited for the workspace file read.');
+                assert.equal((await stopping).statusCode, 200);
+                await waitFor(() => completedTurns > completedBeforeStop);
+                assert.equal(
+                  (await db.pool.query('SELECT status FROM turns WHERE id=$1', [turnId])).rows[0]
+                    .status,
+                  'cancelled',
+                );
+              } finally {
+                resume();
+                publicationRead = undefined;
+                await stop;
+                await runtime.dispose();
+                runtimes.delete(prompt);
+              }
+              await Promise.allSettled(publicationOperations);
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant'",
+                    [turnId],
+                  )
+                ).rowCount,
+                0,
+              );
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT 1 FROM artifacts WHERE thread_id=$1 AND name='stopped.txt'",
+                    [threadId],
+                  )
+                ).rowCount,
+                0,
+              );
+            });
+        },
+      );
+      await t.test(
+        'Stop works when blocked publications occupy every worker database connection',
+        async () => {
+          const prompt = 'Stop four concurrent file publications';
+          const previousThread = (await threads.activeThread()).id;
+          const reset = await app.inject({
+            method: 'POST',
+            url: '/api/conversation/reset',
+            headers,
+            payload: { threadId: previousThread },
+          });
+          assert.equal(reset.statusCode, 200, reset.body);
+          const threadId = reset.json<{ threadId: string }>().threadId;
+          const foreignThread = randomUUID();
+          const foreignTurn = randomUUID();
+          const foreignTask = randomUUID();
+          await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'foreign-owner')", [
+            foreignThread,
+          ]);
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt) VALUES($1,'foreign-owner',$2,$1,'task','Synthetic foreign task')",
+            [foreignTurn, foreignThread],
+          );
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text) VALUES($1,'foreign-owner',$2,$2,'Foreign task','Checked','Working')",
+            [foreignTask, foreignTurn],
+          );
+          await mkdir(join(dataRoot, 'workspaces', threadId), { recursive: true });
+          await writeFile(join(dataRoot, 'workspaces', threadId, 'pool.txt'), 'Synthetic file');
+          let reads = 0;
+          let started!: () => void;
+          const reading = new Promise<void>((resolve) => {
+            started = resolve;
+          });
+          let resume!: () => void;
+          publicationRead = {
+            started() {
+              if (++reads === 4) started();
+            },
+            resume: new Promise<void>((resolve) => {
+              resume = resolve;
+            }),
+          };
+          const active: Array<() => boolean> = [];
+          const runtime = createAgentRuntime({
+            computer: fakeComputer(),
+            workspace: fakeWorkspace(),
+            agent: {
+              open: async (input) => {
+                active.push(input.shouldStop);
+                return {
+                  resumed: false,
+                  async prompt() {
+                    await input.tools
+                      .find((tool) => tool.name === 'send_message')!
+                      .execute({
+                        text: `Read [the file](/workspace/${threadId}/pool.txt).`,
+                        intent: 'final',
+                      });
+                  },
+                  abort() {},
+                  dispose() {},
+                };
+              },
+              dispose() {},
+            },
+          });
+          runtimes.set(prompt, runtime);
+          const turns: string[] = [];
+          let stopping: Promise<unknown> | undefined;
+          try {
+            for (let index = 0; index < 4; index++)
+              turns.push(
+                await threads.enqueueTurn(prompt, {
+                  source: 'schedule',
+                  sourceId: `synthetic-blocked-publication-${index}`,
+                  sessionId: randomUUID(),
+                  background: true,
+                }),
+              );
+            await reading;
+            assert.equal(db.pool.totalCount, 4);
+            assert.equal(db.pool.idleCount, 0);
+            for (const [url, payload, status] of [
+              [`/api/tasks/${foreignTask}/stop`, undefined, 404],
+              ['/api/conversation/reset', { threadId: previousThread }, 409],
+            ] as const) {
+              const response = await Promise.race([
+                app.inject({ method: 'POST', url, headers, payload }),
+                delay(2000).then(() => {
+                  throw new Error('The scope check waited for a worker database connection.');
+                }),
+              ]);
+              assert.equal(response.statusCode, status, response.body);
+              assert.equal(active.length, 4);
+              assert.ok(active.every((stopped) => !stopped()));
+              assert.deepEqual(
+                (
+                  await admin.query(`SELECT status FROM ${schema}.turns WHERE id=ANY($1::uuid[])`, [
+                    turns,
+                  ])
+                ).rows.map(({ status }) => status),
+                ['running', 'running', 'running', 'running'],
+              );
+            }
+            const response = app.inject({ method: 'POST', url: '/api/thread/stop', headers });
+            stopping = response;
+            assert.equal(
+              await Promise.race([response.then(() => true), delay(2000).then(() => false)]),
+              true,
+              'Stop waited for a worker database connection.',
+            );
+            assert.equal((await response).statusCode, 200);
+          } finally {
+            resume();
+            publicationRead = undefined;
+            await stopping;
+            await runtime.dispose();
+            runtimes.delete(prompt);
+          }
+          await Promise.allSettled(publicationOperations);
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT 1 FROM messages WHERE turn_id=ANY($1::uuid[]) AND role='assistant'",
+                [turns],
+              )
+            ).rowCount,
+            0,
+          );
+        },
+      );
       await t.test(
         'workspace file references deliver owned bytes without share_file',
         async (test) => {

@@ -18,7 +18,7 @@ import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
-import { guestConfiguration, protectNetworks } from './guest-config.mjs';
+import { guestConfiguration, protectGuest, protectNetworks } from './guest-config.mjs';
 import {
   assetHash,
   findRuntimeAssets,
@@ -312,8 +312,22 @@ async function prepare(options, onComputerStart) {
       throw new Error('The Nod computer has unexpected folder access.');
     if (config.mounts[0].location !== assets) {
       const currentStatus = await runLima(['list', '--format', '{{.Status}}', vm]);
-      if (currentStatus.trim() !== 'Stopped')
-        throw new Error('Quit and reopen Nod to update its local computer.');
+      if (currentStatus.trim() !== 'Stopped') {
+        status('preparing', 'Stopping your local computer for the update…');
+        await runLima(['stop', '--tty=false', vm], { timeout: 90_000 });
+        signal?.throwIfAborted();
+        await waitFor(
+          async () => {
+            if (
+              (await runLima(['list', '--format', '{{.Status}}', vm], { timeout: 5000 })).trim() !==
+              'Stopped'
+            )
+              throw new Error('Nod could not stop its local computer for the update. Try again.');
+          },
+          { signal, attempts: 3, interval: 250 },
+        );
+      }
+      signal?.throwIfAborted();
       config.mounts[0].location = assets;
       config.images = [
         {
@@ -330,6 +344,15 @@ async function prepare(options, onComputerStart) {
   status('starting', 'Starting your private computer…');
   onComputerStart();
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
+  try {
+    await runLima(['shell', vm, 'sudo', 'bash', '-s'], { input: protectGuest });
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw Object.assign(
+      new Error('Nod could not apply its container protection. Keep your app data and retry.'),
+      { code: 'NOD_COMPUTER_PROTECTION_FAILED', details: error.details || error.stack },
+    );
+  }
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   const prepareImage = async (name) => {

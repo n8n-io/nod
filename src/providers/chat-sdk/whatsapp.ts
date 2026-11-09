@@ -371,7 +371,9 @@ export function createWhatsAppLinkedTransport(options: {
     });
     current.ev.on('connection.update', (update) => {
       if (closed || halted || socket !== current) return;
-      if (update.qr)
+      if (update.isNewLogin)
+        state = { ...state, state: 'connecting', qr: undefined, expiresAt: undefined };
+      else if (update.qr)
         state = {
           ...state,
           state: 'awaiting_scan',

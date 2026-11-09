@@ -58,7 +58,11 @@ semgrep scan --config p/ci --severity ERROR --metrics off --disable-version-chec
 
 CodeQL checks JavaScript, TypeScript, and Python when the repository is public. To use it while the repository is private, enable GitHub Code Security and set `NOD_PRIVATE_CODEQL` to `true`. The workflow does not change repository access or branch protection.
 
-CI also runs Gitleaks on all fetched Git refs and the checkout. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
+CI also runs Gitleaks on all fetched Git refs and the checkout. It downloads the pinned scanner through the authenticated GitHub API and checks its SHA-256 before extraction. The exceptions in `.gitleaks.toml` name exact public values, source hashes, or synthetic fixtures. Do not add an exception for a live credential.
+
+Windows CI downloads Electron through the authenticated GitHub API. The download, cached archives, native fixtures and release build use the checksums shipped with the pinned Electron package. The download token is scoped to its preparation step and is not passed to the test apps.
+
+Native Mac update fixtures also use the checksums shipped with the pinned Electron package. They verify the archive without a separate checksum download.
 
 Check dependency advisories in each package:
 
@@ -93,6 +97,17 @@ flowchart LR
 The network has no internet access, and your source folders are mounted read-only. The run fails if any test is skipped.
 
 Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
+
+## Mac guest protection
+
+Run this check on a Mac with Docker running. It creates a disposable Lima VM from a prepared runtime pack. It tests normal startup, stacked AppArmor signals, mount restrictions, and PostgreSQL data after a restart with the old profile restored. It does not use your Nod profile or connected accounts. The check needs 3 GiB of VM memory. It stops the VM before deleting its files. If the VM cannot stop, the check keeps its control files for recovery.
+
+```sh title="Terminal"
+pnpm run desktop:prepare
+NOD_TEST_GUEST_ASSETS="$PWD/.local/desktop-runtime-assets" node --test --test-name-pattern='guest repair' desktop/test/runtime-assets.test.mjs
+```
+
+The normal desktop tests skip this check when `NOD_TEST_GUEST_ASSETS` is absent or the host is not macOS.
 
 ## Write tests that catch real regressions
 

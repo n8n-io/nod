@@ -7,6 +7,7 @@ import type {
   ObservationQuery,
   ObservationSource,
 } from '../ports/proactivity.ts';
+import { withoutSchemaPatterns } from '../shared/json-schema.ts';
 
 export type AppAccount = {
   connectionId: string;
@@ -89,7 +90,7 @@ export function appTools(raw: unknown, connectionId: string): AppTool[] {
 }
 
 export function appToolArgs(tool: AppTool, args: Record<string, unknown>, connectionId: string) {
-  if (!Compile(tool.schema as Parameters<typeof Compile>[0]).Check(args))
+  if (!Compile(withoutSchemaPatterns(tool.schema) as Parameters<typeof Compile>[0]).Check(args))
     throw Object.assign(new Error('These arguments do not match the tool schema.'), {
       refused: true,
     });

@@ -179,9 +179,11 @@ export function createMemoryLearning(options: {
     if (!reply.success)
       throw new Error('The memory model gave no usable answer. Nothing was saved.');
     const changes = await commit(() =>
-      options.memory.edit((fresh) =>
-        applyOps(fresh, reply.data.ops, ordered, new Date().toISOString(), 'stated'),
-      ),
+      options.memory.edit((fresh) => {
+        if (fresh.generation !== tree.generation)
+          throw new Error('Memory changed while this note was being prepared. Save it again.');
+        return applyOps(fresh, reply.data.ops, ordered, new Date().toISOString(), 'stated');
+      }),
     );
     report(changes, 'agent');
     return {

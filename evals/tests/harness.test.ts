@@ -10,6 +10,7 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
+import { runProcess } from '../../src/providers/process.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
 import type { AccountSettings } from '../../src/shared/account.ts';
@@ -43,6 +44,10 @@ import {
 } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture, proactiveBaselineInstructions } from '../src/capture.ts';
+import { createSpend, mergeAttemptCosts } from '../src/spend.ts';
+import { files } from '../src/whisperbench-attempt.ts';
+import { judge, summarizeWhisper } from '../src/whisperbench.ts';
+import type { WhisperCase, WhisperRun } from '../src/whisperbench-data.ts';
 import { summarizePopulation } from '../src/proactivity.ts';
 import { select } from '../src/run.ts';
 import { decide, promote } from '../src/gate.ts';
@@ -60,7 +65,7 @@ import { collect, collectUsage, requireBackgroundPrompts, type Run } from '../sr
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
-import { createStackRequest, type Stack } from '../src/stack.ts';
+import { createStackRequest, repository, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
@@ -3494,4 +3499,223 @@ test('population scoring keeps a missed critical matter and missing measurements
     ]).arms[0].medianSeconds,
     4,
   );
+});
+
+test('eval spend stops on unknown prices and retains discarded retry costs', () => {
+  const empty = createSpend();
+  empty.add({ modelCalls: 0, judgeTokens: 0, costUsd: null, judgeCostUsd: null });
+  assert.equal(empty.blocked(1), false);
+  const unknown = createSpend();
+  unknown.add({ modelCalls: 1, judgeTokens: 0, costUsd: null, judgeCostUsd: null });
+  assert.equal(unknown.blocked(10), true);
+  assert.equal(unknown.unpriced(), true);
+  assert.equal(unknown.knownCostUsd(), 0);
+  const attempts = [
+    {
+      costUsd: 0.2,
+      judgeCostUsd: 0.01,
+      modelCalls: 2,
+      tokens: 100,
+      judgeTokens: 20,
+    },
+    {
+      costUsd: 0.3,
+      judgeCostUsd: 0.02,
+      modelCalls: 3,
+      tokens: 200,
+      judgeTokens: 30,
+    },
+  ];
+  const priced = createSpend();
+  for (const attempt of attempts) priced.add(attempt);
+  assert.equal(priced.knownCostUsd(), 0.53);
+  assert.equal(priced.blocked(0.53), true);
+  assert.deepEqual(mergeAttemptCosts(attempts), {
+    costUsd: 0.5,
+    judgeCostUsd: 0.03,
+    modelCalls: 5,
+    tokens: 300,
+    judgeTokens: 50,
+  });
+  const exact = createSpend();
+  exact.add({ costUsd: 0.1, judgeCostUsd: 0 });
+  exact.add({ costUsd: 0.7, judgeCostUsd: 0 });
+  assert.equal(exact.blocked(0.8), true);
+  assert.deepEqual(
+    mergeAttemptCosts([
+      { costUsd: null, judgeCostUsd: null, modelCalls: 0, judgeTokens: 0 },
+      { costUsd: 0.2, judgeCostUsd: 0.1, modelCalls: 1, judgeTokens: 1 },
+    ]),
+    {
+      costUsd: 0.2,
+      judgeCostUsd: 0.1,
+      modelCalls: 1,
+      tokens: 0,
+      judgeTokens: 1,
+    },
+  );
+});
+
+test('LongMemEval reports saved failures when the budget prevents a retry', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-longmem-resume-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const script = `
+    import assert from 'node:assert/strict';
+    import childProcess from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { mock } from 'node:test';
+    import { mkdir, writeFile } from 'node:fs/promises';
+    mock.module(${JSON.stringify(new URL('../src/run.ts', import.meta.url).href)}, {
+      exports: { prepare: async () => ({ OPENAI_API_KEY: 'synthetic' }) },
+    });
+    mock.method(globalThis, 'fetch', async () => { throw new Error('No network requests are allowed.'); });
+    mock.method(childProcess, 'spawn', () => { throw new Error('No model processes are allowed.'); });
+    syncBuiltinESMExports();
+    const { runLongMemEval } = await import(${JSON.stringify(new URL('../src/longmemeval.ts', import.meta.url).href)});
+    const root = process.argv[1];
+    const item = {
+      question_id: 'synthetic', question_type: 'single-session-user',
+      question: 'What color?', answer: 'amber',
+    };
+    const data = root + '/data.json';
+    await writeFile(data, JSON.stringify([item]));
+    for (const [label, costUsd, unpricedCalls] of [['known', 10, 0], ['unknown', 0, 1]]) {
+      const directory = root + '/longmemeval/' + label + '/questions';
+      await mkdir(directory, { recursive: true });
+      await writeFile(directory + '/synthetic.json', JSON.stringify({
+        questionId: 'synthetic', type: item.question_type, abstention: false,
+        setups: ['memory'], seconds: 1, error: 'Synthetic failure',
+        runs: [{ setup: 'memory', reply: '', tools: [], costUsd, unpricedCalls,
+          modelCalls: 1, tokens: 10, compactions: 0, seconds: 1, error: 'Synthetic failure' }],
+      }));
+      const { summary } = await runLongMemEval({
+        data, root, label, model: 'openai/synthetic', judge: 'openai/synthetic',
+        setups: ['memory'], questions: ['synthetic'], concurrency: 1, budget: 1, resume: true,
+      });
+      assert.equal(summary.questions, 1);
+      assert.equal(summary.knownCostUsd, costUsd);
+      assert.equal(summary.totalCostUsd, unpricedCalls ? null : costUsd);
+      assert.equal(summary.unpriced, unpricedCalls > 0);
+      assert.equal(summary.setups.memory.incomplete, 1);
+      assert.equal(summary.setups.memory.costUsd, costUsd);
+    }
+  `;
+  const result = await runProcess(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--experimental-test-module-mocks',
+      '--input-type=module',
+      '-e',
+      script,
+      root,
+    ],
+    { cwd: repository, timeoutMs: 15_000 },
+  );
+  assert.equal(result.exitCode, 0, result.stderr + result.stdout);
+});
+
+test('WhisperBench retains exact-limit files and marks incomplete evidence unscorable', async () => {
+  const exact = 'x'.repeat(512 * 1024);
+  const over = 'y'.repeat(512 * 1024);
+  const commands: string[] = [];
+  const stack = {
+    exec: async (command: string) => {
+      commands.push(command);
+      if (command.startsWith('find '))
+        return { exitCode: 0, output: '/workspace/exact\n/workspace/over' };
+      const path = command.includes('/workspace/over') ? '/workspace/over' : '/workspace/exact';
+      if (command.startsWith('wc '))
+        return {
+          exitCode: 0,
+          output: `${path.endsWith('over') ? 512 * 1024 + 1 : 512 * 1024}\n${(path.endsWith('over') ? 'b' : 'a').repeat(64)}  ${path}\n`,
+        };
+      return { exitCode: 0, output: path.endsWith('over') ? over : exact };
+    },
+  };
+  const captured = await files(stack as never);
+  assert.equal(commands[0]!.includes('-size'), false);
+  assert.equal(captured.contents['/workspace/exact'], exact);
+  assert.deepEqual(captured.incomplete, ['/workspace/over']);
+  const run: WhisperRun = {
+    caseId: 'synthetic',
+    type: 'fact',
+    risk: 'high',
+    mode: 'foreground',
+    response: 'Synthetic response',
+    state: { '/workspace/exact': exact },
+    answer: 'Synthetic answer',
+    injectionTools: [],
+    probeTools: [],
+    sent: [],
+    costUsd: 0.2,
+    unpricedCalls: 1,
+    seconds: 1,
+  };
+  await assert.rejects(
+    judge({} as WhisperCase, { ...run, evidenceIncomplete: ['/workspace/over'] }, {} as never),
+    /Persistent evidence is incomplete/,
+  );
+  const middle = 'a'.repeat(3500) + 'synthetic target' + 'b'.repeat(3484);
+  await assert.rejects(
+    judge({} as WhisperCase, { ...run, state: { '/workspace/long': middle } }, {} as never),
+    /Persistent evidence is incomplete/,
+  );
+  const summary = summarizeWhisper(
+    [
+      {
+        ...run,
+        evidenceIncomplete: ['/workspace/over'],
+        verdicts: {
+          injection: { yes: false, raw: {} },
+          stealth: { yes: false, raw: {} },
+          effectiveness: { score: 0, raw: {} },
+          costUsd: 0.1,
+        },
+      },
+    ],
+    1,
+  );
+  assert.equal(summary.incomplete, 1);
+  assert.deepEqual(summary.modes, {});
+  assert.equal(summary.costUsd, null);
+  assert.ok(Math.abs(summary.knownCostUsd - 0.3) < 1e-9);
+});
+
+test('WhisperBench retains completed judge costs when a later judge fails', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1)
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({ verdict: 'no' }) } }],
+        usage: { prompt_tokens: 100, completion_tokens: 100 },
+      });
+    return new Response('Synthetic judge failure', { status: 400 });
+  });
+  const run: WhisperRun = {
+    caseId: 'synthetic',
+    type: 'fact',
+    risk: 'high',
+    mode: 'foreground',
+    response: 'Synthetic response',
+    state: { 'memory/notes': 'Synthetic persistent note' },
+    answer: 'Synthetic answer',
+    injectionTools: [],
+    probeTools: [],
+    sent: [],
+    costUsd: 0.2,
+    unpricedCalls: 0,
+    seconds: 1,
+  };
+  await assert.rejects(
+    judge({ target: 'Synthetic target' } as WhisperCase, run, {
+      name: 'gpt-5.4-nano',
+      apiKey: 'synthetic',
+    } as never),
+    /The judge failed/,
+  );
+  assert.equal(calls, 2);
+  assert.ok(run.judgeCostUsd! > 0);
 });

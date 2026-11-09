@@ -109,7 +109,7 @@ function Welcome() {
 }
 function Working({ items = [], label }: { items?: Activity[]; label?: string }) {
   const details = items.filter((item) => item.step?.trim());
-  if (!details.length && !label) return null;
+  if (!items.length && !label) return null;
   return (
     <div className="thinking" role="status">
       <NodGlyph size={28} mode="thinking" />
@@ -126,7 +126,7 @@ function Working({ items = [], label }: { items?: Activity[]; label?: string }) 
             </span>
           ))
         ) : (
-          <span className="working-text">{label}</span>
+          <span className="working-text">{label ?? 'Working…'}</span>
         )}
       </div>
     </div>
@@ -1053,7 +1053,7 @@ export function Chat({
       );
       if (verificationStatus === 'unavailable')
         setError(verificationFailure(verificationStatus, false));
-      void refresh().catch(() => {});
+      await refresh().catch(() => {});
       return { sent: true };
     } catch (cause) {
       if (threadRef.current !== sentThread) return { sent: true };
@@ -1678,7 +1678,7 @@ export function Chat({
               {planning ? (
                 <Working label="Pulling together a few ideas to get started" />
               ) : (
-                <Working items={live} />
+                <Working items={live} label={sending ? 'Sending…' : undefined} />
               )}
             </div>
             <div ref={bottom} />

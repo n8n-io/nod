@@ -7,8 +7,11 @@ import {
   type Presentation,
 } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -22,8 +25,124 @@ import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 import { ownerAddress } from '../src/providers/discovered/remote.ts';
+import {
+  escapeForwarder,
+  SandboxedFrame,
+  sandboxedDocument,
+} from '../src/web/components/attachment-frame.tsx';
+import { runProcess } from '../src/providers/process.ts';
 
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
+
+test(
+  'HTML previews run local scripts but block navigation before any request leaves the frame',
+  { skip: !process.env.NOD_TEST_BROWSER_EXECUTABLE, timeout: 30_000 },
+  async () => {
+    const received: string[] = [];
+    const collector = createServer((request, response) => {
+      received.push(request.url ?? '');
+      response.end('Synthetic collector');
+    });
+    collector.listen(0, '127.0.0.1');
+    await once(collector, 'listening');
+    const address = collector.address();
+    assert.ok(address && typeof address !== 'string');
+    const destination = `http://127.0.0.1:${address.port}/collect?data=synthetic-marker`;
+    const target = JSON.stringify(destination);
+    const navigations = [
+      `location.href=${target}`,
+      `location.replace(${target})`,
+      `location.assign(${target})`,
+      `window.open(${target},'_self')`,
+      `const a=document.createElement('a');a.href=${target};a.target='_self';a.click()`,
+      `const meta=document.createElement('meta');meta.httpEquiv='refresh';meta.content='0;url='+${target};document.head.append(meta)`,
+      `document.querySelectorAll('meta').forEach(node=>node.remove());location.replace(${target})`,
+      `document.open();document.write('<meta http-equiv="refresh" content="0;url='+${target}+'">');document.close()`,
+    ];
+    const attempts = [
+      ...navigations,
+      `parent.location=${target}`,
+      `top.location=${target}`,
+      `window.open(${target},'_blank')`,
+      `fetch(${target}).catch(()=>{});navigator.sendBeacon(${target},'synthetic');new Image().src=${target}`,
+      `const form=document.createElement('form');form.action=${target};form.method='POST';document.body.append(form);form.submit()`,
+    ];
+    const frame = (content: string, scripts = true) =>
+      renderToStaticMarkup(
+        createElement(SandboxedFrame, {
+          html: sandboxedDocument(content, escapeForwarder),
+          title: 'Synthetic HTML preview',
+          scripts,
+          onLeave() {},
+        }),
+      );
+    const previews = attempts.map((script, index) =>
+      frame(
+        `<p>synthetic-marker</p><script>top.postMessage('ran-${index}','*');try{${script}}catch{}</script>`,
+      ),
+    );
+    previews.push(
+      frame(
+        `<p>Safe &amp; interactive</p><button onclick="this.textContent='Done'">Run</button><script>document.querySelector('button').click();top.postMessage(document.querySelector('button').textContent==='Done'?'interactive':'failed','*');dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))</script>`,
+      ),
+      frame(
+        `<meta http-equiv="refresh" content="0;url=${destination}"><script>top.postMessage('thumbnail-script','*')</script>`,
+        false,
+      ),
+      frame(
+        `&quot;><iframe src="${destination}"></iframe><script>top.postMessage('quoted-content','*')</script>`,
+      ),
+    );
+    const host = createServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<body><script>const messages=[],blocked=new Set();addEventListener('message',event=>{if(typeof event.data!=='string')return;messages.push(event.data);document.body.dataset.messages=JSON.stringify(messages);const index=[...document.querySelectorAll('iframe')].findIndex(frame=>frame.contentWindow===event.source);if(index<0)return;if(event.data==='nod:leave'){blocked.add(index);document.body.dataset.navigationBlocked=JSON.stringify([...blocked].sort((a,b)=>a-b))}if(event.data==='nod:close')document.body.dataset.closed='yes'});addEventListener('load',()=>{document.querySelectorAll('iframe')[${attempts.length + 1}].contentWindow[0].location=${target}})</script>${previews.join('')}</body>`,
+      );
+    });
+    const profile = await mkdtemp(join(tmpdir(), 'nod-preview-browser-'));
+    try {
+      await fetch(destination);
+      assert.equal(received.length, 1);
+      received.length = 0;
+      host.listen(0, '127.0.0.1');
+      await once(host, 'listening');
+      const address = host.address();
+      assert.ok(address && typeof address !== 'string');
+      const result = await runProcess(
+        process.env.NOD_TEST_BROWSER_EXECUTABLE!,
+        [
+          '--headless',
+          '--no-sandbox',
+          '--disable-gpu',
+          '--disable-background-networking',
+          '--no-first-run',
+          `--user-data-dir=${profile}`,
+          '--dump-dom',
+          '--virtual-time-budget=1500',
+          `http://127.0.0.1:${address.port}`,
+        ],
+        { signal: AbortSignal.timeout(20_000) },
+      );
+      assert.equal(result.exitCode, 0, result.stderr);
+      for (let index = 0; index < attempts.length; index++)
+        assert.match(result.stdout, new RegExp(`ran-${index}(?:&quot;|\")`));
+      assert.deepEqual(received, []);
+      assert.match(result.stdout, /data-closed="yes"/);
+      const blocked = /data-navigation-blocked="([^"]+)"/.exec(result.stdout);
+      assert.ok(blocked);
+      assert.deepEqual(JSON.parse(blocked[1]), [...navigations.keys(), attempts.length + 1]);
+      assert.match(result.stdout, /&quot;interactive&quot;/);
+      assert.match(result.stdout, /&quot;quoted-content&quot;/);
+      assert.doesNotMatch(result.stdout, /&quot;thumbnail-script&quot;/);
+    } finally {
+      await Promise.all([
+        new Promise<void>((resolve) => host.close(() => resolve())),
+        new Promise<void>((resolve) => collector.close(() => resolve())),
+      ]);
+      await rm(profile, { recursive: true, force: true });
+    }
+  },
+);
 
 const addresses = async () => [{ address: '93.184.216.34', family: 4 }];
 const html = (text = '<title>Fixture page</title>') => ({

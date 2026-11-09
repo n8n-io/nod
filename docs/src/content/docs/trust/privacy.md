@@ -13,6 +13,29 @@ Requests go to your model and decision providers, and the apps you choose. Compo
 
 The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback, usage analytics and conversation traces are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
+## What Nod shares with n8n
+
+Nod shares a little data with the Nod team at n8n so they can find where Nod gets stuck and fix it. There are two kinds, and each has its own switch in **Settings → Privacy & data**.
+
+|                | Usage data                                                                                                                               | Conversation traces                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Starts         | On for new owners                                                                                                                        | Off until you choose to share                                                                           |
+| Includes       | The screens and features you use, the kinds of tasks you ask for, timings, costs, and failures, plus basic device details and random IDs | Your conversations with Nod, including what it reads and does, minus the personal details it recognizes |
+| Never includes | Your messages, Nod's replies, what Nod reads, saved passwords and cards, names, email addresses, screen recordings, or session replays   | Saved passwords and cards, your saved memory, images, or any account or device ID                       |
+| Kept           | In n8n's PostHog project in the EU                                                                                                       | In n8n's LangSmith project in the EU for 14 days, and never used to train AI models                     |
+| Switch         | **Share usage data**                                                                                                                     | **Share conversation traces**                                                                           |
+| More           | [Usage analytics](#usage-analytics)                                                                                                      | [Conversation traces](/trust/conversation-traces/)                                                      |
+
+A server operator can turn either kind off for everyone, or send traces to a different receiver.
+
+:::note[Limits]
+Nod removes personal details automatically and can miss ones written in other ways, so traces are pseudonymised, not anonymous. Survey answers you choose to send are the only content in usage data.
+:::
+
+To see this summary in Nod, select **How Nod uses your data** during setup, or next to the **Privacy & data** heading in Settings.
+
+![The How Nod uses your data panel. Usage data is on, conversation traces are off, and saved passwords and cards, memory, and screen recordings are never shared. Full details and Got it are at the bottom.](../../../assets/screens/how-nod-uses-your-data.png)
+
 ## Where your data lives
 
 |                              | Local desktop assistant                                                                                                          | Local source install                           |

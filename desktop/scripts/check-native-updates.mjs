@@ -32,6 +32,9 @@ import { run, signApplication, signingConfiguration } from './release-tools.mjs'
 const source = fileURLToPath(import.meta.url);
 const repository = resolve(dirname(source), '../..');
 const configuration = JSON.parse(await readFile(join(repository, 'desktop/package.json')));
+const electronChecksums = JSON.parse(
+  await readFile(join(repository, 'desktop/node_modules/electron/checksums.json')),
+);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 assert.equal(process.platform, 'darwin', 'This acceptance case requires macOS.');
@@ -264,6 +267,7 @@ app.whenReady().then(async () => {
       appVersion: fixture.version,
       buildVersion: fixture.version,
       electronVersion: configuration.devDependencies.electron,
+      download: { checksums: electronChecksums },
       platform: 'darwin',
       arch: process.arch,
       asar: false,

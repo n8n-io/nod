@@ -551,6 +551,21 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     return controls;
   };
 
+  const controlTarget = async (query: ControlQuery) => {
+    const found = await locate(query);
+    const [frame] = found ? await tree(found.session) : [];
+    return found && frame?.loaderId
+      ? {
+          identity: {
+            frame: frame.id,
+            document: frame.loaderId,
+            backendNodeId: found.backendNodeId,
+          },
+          controls: await controlsFor(found),
+        }
+      : undefined;
+  };
+
   const resolveControl = async (backendNodeId: number, session: string, frameId: string) => {
     const { object } = (await send(
       'DOM.resolveNode',
@@ -669,9 +684,9 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         )) === true
       );
     },
+    target: controlTarget,
     async controls(query: ControlQuery) {
-      const found = await locate(query);
-      return found ? controlsFor(found) : [];
+      return (await controlTarget(query))?.controls ?? [];
     },
     async signInControl(query: ControlQuery): Promise<BoundSignInControl> {
       const found = query.selector ? await signInSelector(query.selector) : await locate(query);

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
@@ -52,6 +52,7 @@ interface BrowserState {
   injecting: boolean;
   secrets: Set<string>;
   refs: Map<string, BrowserControl>;
+  refVersions: Map<string, number>;
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   signInMethods?: { document: string; origin: string; controls: Map<string, BoundSignInControl> };
@@ -236,6 +237,8 @@ export function createAgentBrowserComputer(options: {
   onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
+  const targetKey = randomBytes(32);
+  let refSequence = 0;
   const discarded = new Set<string>();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
@@ -334,6 +337,7 @@ export function createAgentBrowserComputer(options: {
         injecting: false,
         secrets: new Set(),
         refs: new Map(),
+        refVersions: new Map(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -810,13 +814,20 @@ export function createAgentBrowserComputer(options: {
     };
     const data = await snapshot();
     if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
-    if (!scope) state.refs.clear();
-    for (const ref of Array.isArray(data.removedRefs) ? data.removedRefs : [])
+    const incoming =
+      data.refs && typeof data.refs === 'object' ? (data.refs as Record<string, unknown>) : {};
+    if (!scope) {
+      state.refs.clear();
+      for (const ref of state.refVersions.keys())
+        if (!(ref in incoming)) state.refVersions.delete(ref);
+    }
+    for (const ref of Array.isArray(data.removedRefs) ? data.removedRefs : []) {
       state.refs.delete(String(ref));
-    for (const [ref, control] of Object.entries(
-      data.refs && typeof data.refs === 'object' ? (data.refs as Record<string, unknown>) : {},
-    ))
-      if (control && typeof control === 'object')
+      state.refVersions.delete(String(ref));
+    }
+    for (const [ref, control] of Object.entries(incoming))
+      if (control && typeof control === 'object') {
+        if (!state.refVersions.has(ref)) state.refVersions.set(ref, ++refSequence);
         state.refs.set(ref, {
           role: String((control as { role?: unknown }).role ?? ''),
           name: redactBrowserText(
@@ -824,6 +835,7 @@ export function createAgentBrowserComputer(options: {
             state.secrets,
           ).slice(0, 300),
         });
+      }
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     const end = Math.min(page.length, offset + snapshotChars);
     return {
@@ -1624,14 +1636,23 @@ export function createAgentBrowserComputer(options: {
     target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
   ) {
     const ref = referenceOf(target.selector);
-    if (ref) return state.refs.has(ref) ? [state.refs.get(ref)!] : [];
-    if (!target.selector && !target.point && !target.focused) return [];
+    if (ref)
+      return {
+        controls: state.refs.has(ref) ? [state.refs.get(ref)!] : [],
+        identity: state.refVersions.has(ref) ? { ref, version: state.refVersions.get(ref)! } : null,
+      };
+    if (!target.selector && !target.point && !target.focused)
+      return { controls: [], identity: { kind: 'page' } };
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      return ((await devtools?.controls(target).catch(() => [])) ?? []).map((control) => ({
-        role: control.role,
-        name: redactBrowserText(control.name, state.secrets).slice(0, 300),
-      }));
+      const resolved = await devtools?.target(target).catch(() => undefined);
+      return {
+        controls: (resolved?.controls ?? []).map((control) => ({
+          role: control.role,
+          name: redactBrowserText(control.name, state.secrets).slice(0, 300),
+        })),
+        identity: resolved?.identity ?? null,
+      };
     } finally {
       devtools?.close();
     }
@@ -1661,7 +1682,7 @@ export function createAgentBrowserComputer(options: {
             .catch(() => 'unknown' as const)
         : ('unknown' as const);
       if (found === 'unknown' || !found) return found ?? undefined;
-      return { method: found.method, to: redactBrowserUrl(found.to, state.secrets) };
+      return { method: found.method, to: found.to };
     } finally {
       devtools?.close();
     }
@@ -1678,42 +1699,84 @@ export function createAgentBrowserComputer(options: {
           : point
             ? { point }
             : { focused: step.action === 'type' };
-    const controls = await controlsOf(state, target);
+    const { controls, identity: sourceIdentity } = await controlsOf(state, target);
     const enter =
       (step.action === 'press' && step.key === 'Enter') ||
       (step.action === 'type' && /[\r\n]/.test(step.text ?? ''));
     const submits =
       step.action === 'click' || enter ? await submissionOf(state, target, enter) : undefined;
-    if (step.action !== 'drag') return { controls, ...(submits ? { submits } : {}) };
+    if (step.action !== 'drag')
+      return { controls, sourceIdentity, ...(submits ? { rawSubmits: submits } : {}) };
     const drop = step.targetSelector
       ? { selector: step.targetSelector }
       : step.points && step.points.length > 1
         ? { point: step.points.at(-1)! }
         : {};
-    return { controls, dropTarget: await controlsOf(state, drop) };
+    const dropResolved = await controlsOf(state, drop);
+    return {
+      controls,
+      sourceIdentity,
+      dropTarget: dropResolved.controls,
+      dropIdentity: dropResolved.identity,
+    };
+  }
+
+  async function targetDetails(
+    state: BrowserState,
+    step: BrowserAction,
+    url: string,
+    dialog?: string,
+  ) {
+    const details = step.action ? await stepControls(state, step) : undefined;
+    const target = createHmac('sha256', targetKey)
+      .update(
+        JSON.stringify({
+          url,
+          dialog,
+          action: step.action,
+          key: step.key,
+          details,
+        }),
+      )
+      .digest('hex');
+    return { target, details };
   }
 
   async function onTarget(
     state: BrowserState,
-    input: {
-      expectOrigin?: string;
-      expectUrl?: string;
-      selector?: string;
-      targetSelector?: string;
-      action?: string;
-    },
+    input: Omit<BrowserAction, 'action'> & { action?: BrowserAction['action'] },
     signal?: AbortSignal,
   ) {
-    if (input.expectOrigin === undefined && input.expectUrl === undefined) return;
-    const at =
-      input.action === 'accept_dialog' && (await openDialog(state, signal))
-        ? await dialogPageUrl(state, signal).catch(() => '')
-        : await currentUrl(state, signal).catch(() => '');
+    if (
+      input.expectOrigin === undefined &&
+      input.expectUrl === undefined &&
+      input.expectTarget === undefined
+    )
+      return;
+    const dialog = input.action === 'accept_dialog' ? await openDialog(state, signal) : undefined;
+    const at = dialog
+      ? await dialogPageUrl(state, signal).catch(() => '')
+      : await currentUrl(state, signal).catch(() => '');
     const refs = [referenceOf(input.selector), referenceOf(input.targetSelector)];
+    const checked =
+      input.expectTarget !== undefined && at
+        ? await targetDetails(
+            state,
+            { ...input, action: input.action ?? 'click' },
+            at,
+            dialog?.message.slice(0, 2000),
+          )
+        : undefined;
+    const unresolved =
+      checked?.details &&
+      (checked.details.sourceIdentity === null ||
+        ('dropIdentity' in checked.details && checked.details.dropIdentity === null));
     if (
       !at ||
       (input.expectOrigin !== undefined && originOf(at) !== input.expectOrigin) ||
       (input.expectUrl !== undefined && redactBrowserUrl(at, state.secrets) !== input.expectUrl) ||
+      (input.expectTarget !== undefined && checked?.target !== input.expectTarget) ||
+      unresolved ||
       refs.some((ref) => ref !== undefined && !state.refs.has(ref))
     )
       throw new BrowserActionError('browser_target_changed');
@@ -1745,8 +1808,28 @@ export function createAgentBrowserComputer(options: {
       const dialog = step?.action === 'accept_dialog' ? await openDialog(state) : undefined;
       const url = dialog ? await dialogPageUrl(state) : await currentUrl(state);
       const page = { origin: browserUrl(url).origin, url: redactBrowserUrl(url, state.secrets) };
-      if (dialog) return { ...page, dialog: dialog.message.slice(0, 2000) };
-      return step ? { ...page, ...(await stepControls(state, step)) } : page;
+      const { target, details } = await targetDetails(
+        state,
+        step ?? ({ action: 'snapshot' } as BrowserAction),
+        url,
+        dialog?.message.slice(0, 2000),
+      );
+      if (dialog) return { ...page, dialog: dialog.message.slice(0, 2000), target };
+      const submits = details && 'rawSubmits' in details ? details.rawSubmits : undefined;
+      return {
+        ...page,
+        target,
+        ...(details?.controls ? { controls: details.controls } : {}),
+        ...(submits
+          ? {
+              submits:
+                submits === 'unknown'
+                  ? 'unknown'
+                  : { method: submits.method, to: redactBrowserUrl(submits.to, state.secrets) },
+            }
+          : {}),
+        ...(details?.dropTarget ? { dropTarget: details.dropTarget } : {}),
+      };
     });
   }
 

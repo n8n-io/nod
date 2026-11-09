@@ -131,7 +131,16 @@ export function piModelTrace(
         : message,
     ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),
-    output: chat(message),
+    output: chat(
+      message,
+      new Set(
+        message.content.flatMap((block) =>
+          block.type === 'toolCall' && block.name === 'skills' && block.arguments.action === 'read'
+            ? [block.id]
+            : [],
+        ),
+      ),
+    ),
     usage: {
       inputTokens,
       outputTokens,

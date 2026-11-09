@@ -51,6 +51,8 @@ Owner replies and corrections steer unfinished work until the owner cancels or r
 
 Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets new background messages since its previous turn started.
 
+Pi validates tool arguments as JSON Schema with `@earendil-works/pi-schema`. It can convert a numeric string to a number or a single value to an array. This also applies to MCP tools. TypeBox refinements and custom TypeBox formats do not run. Nod's tool checks, turn guard, and trust check still apply before an action runs.
+
 When a clarification has a few known answers, Nod uses `ask_user` with clickable choices instead of listing them in prose. This includes choosing an account in chat. Open-ended questions need no choices. The runtime assigns each option an ID; labels and descriptions contain its full meaning, with no hidden action payload. The owner can select one or several options when offered, or write their own answer. Sign-in method selection and credentials use the private sign-in flow. Choices never replace action approvals or browser handoffs. Channels, speech and rebuilt history retain the option text.
 
 The server derives whether a question still accepts choices from its waiting turn and session. An answer, stop, reset or newer turn in that session closes the choices. Questions in other sessions stay independent. Structured answers bind to the owned question, are checked under the thread lock and preserve the selected labels and descriptions in the owner's message. Typed answers keep private-code screening; only an exact visible choice skips numeric-code interpretation. Retrying the same message ID returns its saved result; a different submission cannot reopen a question that was already answered.
@@ -96,6 +98,8 @@ For `openrouter/free` and `openrouter/auto`, Nod uses an 8,192-token working win
 If a restored session already uses more than half a small model's window, Nod adds a checkpoint without a model request. It keeps recent complete turns that fit in one eighth of the window. The checkpoint tells the model to retrieve older messages and files when needed. The full transcript stays on disk. This prevents an oversized old transcript from blocking its own summary request.
 
 For these small windows, direct text tool results above half the window in characters are saved in full under `.nod/outputs/` inside the workspace. The model gets a file reference and a short preview. Nested codemode calls keep their full results so scripts can process them. Scripts can call Nod and connected MCP tools. Each call keeps its normal validation, account binding, trust check, approval order and stop guard. An approval or private-entry wait stops later calls. The final script output is untrusted data. Full argument validation and the turn guard still apply.
+
+Each model request uses at most the output limit of its target model. Text requests from an audio model use the limit of its text companion. A smaller requested output limit stays unchanged.
 
 Before sending a small-window model request, Nod estimates the complete serialized payload at one token per three UTF-8 bytes. It leaves a safety margin and limits output to at most a quarter of the window. A request that leaves fewer than 128 output tokens fails before it reaches the provider. This estimate includes tool schemas. Images use Pi's estimate of 1,200 tokens each, instead of counting their encoded bytes as text. The provider's actual text and image token counts can differ. Nod does not cut the current owner instruction or rules to make a request fit.
 
@@ -150,6 +154,8 @@ flowchart TD
 `apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions, changes to schedules, notification settings, the owner's rules and spending limits, and forgetting a note or turning memory on, off or clearing it, and those checks run in parallel too. Other `manage_personal_context` operations, such as saving a note and reads, have no trust check and count as decided as soon as they reach the server.
 
 Public web reads also run in parallel when the model requests independent searches or pages in one step. Each call passes the same turn guard. Browser steps run in sequence.
+
+Managed app requests use the request's time limit, or the client's default, for the whole response. Nod keeps that deadline and the caller's Stop signal active after headers arrive. The SDK keeps its normal lazy parsing: a raw response is available at headers, and Nod does not read an extra copy first. Completed parsing removes the timer and Stop listener without aborting the retained raw response. Without parsing, a raw response with a body keeps those guards until its deadline or Stop. Client and request options cannot enable retries.
 
 A call acts only once every `apps` or `manage_personal_context` call issued before it in the turn is decided, and each earlier one that asks has opened its question or failed. If one of them opened a question, the later call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 

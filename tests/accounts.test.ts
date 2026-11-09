@@ -591,9 +591,15 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     assert.equal(trustBasis(gate.result({ trust: source }), input, [])?.kind, kind);
   }
   let output: unknown = { readOnly: true };
+  let currentRules: string | undefined = words.userRules;
+  let holdReview = false;
+  let reviewStarted: () => void = () => {};
+  let releaseReview: () => void = () => {};
+  let started = Promise.resolve();
+  let released = Promise.resolve();
   const seen: object[] = [];
   const trust = createTrust({
-    pool: { query: async () => ({ rows: [{ rules: words.userRules }] }) } as never,
+    pool: { query: async () => ({ rows: [{ rules: currentRules }] }) } as never,
     ownerId: 'synthetic-owner',
     review: async () => assert.fail('A decision check must not switch to an LLM.'),
     decisions: {
@@ -601,6 +607,10 @@ test('trust decisions select only owner evidence and keep reply evidence separat
         seen.push(input);
         assert.equal(question.minProbability, 0.99);
         if (output instanceof Error) throw output;
+        if (holdReview) {
+          reviewStarted();
+          await released;
+        }
         return output && typeof output === 'object' ? { probability: 1, ...output } : output;
       },
     },
@@ -621,6 +631,28 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     output = value;
     assert.equal(await read(), false);
   }
+  output = { readOnly: true };
+  holdReview = true;
+  started = new Promise<void>((resolve) => (reviewStarted = resolve));
+  released = new Promise<void>((resolve) => (releaseReview = resolve));
+  const pendingRead = read();
+  await started;
+  currentRules = 'Ask before every connected-account read.';
+  releaseReview();
+  assert.equal(await pendingRead, false);
+  holdReview = false;
+  currentRules = words.userRules;
+  assert.equal(await read(), true);
+  holdReview = true;
+  currentRules = undefined;
+  started = new Promise<void>((resolve) => (reviewStarted = resolve));
+  released = new Promise<void>((resolve) => (releaseReview = resolve));
+  const emptyRowRead = read();
+  await started;
+  currentRules = '';
+  releaseReview();
+  assert.equal(await emptyRowRead, true);
+  holdReview = false;
   for (const [answer, expected] of [
     ['yes', true],
     ['no', false],
@@ -1303,8 +1335,8 @@ describe('account routes', () => {
     const turnId = '3f2a9c4e-8b1d-4f6a-9e2b-7c5d1a0f4e83';
     const trace = (content: string): ModelTrace => ({
       id: 'e2f062ac-4a2b-466b-9fe6-b85c4e49a3d9',
-      name: 'fixture-model',
-      provider: 'fixture',
+      name: 'marta.vidal@example.com',
+      provider: 'fixture-model-key-8c41f2',
       startedAt: '2026-10-19T10:00:00.000Z',
       endedAt: '2026-10-19T10:00:01.000Z',
       messages: [
@@ -1325,7 +1357,7 @@ describe('account routes', () => {
           ],
         },
       ],
-      tools: ['send_email'],
+      tools: ['send_email', 'Marta Vidal', `tool-${turnId}`],
       output: { role: 'assistant', content: 'Thanks Marta, sent to +44 20 7946 0958.' },
       usage: {
         inputTokens: 10,

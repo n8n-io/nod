@@ -58,6 +58,7 @@ export interface BrowserAction {
   locale?: string;
   expectOrigin?: string;
   expectUrl?: string;
+  expectTarget?: string;
   readOnly?: boolean;
 }
 export interface BrowserControl {
@@ -75,6 +76,7 @@ export interface BrowserDownloadInput {
   name?: string;
   expectOrigin?: string;
   expectUrl?: string;
+  expectTarget?: string;
 }
 export interface BrowserDownload {
   bytes: Buffer;
@@ -87,11 +89,13 @@ export interface BrowserUploadInput {
   bytes: Uint8Array;
   expectOrigin?: string;
   expectUrl?: string;
+  expectTarget?: string;
 }
 export type CredentialKind = 'identifier' | 'password' | 'otp';
 export interface BrowserPage {
   origin: string;
   url: string;
+  target?: string;
   controls?: BrowserControl[];
   submits?: { method: string; to: string } | 'unknown';
   dropTarget?: BrowserControl[];

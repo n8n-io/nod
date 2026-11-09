@@ -71,7 +71,11 @@ On Windows, the message reads "Nod needs more free disk space to prepare its pri
 
 Retry first. Do not delete the profile, VM, database, or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat cannot open, select **Show startup log** on the error screen. Send that log with a screenshot of the error. When a setup command fails, the message includes the last lines of its output.
 
+On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
+
 On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+
+On a Mac, **Technical details** and the startup log also show the cause of a runtime download failure. This includes a connection error inside `fetch failed` or a damaged archive error. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
 Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
@@ -80,6 +84,14 @@ To start over, select **Remove all data…** in the **Nod** menu. Nod deletes yo
 ### Windows says WSL is missing
 
 Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. A device policy can block WSL installation.
+
+### PostgreSQL fails after a Mac VM kernel update
+
+Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. The PostgreSQL user-switch process then waits forever, and Nod reports `NOD_DATABASE_CONNECTION_FAILED`.
+
+Install a Nod build with the container profile repair, then quit and reopen Nod. The repair keeps AppArmor active and preserves the database volume. It also prevents further automatic kernel changes and VM restarts. A restart alone does not repair the old profile. Do not delete the VM or database to fix this failure.
+
+If setup still fails, select **Show startup log** and [send feedback](#send-feedback-with-a-diagnostic-report). This error alone does not show whether the database files are damaged.
 
 ## Models and apps
 

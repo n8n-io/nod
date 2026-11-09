@@ -68,7 +68,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
 - Every query and route is scoped to one owner.
-- File previews never run a file in Nod's own page. An HTML file runs in a sandbox with an empty origin and no network, forms or pop-ups, and its preview closes if it tries to open a website. Other formats are read as data. Files that can run code get no local preview before they upload.
+- File previews never run a file in Nod's own page. HTML runs in a sandboxed frame inside a second sandboxed frame. The outer frame blocks navigation requests from the inner frame before they leave. Its content policy also blocks external resources. It runs Nod's handlers even when scripts in the file are disabled. Interactive HTML can run local scripts, but forms and pop-ups are blocked. When file scripts are disabled, links you select can open a new window outside the preview. The preview closes after a blocked navigation. Other formats are read as data. Files that can run code get no local preview before they upload.
 
 ### Client access
 
@@ -98,7 +98,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The checker quotes your words, or says "read", to run an action. The server verifies that the words exist, not that they really ask for the action; that judgment is still the checker's.
 - Reads, drafts and links Nod opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
-- A script in an HTML preview can still navigate its own frame to a website and take that page's contents with it, as it could if you opened the downloaded file in a browser. It can't read anything from Nod, and the preview closes when it navigates.
+- HTML that you download and open outside Nod does not have Nod's preview protections.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.
 
 :::

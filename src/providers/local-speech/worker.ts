@@ -178,9 +178,9 @@ async function synthesize(text: string, voice: LocalVoice) {
     const part = remaining.slice(0, end);
     const audio = await generate(part, voice);
     remaining = remaining.slice(end).trimStart();
-    count += audio.audio.length;
+    count += audio.data.length;
     if (count > 24000 * 300) throw new Error('length');
-    chunks.push(audio.audio);
+    chunks.push(audio.data);
   }
   const samples = new Float32Array(count);
   let offset = 0;
@@ -188,7 +188,7 @@ async function synthesize(text: string, voice: LocalVoice) {
     samples.set(chunk, offset);
     offset += chunk.length;
   }
-  return new Uint8Array(new RawAudio(samples, 24000).toWav());
+  return new Uint8Array(await new RawAudio(samples, 24000).toBlob().arrayBuffer());
 }
 
 async function detectLanguage(samples: Float32Array) {
@@ -203,7 +203,7 @@ async function detectLanguage(samples: Float32Array) {
     decoder_input_ids: new Tensor('int64', [BigInt(config.decoder_start_token_id)], [1, 1]),
   });
   const logits = output.logits.data as Float32Array;
-  const noSpeech = transcriber!.tokenizer!.model.tokens_to_ids.get('<|nocaptions|>');
+  const noSpeech = transcriber!.tokenizer!.convert_tokens_to_ids('<|nocaptions|>');
   if (noSpeech !== undefined) {
     let maximum = -Infinity;
     for (const value of logits) maximum = Math.max(maximum, value);

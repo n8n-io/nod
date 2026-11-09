@@ -30,6 +30,7 @@ import { runProcess } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
 import { openDevtools } from '../src/providers/agent-browser/devtools.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
+import { createBridgeComputer } from '../src/providers/container-browser/client.ts';
 import {
   browserNamespace,
   createContainerBrowserComputer,
@@ -1252,6 +1253,9 @@ function workerComputer() {
     close: async () => {
       calls.push({ method: 'close' });
     },
+    clear: async (id) => {
+      calls.push({ method: 'clear', input: id });
+    },
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
     },
@@ -1279,7 +1283,12 @@ function workerComputer() {
   };
 }
 
-async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: Computer } = {}) {
+async function harness(
+  control: {
+    beforeFirstBridge?: Promise<void>;
+    computer?: Computer | (() => Computer);
+  } = {},
+) {
   const root = await mkdtemp('/tmp/sk-browser-');
   const socketPath = join(root, 'control.sock');
   const instances = new Map<string, ReturnType<typeof workerComputer>>();
@@ -1287,6 +1296,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     socketPath,
     dataRoot: root,
     createComputer: async (path) => {
+      if (typeof control.computer === 'function') return control.computer();
       if (control.computer) return control.computer;
       const value = workerComputer();
       instances.set(path, value);
@@ -1589,6 +1599,185 @@ async function interruptedBrowser(fixture: Awaited<ReturnType<typeof harness>>, 
   await cancelled;
   return { computer, instance, release };
 }
+
+for (const successful of [true, false])
+  test(`a cancelled ${successful ? 'successful' : 'cancelled'} bridge response fences later actions`, async () => {
+    const entered = deferred<string>();
+    let launches = 0;
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    child.stdin.on('data', (chunk: Buffer) => {
+      for (const line of String(chunk).trim().split('\n')) {
+        const frame = JSON.parse(line);
+        if (frame.type === 'request') entered.resolve(frame.request.id);
+      }
+    });
+    const computer = createBridgeComputer({
+      namespace: 'sk-000000000000000000000001',
+      launch: () => {
+        launches++;
+        return child as never;
+      },
+    });
+    const controller = new AbortController();
+    const pending = computer.act(
+      'task',
+      { action: 'click', selector: '#submit' },
+      controller.signal,
+    );
+    const id = await entered.promise;
+    child.stdout.write(
+      JSON.stringify(
+        successful
+          ? {
+              id,
+              ok: true,
+              result: { text: 'Done', url: 'https://example.com' },
+              metadata: { status: 'succeeded' },
+            }
+          : { id, ok: false, error: 'cancelled', metadata: { status: 'cancelled' } },
+      ) + '\n',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    child.emit('close', 0);
+    await assert.rejects(pending, /Browser operation cancelled/);
+    await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+    assert.equal(launches, 1);
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  });
+
+test('read-only cancellation preserves an existing mutation fence', async () => {
+  const entered: string[] = [];
+  const waiting: Array<() => void> = [];
+  const children: Array<ReturnType<typeof fakeBridge>> = [];
+  function fakeBridge() {
+    return Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+  }
+  const computer = createBridgeComputer({
+    namespace: 'sk-000000000000000000000002',
+    launch: () => {
+      const child = fakeBridge();
+      children.push(child);
+      child.stdin.on('data', (chunk: Buffer) => {
+        for (const line of String(chunk).trim().split('\n')) {
+          const frame = JSON.parse(line);
+          if (frame.type === 'request') {
+            entered.push(frame.request.id);
+            waiting.shift()?.();
+          }
+        }
+      });
+      return child as never;
+    },
+  });
+  const request = (input: BrowserAction, signal: AbortSignal) => {
+    const ready = new Promise<void>((resolve) => waiting.push(resolve));
+    const pending = computer.act('task', input, signal);
+    return { pending, ready };
+  };
+  const mutation = new AbortController();
+  const first = request({ action: 'click', selector: '#submit' }, mutation.signal);
+  await first.ready;
+  const observation = new AbortController();
+  const secondReady = new Promise<void>((resolve) => waiting.push(resolve));
+  const secondPending = computer.screenshot('task', observation.signal);
+  await secondReady;
+  mutation.abort();
+  observation.abort();
+  const firstRejected = assert.rejects(first.pending, /cancelled/);
+  const secondRejected = assert.rejects(secondPending, /cancelled/);
+  for (const [index, child] of children.entries()) {
+    const id = entered[index]!;
+    child.stdout.write(
+      JSON.stringify({ id, ok: false, error: 'cancelled', metadata: { status: 'cancelled' } }) +
+        '\n',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    child.emit('close', 0);
+  }
+  await firstRejected;
+  await secondRejected;
+  await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+  assert.equal(children.length, 2);
+  for (const child of children) {
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
+});
+
+test(
+  'cancelling and reopening one browser keeps other sessions in the same namespace running',
+  { timeout: 10_000 },
+  async () => {
+    const fixture = await harness();
+    const dataRoot = '/synthetic/parallel-cancellation';
+    const computer = fixture.client(dataRoot);
+    const entered = deferred();
+    const chatEntered = deferred();
+    const releaseChat = deferred();
+    let chatSignal: AbortSignal | undefined;
+    try {
+      await computer.act('chat', { action: 'snapshot' });
+      const instance = fixture.instance(dataRoot);
+      instance.setAct(async (id, input, signal) => {
+        if (id === 'task' && input.action === 'click') {
+          entered.resolve();
+          await new Promise<void>((_resolve, reject) =>
+            signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }),
+          );
+        }
+        if (id === 'chat' && input.action === 'wait') {
+          chatSignal = signal;
+          chatEntered.resolve();
+          await releaseChat.promise;
+        }
+        return { text: id, url: 'https://example.com' };
+      });
+      const controller = new AbortController();
+      const cancelled = assert.rejects(
+        computer.act('task', { action: 'click', selector: '#submit' }, controller.signal),
+        /cancelled/,
+      );
+      await entered.promise;
+      controller.abort();
+      await cancelled;
+      await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+      assert.equal((await computer.act('chat', { action: 'snapshot' })).text, 'chat');
+      const chat = computer.act('chat', { action: 'wait' });
+      await chatEntered.promise;
+      await computer.act('task', { action: 'open', url: 'https://example.com/reopened' });
+      assert.equal(chatSignal?.aborted, false);
+      assert.equal(fixture.instance(dataRoot), instance);
+      assert.deepEqual(
+        instance.calls.filter(({ method }) => method === 'clear'),
+        [{ method: 'clear', input: 'task' }],
+      );
+      assert.equal(
+        instance.calls.some(({ method }) => method === 'dispose'),
+        false,
+      );
+      releaseChat.resolve();
+      assert.equal((await chat).text, 'chat');
+      assert.equal((await computer.act('chat', { action: 'snapshot' })).text, 'chat');
+    } finally {
+      releaseChat.resolve();
+      await fixture.close();
+    }
+  },
+);
 
 for (const method of ['open', 'bindProfile'] as const)
   test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
@@ -5191,12 +5380,21 @@ test('a checked browser step is described from its snapshot and runs only on tha
     await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.act('checked', { action: 'fill', selector: '#account', text: 'synthetic' });
     const search = await computer.currentPage('checked', { action: 'click', selector: '@e3' });
-    assert.deepEqual(search, {
-      origin: 'https://1.1.1.1',
-      url: 'https://1.1.1.1/login',
-      controls: [{ role: 'textbox', name: 'Search' }],
-      submits: 'unknown',
-    });
+    assert.match(search.target!, /^[0-9a-f]{64}$/);
+    assert.deepEqual(
+      {
+        origin: search.origin,
+        url: search.url,
+        controls: search.controls,
+        submits: search.submits,
+      },
+      {
+        origin: 'https://1.1.1.1',
+        url: 'https://1.1.1.1/login',
+        controls: [{ role: 'textbox', name: 'Search' }],
+        submits: 'unknown',
+      },
+    );
     const next = { action: 'click', selector: '@e2' } as const;
     await assert.rejects(
       computer.act('checked', { ...next, expectOrigin: 'https://2.2.2.2' }),
@@ -5225,6 +5423,32 @@ test('a checked browser step is described from its snapshot and runs only on tha
       ).dropTarget,
       [{ role: 'button', name: '' }],
     );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'drag',
+        selector: '@e3',
+        targetSelector: '@e2',
+        expectTarget: search.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    page().location = {
+      origin: 'https://1.1.1.1',
+      href: 'https://1.1.1.1/login?token=first',
+    };
+    page().dom.window.history.replaceState(null, '', '/login?token=first');
+    const collision = await computer.currentPage('checked', next);
+    page().location.href = 'https://1.1.1.1/login?token=second';
+    page().dom.window.history.replaceState(null, '', '/login?token=second');
+    await assert.rejects(
+      computer.act('checked', {
+        ...next,
+        expectOrigin: collision.origin,
+        expectUrl: collision.url,
+        expectTarget: collision.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
     assert.deepEqual(page().entered, []);
     await assert.rejects(
       computer.download('checked', { selector: '@e2' }),
@@ -5238,7 +5462,14 @@ test('a checked browser step is described from its snapshot and runs only on tha
       commands.some((command) => command.action === 'download'),
       false,
     );
-    await computer.act('checked', { ...next, expectOrigin: 'https://1.1.1.1' });
+    const nextTarget = await computer.currentPage('checked', next);
+    await computer.act('checked', { action: 'snapshot' });
+    assert.equal((await computer.currentPage('checked', next)).target, nextTarget.target);
+    await computer.act('checked', {
+      ...next,
+      expectOrigin: 'https://1.1.1.1',
+      expectTarget: nextTarget.target,
+    });
     assert.deepEqual(page().entered, ['synthetic']);
     await assert.rejects(
       computer.act('checked', {
@@ -5252,6 +5483,10 @@ test('a checked browser step is described from its snapshot and runs only on tha
     const before = await computer.act('checked', { action: 'snapshot' });
     const searchRef = /textbox "Search" \[ref=(e\d+)\]/.exec(before.text)?.[1];
     assert.ok(searchRef);
+    const beforeControlChange = await computer.currentPage('checked', {
+      action: 'click',
+      selector: `@${searchRef}`,
+    });
     await computer.act('checked', {
       action: 'evaluate',
       script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
@@ -5260,6 +5495,14 @@ test('a checked browser step is described from its snapshot and runs only on tha
       (await computer.currentPage('checked', { action: 'click', selector: `@${searchRef}` }))
         .controls,
       [{ role: 'textbox', name: 'Delete account' }],
+    );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'click',
+        selector: `@${searchRef}`,
+        expectTarget: beforeControlChange.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
     );
   } finally {
     await computer.dispose();
@@ -5359,6 +5602,36 @@ test(
         method: 'POST',
         to: `${origin}/label`,
       });
+      const cssStep = { action: 'click', selector: '#plain' } as const;
+      const original = await computer.currentPage('submits', cssStep);
+      assert.equal((await computer.currentPage('submits', cssStep)).target, original.target);
+      await computer.act('submits', { ...cssStep, expectTarget: original.target });
+      const enterStep = { action: 'press', key: 'Enter' } as const;
+      const focused = await computer.currentPage('submits', enterStep);
+      await computer.act('submits', { ...enterStep, expectTarget: focused.target });
+      const located = await computer.act('submits', {
+        action: 'evaluate',
+        script:
+          "const r=document.querySelector('#plain').getBoundingClientRect();({x:(r.x+r.width/2)/innerWidth,y:(r.y+r.height/2)/innerHeight})",
+      });
+      const point = JSON.parse(located.text.slice(located.text.indexOf('\n') + 1)) as {
+        x: number;
+        y: number;
+      };
+      const pointStep = { action: 'click', ...point } as const;
+      const pointed = await computer.currentPage('submits', pointStep);
+      await computer.act('submits', { ...pointStep, expectTarget: pointed.target });
+      await computer.act('submits', {
+        action: 'evaluate',
+        script:
+          "const plain=document.querySelector('#plain');plain.replaceWith(plain.cloneNode(true))",
+      });
+      const replacement = await computer.currentPage('submits', cssStep);
+      assert.notEqual(replacement.target, original.target);
+      await assert.rejects(
+        computer.act('submits', { ...cssStep, expectTarget: original.target }),
+        (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+      );
       assert.deepEqual(sent, []);
     } finally {
       await computer.dispose();
@@ -5451,23 +5724,26 @@ test(
     assert.ok(address && typeof address !== 'string');
     const origin = `http://127.0.0.1:${address.port}`;
     let socketPath = '';
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-      daemonCommand: async (path, command, signal, timeoutMs) => {
-        socketPath = path;
-        return existingDaemonCommand(path, command, signal, timeoutMs);
-      },
-    });
-    const selectMethod = computer.selectSignInMethod!;
-    computer.selectSignInMethod = async (id, input, signal) => {
-      if (input.methodId === cancelledMethod)
-        signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
-      return selectMethod(id, input, signal);
+    const makeComputer = () => {
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+        daemonCommand: async (path, command, signal, timeoutMs) => {
+          socketPath = path;
+          return existingDaemonCommand(path, command, signal, timeoutMs);
+        },
+      });
+      const selectMethod = computer.selectSignInMethod!;
+      computer.selectSignInMethod = async (id, input, signal) => {
+        if (input.methodId === cancelledMethod)
+          signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
+        return selectMethod(id, input, signal);
+      };
+      return computer;
     };
-    const worker = await harness({ computer });
+    const worker = await harness({ computer: makeComputer });
     const client = worker.client(directory, { timeoutMs: 30_000 });
     const act = (input: BrowserAction) => client.act('fixture', input);
     const choices = [
@@ -5687,6 +5963,8 @@ test(
       assert.equal(cancelling.signal.aborted, true);
       assert.deepEqual(received, Array(5).fill('/selected'));
       await assert.rejects(client.selectSignInMethod!('fixture', interruptedSelection));
+      await assert.rejects(act({ action: 'click', selector: '#ordinary' }), /unavailable/);
+      await act({ action: 'open', url: origin + '/cancel' });
       await act({ action: 'click', selector: '#ordinary' });
       const deadline = Date.now() + 5000;
       while (received.length < 6 && Date.now() < deadline) await delay(10);
@@ -5700,7 +5978,7 @@ test(
   },
 );
 
-test('chat waits for an authored activity description while keeping active work stoppable', async () => {
+test('chat shows pending sends and active work before a model step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -5723,7 +6001,7 @@ test('chat waits for an authored activity description while keeping active work 
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       HTMLElement.prototype.scrollTo = () => {};
       HTMLElement.prototype.scrollIntoView = () => {};
-      let messageRequest, releaseMessage, stops = 0;
+      let messageRequest, releaseMessage, releaseRefresh, stops = 0;
       globalThis.fetch = async (path, options = {}) => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
@@ -5760,15 +6038,19 @@ test('chat waits for an authored activity description while keeping active work 
         since: '2026-10-26T12:00:00Z',
       };
       try {
-        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' } });
+        await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' },
+          refresh: () => new Promise(resolve => { releaseRefresh = resolve; }) });
         await settle(() => messageRequest && document.querySelector('.message-user'));
-        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
         await act(async () => releaseMessage(Response.json({
           messageId: messageRequest.clientMessageId, turnId: activity.turnId,
         })));
+        await settle(() => releaseRefresh);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
         state = { ...state, activity: [activity] };
+        await act(async () => releaseRefresh());
         await render();
-        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
         const stop = document.querySelector('[aria-label="Stop all work"]');
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
@@ -5776,7 +6058,7 @@ test('chat waits for an authored activity description while keeping active work 
         for (const detail of [{ site: 'example.test' }, { title: 'Synthetic task', taskId: 'synthetic-task' }, { step: '   ' }]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
-          assert.equal(Boolean(document.querySelector('.thinking')), false);
+          assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
           assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         }
         state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',

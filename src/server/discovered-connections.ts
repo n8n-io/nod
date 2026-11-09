@@ -167,22 +167,63 @@ function headers(
   return path.auth === 'x-api-key' ? { 'X-API-Key': token } : { Authorization: `Bearer ${token}` };
 }
 
-function redact(value: unknown, token: string): unknown {
-  if (typeof value === 'string') return value.replaceAll(token, '[redacted]');
+function credentialVariants(token: string) {
+  const variants = new Set([token, JSON.stringify(token).slice(1, -1)]);
+  try {
+    variants.add(encodeURIComponent(token));
+    variants.add(encodeURI(token));
+    variants.add(new URLSearchParams({ value: token }).toString().slice(6));
+  } catch {}
+  for (const value of [...variants])
+    variants.add(value.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()));
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+
+function credentialExpression(variant: string) {
+  const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    escaped.replace(/%[0-9A-F]{2}/g, (code) =>
+      code.replace(/[A-F]/g, (letter) => `[${letter}${letter.toLowerCase()}]`),
+    ),
+    'g',
+  );
+}
+
+type CredentialVariant = { value: string; expression: RegExp };
+
+function redactText(value: string, variants: CredentialVariant[]) {
+  return variants.reduce((text, variant) => text.replace(variant.expression, '[redacted]'), value);
+}
+
+function redact(
+  value: unknown,
+  token: string,
+  variants = credentialVariants(token).map((value) => ({
+    value,
+    expression: credentialExpression(value),
+  })),
+): unknown {
+  if (typeof value === 'string') return redactText(value, variants);
   if (isIntegrationFile(value))
-    return Buffer.from(value.bytes).includes(token)
+    return variants.some((variant) => {
+      const bytes = Buffer.from(value.bytes);
+      return (
+        bytes.includes(variant.value) ||
+        (variant.value.includes('%') && variant.expression.test(bytes.toString('latin1')))
+      );
+    })
       ? {
-          name: redact(value.name, token),
+          name: redactText(value.name, variants),
           mimeType: value.mimeType,
           error: 'The file was withheld because it contains the connection credential.',
         }
-      : { ...value, name: redact(value.name, token) };
-  if (Array.isArray(value)) return value.map((item) => redact(item, token));
+      : { ...value, name: redactText(value.name, variants) };
+  if (Array.isArray(value)) return value.map((item) => redact(item, token, variants));
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value).map(([name, item]) => [
-        name.replaceAll(token, '[redacted]'),
-        redact(item, token),
+        redactText(name, variants),
+        redact(item, token, variants),
       ]),
     );
   return value;

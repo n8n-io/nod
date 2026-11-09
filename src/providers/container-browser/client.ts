@@ -33,6 +33,10 @@ const pageSchema = z
   .object({
     origin: z.string().max(2048),
     url: z.string().max(8192),
+    target: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
     controls: controls.optional(),
     submits: z
       .union([z.object({ method: z.string(), to: z.string() }).strict(), z.literal('unknown')])
@@ -51,31 +55,49 @@ export function createBridgeComputer(options: {
 }): Computer & { quiesce(): Promise<boolean> } {
   let disposed = false;
   let uncertain = false;
+  const uncertainBrowsers = new Set<string>();
   let sequence = 0;
   const screens = new Map<
     string,
     { sequence: number; value: ReturnType<NonNullable<Computer['screenStatus']>> }
   >();
-  const pending = new Set<Promise<unknown>>();
-  const cancellations = new Set<() => void>();
+  const pending = new Map<Promise<unknown>, string | undefined>();
+  const cancellations = new Map<() => void, string | undefined>();
   const views = new Map<string, Set<(input: unknown, signal?: AbortSignal) => Promise<void>>>();
   let disposing: Promise<void> | undefined;
-  let recovering: Promise<void> | undefined;
+  const recovering = new Map<string, Promise<void>>();
   const reopenNotice =
     'Explicitly reopen the website or saved browser session to start a new page. The previous action may have completed; do not repeat it.';
 
-  function recover() {
-    recovering ??= (async () => {
-      for (const cancel of cancellations) cancel();
-      await Promise.allSettled([...pending]);
-      await call({ method: 'dispose' });
-      if (disposed) return;
-      uncertain = false;
-      screens.clear();
-    })().finally(() => {
-      recovering = undefined;
-    });
-    return recovering;
+  function recover(browserId?: string) {
+    const scope = uncertain ? undefined : browserId;
+    const key = scope ?? '';
+    let recovery = recovering.get(key);
+    if (!recovery) {
+      recovery = (async () => {
+        for (const [cancel, id] of cancellations) if (!scope || id === scope) cancel();
+        await Promise.allSettled(
+          [...pending].flatMap(([promise, id]) => (!scope || id === scope ? [promise] : [])),
+        );
+        await call(
+          scope ? { method: 'clear', threadId: scope } : { method: 'dispose' },
+          undefined,
+          {},
+          true,
+        );
+        if (disposed) return;
+        if (scope) {
+          uncertainBrowsers.delete(scope);
+          screens.delete(scope);
+        } else {
+          uncertain = false;
+          uncertainBrowsers.clear();
+          screens.clear();
+        }
+      })().finally(() => recovering.delete(key));
+      recovering.set(key, recovery);
+    }
+    return recovery;
   }
 
   function updateMetadata(value: BrowserMetadata, order: number) {
@@ -90,6 +112,7 @@ export function createBridgeComputer(options: {
     input: BrowserCall,
     signal?: AbortSignal,
     transfer: { data?: Uint8Array; chunks?: Buffer[] } = {},
+    recovery = false,
   ): Promise<unknown> {
     signal?.throwIfAborted();
     const request = browserRequest.parse({
@@ -98,21 +121,28 @@ export function createBridgeComputer(options: {
       namespace: options.namespace,
     });
     const encoded = JSON.stringify({ type: 'request', request }) + '\n';
+    const browserId =
+      'threadId' in input
+        ? input.threadId
+        : input.method === 'injectCredentials' || input.method === 'fillCard'
+          ? input.input.threadId
+          : undefined;
+    const fenced = uncertain || (browserId !== undefined && uncertainBrowsers.has(browserId));
     const available = options.available?.(input) !== false;
-    if (input.method !== 'dispose' && (disposed || uncertain || !available)) {
+    if (input.method !== 'dispose' && (disposed || (!recovery && fenced) || !available)) {
       if (
         !disposed &&
-        uncertain &&
+        fenced &&
         available &&
         (input.method === 'bindProfile' ||
           (input.method === 'act' && input.input.action === 'open'))
       ) {
         if (input.method === 'act') browserUrl(input.input.url ?? '');
-        return recover().then(() => call(input, signal, transfer));
+        return recover(browserId).then(() => call(input, signal, transfer));
       }
       return Promise.reject(
         new Error(
-          uncertain && !disposed && available
+          fenced && !disposed && available
             ? `The workspace browser is unavailable. ${reopenNotice}`
             : 'The workspace browser is unavailable. Restart Nod before continuing.',
         ),
@@ -155,12 +185,16 @@ export function createBridgeComputer(options: {
       function cancel() {
         if (settled || cancelling) return;
         cancelling = true;
+        if (!['currentPage', 'screenshot'].includes(input.method)) {
+          if (browserId) uncertainBrowsers.add(browserId);
+          else uncertain = true;
+        }
         clearTimeout(timer);
         if (!response) child.stdin.write(JSON.stringify({ type: 'cancel', id: request.id }) + '\n');
         drainTimer = setTimeout(unavailable, options.drainTimeoutMs ?? 15_000);
       }
       signal?.addEventListener('abort', cancel, { once: true });
-      cancellations.add(cancel);
+      cancellations.set(cancel, browserId);
       child.stdin.on('error', unavailable);
       child.on('error', unavailable);
       child.stderr.resume();
@@ -225,7 +259,7 @@ export function createBridgeComputer(options: {
       })().catch(unavailable);
       if (signal?.aborted) cancel();
     });
-    pending.add(result);
+    pending.set(result, browserId);
     void result.finally(() => pending.delete(result)).catch(() => {});
     return result;
   }
@@ -233,7 +267,12 @@ export function createBridgeComputer(options: {
   async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
     const threadId = threadIdentity(id);
     signal.throwIfAborted();
-    if (disposed || uncertain || options.available?.({ method: 'view', threadId }) === false)
+    if (
+      disposed ||
+      uncertain ||
+      uncertainBrowsers.has(threadId) ||
+      options.available?.({ method: 'view', threadId }) === false
+    )
       throw new Error('The workspace browser is unavailable.');
     const request = browserRequest.parse({
       method: 'view',
@@ -270,6 +309,8 @@ export function createBridgeComputer(options: {
     const send = async (input: unknown, inputSignal?: AbortSignal) => {
       inputSignal?.throwIfAborted();
       if (closed) throw new Error('The browser view is not open.');
+      if (uncertain || uncertainBrowsers.has(threadId))
+        throw new Error(`The workspace browser is unavailable. ${reopenNotice}`);
       const inputId = randomUUID();
       const timer = setTimeout(cancel, options.timeoutMs ?? 30_000);
       inputSignal?.addEventListener('abort', cancel, { once: true });
@@ -326,7 +367,7 @@ export function createBridgeComputer(options: {
     });
     views.set(threadId, open.add(send));
     signal.addEventListener('abort', cancel, { once: true });
-    cancellations.add(cancel);
+    cancellations.set(cancel, threadId);
     write({ type: 'request', request });
     if (signal.aborted) cancel();
     try {
@@ -397,6 +438,7 @@ export function createBridgeComputer(options: {
               size: input.bytes.length,
               ...(input.expectOrigin ? { expectOrigin: input.expectOrigin } : {}),
               ...(input.expectUrl ? { expectUrl: input.expectUrl } : {}),
+              ...(input.expectTarget ? { expectTarget: input.expectTarget } : {}),
             },
           },
           signal,
@@ -522,8 +564,8 @@ export function createBridgeComputer(options: {
     dispose: () => {
       disposing ??= (async () => {
         disposed = true;
-        for (const cancel of cancellations) cancel();
-        await Promise.allSettled([...pending]);
+        for (const cancel of cancellations.keys()) cancel();
+        await Promise.allSettled([...pending.keys()]);
         await call({ method: 'dispose' });
         screens.clear();
       })().catch((error) => {

@@ -118,6 +118,27 @@
 .settings-category > h2 {
   margin-bottom: 24px;
 }
+.settings-privacy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 16px;
+}
+.settings-privacy > :not(h2, .settings-data-sharing) {
+  grid-column: 1 / -1;
+}
+.settings-data-sharing {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+.settings-data-sharing:hover {
+  color: var(--link-hover);
+}
 .settings-category + .settings-category {
   margin-top: 48px;
   padding-top: 40px;

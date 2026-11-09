@@ -145,7 +145,10 @@ export function createMemoryService(options: {
     const result = await edit(
       (tree) => {
         const before = { enabled: tree.enabled };
+        const invalidate =
+          input.clear || (input.enabled !== undefined && input.enabled !== tree.enabled);
         if (input.enabled !== undefined) tree.enabled = input.enabled;
+        if (invalidate) tree.generation++;
         if (input.clear) {
           tree.entries = [];
           tree.archive = [];
@@ -280,10 +283,12 @@ export function createMemoryService(options: {
     });
   }
 
-  async function style(raw: string) {
+  async function style(raw: string, generation?: number) {
     const text = line().parse(raw);
     safe(text);
     return edit((tree) => {
+      if (generation !== undefined && tree.generation !== generation)
+        throw new Error('Memory changed while writing style was being learned.');
       const now = new Date().toISOString();
       const current = locate(tree, 'preferences/writing-style');
       if (current && (current.origin !== 'email' || current.text === text)) return;
@@ -396,10 +401,14 @@ export function createMemoryService(options: {
       const before = { enabled: tree.enabled, sensitive: tree.sensitive };
       if (input.saving !== undefined && input.saving !== tree.enabled) {
         tree.enabled = input.saving;
+        tree.generation++;
         tree.reflected = mark;
         tree.retries = 0;
       }
-      if (input.sensitive !== undefined) tree.sensitive = input.sensitive;
+      if (input.sensitive !== undefined && input.sensitive !== tree.sensitive) {
+        tree.sensitive = input.sensitive;
+        tree.generation++;
+      }
       return { before, after: { enabled: tree.enabled, sensitive: tree.sensitive } };
     });
     captureSettingChanges(capture, 'owner', change.before, change.after, {

@@ -71,7 +71,7 @@ jobs:
           fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
           persist-credentials: false
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
       - name: Set up Node.js 24.21.0
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -80,7 +80,7 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Set up the Docker layer cache
-        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
+        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
         with:
           cache-key: n8n-io/nod/evals
       - name: Build the workspace and browser images

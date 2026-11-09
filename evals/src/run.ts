@@ -14,6 +14,7 @@ import type { AttemptResult, RunManifest } from './results.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel, repository } from './stack.ts';
 import { pruneAttempts, readAttempts, saveRun } from './store.ts';
+import { createSpend, mergeAttemptCosts } from './spend.ts';
 
 export const defaultJudge = 'anthropic/claude-sonnet-5-5';
 
@@ -286,16 +287,21 @@ export async function runSuite(options: RunOptions) {
     const results: AttemptResult[] = [];
     let next = 0;
     let stopped = false;
-    const spent = () =>
-      results.reduce((total, item) => total + (item.costUsd ?? 0) + (item.judgeCostUsd ?? 0), 0);
+    const accounting = createSpend();
+    const stoppedForBudget = () => {
+      if (stopped) return;
+      stopped = true;
+      console.log(
+        accounting.unpriced()
+          ? 'Stopped: completed model usage has no valid price. Remaining attempts and retries were not run.'
+          : `Stopped: spent $${accounting.knownCostUsd().toFixed(2)} of the $${options.budget} budget. Remaining attempts were not run.`,
+      );
+    };
     const started = Date.now();
     async function worker() {
       while (next < tasks.length && !stopped) {
-        if (options.budget !== undefined && spent() >= options.budget) {
-          stopped = true;
-          console.log(
-            `Stopped: spent $${spent().toFixed(2)} of the $${options.budget} budget. Remaining attempts were not run.`,
-          );
+        if (options.budget !== undefined && accounting.blocked(options.budget)) {
+          stoppedForBudget();
           break;
         }
         const task = tasks[next++];
@@ -303,9 +309,26 @@ export async function runSuite(options: RunOptions) {
         const previous = await readFile(file, 'utf8')
           .then((text) => JSON.parse(text) as AttemptResult)
           .catch(() => undefined);
+        if (options.resume && previous) accounting.add(previous);
         let result =
           options.resume && previous && previous.status !== 'incomplete' ? previous : undefined;
+        if (
+          options.resume &&
+          previous?.status === 'incomplete' &&
+          options.budget !== undefined &&
+          accounting.blocked(options.budget)
+        ) {
+          stoppedForBudget();
+          result = previous;
+        }
+        const discarded: AttemptResult[] =
+          options.resume && previous?.status === 'incomplete' && !result ? [previous] : [];
+        let attempted = false;
         for (let tries = 0; !result && tries <= options.retries; tries++) {
+          if (tries > 0 && accounting.blocked(options.budget)) {
+            stoppedForBudget();
+            break;
+          }
           result = await attemptOnce({
             directory,
             model,
@@ -313,17 +336,28 @@ export async function runSuite(options: RunOptions) {
             judge,
             task,
           });
+          attempted = true;
           if (
             result.status === 'incomplete' &&
             result.blame !== 'agent' &&
             tries < options.retries
           ) {
+            accounting.add(result);
+            if (accounting.blocked(options.budget)) {
+              stoppedForBudget();
+              break;
+            }
             console.log(
               `~ ${task.item.id} #${task.attempt}  incomplete (${result.blame}: ${(result.error ?? '').replace(/\s+/g, ' ').slice(0, 160)}), trying again`,
             );
+            discarded.push(result);
             result = undefined;
             await sleep(Math.min(30_000 * 3 ** tries, 90_000));
-          }
+          } else accounting.add(result);
+        }
+        if (discarded.length && attempted) {
+          result = mergeAttemptCosts([...discarded, ...(result ? [result] : [])]);
+          await writeFile(file, JSON.stringify(result, null, 2));
         }
         results.push(result!);
         const mark = result!.status === 'pass' ? '✓' : result!.status === 'fail' ? '✗' : '~';

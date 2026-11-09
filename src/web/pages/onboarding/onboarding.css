@@ -322,6 +322,10 @@
     transform: translateY(-4px);
   }
 }
+.ob .ob-data-sharing {
+  margin-right: auto;
+  font-size: var(--text-control);
+}
 @media (max-width: 640px) {
   .ob {
     --ob-navigation-height: 72px;
@@ -354,6 +358,11 @@
   }
   .ob-footer .ob-next {
     min-width: 112px;
+  }
+  .ob .ob-data-sharing {
+    flex-basis: 100%;
+    margin-right: 0;
+    text-align: left;
   }
 }
 @media (prefers-reduced-motion: reduce) {

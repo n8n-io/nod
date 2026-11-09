@@ -41,6 +41,9 @@ const executable = join(installation, 'nod.exe');
 const powershell = join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe');
 const nsis = process.env.NOD_NSIS || join(process.env['ProgramFiles(x86)'], 'NSIS/makensis.exe');
 const configuration = JSON.parse(await readFile(join(repository, 'desktop/package.json')));
+const electronChecksums = JSON.parse(
+  await readFile(join(repository, 'desktop/node_modules/electron/checksums.json')),
+);
 const environment = { ...process.env, NOD_UPDATE_FIXTURE_ROOT: root };
 delete environment.ELECTRON_RUN_AS_NODE;
 const receipt = { source: await run('git', ['rev-parse', 'HEAD'], { cwd: repository }) };
@@ -239,6 +242,7 @@ app.whenReady().then(async () => {
       platform: 'win32',
       arch: 'x64',
       electronVersion: configuration.devDependencies.electron,
+      download: { checksums: electronChecksums },
       appVersion: version,
       win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Nod', FileDescription: 'Nod' },
       overwrite: true,

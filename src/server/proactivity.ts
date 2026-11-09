@@ -175,6 +175,7 @@ type Row = {
   feedback: ProactiveIssue['feedback'];
   updated_at: Date;
   notified_versions: string | null;
+  pending_delivery: string | null;
   notified_deadline: Date | null;
   identity: string;
   message_id: string | null;
@@ -254,7 +255,7 @@ export function createProactivity(options: {
       id uuid PRIMARY KEY, owner_id text NOT NULL, identity text NOT NULL,
       proposal jsonb NOT NULL, sources jsonb NOT NULL, state text NOT NULL DEFAULT 'open',
       next_check timestamptz, snoozed_until timestamptz, notified_at timestamptz,
-      notified_versions text, notified_deadline timestamptz, message_id uuid REFERENCES messages(id) ON DELETE SET NULL,
+      notified_versions text, pending_delivery text, notified_deadline timestamptz, message_id uuid REFERENCES messages(id) ON DELETE SET NULL,
       feedback text, policy text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE(owner_id,identity)
     );
@@ -280,6 +281,7 @@ export function createProactivity(options: {
       checked_at timestamptz NOT NULL DEFAULT now(), turn_id uuid NOT NULL REFERENCES turns(id),
       PRIMARY KEY(owner_id,source_id,resource_id)
     );
+    ALTER TABLE proactive_issues ADD COLUMN IF NOT EXISTS pending_delivery text;
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS claimed_turn uuid;
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS reads jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE proactive_sources ADD COLUMN IF NOT EXISTS reads_turn uuid;
@@ -810,7 +812,7 @@ export function createProactivity(options: {
       if (input.action === 'resolve') {
         const row = (
           await client.query<Row>(
-            `UPDATE proactive_issues SET state='resolved',next_check=NULL,updated_at=now(),
+            `UPDATE proactive_issues SET state='resolved',next_check=NULL,pending_delivery=NULL,updated_at=now(),
           sources=(SELECT jsonb_agg(COALESCE((SELECT n FROM jsonb_array_elements($4::jsonb) n
             WHERE n->>'sourceId'=s->>'sourceId' AND n->>'revision'=s->>'revision' AND n->>'id'=s->>'id'),s))
             FROM jsonb_array_elements(sources) s)
@@ -930,7 +932,7 @@ export function createProactivity(options: {
         previous &&
         alreadyShown &&
         previous.notified_versions !== versions &&
-        input.materialChange !== 'none' &&
+        (input.materialChange !== 'none' || previous.pending_delivery === versions) &&
         (input.materialChange !== 'deadline_advanced' ||
           (deadline !== null &&
             previous.notified_deadline !== null &&
@@ -973,13 +975,18 @@ export function createProactivity(options: {
           [messageId, ownerId],
         );
         await client.query(
-          "UPDATE proactive_issues SET state='offered',message_id=$3,notified_at=clock_timestamp(),notified_versions=$4,notified_deadline=$5,snoozed_until=NULL WHERE id=$1 AND owner_id=$2",
+          "UPDATE proactive_issues SET state='offered',message_id=$3,notified_at=clock_timestamp(),notified_versions=$4,notified_deadline=$5,pending_delivery=NULL,snoozed_until=NULL WHERE id=$1 AND owner_id=$2",
           [id, ownerId, messageId, versions, input.deadline],
         );
       } else if (delivery)
         await client.query(
-          'UPDATE proactive_issues SET next_check=$3 WHERE id=$1 AND owner_id=$2',
-          [id, ownerId, !deadline || delivery.getTime() < deadline ? delivery : null],
+          'UPDATE proactive_issues SET next_check=$3,pending_delivery=$4 WHERE id=$1 AND owner_id=$2',
+          [id, ownerId, !deadline || delivery.getTime() < deadline ? delivery : null, versions],
+        );
+      else if (previous?.pending_delivery)
+        await client.query(
+          'UPDATE proactive_issues SET pending_delivery=NULL WHERE id=$1 AND owner_id=$2',
+          [id, ownerId],
         );
       const row = (
         await client.query<Row>('SELECT * FROM proactive_issues WHERE id=$1 AND owner_id=$2', [
@@ -1505,6 +1512,7 @@ export function createProactivity(options: {
           `UPDATE proactive_issues SET state=COALESCE($3,state),feedback=COALESCE($4,feedback),
           snoozed_until=CASE WHEN $5::integer IS NOT NULL THEN now()+$5*interval '1 minute' ELSE snoozed_until END,
           next_check=CASE WHEN $3 IS NOT NULL THEN NULL WHEN $5::integer IS NOT NULL THEN now()+$5*interval '1 minute' ELSE next_check END,
+          pending_delivery=CASE WHEN $3 IS NOT NULL THEN NULL ELSE pending_delivery END,
           updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *`,
           [
             input.id,

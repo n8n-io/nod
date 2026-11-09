@@ -123,6 +123,22 @@ const cost = (result: QuestionRun) =>
   (result.learning?.costUsd ?? 0) +
   result.runs.reduce((sum, run) => sum + run.costUsd + (run.verdict?.costUsd ?? 0), 0);
 
+const unpricedCount = (result: QuestionRun) =>
+  (result.previousUnpricedCalls ?? 0) +
+  (result.learning
+    ? (result.learning.unpricedCalls ?? (result.learning.modelCalls > 0 ? 1 : 0))
+    : 0) +
+  result.runs.reduce((sum, run) => sum + (run.unpricedCalls ?? (run.modelCalls > 0 ? 1 : 0)), 0);
+const unpriced = (result: QuestionRun) => unpricedCount(result) > 0;
+const totalCost = (result: QuestionRun) => cost(result) + (result.previousCostUsd ?? 0);
+const setupCosts = (result: QuestionRun) => {
+  const costs = { ...(result.previousSetupCostsUsd ?? {}) };
+  for (const run of result.runs) costs[run.setup] = (costs[run.setup] ?? 0) + run.costUsd;
+  return costs;
+};
+const learningCost = (result: QuestionRun) =>
+  (result.learning?.costUsd ?? 0) + (result.previousLearningCostUsd ?? 0);
+
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
 
@@ -160,7 +176,7 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
           evidenceOutsideRecent: accuracy(runs.filter(({ result }) => !result.evidenceInRecent)),
           incomplete: attempted - runs.length,
           compacted: runs.filter(({ run }) => run.compactions > 0).length,
-          costUsd: runs.reduce((sum, { run }) => sum + run.costUsd, 0),
+          costUsd: results.reduce((sum, result) => sum + (setupCosts(result)[setup] ?? 0), 0),
           meanTools: runs.length
             ? Math.round(
                 (10 * runs.reduce((sum, { run }) => sum + run.tools.length, 0)) / runs.length,
@@ -180,15 +196,21 @@ function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]) {
       : null;
   return {
     questions: results.length,
+    unpriced: results.some(unpriced),
     setups: bySetup,
     learning: {
-      costUsd: learned.reduce((sum, item) => sum + item.costUsd, 0),
+      costUsd:
+        learned.reduce((sum, item) => sum + item.costUsd, 0) +
+        results.reduce((sum, result) => sum + (result.previousLearningCostUsd ?? 0), 0),
       meanNotes: mean((item) => item.notes),
       meanConfirmed: mean((item) => item.confirmed),
       meanLearned: mean((item) => item.learned),
       meanTentative: mean((item) => item.tentative),
     },
-    totalCostUsd: results.reduce((sum, result) => sum + cost(result), 0),
+    totalCostUsd: results.some(unpriced)
+      ? null
+      : results.reduce((sum, result) => sum + totalCost(result), 0),
+    knownCostUsd: results.reduce((sum, result) => sum + totalCost(result), 0),
   };
 }
 
@@ -199,7 +221,7 @@ function markdown(
   const lines = [
     `# LongMemEval-S on Nod: ${manifest.label}`,
     '',
-    `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, $${summary.totalCostUsd.toFixed(2)} total.`,
+    `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, ${summary.unpriced ? `$${summary.knownCostUsd.toFixed(2)} known subtotal; total cost unknown` : `$${summary.totalCostUsd!.toFixed(2)} total`}.`,
     '',
   ];
   for (const [setup, result] of Object.entries(summary.setups)) {
@@ -281,6 +303,7 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       throw new Error(`Label ${options.label} was run with other setups. Pick a new label.`);
   } else await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const results = new Map<string, QuestionRun>();
+  const retried = new Map<string, QuestionRun>();
   for (const item of picked) {
     const done = await readFile(join(directory, 'questions', `${item.question_id}.json`), 'utf8')
       .then((text) => JSON.parse(text) as QuestionRun)
@@ -294,8 +317,11 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       wanted.every((setup) => scored(done.runs.find((run) => run.setup === setup)))
     )
       results.set(item.question_id, done);
+    else if (done) retried.set(item.question_id, done);
   }
-  let spent = [...results.values()].reduce((sum, result) => sum + cost(result), 0);
+  const savedAttempts = [...results.values(), ...retried.values()];
+  let spent = savedAttempts.reduce((sum, result) => sum + totalCost(result), 0);
+  let hasUnpriced = savedAttempts.some(unpriced);
   const rank = (id: string) => createHash('sha256').update(`order:${id}`).digest('hex');
   const queue = picked
     .filter((item) => !results.has(item.question_id))
@@ -307,10 +333,14 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
   let stopped = false;
   await Promise.all(
     Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
-      while (next < queue.length) {
-        if (options.budget !== undefined && spent >= options.budget) {
+      while (next < queue.length && !stopped) {
+        if (options.budget !== undefined && (hasUnpriced || spent >= options.budget)) {
           if (!stopped)
-            console.log(`Stopping: $${spent.toFixed(2)} spent of the $${options.budget} budget.`);
+            console.log(
+              hasUnpriced
+                ? 'Stopping: completed model usage has no valid price.'
+                : `Stopping: $${spent.toFixed(2)} spent of the $${options.budget} budget.`,
+            );
           stopped = true;
           return;
         }
@@ -319,13 +349,23 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
           (setup) => setup === 'memory' || chatIds.has(item.question_id),
         );
         const result = await attempt(directory, item, setups, options.model);
+        spent += cost(result);
+        if (unpriced(result)) hasUnpriced = true;
         for (const run of result.runs)
-          if (!(run.error && !run.reply))
+          if (!(run.error && !run.reply)) {
             run.verdict = await judge(item, run.reply, judgeModel).catch((error) => {
               run.error = error instanceof Error ? error.message : String(error);
               return undefined;
             });
-        spent += cost(result);
+            spent += run.verdict?.costUsd ?? 0;
+          }
+        const previous = retried.get(item.question_id);
+        if (previous) {
+          result.previousCostUsd = totalCost(previous);
+          result.previousSetupCostsUsd = setupCosts(previous);
+          result.previousLearningCostUsd = learningCost(previous);
+          result.previousUnpricedCalls = unpricedCount(previous);
+        }
         results.set(item.question_id, result);
         await writeFile(
           join(directory, 'questions', `${item.question_id}.json`),
@@ -352,7 +392,9 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
       }
     }),
   );
-  const ordered = picked.flatMap((item) => results.get(item.question_id) ?? []);
+  const ordered = picked.flatMap(
+    (item) => results.get(item.question_id) ?? retried.get(item.question_id) ?? [],
+  );
   const summary = summarizeLongMemEval(ordered, options.setups);
   await writeFile(join(directory, 'summary.json'), JSON.stringify({ manifest, summary }, null, 2));
   const report = markdown(summary, manifest);

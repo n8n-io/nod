@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { getEventListeners } from 'node:events';
 import {
   createHash,
   generateKeyPairSync,
@@ -16,7 +17,13 @@ import test, { type TestContext } from 'node:test';
 import type { Connection as AppConnection } from '../src/shared/contracts.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIUserAbortError,
+  APIError,
+  type RequestOptions,
+} from '@composio/client';
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
 import { JSDOM } from 'jsdom';
@@ -198,6 +205,463 @@ test(
         assert.match(proxy.userId, /^nod_[a-f0-9]{64}$/);
         assert.ok(await saved.checkpoint.read());
       }
+    });
+  },
+);
+
+test(
+  'managed integration SDK requests keep their deadline and cancellation through the response body',
+  { timeout: 45_000 },
+  async (t) => {
+    const { createServer } = await import('node:http');
+    const root = await mkdtemp(join(tmpdir(), 'nod-integration-response-'));
+    let receiving = () => {};
+    let release = () => {};
+    let requests = 0;
+    let complete = false;
+    let originalResponse: Response | undefined;
+    let requestSignal: AbortSignal | undefined;
+    let mode: 'body' | 'headers' | 'success' | 'error' | 'reset' | 'empty' = 'body';
+    const received: Record<string, unknown>[] = [];
+    const cloneCalls = new WeakMap<Response, number>();
+    const payload = 'x'.repeat(4 * 1024 * 1024);
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/v2/access/enroll') {
+        response.end(
+          JSON.stringify({
+            state: 'enabled',
+            userId:
+              'nod_' +
+              createHash('sha256')
+                .update(Buffer.from(String(request.headers['x-nod-public-key']), 'base64url'))
+                .digest('hex'),
+          }),
+        );
+        return;
+      }
+      assert.equal(request.url, '/v2/api/v3.1/tool_router/session/fixture-session/execute');
+      requests++;
+      received.push(JSON.parse(Buffer.concat(chunks).toString()));
+      const body =
+        '{"data":{"messages":[]},"error":null,"log_id":"fixture-log","result_type":"completed"}';
+      if (mode === 'reset') {
+        request.socket.destroy();
+        receiving();
+        return;
+      }
+      if (mode === 'empty') {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      if (mode === 'headers') {
+        release = () => {
+          if (!response.destroyed && !response.writableEnded) response.end(body);
+        };
+        receiving();
+        return;
+      }
+      if (mode === 'success') {
+        response.end(body);
+        return;
+      }
+      if (mode === 'error') {
+        response.statusCode = 503;
+        response.setHeader('retry-after-ms', '0');
+      }
+      if (complete) {
+        response.setHeader('x-fixture-response', 'preserved');
+        response.write('{"data":{"payload":"');
+        for (let offset = 0; offset < payload.length; offset += 65_536)
+          response.write(payload.slice(offset, offset + 65_536));
+        response.end('"},"error":null,"log_id":"fixture-log","result_type":"completed"}');
+        return;
+      }
+      response.write('{"data":');
+      release = () => {
+        if (!response.destroyed && !response.writableEnded)
+          response.end(
+            '{"messages":[]},"error":null,"log_id":"fixture-log","result_type":"completed"}',
+          );
+      };
+      receiving();
+    });
+    t.after(async () => {
+      release();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const request = globalThis.fetch;
+    const proxy = createComposioProxy({
+      dataRoot: root,
+      ownerId: 'fixture-owner',
+      keyStore: installationKeyStore,
+      checkpoint: fixtureIdentityCheckpoint,
+      url: 'https://proxy.example.test',
+      request: async (input, init) => {
+        assert.ok(init?.signal);
+        requestSignal = init.signal;
+        const response = await request(new URL(new URL(String(input)).pathname, origin), init);
+        const clone = response.clone.bind(response);
+        cloneCalls.set(response, 0);
+        t.mock.method(response, 'clone', () => {
+          cloneCalls.set(response, (cloneCalls.get(response) ?? 0) + 1);
+          return clone();
+        });
+        originalResponse = response;
+        return response;
+      },
+    });
+    await proxy.initialize();
+    const sdk = proxy.client.getClient();
+    const execute = (options: RequestOptions = {}, client = sdk) =>
+      client.toolRouter.session.execute(
+        'fixture-session',
+        { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+        { timeout: 5000, ...options },
+      );
+    const arrival = () =>
+      new Promise<void>((resolve) => {
+        receiving = resolve;
+      });
+    const bounded = <T>(work: PromiseLike<T>) =>
+      Promise.race([
+        work,
+        delay(5000).then(() => assert.fail('The SDK fixture did not reach its boundary.')),
+      ]);
+    await t.test('raw response headers arrive before the producer finishes its body', async () => {
+      const started = new Promise<void>((resolve) => {
+        receiving = resolve;
+      });
+      const pending = proxy.client
+        .getClient()
+        .toolRouter.session.execute(
+          'fixture-session',
+          { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} },
+          { timeout: 5000 },
+        );
+      const headers = pending.asResponse();
+      headers.catch(() => {});
+      try {
+        await Promise.race([
+          started,
+          headers.then(() => assert.fail('The partial response was not held.')),
+          delay(2000).then(() => assert.fail('The fixture did not send response headers.')),
+        ]);
+        const response = await Promise.race([
+          headers,
+          delay(1000).then(() => assert.fail('Response headers waited for the complete body.')),
+        ]);
+        assert.equal(response, originalResponse);
+        assert.equal(response.bodyUsed, false);
+        assert.equal(cloneCalls.get(response), 0);
+      } finally {
+        release();
+        await pending.catch(() => {});
+      }
+      assert.ok(originalResponse);
+      assert.equal(cloneCalls.get(originalResponse), 1);
+    });
+    await t.test('chunked response data and metadata stay available', async () => {
+      complete = true;
+      try {
+        const { data, response } = await proxy.client
+          .getClient()
+          .toolRouter.session.execute('fixture-session', {
+            tool_slug: 'GMAIL_FETCH_EMAILS',
+            arguments: {},
+          })
+          .withResponse();
+        assert.ok(data.result_type === 'completed');
+        assert.equal(cloneCalls.get(response), 1);
+        assert.deepEqual(data.data, { payload });
+        assert.equal(response.headers.get('x-fixture-response'), 'preserved');
+        assert.equal(response.status, 200);
+        assert.equal(
+          response.url,
+          `${origin}/v2/api/v3.1/tool_router/session/fixture-session/execute`,
+        );
+        assert.deepEqual((await response.json()).data, { payload });
+        assert.equal(requests, 2);
+      } finally {
+        complete = false;
+      }
+    });
+    for (const mode of ['timeout', 'abort'] as const) {
+      await t.test(mode, async () => {
+        const controller = new AbortController();
+        const started = new Promise<void>((resolve) => {
+          receiving = resolve;
+        });
+        const before = requests;
+        const pending = proxy.client
+          .getClient()
+          .toolRouter.session.execute(
+            'fixture-session',
+            { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+            { timeout: mode === 'timeout' ? 200 : 10_000, signal: controller.signal },
+          )
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        try {
+          await Promise.race([
+            started,
+            pending.then(() => assert.fail('The app request ended before response headers.')),
+            delay(2_000).then(() => assert.fail('The fixture did not send response headers.')),
+          ]);
+          await delay(20);
+          if (mode === 'abort') controller.abort();
+          const error = await Promise.race([
+            pending,
+            delay(2_000).then(() => assert.fail('The app request did not end.')),
+          ]);
+          assert.ok(error instanceof Error);
+          assert.equal(
+            error.constructor.name,
+            mode === 'timeout' ? 'APIConnectionTimeoutError' : 'APIUserAbortError',
+          );
+          assert.equal(requests, before + 1);
+        } finally {
+          release();
+          await pending;
+        }
+      });
+    }
+    for (const stopped of ['timeout', 'abort'] as const)
+      for (const parse of [false, true])
+        await t.test(
+          `raw response ${stopped} ${parse ? 'with delayed parsing' : 'without parsing'}`,
+          async () => {
+            mode = 'body';
+            const owner = new AbortController();
+            const started = arrival();
+            const pending = execute({ timeout: 1000, signal: owner.signal });
+            const headers = pending.asResponse();
+            headers.catch(() => {});
+            try {
+              await bounded(Promise.race([started, headers.then(() => {})]));
+              const response = await bounded(headers);
+              assert.equal(response, originalResponse);
+              assert.equal(cloneCalls.get(response), 0);
+              assert.ok(requestSignal);
+              const signal = requestSignal;
+              const ended = new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener('abort', () => resolve(), { once: true });
+              });
+              if (stopped === 'abort') owner.abort();
+              await bounded(ended);
+              assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+              if (parse)
+                await assert.rejects(
+                  pending,
+                  stopped === 'timeout' ? APIConnectionTimeoutError : APIUserAbortError,
+                );
+              assert.equal(cloneCalls.get(response), 0);
+              await assert.rejects(response.text());
+            } finally {
+              owner.abort();
+              release();
+              await headers.catch(() => {});
+            }
+          },
+        );
+    for (const stopped of ['timeout', 'abort'] as const)
+      await t.test(`raw and parsed ${stopped} before response headers`, async () => {
+        mode = 'headers';
+        const owner = new AbortController();
+        const started = arrival();
+        const pending = execute({ timeout: 1000, signal: owner.signal });
+        const rawFailure = pending.asResponse().then(
+          () => assert.fail('The response headers were not held.'),
+          (error: unknown) => error,
+        );
+        const parsedFailure = pending.then(
+          () => assert.fail('The response headers were not held.'),
+          (error: unknown) => error,
+        );
+        try {
+          await bounded(
+            Promise.race([
+              started,
+              rawFailure.then((error) => {
+                throw error;
+              }),
+            ]),
+          );
+          if (stopped === 'abort') owner.abort();
+          const error = await bounded(rawFailure);
+          assert.ok(
+            error instanceof
+              (stopped === 'timeout' ? APIConnectionTimeoutError : APIUserAbortError),
+          );
+          assert.equal(await bounded(parsedFailure), error);
+          assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+        } finally {
+          owner.abort();
+          release();
+          await rawFailure;
+          await parsedFailure;
+        }
+      });
+    for (const outcome of ['success', 'error'] as const)
+      await t.test(
+        `the raw response remains readable after parsed ${outcome} and deadline`,
+        async () => {
+          mode = outcome;
+          const owner = new AbortController();
+          const started = arrival();
+          const pending = execute({ timeout: 1000, signal: owner.signal });
+          const headers = pending.asResponse();
+          headers.catch(() => {});
+          try {
+            if (outcome === 'error') await bounded(Promise.race([started, headers.then(() => {})]));
+            const response = await bounded(headers);
+            assert.equal(response, originalResponse);
+            assert.equal(response.status, outcome === 'success' ? 200 : 503);
+            release();
+            if (outcome === 'error')
+              await assert.rejects(
+                pending,
+                (error: unknown) => error instanceof APIError && error.status === 503,
+              );
+            else assert.equal((await pending.withResponse()).response, response);
+            assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+            await delay(1100);
+            owner.abort();
+            assert.equal(response.bodyUsed, false);
+            assert.deepEqual((await response.json()).data, { messages: [] });
+          } finally {
+            owner.abort();
+            release();
+            await headers.catch(() => {});
+          }
+        },
+      );
+    for (const outcome of ['error', 'reset'] as const)
+      for (const override of ['request', 'client'] as const)
+        await t.test(`${outcome} sends once with a ${override} retry override`, async () => {
+          mode = outcome;
+          const before = requests;
+          const started = arrival();
+          const owner = new AbortController();
+          const client = override === 'client' ? sdk.withOptions({ maxRetries: 4 }) : sdk;
+          const pending = execute(
+            { signal: owner.signal, ...(override === 'request' ? { maxRetries: 4 } : {}) },
+            client,
+          );
+          const failure = assert.rejects(pending, (error: unknown) =>
+            outcome === 'error'
+              ? error instanceof APIError && error.status === 503
+              : error instanceof APIConnectionError,
+          );
+          try {
+            await bounded(Promise.race([started, failure]));
+            release();
+            await bounded(failure);
+            assert.equal(requests, before + 1);
+            assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+          } finally {
+            owner.abort();
+            release();
+            await failure;
+          }
+        });
+    await t.test(
+      'request fields and caller signal are captured before the caller can change them',
+      async () => {
+        mode = 'success';
+        const first = new AbortController();
+        const second = new AbortController();
+        let initialLogs = 0;
+        let laterLogs = 0;
+        const record = () => {
+          initialLogs++;
+        };
+        const later = () => {
+          laterLogs++;
+        };
+        const client = sdk.withOptions({
+          timeout: 5000,
+          logLevel: 'debug',
+          logger: { debug: record, info: record, warn: record, error: record },
+        });
+        const body = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: { value: 'before' } };
+        const options: Parameters<typeof sdk.request>[0] = {
+          method: 'post',
+          path: '/api/v3.1/tool_router/session/fixture-session/execute',
+          body,
+          signal: first.signal,
+        };
+        const pending = client.request(options);
+        options.signal = second.signal;
+        body.arguments.value = 'after';
+        client.timeout = 1;
+        client.baseURL = 'https://changed.example.test';
+        client.logger = { debug: later, info: later, warn: later, error: later };
+        client.logLevel = 'error';
+        await pending;
+        assert.deepEqual(received.at(-1), {
+          tool_slug: 'GMAIL_SEND_EMAIL',
+          arguments: { value: 'before' },
+        });
+        assert.ok(initialLogs > 0);
+        assert.equal(laterLogs, 0);
+        assert.equal(getEventListeners(first.signal, 'abort').length, 0);
+        assert.equal(getEventListeners(second.signal, 'abort').length, 0);
+      },
+    );
+    await t.test('derived mutable timeout applies to the next request', async () => {
+      mode = 'body';
+      const owner = new AbortController();
+      const client = sdk.withOptions({ timeout: 10000 });
+      client.timeout = 1000;
+      const started = arrival();
+      const pending = client.toolRouter.session.execute(
+        'fixture-session',
+        { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} },
+        { signal: owner.signal },
+      );
+      const headers = pending.asResponse();
+      headers.catch(() => {});
+      try {
+        await bounded(Promise.race([started, headers.then(() => {})]));
+        await bounded(headers);
+        await assert.rejects(bounded(pending), APIConnectionTimeoutError);
+        assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+      } finally {
+        owner.abort();
+        release();
+        await headers.catch(() => {});
+      }
+    });
+    await t.test('an already-aborted caller sends no request', async () => {
+      const before = requests;
+      const owner = new AbortController();
+      owner.abort();
+      const pending = execute({ signal: owner.signal });
+      await assert.rejects(pending.asResponse(), APIUserAbortError);
+      await assert.rejects(pending, APIUserAbortError);
+      assert.equal(requests, before);
+      assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
+    });
+    await t.test('an empty raw response releases the caller listener without parsing', async () => {
+      mode = 'empty';
+      const owner = new AbortController();
+      const pending = execute({ signal: owner.signal });
+      const response = await pending.asResponse();
+      assert.equal(response, originalResponse);
+      assert.equal(response.status, 204);
+      assert.equal(response.body, null);
+      assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
     });
   },
 );
@@ -1391,7 +1855,7 @@ test(
       'watch-disabled',
       'two-accounts',
       'restart',
-      'claimed-restart',
+      'expired-claim-restart',
       'cancel',
       'authorize-failure',
       'wrong-email',
@@ -1399,7 +1863,8 @@ test(
       'unknown-identity',
       'foreign-target',
       'superseded',
-      'superseded-during-callback',
+      'restart-during-callback',
+      'claim-during-start',
       'concurrent',
       'callback-race',
       'expired',
@@ -1413,9 +1878,10 @@ test(
           'watch-disabled',
           'two-accounts',
           'restart',
-          'claimed-restart',
+          'expired-claim-restart',
           'superseded',
-          'superseded-during-callback',
+          'restart-during-callback',
+          'claim-during-start',
           'concurrent',
           'callback-race',
         ].includes(variant);
@@ -1434,6 +1900,14 @@ test(
           releaseParsing = resolve;
         });
         let holdingParse = false;
+        let releaseAuthorization = () => {};
+        let authorizing = () => {};
+        const authorizationStarted = new Promise<void>((resolve) => {
+          authorizing = resolve;
+        });
+        const authorizationHeld = new Promise<void>((resolve) => {
+          releaseAuthorization = resolve;
+        });
         let releaseInspection = () => {};
         let inspected = () => {};
         const inspectionStarted = new Promise<void>((resolve) => {
@@ -1446,6 +1920,7 @@ test(
         const completedTokens = new Set<string>();
         t.after(async () => {
           releaseParsing();
+          releaseAuthorization();
           releaseInspection();
           for (const app of apps) await app.close();
           await database.close();
@@ -1472,6 +1947,10 @@ test(
               active: false,
               owner: variant === 'wrong-owner' ? 'another-owner' : owner,
             });
+            if (variant === 'claim-during-start' && authorizations === 2) {
+              authorizing();
+              await authorizationHeld;
+            }
             return {
               accountId: `pending_${new URL(callback).searchParams.get('state')}`,
               verificationSecret: 'synthetic-local-challenge',
@@ -1578,7 +2057,10 @@ test(
             const account = remote.get(query.account_ref);
             assert.ok(account);
             if (query.outcome === 'ok') account.active = true;
-            if (variant === 'superseded-during-callback' && !holdingParse) {
+            if (
+              ['restart-during-callback', 'claim-during-start'].includes(variant) &&
+              !holdingParse
+            ) {
               holdingParse = true;
               parsed();
               await parsingHeld;
@@ -1680,7 +2162,7 @@ test(
             await app.close();
             ({ integrations, app } = await start());
           }
-          if (variant === 'claimed-restart') {
+          if (variant === 'expired-claim-restart') {
             await database.pool.query(
               'UPDATE app_connections SET callback_claim_id=$1 WHERE account_id IS NULL',
               [randomUUID()],
@@ -1690,6 +2172,11 @@ test(
             const stale = await complete('new-account-1');
             assert.doesNotMatch(String(stale.headers.location), /connection=connected/);
             assert.equal(completedTokens.size, 0);
+            assert.equal((await begin()).statusCode, 409);
+            assert.equal(authorizations, 1);
+            await database.pool.query(
+              "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE account_id IS NULL",
+            );
             assert.equal((await begin()).statusCode, 200);
           }
           if (variant === 'superseded') {
@@ -1698,7 +2185,7 @@ test(
             const stale = await complete('new-account-1');
             assert.doesNotMatch(String(stale.headers.location), /connection=connected/);
           }
-          let currentAccount = ['superseded', 'claimed-restart'].includes(variant)
+          let currentAccount = ['superseded', 'expired-claim-restart'].includes(variant)
             ? 'new-account-2'
             : 'new-account-1';
           if (variant === 'concurrent') {
@@ -1728,17 +2215,25 @@ test(
             });
             assert.equal(disconnect.statusCode, 200, disconnect.body);
           }
-          if (variant === 'superseded-during-callback') {
-            const previous = complete(currentAccount);
+          let retainedCompletion: ReturnType<typeof complete> | undefined;
+          if (variant === 'claim-during-start') {
+            const replacement = begin();
+            await authorizationStarted;
+            retainedCompletion = complete(currentAccount);
             await parsingStarted;
-            assert.equal((await begin()).statusCode, 200);
+            releaseAuthorization();
+            assert.equal((await replacement).statusCode, 409);
             releaseParsing();
-            assert.doesNotMatch(String((await previous).headers.location), /connection=connected/);
-            assert.equal(remote.has(currentAccount), false);
-            currentAccount = 'new-account-2';
+          } else if (variant === 'restart-during-callback') {
+            retainedCompletion = complete(currentAccount);
+            await parsingStarted;
+            assert.equal((await begin()).statusCode, 409);
+            assert.equal(authorizations, 1);
+            releaseParsing();
           }
           const accountId = currentAccount;
-          const completion = complete(accountId, variant === 'cancel' ? 'cancel' : 'ok');
+          const completion =
+            retainedCompletion ?? complete(accountId, variant === 'cancel' ? 'cancel' : 'ok');
           if (variant === 'callback-race') {
             await inspectionStarted;
             const replay = await complete(accountId);
@@ -2310,6 +2805,50 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'Gmail scope failures preserve the account and its existing reconnect path',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    f.provider.reconnectAccount = async () => assert.fail('Consent needs an owner action.');
+    const account = await f.connect('gmail');
+    const before = (
+      await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [account.connectionId])
+    ).rows[0];
+    let requests = 0;
+    f.session.execute = async () => {
+      requests++;
+      throw new IntegrationPermissionError(
+        'HTTP 403: Request had insufficient authentication scopes.',
+      );
+    };
+    await assert.rejects(
+      f.service.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+        connectionId: account.connectionId,
+      }),
+      (error: Error & { statusCode?: number }) => {
+        assert.equal(error.statusCode, 403);
+        assert.match(error.message, /Do not retry until permissions change/);
+        assert.ok(error.message.includes(account.connectionId!));
+        return true;
+      },
+    );
+    assert.equal(requests, 1);
+    assert.ok(!f.removed.includes(account.accountId!));
+    assert.deepEqual(
+      (await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [account.connectionId]))
+        .rows[0],
+      before,
+    );
+    const saved = (await f.service.list('local-development', { refresh: false })).find(
+      (item) => item.connectionId === account.connectionId,
+    );
+    assert.equal(saved?.status, 'connected');
+    assert.equal(saved?.canReconnect, true);
+    assert.equal(saved?.reconnectRequired, false);
+  },
+);
 
 test(
   'app preflight reads account state through the transaction with a full pool',
@@ -3283,6 +3822,441 @@ test(
         );
       },
     );
+  },
+);
+
+test(
+  'managed sign-in restarts replace only an unclaimed attempt and preserve a finishing callback',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const outcome of ['unclaimed', 'connected', 'failed'])
+      await t.test(outcome, async (t) => {
+        const finishing = outcome !== 'unclaimed';
+        const f = await appsFixture(t);
+        const begin = (restartAttempt?: string) =>
+          f.app.inject({
+            method: 'POST',
+            url: '/api/apps/gmail/connect',
+            payload: { returnTo: 'window', restartAttempt },
+          });
+        const started = await begin();
+        assert.equal(started.statusCode, 200, started.body);
+        const attempt = started.json<{ url: string; attempt: string }>();
+        const hash = createHash('sha256').update(attempt.url).digest('hex');
+        const callback = new URL(f.callbacks.at(-1)!);
+        callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+        let release = () => {};
+        let entered = () => {};
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const checking = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        t.after(release);
+        const inspect = f.provider.inspectAccount;
+        let inspections = 0;
+        f.provider.inspectAccount = async (...args) => {
+          inspections++;
+          if (finishing) {
+            entered();
+            await held;
+            if (outcome === 'failed') throw new Error('Synthetic account inspection failure.');
+          }
+          return inspect(...args);
+        };
+        const complete = () => f.app.inject({ url: callback.pathname + callback.search });
+        const completion = finishing ? complete() : undefined;
+        if (finishing) await checking;
+        try {
+          const restarted = await begin(attempt.attempt);
+          assert.equal(restarted.statusCode, finishing ? 409 : 200, restarted.body);
+          if (finishing) {
+            const duplicateStart = await begin();
+            assert.equal(duplicateStart.statusCode, 409, duplicateStart.body);
+            assert.equal(f.callbacks.length, 1);
+            const cancel = await f.app.inject({
+              method: 'POST',
+              url: '/api/apps/setup-cancel',
+              payload: { hash },
+            });
+            assert.equal(cancel.statusCode, 200, cancel.body);
+            const duplicate = await complete();
+            assert.equal(
+              new URL(duplicate.headers.location!).searchParams.get('connection'),
+              'expired',
+            );
+            assert.equal(inspections, 1);
+            release();
+            assert.equal(
+              new URL((await completion!).headers.location!).searchParams.get('connection'),
+              outcome === 'connected' ? 'connected' : 'failed',
+            );
+            const again = await begin(attempt.attempt);
+            assert.equal(again.statusCode, 409, again.body);
+            const status = await f.app.inject({
+              method: 'POST',
+              url: '/api/apps/setup-status',
+              payload: { hashes: [hash], pairingUrl: attempt.url },
+            });
+            assert.deepEqual(status.json().completed, outcome === 'connected' ? [hash] : []);
+            if (outcome === 'failed') assert.equal(status.json().apps[0].available, false);
+          } else {
+            const stale = await complete();
+            assert.equal(
+              new URL(stale.headers.location!).searchParams.get('connection'),
+              'expired',
+            );
+            assert.equal(inspections, 0);
+            const wrong = await begin(attempt.attempt);
+            assert.equal(wrong.statusCode, 409, wrong.body);
+          }
+          assert.equal(
+            (await f.pool.query('SELECT count(*)::int AS n FROM app_connections')).rows[0].n,
+            outcome === 'failed' ? 0 : 1,
+          );
+        } finally {
+          release();
+        }
+      });
+  },
+);
+
+test(
+  'a settled OAuth callback survives a delayed restart refusal',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      url: 'http://localhost:4310/',
+      pretendToBeVisual: true,
+    });
+    const channels: Array<{ onmessage?: (event: { data: Record<string, string> }) => void }> = [];
+    const globals = {
+      window: dom.window,
+      document: dom.window.document,
+      navigator: dom.window.navigator,
+      HTMLElement: dom.window.HTMLElement,
+      IS_REACT_ACT_ENVIRONMENT: true,
+      BroadcastChannel: class {
+        onmessage?: (event: { data: Record<string, string> }) => void;
+        constructor() {
+          channels.push(this);
+        }
+        close() {}
+      },
+      fetch: globalThis.fetch,
+    };
+    const originals = new Map(
+      Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+    );
+    for (const [key, value] of Object.entries(globals))
+      Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    dom.window.open = () =>
+      ({ closed: false, close() {}, location: { href: '' } }) as unknown as Window;
+    const { act, createElement } = await import('react');
+    const { createRoot } = await import('react-dom/client');
+    const { useAppSignIn } = await import('../src/web/hooks/use-app-sign-in.ts');
+    try {
+      for (const outcome of ['connected', 'failed', 'opener-failed'])
+        await t.test(outcome, async (t) => {
+          const f = await appsFixture(t);
+          const openerFailure = new Error('Synthetic desktop opener failure.');
+          let opened = 0;
+          if (outcome === 'opener-failed')
+            Object.defineProperty(dom.window, 'nodDesktop', {
+              configurable: true,
+              value: {
+                async openExternal() {
+                  if (++opened === 2) throw openerFailure;
+                },
+              },
+            });
+          let release = () => {};
+          let entered = () => {};
+          let respond = () => {};
+          let received = (_status: number) => {};
+          let statusReady = () => {};
+          const statusRead = new Promise<void>((resolve) => {
+            statusReady = resolve;
+          });
+          const held = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const checking = new Promise<void>((resolve) => {
+            entered = resolve;
+          });
+          const responseHeld = new Promise<void>((resolve) => {
+            respond = resolve;
+          });
+          const responseReady = new Promise<number>((resolve) => {
+            received = resolve;
+          });
+          const inspect = f.provider.inspectAccount;
+          f.provider.inspectAccount = async (...args) => {
+            entered();
+            await held;
+            if (outcome === 'failed') throw new Error('Synthetic provider failure.');
+            return inspect(...args);
+          };
+          globalThis.fetch = async (path, options = {}) => {
+            const response = await f.app.inject({
+              method: (options.method ?? 'GET') as 'GET' | 'POST',
+              url: String(path),
+              ...(options.body
+                ? { payload: String(options.body), headers: { 'content-type': 'application/json' } }
+                : {}),
+            });
+            if (String(path) === '/api/apps/setup-status') statusReady();
+            if (
+              String(path) === '/api/apps/gmail/connect' &&
+              outcome !== 'opener-failed' &&
+              JSON.parse(String(options.body)).restartAttempt
+            ) {
+              received(response.statusCode);
+              await responseHeld;
+            }
+            return new Response(response.body, { status: response.statusCode });
+          };
+          let signIn!: ReturnType<typeof useAppSignIn>;
+          let settled = 0;
+          function SignIn() {
+            signIn = useAppSignIn({
+              entry: 'onboarding',
+              name: (service) => service,
+              onSettled() {
+                settled++;
+              },
+            });
+            return null;
+          }
+          const root = createRoot(dom.window.document.getElementById('root')!);
+          let restarting: Promise<void> | undefined;
+          try {
+            await act(async () => root.render(createElement(SignIn)));
+            await act(async () => {
+              await signIn.connect({ service: 'gmail' });
+              await statusRead;
+            });
+            if (outcome === 'opener-failed') {
+              await act(async () => signIn.connect({ service: 'gmail' }));
+              assert.equal(opened, 2);
+              assert.equal(f.callbacks.length, 2);
+              assert.equal(signIn.error, openerFailure.message);
+              assert.equal(signIn.signInUrl, undefined);
+              assert.equal(signIn.pending, undefined);
+              assert.equal(signIn.completed, undefined);
+              return;
+            }
+            const callback = new URL(f.callbacks.at(-1)!);
+            callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+            const completion = f.app.inject({ url: callback.pathname + callback.search });
+            await checking;
+            await act(async () => {
+              restarting = signIn.connect({ service: 'gmail' });
+              assert.equal(await responseReady, 409);
+            });
+            release();
+            const returned = new URL((await completion).headers.location!);
+            assert.equal(returned.searchParams.get('connection'), outcome);
+            await act(async () => {
+              channels.at(-1)!.onmessage?.({
+                data: {
+                  connection: outcome,
+                  service: 'gmail',
+                  attempt: callback.searchParams.get('state')!,
+                },
+              });
+            });
+            const completed = signIn.completed;
+            const error = signIn.error;
+            assert.equal(Boolean(completed), outcome === 'connected');
+            assert.equal(settled, 1);
+            await act(async () => {
+              respond();
+              await restarting;
+            });
+            assert.equal(signIn.completed, completed);
+            assert.equal(signIn.error, error);
+            assert.equal(signIn.pending, undefined);
+            assert.equal(settled, 1);
+            assert.equal(f.callbacks.length, 1);
+          } finally {
+            release();
+            respond();
+            await act(async () => {
+              await restarting;
+              root.unmount();
+            });
+            Reflect.deleteProperty(dom.window, 'nodDesktop');
+          }
+        });
+    } finally {
+      dom.window.close();
+      for (const [key, value] of originals)
+        if (value) Object.defineProperty(globalThis, key, value);
+        else Reflect.deleteProperty(globalThis, key);
+    }
+  },
+);
+
+test(
+  'an executing callback stays protected past expiry and an expired restart claim can be replaced without replay',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    await t.test('executing callback', async (t) => {
+      const f = await appsFixture(t);
+      const begin = () =>
+        f.app.inject({
+          method: 'POST',
+          url: '/api/apps/gmail/connect',
+          payload: { returnTo: 'window' },
+        });
+      const first = await begin();
+      const callback = new URL(f.callbacks.at(-1)!);
+      callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+      let release = () => {};
+      let entered = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const checking = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const inspect = f.provider.inspectAccount;
+      f.provider.inspectAccount = async (...args) => {
+        entered();
+        await held;
+        return inspect(...args);
+      };
+      const completion = f.app.inject({ url: callback.pathname + callback.search });
+      await checking;
+      try {
+        await f.pool.query("UPDATE app_connections SET callback_expires=now()-interval '1 minute'");
+        const blocked = await begin();
+        assert.equal(blocked.statusCode, 409, blocked.body);
+        assert.equal(f.callbacks.length, 1);
+        assert.equal(
+          (
+            await f.pool.query(
+              'SELECT count(*)::int AS n FROM app_connections WHERE callback_claim_id IS NOT NULL',
+            )
+          ).rows[0].n,
+          1,
+        );
+        release();
+        assert.equal(
+          new URL((await completion).headers.location!).searchParams.get('connection'),
+          'failed',
+        );
+        const fresh = await begin();
+        assert.equal(fresh.statusCode, 200, fresh.body);
+        const old = await f.app.inject({ url: callback.pathname + callback.search });
+        assert.equal(new URL(old.headers.location!).searchParams.get('connection'), 'expired');
+        assert.equal(f.callbacks.length, 2);
+        assert.notEqual(fresh.json().attempt, first.json().attempt);
+      } finally {
+        release();
+      }
+    });
+    await t.test('new-account claim after restart', async (t) => {
+      const f = await appsFixture(t);
+      const first = await f.app.inject({
+        method: 'POST',
+        url: '/api/apps/gmail/connect',
+        payload: { returnTo: 'window' },
+      });
+      const attempt = first.json<{ attempt: string }>().attempt;
+      const callback = new URL(f.callbacks.at(-1)!);
+      callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+      await f.pool.query(
+        "UPDATE app_connections SET callback_claim_id='synthetic-stopped-process'",
+      );
+      const service = await createIntegrations(f.pool, {
+        ownerId: 'local-development',
+        provider: f.provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      });
+      const app = Fastify();
+      service.registerRoutes(app);
+      t.after(() => app.close());
+      const retry = () =>
+        app.inject({
+          method: 'POST',
+          url: '/api/apps/gmail/connect',
+          payload: { returnTo: 'window', restartAttempt: attempt },
+        });
+      assert.equal((await retry()).statusCode, 409);
+      const now = Date.now();
+      const clock = t.mock.method(Date, 'now', () => now + 20 * 60_000);
+      try {
+        assert.equal((await retry()).statusCode, 409);
+        assert.equal(f.callbacks.length, 1);
+        assert.equal(
+          (await f.pool.query('SELECT callback_hash FROM app_connections')).rows[0].callback_hash,
+          createHash('sha256').update(attempt).digest('hex'),
+        );
+      } finally {
+        clock.mock.restore();
+      }
+      await f.pool.query("UPDATE app_connections SET callback_expires=now()-interval '1 minute'");
+      const fresh = await retry();
+      assert.equal(fresh.statusCode, 200, fresh.body);
+      assert.notEqual(fresh.json().attempt, attempt);
+      const stale = await app.inject({ url: callback.pathname + callback.search });
+      assert.equal(new URL(stale.headers.location!).searchParams.get('connection'), 'expired');
+      assert.equal(
+        (await f.pool.query('SELECT count(*)::int AS n FROM app_connections')).rows[0].n,
+        1,
+      );
+    });
+    await t.test('saved-account claim after restart', async (t) => {
+      const f = await managedReconnectFixture(t);
+      const started = await f.reconnect();
+      assert.equal(started.statusCode, 200, started.body);
+      const first = f.links.at(-1)!;
+      await f.pool.query(
+        "UPDATE app_connections SET callback_claim_id='synthetic-stopped-process' WHERE id=$1",
+        [f.connectionId],
+      );
+      const service = await createIntegrations(f.pool, {
+        ownerId: f.ownerId,
+        provider: f.provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      });
+      const app = Fastify();
+      service.registerRoutes(app);
+      t.after(() => app.close());
+      const retry = () =>
+        app.inject({
+          method: 'POST',
+          url: '/api/apps/gmail/connect',
+          payload: { connectionId: f.connectionId },
+        });
+      assert.equal((await retry()).statusCode, 409);
+      assert.equal(f.links.length, 1);
+      const now = Date.now();
+      const clock = t.mock.method(Date, 'now', () => now + 20 * 60_000);
+      try {
+        assert.equal((await retry()).statusCode, 409);
+        assert.equal(f.links.length, 1);
+        assert.equal((await f.row()).callback_claim_id, 'synthetic-stopped-process');
+      } finally {
+        clock.mock.restore();
+      }
+      await f.pool.query(
+        "UPDATE app_connections SET callback_expires=now()-interval '1 minute' WHERE id=$1",
+        [f.connectionId],
+      );
+      const fresh = await retry();
+      assert.equal(fresh.statusCode, 200, fresh.body);
+      assert.equal(f.links.length, 2);
+      assert.equal((await f.row()).account_id, 'old-account');
+      assert.equal(await f.complete(first), 'expired');
+      assert.equal(f.accounts.has('old-account'), true);
+      assert.equal(f.removed.includes(first.accountId), true);
+    });
   },
 );
 
@@ -6728,7 +7702,10 @@ test(
       await admin.end();
     });
     const owner = 'fixture-owner';
-    const token = 'synthetic-secret-token';
+    const token = 'synthetic/secret token';
+    const encoded = 'synthetic%2Fsecret%20token';
+    const mixedCaseEncoded = 'synthetic%2fsecret%20token';
+    const formEncoded = 'synthetic%2Fsecret+token';
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
@@ -6737,7 +7714,7 @@ test(
     const transport = createDiscoveredTransport(async (input, init) => {
       if (String(input) === 'https://fixture.example/api/records')
         return Response.json(
-          { error: { code: 'invalid_field', detail: `Rejected ${token}` } },
+          { error: { code: 'invalid_field', detail: `Rejected ${encoded}` } },
           { status: 422 },
         );
       if (String(input) === 'https://fixture.example/api/files/agenda')
@@ -6757,7 +7734,7 @@ test(
       if (String(input) === 'https://fixture.example/api/files/log')
         return new Response('x'.repeat(20_000), { headers: { 'content-type': 'text/plain' } });
       if (String(input) === 'https://fixture.example/api/files/echo')
-        return new Response(Buffer.from(`echo ${token}`), {
+        return new Response(Buffer.from(`echo ${mixedCaseEncoded}`), {
           headers: { 'content-type': 'application/octet-stream' },
         });
       if (init?.method === 'GET') return new Response(null, { status: 405 });
@@ -6783,7 +7760,7 @@ test(
                 }
               : {
                   isError: true,
-                  content: [{ type: 'text', text: `Unknown record for ${token}` }],
+                  content: [{ type: 'text', text: `Unknown record for ${formEncoded}` }],
                 },
       });
     });
@@ -6829,6 +7806,7 @@ test(
       (error) => {
         assert.match(failure(error), /\(422\).*invalid_field.*Rejected \[redacted\]/);
         assert.doesNotMatch(failure(error), new RegExp(token));
+        assert.ok(!failure(error).includes(encoded));
         return true;
       },
     );
@@ -6837,6 +7815,7 @@ test(
       (error) => {
         assert.match(failure(error), /Unknown record for \[redacted\]/);
         assert.doesNotMatch(failure(error), new RegExp(token));
+        assert.ok(!failure(error).includes(formEncoded));
         return true;
       },
     );
@@ -7225,6 +8204,27 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     resultType: 'completed',
   };
   assert.deepEqual(await session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'), result);
+  for (const failure of [
+    {
+      error: 'HTTP 403: Request had insufficient authentication scopes.',
+      resultType: 'failed',
+      data: {},
+    },
+    {
+      error: null,
+      resultType: 'completed',
+      data: {
+        successful: false,
+        error: 'HTTP 403: Request had insufficient authentication scopes.',
+      },
+    },
+  ]) {
+    result = failure;
+    await assert.rejects(
+      session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'),
+      IntegrationPermissionError,
+    );
+  }
   result = {
     error: `Permission denied. ${'x'.repeat(5000)}`,
     data: {

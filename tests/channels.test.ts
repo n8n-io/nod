@@ -700,6 +700,9 @@ test(
             assert.equal(await transport.cancelPairing!('another-setup'), false);
             const me = { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' };
             sockets[0].events.emit('creds.update', { me, registered: true });
+            sockets[0].events.emit('connection.update', { isNewLogin: true, qr: undefined });
+            assert.equal((await transport.pairing!()).qr, undefined);
+            assert.equal((await transport.pairing!()).state, 'connecting');
             sockets[0].events.emit('connection.update', { connection: 'open' });
             assert.equal((await transport.pairing!()).qr, undefined);
             assert.equal(await transport.cancelPairing!(initial.pairingId!), false);
@@ -2543,6 +2546,38 @@ test('on-device speech decodes a real WAV into bounded mono samples and refuses 
       message: 'format',
     });
   });
+});
+
+test('local speech exports chunked audio as WAV and finds the silence token without loading a model', async () => {
+  const { RawAudio, PreTrainedTokenizer } = await import('@huggingface/transformers');
+  const samples = Float32Array.from(
+    { length: 24000 },
+    (_, index) => Math.sin((index * 2 * Math.PI * 440) / 24000) * 0.25,
+  );
+  const audio = new RawAudio([samples.subarray(0, 5000), samples.subarray(5000)], 24000);
+  assert.deepEqual(audio.data, samples);
+  const bytes = new Uint8Array(await audio.toBlob().arrayBuffer());
+  const decoded = await decodeLocalAudio(bytes, 'audio/wav');
+  assert.equal(decoded.length, 16000);
+  const rms = Math.sqrt(decoded.reduce((sum, value) => sum + value * value, 0) / decoded.length);
+  assert.ok(rms > 0.17 && rms < 0.18);
+  const tokenizer = new PreTrainedTokenizer(
+    {
+      model: {
+        type: 'WordLevel',
+        vocab: { '[UNK]': 0, '<|nocaptions|>': 1 },
+        unk_token: '[UNK]',
+      },
+      added_tokens: [],
+      normalizer: null,
+      pre_tokenizer: null,
+      post_processor: null,
+      decoder: null,
+    },
+    { unk_token: '[UNK]' },
+  );
+  assert.equal(tokenizer.convert_tokens_to_ids('<|nocaptions|>'), 1);
+  assert.equal(tokenizer.convert_tokens_to_ids('absent'), undefined);
 });
 
 test('OpenRouter transcribes with its own current key, bounds responses, and reports cost without content', async () => {

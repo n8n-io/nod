@@ -20,7 +20,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
-import { pool } from './db.ts';
+import { cancellationTransaction, pool } from './db.ts';
 import { afterCommit, afterRollback, transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
@@ -252,7 +252,7 @@ export async function withTurnLock<T>(
   database?: PoolClient,
 ) {
   const turnId = typeof turn === 'string' ? turn : turn.turnId;
-  const signal = typeof turn === 'string' ? undefined : turn.signal;
+  const signal = typeof turn === 'string' ? running.get(turn)?.signal : turn.signal;
   const execute = async (client: PoolClient) => {
     signal?.throwIfAborted();
     const { rows } = await client.query(
@@ -260,6 +260,7 @@ export async function withTurnLock<T>(
        WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR NO KEY UPDATE OF u`,
       [turnId, ownerId],
     );
+    signal?.throwIfAborted();
     if (rows[0]?.status !== 'running') throw turnStopped();
     return operation(client);
   };
@@ -717,6 +718,11 @@ export async function cancelTurns(
 ) {
   const capture = snapshotAnalytics(analytics);
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
+  const candidates = await client.query<{ id: string }>(
+    "SELECT id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting')",
+    values,
+  );
+  abortTurns(candidates.rows.map(({ id }) => id));
   const current = await client.query(
     "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
     values,
@@ -759,7 +765,7 @@ export function abortTurns(ids: string[]) {
 
 export async function stopThread(analytics?: CaptureAnalytics) {
   const capture = snapshotAnalytics(analytics);
-  const cancelled = await transaction(
+  const cancelled = await cancellationTransaction(
     async (client) => cancelTurns(client, (await lockThread(client)).id, {}, capture),
     pool,
   );
@@ -770,7 +776,7 @@ export async function stopThread(analytics?: CaptureAnalytics) {
 
 export async function resetThread(expectedThreadId: string, analytics?: CaptureAnalytics) {
   const capture = snapshotAnalytics(analytics);
-  const result = await transaction(async (client) => {
+  const result = await cancellationTransaction(async (client) => {
     const thread = await lockThread(client);
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
@@ -1380,7 +1386,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   if (stopping) controller.abort();
   const current = async <T>(operation: (client: PoolClient) => Promise<T>) => {
     if (signal.aborted) throw turnStopped();
-    return withTurnLock(turnId, operation);
+    return withTurnLock({ turnId, signal }, operation);
   };
   const ensureCurrent = () => current(async () => {});
   const fenced =
@@ -1971,8 +1977,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (shared.length) await post('', shared.splice(0)).catch(() => {});
-    if (signal.aborted) outcome = 'cancelled';
-    if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached) {
+    if (signal.aborted) {
+      outcome = 'cancelled';
+      return;
+    }
+    if (error instanceof Error && error.message === spendingLimitReached) {
       limited = true;
       await failTurn(turnId, undefined, spendingLimitReached);
     } else {
@@ -1981,6 +1990,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
+    if (signal.aborted && !stopping)
+      await cancellationTransaction((client) =>
+        client.query(
+          "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",
+          [turnId, ownerId],
+        ),
+      )
+        .then(({ rowCount }) => {
+          if (rowCount) refresh();
+        })
+        .catch((error: unknown) => logFailure('turn_cancellation_failed', error));
     if (work)
       dependencies.analytics?.({
         event: 'turn_completed',

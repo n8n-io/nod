@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { AppSetupStatus } from '../../shared/contracts';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { analyticsForCurrentSession, appConnectionAnalytics } from '../lib/analytics';
 import { cancelSetup, connectionUrl, setupLinkHash } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -205,13 +205,16 @@ export function useAppSignIn({
     const capture = analyticsForCurrentSession();
     const completion = appConnectionAnalytics(entry);
     capture('app_connect_clicked', { entry, result: 'opened' });
-    clearAttempt();
+    const previous = attempt.current;
+    const restarting =
+      previous?.service === slug && previous.connectionId === connectionId ? previous : undefined;
+    if (!restarting) clearAttempt();
     const external = desktopLinksAvailable();
     const popup = external
       ? null
       : window.open(
           `/connection-loading.html?service=${encodeURIComponent(slug)}`,
-          `nod-connect-${slug}`,
+          restarting ? '_blank' : `nod-connect-${slug}`,
           'popup,width=520,height=720',
         );
     try {
@@ -220,18 +223,29 @@ export function useAppSignIn({
     const controller = new AbortController();
     request.current = controller;
     controller.signal.addEventListener('abort', () => popup?.close(), { once: true });
-    signInWindow.current = popup;
+    if (!restarting) signInWindow.current = popup;
     setService(slug);
     setPending('opening');
     setPairingConfirmed(false);
     setError('');
     let next: 'waiting' | undefined;
+    let ownedAttempt = restarting;
     try {
+      if (previous && !restarting)
+        await api('/api/apps/setup-cancel', {
+          method: 'POST',
+          body: JSON.stringify({ hash: await setupLinkHash(previous.url) }),
+          signal: controller.signal,
+        });
       const response = await api<{ url: string; attempt?: string }>(
         `/api/apps/${encodeURIComponent(slug)}/connect`,
         {
           method: 'POST',
-          body: JSON.stringify({ returnTo: external ? 'desktop' : 'window', connectionId }),
+          body: JSON.stringify({
+            returnTo: external ? 'desktop' : 'window',
+            connectionId,
+            restartAttempt: restarting?.id,
+          }),
         },
       );
       if (controller.signal.aborted) {
@@ -239,6 +253,8 @@ export function useAppSignIn({
         throw new DOMException('Cancelled.', 'AbortError');
       }
       const url = connectionUrl(response.url, window.location.origin);
+      clearAttempt();
+      signInWindow.current = popup;
       const setup = new URL(url);
       if (
         latest.current.onSetup &&
@@ -259,6 +275,7 @@ export function useAppSignIn({
         url,
         report: completion.complete,
       };
+      ownedAttempt = attempt.current;
       flushSync(() => {
         setSignInUrl(url);
       });
@@ -269,8 +286,20 @@ export function useAppSignIn({
         setSignInOpened(external || Boolean(popup && !popup.closed));
     } catch (cause) {
       popup?.close();
-      if (controller.signal.aborted || request.current !== controller) return;
-      clearAttempt();
+      if (
+        controller.signal.aborted ||
+        request.current !== controller ||
+        (ownedAttempt && attempt.current !== ownedAttempt)
+      )
+        return;
+      if (
+        restarting &&
+        attempt.current === restarting &&
+        cause instanceof ApiError &&
+        cause.status === 409
+      )
+        next = 'waiting';
+      else clearAttempt();
       setError(errorMessage(cause));
       capture('ui_error', { area: entry, action: 'connect' });
     } finally {

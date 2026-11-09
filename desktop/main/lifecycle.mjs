@@ -1,3 +1,19 @@
+export function startupErrorDetails(error, seen = new Set()) {
+  if (!error || seen.has(error)) return '';
+  seen.add(error);
+  return [
+    error.code,
+    error.stack || error.message,
+    error.details,
+    startupErrorDetails(error.cause, seen),
+    ...(Array.isArray(error.errors)
+      ? error.errors.map((cause) => startupErrorDetails(cause, seen))
+      : []),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export function createDesktopLifecycle({
   prepareRuntime,
   stopRuntime,
@@ -43,7 +59,7 @@ export function createDesktopLifecycle({
     report({
       phase: 'error',
       message: error.message,
-      details: [error.code, error.stack || error.message, error.details].filter(Boolean).join('\n'),
+      details: startupErrorDetails(error),
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
       needsWsl: error.code === 'NOD_WSL_REQUIRED',
     });

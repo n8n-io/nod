@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 const framePolicy =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:";
@@ -22,13 +22,25 @@ export function SandboxedFrame({
   onLeave(): void;
 }) {
   const loads = useRef(0);
+  const frame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    const leave = (event: MessageEvent) => {
+      if (event.source === frame.current?.contentWindow && event.data === 'nod:leave') onLeave();
+    };
+    window.addEventListener('message', leave);
+    return () => window.removeEventListener('message', leave);
+  }, [onLeave]);
+  const permissions = scripts ? 'allow-scripts' : 'allow-popups allow-popups-to-escape-sandbox';
+  const source = html.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}; frame-src 'none'; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;width:100%;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style><iframe title="File content" sandbox="${permissions}" referrerpolicy="no-referrer" srcdoc="${source}" onload="if(this.dataset.loaded)parent.postMessage('nod:leave','*');this.dataset.loaded='yes'"></iframe><script>addEventListener('securitypolicyviolation',function(e){if(e.effectiveDirective==='frame-src')parent.postMessage('nod:leave','*')});addEventListener('message',function(e){if(e.source===document.querySelector('iframe').contentWindow&&e.data==='nod:close')parent.postMessage(e.data,'*')})</script>`;
   return (
     <iframe
+      ref={frame}
       className="artifact-frame"
       title={title}
-      sandbox={scripts ? 'allow-scripts' : 'allow-popups allow-popups-to-escape-sandbox'}
+      sandbox={scripts ? permissions : `allow-scripts ${permissions}`}
       referrerPolicy="no-referrer"
-      srcDoc={html}
+      srcDoc={page}
       onLoad={() => {
         loads.current += 1;
         if (loads.current > 1) onLeave();

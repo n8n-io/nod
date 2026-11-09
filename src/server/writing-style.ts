@@ -57,7 +57,9 @@ async function learnWritingStyle(
   validate?: (signal: AbortSignal) => Promise<void>,
 ) {
   try {
-    if (!options.curator.configured || !(await options.memory.enabled())) return;
+    if (!options.curator.configured) return;
+    const tree = await options.memory.load();
+    if (!tree.enabled) return;
     const signal = AbortSignal.any([AbortSignal.timeout(90_000), ...(stop ? [stop] : [])]);
     signal.throwIfAborted();
     let total = 0;
@@ -93,6 +95,7 @@ async function learnWritingStyle(
     signal.throwIfAborted();
     await validate?.(signal);
     signal.throwIfAborted();
-    if (reply.success) await options.memory.style(`Writing style: ${reply.data.style}`);
+    if (reply.success)
+      await options.memory.style(`Writing style: ${reply.data.style}`, tree.generation);
   } catch {}
 }

@@ -1144,6 +1144,10 @@ export async function createPiModelRuntime(
     const usage = audio?.active ? audioUsage() : undefined;
     const events = stream(target, audio?.context ?? context, {
       ...options,
+      maxTokens:
+        options?.maxTokens && target.maxTokens > 0
+          ? Math.min(options.maxTokens, target.maxTokens)
+          : options?.maxTokens,
       maxRetries: 0,
       ...(target !== model
         ? { reasoning: access.textModel!.effort === 'off' ? undefined : access.textModel!.effort }

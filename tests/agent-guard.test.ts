@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { Compile } from 'typebox/compile';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { appConfirmation } from '../src/ports/agent.ts';
@@ -35,6 +36,8 @@ import { createMailCheck } from '../src/server/mail-check.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import type { MemoryBrief } from '../src/ports/memory-recall.ts';
 import { presentationText, type Presentation } from '../src/shared/presentation.ts';
+import { appToolArgs, type AppTool } from '../src/server/app-reads.ts';
+import { withoutSchemaPatterns } from '../src/shared/json-schema.ts';
 
 async function fixture(
   run: (
@@ -2784,6 +2787,398 @@ test('current evidence stays untrusted and excludes private, failed and foreign 
     /"2026-10-30T10:00:00Z":"2026-10-30T11:00:00\+01:00"/,
   );
   assert.ok(current.some((read) => read.action.startsWith('mcp__records__')));
+});
+
+test('external tool schemas drop regex constraints before argument validation', () => {
+  const expression = '^(a+)+$';
+  const schema = {
+    type: 'object',
+    properties: {
+      query: { type: 'string', pattern: expression },
+      nested: { allOf: [{ type: 'string', pattern: expression }] },
+      pattern: { type: 'string', pattern: expression },
+    },
+    $defs: { pattern: { type: 'string', pattern: expression } },
+    patternProperties: { [expression]: { type: 'string' } },
+    propertyNames: { pattern: expression },
+    required: ['query'],
+  };
+  assert.deepEqual(withoutSchemaPatterns(schema), {
+    type: 'object',
+    properties: {
+      query: { type: 'string' },
+      nested: { allOf: [{ type: 'string' }] },
+      pattern: { type: 'string' },
+    },
+    $defs: { pattern: { type: 'string' } },
+    propertyNames: {},
+    required: ['query'],
+  });
+  const tool: AppTool = {
+    name: 'records:find',
+    action: 'CONNECTED_MCP_CALL',
+    description: 'Find synthetic records',
+    schema,
+    pathId: 'synthetic-path',
+    tool: 'find',
+  };
+  const connectionId = randomUUID();
+  assert.deepEqual(appToolArgs(tool, { query: 'not-a-match' }, connectionId), {
+    tool: 'find',
+    input: { query: 'not-a-match' },
+    connectionId,
+    pathId: 'synthetic-path',
+  });
+  const dynamic = {
+    type: 'object',
+    properties: {
+      filter: { const: { pattern: 'synthetic', patternProperties: { literal: 'value' } } },
+    },
+    patternProperties: { '^field_[a-z]+$': { type: 'string', pattern: expression } },
+    additionalProperties: false,
+  };
+  const input = {
+    field_name: 'synthetic',
+    filter: { pattern: 'synthetic', patternProperties: { literal: 'value' } },
+  };
+  assert.deepEqual(withoutSchemaPatterns(dynamic), {
+    type: 'object',
+    properties: dynamic.properties,
+    additionalProperties: true,
+  });
+  assert.deepEqual(appToolArgs({ ...tool, schema: dynamic }, input, connectionId), {
+    tool: 'find',
+    input,
+    connectionId,
+    pathId: 'synthetic-path',
+  });
+  assert.deepEqual(
+    withoutSchemaPatterns({
+      type: 'object',
+      default: input,
+      examples: [input],
+      enum: [input],
+      dependentRequired: { pattern: ['filter'] },
+      unevaluatedProperties: false,
+    }),
+    {
+      type: 'object',
+      default: input,
+      examples: [input],
+      enum: [input],
+      dependentRequired: { pattern: ['filter'] },
+      unevaluatedProperties: false,
+    },
+  );
+});
+
+test('external regex removal keeps valid compound arguments and shared definitions usable', () => {
+  const cases: Array<{ schema: Record<string, unknown>; input: unknown }> = [
+    {
+      schema: { type: 'string', oneOf: [{ pattern: '^alpha$' }, { pattern: '^beta$' }] },
+      input: 'alpha',
+    },
+    { schema: { type: 'string', not: { pattern: '^blocked$' } }, input: 'allowed' },
+    {
+      schema: {
+        type: 'string',
+        if: { pattern: '^alpha$' },
+        then: { const: 'alpha' },
+        else: { const: 'beta' },
+      },
+      input: 'beta',
+    },
+    {
+      schema: {
+        type: 'array',
+        contains: { type: 'string', pattern: '^alpha$' },
+        minContains: 1,
+        maxContains: 1,
+      },
+      input: ['alpha', 'beta'],
+    },
+    {
+      schema: {
+        $defs: {
+          alpha: { type: 'string', pattern: '^alpha$' },
+          beta: { type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [{ $ref: '#/$defs/alpha' }, { $ref: '#/$defs/beta' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        type: 'string',
+        allOf: [{ minLength: 2 }],
+        anyOf: [{ const: 'alpha' }, { const: 'beta' }],
+        oneOf: [{ pattern: '^alpha$' }, { pattern: '^beta$' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        $defs: {
+          alpha: { $dynamicAnchor: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { $dynamicAnchor: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [{ $dynamicRef: '#alpha' }, { $dynamicRef: '#beta' }],
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        type: 'object',
+        allOf: [{ patternProperties: { '^field_': { type: 'string' } } }],
+        unevaluatedProperties: false,
+      },
+      input: { field_name: 'synthetic' },
+    },
+    ...['$id', '$anchor'].map((key) => ({
+      schema: {
+        $defs: {
+          alpha: { [key]: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { [key]: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [
+          { $ref: `${key === '$anchor' ? '#' : ''}alpha` },
+          { $ref: `${key === '$anchor' ? '#' : ''}beta` },
+        ],
+      },
+      input: 'alpha',
+    })),
+    ...['$id', '$anchor'].map((key) => ({
+      schema: {
+        $id: 'https://schema.example/root',
+        $defs: {
+          alpha: { [key]: 'alpha', type: 'string', pattern: '^alpha$' },
+          beta: { [key]: 'beta', type: 'string', pattern: '^beta$' },
+        },
+        oneOf: [
+          {
+            $ref:
+              key === '$anchor'
+                ? 'https://schema.example/root#alpha'
+                : 'https://schema.example/alpha',
+          },
+          { $ref: key === '$anchor' ? '#beta' : 'beta' },
+        ],
+      },
+      input: 'alpha',
+    })),
+    {
+      schema: {
+        type: 'object',
+        properties: {
+          nested: {
+            $id: 'https://schema.example/nested',
+            type: 'object',
+            $defs: {
+              choice: {
+                oneOf: [
+                  { type: 'string', pattern: '^alpha$' },
+                  { type: 'string', pattern: '^beta$' },
+                ],
+              },
+            },
+            properties: { value: { $ref: '#/$defs/choice/oneOf/0' } },
+          },
+        },
+      },
+      input: { nested: { value: 'alpha' } },
+    },
+    {
+      schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              { type: 'string', pattern: '^alpha$' },
+              { type: 'string', pattern: '^beta$' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              {
+                $id: 'https://schema.example/copied',
+                type: 'object',
+                $defs: {
+                  value: { oneOf: [{ type: 'string', pattern: '^alpha$' }, { const: 'beta' }] },
+                },
+                properties: { value: { $ref: '#/$defs/value/oneOf/0' } },
+              },
+              { const: 'other' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: { value: 'alpha' },
+    },
+    {
+      schema: {
+        $defs: { choice: { oneOf: [true, { pattern: '^alpha$' }] } },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: 'alpha',
+    },
+    {
+      schema: {
+        $defs: {
+          node: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', pattern: '^alpha$' },
+              next: { $ref: '#/$defs/node' },
+            },
+            required: ['name'],
+          },
+        },
+        $ref: '#/$defs/node',
+      },
+      input: { name: 'alpha', next: { name: 'alpha' } },
+    },
+    {
+      schema: {
+        $defs: {
+          choice: {
+            oneOf: [
+              {
+                $id: 'https://schema.example/recursive',
+                type: 'object',
+                properties: {
+                  name: { type: 'string', pattern: '^alpha$' },
+                  next: { $ref: '#' },
+                },
+                required: ['name'],
+              },
+              { const: 'other' },
+            ],
+          },
+        },
+        $ref: '#/$defs/choice/oneOf/0',
+      },
+      input: { name: 'alpha', next: { name: 'alpha' } },
+    },
+  ];
+  for (const example of cases) {
+    const { $defs, $id, ...value } = example.schema;
+    const schema = {
+      type: 'object',
+      ...($defs ? { $defs } : {}),
+      ...($id ? { $id } : {}),
+      properties: { value },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const args = { value: example.input };
+    assert.equal(Compile(schema as never).Check(args), true);
+    const cleaned = withoutSchemaPatterns(schema);
+    assert.equal(Compile(cleaned as never).Check(args), true);
+    assert.deepEqual(withoutSchemaPatterns(cleaned), cleaned);
+    const tool: AppTool = {
+      name: 'find',
+      action: 'CONNECTED_MCP_CALL',
+      description: 'Read synthetic records',
+      schema,
+      pathId: 'synthetic',
+      tool: 'find',
+    };
+    assert.deepEqual(appToolArgs(tool, args, 'synthetic'), {
+      tool: 'find',
+      input: args,
+      connectionId: 'synthetic',
+      pathId: 'synthetic',
+    });
+    assert.throws(() => appToolArgs(tool, {}, 'synthetic'), /do not match/);
+    assert.throws(() => appToolArgs(tool, { ...args, extra: true }, 'synthetic'), /do not match/);
+  }
+  const strict = {
+    type: 'string',
+    oneOf: [{ const: 'alpha' }, { const: 'beta' }],
+    not: { const: 'blocked' },
+  };
+  assert.deepEqual(withoutSchemaPatterns(strict), strict);
+  assert.equal(Compile(withoutSchemaPatterns(strict) as never).Check('other'), false);
+  const siblings = {
+    type: 'object',
+    properties: {
+      query: { type: 'string', pattern: '^alpha$' },
+      choice: { type: 'string', oneOf: [{ minLength: 1 }, { maxLength: 1 }] },
+      guard: {
+        type: 'string',
+        not: { $defs: { unused: { pattern: '^alpha$' } }, const: 'blocked' },
+      },
+      condition: {
+        type: 'string',
+        if: { const: 'alpha' },
+        then: { const: 'alpha' },
+        else: { const: 'beta' },
+      },
+      tags: { type: 'array', contains: { type: 'string' }, maxContains: 1 },
+    },
+    unevaluatedProperties: false,
+  };
+  const good = {
+    query: 'alpha',
+    choice: 'alpha',
+    guard: 'allowed',
+    condition: 'beta',
+    tags: ['one'],
+  };
+  for (const args of [
+    good,
+    { ...good, choice: 'a' },
+    { ...good, guard: 'blocked' },
+    { ...good, condition: 'other' },
+    { ...good, tags: ['one', 'two'] },
+    { ...good, extra: true },
+  ])
+    assert.equal(
+      Compile(withoutSchemaPatterns(siblings) as never).Check(args),
+      Compile(siblings).Check(args),
+    );
+  const literal = {
+    type: 'object',
+    examples: [{ $id: 'literal', type: 'string', pattern: '^(a+)+$' }],
+    properties: { named: { $ref: 'literal' }, value: { $ref: '#/examples/0' } },
+  };
+  const cleaned = withoutSchemaPatterns(literal) as Record<string, any>;
+  assert.deepEqual(cleaned.examples, literal.examples);
+  assert.notEqual(cleaned.properties.value.$ref, '#/examples/0');
+  assert.equal(cleaned.properties.named.$ref, cleaned.properties.value.$ref);
+  assert.equal(cleaned.$defs.__nod_ref_0.pattern, undefined);
+  assert.equal(Compile(cleaned as never).Check({ value: 'not-a-match' }), true);
+  assert.deepEqual(withoutSchemaPatterns(cleaned), cleaned);
+  const named = withoutSchemaPatterns({
+    ...literal,
+    properties: { named: { $ref: 'literal' } },
+  }) as Record<string, any>;
+  assert.notEqual(named.properties.named.$ref, 'literal');
+  assert.equal(named.$defs.__nod_ref_0.pattern, undefined);
+  assert.equal(Compile(named as never).Check({ named: 'not-a-match' }), true);
+  assert.deepEqual(withoutSchemaPatterns(named), named);
+  const nested = withoutSchemaPatterns({
+    type: 'object',
+    examples: [
+      {
+        $id: 'https://schema.example/literal',
+        type: 'object',
+        $defs: { choice: { oneOf: [{ type: 'string', pattern: '^(a+)+$' }, { const: 'beta' }] } },
+        properties: { value: { $ref: '#/$defs/choice/oneOf/0' } },
+      },
+    ],
+    properties: { value: { $ref: 'https://schema.example/literal' } },
+  });
+  assert.equal(Compile(nested as never).Check({ value: { value: 'not-a-match' } }), true);
+  assert.deepEqual(withoutSchemaPatterns(nested), nested);
 });
 
 test('memory evidence stays bounded and rechecks only eligible replies after truncation', async () => {

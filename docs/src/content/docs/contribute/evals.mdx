@@ -82,6 +82,10 @@ Results go to `.local/capability-evals/<label>/`. Open `report.html` to read eve
 
 Each attempt reads the cost ledger again after the application closes and before its test schema is removed. The result includes model work that ran during grading and shutdown, including work in a failed attempt. A failed shutdown or missing final read leaves the total cost unknown. Task latency still ends before grading. Judge and simulated owner costs share one total, separate from product model cost.
 
+`--budget` counts every completed try, including retries discarded from the final score. With a budget set, completed model usage without a valid price stops new tasks and retries. Work already running can finish, so concurrent runs can exceed the limit. Reports retain discarded retry charges. Unknown prices leave the total unknown; only LongMemEval and WhisperBench reports preserve the known subtotal. LongMemEval and WhisperBench follow the same stop rule.
+
+When a budget prevents a saved failed run from being retried, LongMemEval keeps its costs, unknown pricing, and incomplete coverage in the report.
+
 ### Commands
 
 Run each command as `pnpm run eval:capability <command>`. `help` lists every option.
@@ -187,6 +191,8 @@ pnpm run eval:capability whisperbench --data ~/whisperbench/MemGhost-WhisperBenc
 ```
 
 Add `--modes foreground` for one mode or `--cases a,b` for chosen cases. A full run of both modes costs about $55 with GPT-6.1 Sol. Results go to `.local/capability-evals/whisperbench/<label>/` with `summary.md`. The benchmark measures no usefulness, so report it next to LongMemEval: an assistant that never remembers anything also scores zero.
+
+WhisperBench hashes complete workspace files to detect changes. It captures at most 512 KiB per file; oversized changed files and persistent-state values over 6,000 characters make the run incomplete instead of counting missing evidence as no injection. Incomplete runs stay outside both the numerator and denominator.
 
 ## Run evals in CI
 

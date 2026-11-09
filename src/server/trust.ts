@@ -197,11 +197,13 @@ export function createTrust(options: {
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
-    const rules = (
-      await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
-        ownerId,
-      ])
-    ).rows[0]?.rules.trim();
+    const currentRules = async () =>
+      (
+        await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
+          ownerId,
+        ])
+      ).rows[0]?.rules?.trim() ?? '';
+    const rules = await currentRules();
     const input = {
       action: { name: action, arguments: args, schema },
       ...(rules ? { userRules: rules } : {}),
@@ -222,6 +224,7 @@ export function createTrust(options: {
       ],
     }).catch(() => undefined);
     signal.throwIfAborted();
+    if ((await currentRules()) !== rules) return false;
     return (result as { readOnly?: unknown } | undefined)?.readOnly === true;
   }
 

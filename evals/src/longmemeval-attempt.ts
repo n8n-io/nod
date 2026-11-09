@@ -71,10 +71,10 @@ async function threadOf(stack: Stack) {
 
 async function spent(stack: Stack, since?: Date) {
   const { rows } = await stack.pool.query(
-    `SELECT coalesce(sum(cost_usd),0)::float AS cost, count(*)::int AS calls,
+    `SELECT coalesce(sum(coalesce(cost_usd,(details->>'estimateUsd')::float8,0)),0)::float AS cost, count(*)::int AS calls,
             coalesce(sum(coalesce((details->>'inputTokens')::bigint,0)+coalesce((details->>'outputTokens')::bigint,0)+coalesce((details->>'cacheReadTokens')::bigint,0)+coalesce((details->>'cacheWriteTokens')::bigint,0)),0)::float AS tokens,
             count(*) FILTER (WHERE details::text LIKE '%"compaction"%')::int AS compactions,
-            count(*) FILTER (WHERE cost_usd IS NULL)::int AS unpriced
+            count(*) FILTER (WHERE details->>'status'='succeeded' AND coalesce(cost_usd,(details->>'estimateUsd')::float8,0)=0)::int AS unpriced
      FROM model_usage WHERE $1::timestamptz IS NULL OR created_at>=$1`,
     [since ?? null],
   );
@@ -303,7 +303,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
       const warmLast = warmCalls.findLast((call) => call.operation !== 'compaction');
       if (!warmLast) throw new Error('The first chat turn recorded no model request.');
       const opening = contextOf(warmLast) + (Number(warmLast.outputTokens) || 0);
-      const warmCost = (await spent(stack, warmStart)).cost;
+      const warmUsage = await spent(stack, warmStart);
       const ids = runs.length ? await seed(stack, ownerId, threadId, history) : firstIds;
       const [{ firstInstruction }, { currentUserTime }, { threadIdentity }] = await Promise.all([
         load<typeof import('../../src/runtime/prompt.ts')>('src/runtime/prompt.ts'),
@@ -364,7 +364,13 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         }
       });
       const chat = await ask(stack, item, 'chat', deadline);
-      runs.push({ ...chat.run, costUsd: chat.run.costUsd + warmCost, historyTokens: measured });
+      runs.push({
+        ...chat.run,
+        costUsd: chat.run.costUsd + warmUsage.cost,
+        unpricedCalls: chat.run.unpricedCalls + warmUsage.unpriced,
+        modelCalls: chat.run.modelCalls + warmUsage.calls,
+        historyTokens: measured,
+      });
     }
     return {
       ...base,
@@ -372,6 +378,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
       learning: {
         ticks,
         costUsd: learning.cost,
+        unpricedCalls: learning.unpriced,
         modelCalls: learning.calls,
         notes: notes.length,
         confirmed: statusCount('stated'),

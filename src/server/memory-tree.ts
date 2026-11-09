@@ -112,6 +112,7 @@ export interface Tree {
   enabled: boolean;
   sensitive: boolean;
   reflected: string | null;
+  generation: number;
   retries: number;
   entries: Entry[];
   archive: Archived[];
@@ -122,6 +123,7 @@ export const emptyTree = (): Tree => ({
   enabled: true,
   sensitive: false,
   reflected: null,
+  generation: 0,
   retries: 0,
   entries: [],
   archive: [],
@@ -212,6 +214,13 @@ export function parse(bytes?: Uint8Array): Tree {
   tree.sensitive = doc.sensitive === true;
   tree.reflected =
     typeof doc.reflected === 'string' && watermark.test(doc.reflected) ? doc.reflected : null;
+  tree.generation = z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .catch(0)
+    .parse(doc.generation);
   tree.retries = z.number().int().min(0).max(9).catch(0).parse(doc.retries);
   for (const raw of Array.isArray(doc.entries) ? doc.entries : []) {
     const entry = entrySchema.safeParse(raw);
@@ -251,6 +260,7 @@ export function render(tree: Tree) {
           enabled: tree.enabled,
           sensitive: tree.sensitive,
           reflected: tree.reflected,
+          generation: tree.generation,
           retries: tree.retries,
           entries: tree.entries.toSorted(
             (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),

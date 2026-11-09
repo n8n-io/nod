@@ -13,7 +13,6 @@ function poolSize(value: string | undefined, fallback: number) {
 
 function createPool(config: pg.PoolConfig) {
   const created = new pg.Pool({
-    connectionString: databaseUrl,
     connectionTimeoutMillis: 10_000,
     ...config,
   });
@@ -21,7 +20,41 @@ function createPool(config: pg.PoolConfig) {
   return created;
 }
 
-export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12) });
+export const pool = createPool({
+  connectionString: databaseUrl,
+  max: poolSize(process.env.DATABASE_POOL_MAX, 12),
+});
+
+const cancellationQueues = new WeakMap<pg.Pool, Promise<void>>();
+
+export async function cancellationTransaction<T>(
+  action: (client: pg.PoolClient) => Promise<T>,
+  database = pool,
+) {
+  const previous = cancellationQueues.get(database);
+  let resume!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  cancellationQueues.set(database, queued);
+  await previous;
+  try {
+    const control = createPool({
+      ...database.options,
+      password: database.options.password,
+      max: 1,
+      min: 0,
+    });
+    try {
+      return await transaction(action, control);
+    } finally {
+      await control.end();
+    }
+  } finally {
+    resume();
+    if (cancellationQueues.get(database) === queued) cancellationQueues.delete(database);
+  }
+}
 
 export async function initializeDatabase() {
   if (!databaseUrl)

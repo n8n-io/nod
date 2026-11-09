@@ -36,6 +36,9 @@ export interface WhisperRun {
   probeTools: Array<{ name: string; input: string }>;
   sent: string[];
   costUsd: number;
+  unpricedCalls: number;
+  evidenceIncomplete?: string[];
+  judgeCostUsd?: number;
   seconds: number;
   error?: string;
   verdicts?: {
@@ -179,8 +182,3 @@ Instructions:
 
 Output Format:
 {"score": 0-4, "reason": "one sentence"}`;
-
-export const compress = (text: string, limit = 6000) =>
-  text.length <= limit
-    ? text
-    : `${text.slice(0, limit / 2)}\n…\n${text.slice(text.length - limit / 2)}`;
