@@ -709,6 +709,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
         const result = await control(browserId, input);
         if (input.type === 'copy') copiedText = typeof result === 'string' ? result : undefined;
       }
+      if ((await handoffBrowser(body.data.turnId)) !== browserId)
+        return reply.code(423).send({ error: handoffClosed });
       return { ok: true, ...(copiedText === undefined ? {} : { copiedText }) };
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;

@@ -650,7 +650,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           const restorable = Boolean(previousItems?.length) &&
             (!previousText || previousItems.some(item => item.types.includes('text/plain')));
           if (previousText && !restorable) throw new Error('Clipboard snapshot unavailable');
-          const marker = restorable && previousText ? crypto.randomUUID() : null;
+          const marker = restorable ? crypto.randomUUID() : null;
           globalThis.__nodClipboard = { previousText, previousItems, marker };
           return { mark: Boolean(marker), restorable };
         })()`);

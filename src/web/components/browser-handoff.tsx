@@ -81,16 +81,19 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [frame, setFrame] = useState('');
   const unavailable = failures >= 3;
 
+  function stopInput(controller: AbortController = lifetime.current) {
+    controller.abort();
+    pending.current.length = 0;
+    for (const copy of clipboardCopies.current.values()) copy.reject(controller.signal.reason);
+    clipboardCopies.current.clear();
+  }
+
   useEffect(() => {
+    if (closed) return;
     if (lifetime.current.signal.aborted) lifetime.current = new AbortController();
     const controller = lifetime.current;
-    return () => {
-      controller.abort();
-      pending.current.length = 0;
-      for (const copy of clipboardCopies.current.values()) copy.reject(controller.signal.reason);
-      clipboardCopies.current.clear();
-    };
-  }, []);
+    return () => stopInput(controller);
+  }, [closed]);
 
   function flush(): Promise<void> {
     const signal = lifetime.current.signal;
@@ -301,6 +304,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       await post('/api/browser-handoff/done', { turnId });
       capture('browser_handoff_action', { action: 'done' });
       setReturned(true);
+      stopInput();
       setClosed(true);
     } catch (reason) {
       setError(errorMessage(reason));
@@ -380,6 +384,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           (reason instanceof DOMException && reason.name === 'AbortError') ||
           (reason instanceof ApiError && reason.status === 423)
         ) {
+          stopInput();
           setClosed(true);
           return;
         }
