@@ -1219,6 +1219,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       await block('channel_access_changed', 'sending');
       return true;
     }
+    let postStarted = false;
     try {
       const target = row.reply_to_message_id
         ? ((
@@ -1236,8 +1237,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             )
           ).rows[0] as { provider_message_id: string; text: string } | undefined)
         : undefined;
-      const post = (database: Pool | PoolClient) =>
-        transport.post({
+      const post = (database: Pool | PoolClient) => {
+        const input = {
           ...(target
             ? {
                 replyToMessageId: target.provider_message_id,
@@ -1276,7 +1277,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                 },
               }
             : {}),
-        });
+        };
+        postStarted = true;
+        return transport.post(input);
+      };
       const sent = (await options.isRetirableScheduleConfirmation?.(row.message_id))
         ? await transaction(async (client) => {
             const visible = await client.query(
@@ -1316,10 +1320,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     } catch (cause) {
       logFailure('channel_send_failed', cause);
       await pool.query(
-        `UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',claim_id=NULL,updated_at=now()
+        `UPDATE channel_outbox SET state=$3,reason=$4,claim_id=NULL,updated_at=now()
          WHERE message_id=$1 AND claim_id=$2 AND state='sending'`,
-        [row.message_id, claimId],
+        [
+          row.message_id,
+          claimId,
+          postStarted ? 'uncertain' : 'pending',
+          postStarted ? 'send_not_confirmed' : null,
+        ],
       );
+      if (!postStarted) return false;
     }
     return true;
   }

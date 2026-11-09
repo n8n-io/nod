@@ -1168,6 +1168,49 @@ test(
 );
 
 test(
+  'a failed schedule confirmation lookup retries before channel delivery',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const messageId = randomUUID();
+    let lookups = 0;
+    const channels = await create({
+      isRetirableScheduleConfirmation: async (id) => {
+        assert.equal(id, messageId);
+        if (++lookups === 1) throw new Error('Synthetic confirmation lookup failed.');
+        return true;
+      },
+    });
+    try {
+      receive('111', 'lookup-retry', 'chat-lookup-retry');
+      await channels.drain();
+      await reply((await turnOf('lookup-retry')).turn_id, 'Cancel the schedule?', messageId, 0);
+      await channels.drain();
+      assert.equal(lookups, 1);
+      assert.deepEqual(posts, []);
+      assert.deepEqual(
+        (
+          await pool.query('SELECT state,reason,claim_id FROM channel_outbox WHERE message_id=$1', [
+            messageId,
+          ])
+        ).rows,
+        [{ state: 'pending', reason: null, claim_id: null }],
+      );
+      await channels.drain();
+      assert.equal(lookups, 2);
+      assert.deepEqual(posts, [{ threadId: 'chat-lookup-retry', text: 'Cancel the schedule?' }]);
+      assert.deepEqual(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [messageId]))
+          .rows,
+        [{ state: 'sent' }],
+      );
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
   'in-flight schedule confirmations finish before their retirement commits',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
   async (t) => {
