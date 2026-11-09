@@ -65,6 +65,8 @@ The panel remembers reading state for up to eight recently viewed files, with a 
 - **Copy image** copies raster image data where the clipboard supports it. **Download** keeps the original file format.
 - In the desktop app, drag a file card, image, or preview file icon to a folder to copy the file. **Save to Downloads** shows **Open** and **Show in folder** after the save completes. The file menu uses the system menu.
 
+Desktop file actions prepare private copies in the system temporary folder, up to eight files. They're removed when the cache needs room or the app quits. A forced stop can leave one behind. Saving creates a separate file in Downloads.
+
 Native opening is limited to supported document and raster image types. Save other formats and open them from your file manager.
 
 | File                                    | How it opens                                                       |
