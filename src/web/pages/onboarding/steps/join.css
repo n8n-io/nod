@@ -1,0 +1,114 @@
+.ob-join {
+  justify-content: flex-start;
+  gap: 20px;
+  max-width: 600px;
+  padding-top: clamp(16px, 3vh, 36px);
+}
+.ob-join-intro .ob-bubble {
+  max-width: 492px;
+  padding: 8px 14px;
+  font-size: var(--text-control);
+  line-height: 1.45;
+}
+.ob-join-card {
+  width: min(492px, calc(100% - 44px));
+  margin-left: 44px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface);
+}
+.ob-join-form {
+  display: grid;
+  gap: 12px;
+}
+.ob-join-form > .input {
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+  padding: 6px 12px;
+}
+.ob-join-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ob-join-consent > input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.ob-join-consent > input[aria-invalid='true'] {
+  outline: 2px solid var(--error);
+  outline-offset: 2px;
+}
+.ob-join-consent a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ob-join-consent a:hover {
+  color: var(--link-hover);
+}
+.ob-join-feedback {
+  margin-top: 2px;
+  font-size: 12px;
+}
+.ob-join-error {
+  color: var(--error);
+}
+.ob-join-retry {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ob-join-community {
+  width: min(492px, calc(100% - 44px));
+  margin-left: 44px;
+}
+.ob-join-links {
+  display: grid;
+  gap: 14px;
+}
+.ob .ob-join-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+  text-decoration: none;
+}
+.ob .ob-join-links a:hover {
+  color: var(--foreground);
+}
+.ob-join-links a > svg:last-child {
+  color: var(--muted-foreground);
+}
+@media (max-width: 640px) {
+  .ob-join {
+    gap: 16px;
+    padding-top: 20px;
+  }
+  .ob-join-card,
+  .ob-join-community {
+    width: 100%;
+    margin-left: 0;
+  }
+  .ob-join-form > .input {
+    min-height: 44px;
+    height: 44px;
+  }
+}

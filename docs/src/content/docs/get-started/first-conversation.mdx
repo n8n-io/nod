@@ -11,16 +11,18 @@ This page walks you through Nod's onboarding, your first tasks and what to do wh
 
 ## Onboarding at a glance
 
-Nod opens onboarding the first time you set up an assistant. After the welcome screen, Nod starts preparing its private computer in the background while you optionally connect email, choose an AI provider if none is set up yet, and decide whether to share conversation traces. If you connected email, Nod reads a small sample of it in the meantime to suggest first ideas in chat.
+Nod opens onboarding the first time you set up an assistant. After the welcome screen, Nod starts preparing its private computer in the background while you optionally connect email, tell it a bit about yourself, choose an AI provider if none is set up yet, decide whether to share conversation traces, and optionally leave an email address for research invitations. If you connected email, Nod reads a small sample of it in the meantime to suggest first ideas in chat.
 
 For a local desktop assistant, you connect accounts while Nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
 
 ```mermaid
 flowchart TD
   start[Welcome] --> email[Email or skip]:::muted
-  email --> model[Connect a model<br/>if needed]:::accent
+  email --> about[About you<br/>or skip]:::muted
+  about --> model[Connect a model<br/>if needed]:::accent
   model --> privacy[Conversation<br/>traces]:::muted
-  privacy --> chat([Why Nod and<br/>first ideas in chat]):::go
+  privacy --> join[Research invitations<br/>or skip]:::muted
+  join --> chat([Why Nod and<br/>first ideas in chat]):::go
 ```
 
 ## Go through onboarding
@@ -29,19 +31,23 @@ flowchart TD
 
 1. **Choose your assistant.** The welcome screen shows what sets Nod apart. Select **Get started**. In the desktop app, select **Connect to a server** instead to use an existing assistant. The desktop app starts preparing its private computer as soon as the welcome screen opens, and the web app as soon as you continue. If the desktop app isn't ready to save your choices yet, it shows a loading screen with the current setup stage. Onboarding opens as soon as it can save them, while the workspace and browser continue preparing in the background.
 
-2. **Connect email (optional).** Select **Connect via Composio** next to **Gmail** or **Outlook**, then sign in and review the permissions, or select **Skip for now**. Google or Microsoft asks you to allow [Composio](/connect/apps/), the service Nod uses to connect apps, as the note under the buttons says. Setup continues after the connection is confirmed. Once it is, Nod starts reading a small sample of recent email in the background to learn what you work on and suggest first ideas. From that sample it keeps only the names of apps that send you notifications, never the email itself. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps.
+2. **Connect email (optional).** Select **Connect via Composio** next to **Gmail** or **Outlook**, then sign in and review the permissions, or select **Skip for now**. Google or Microsoft asks you to allow [Composio](/connect/apps/), the service Nod uses to connect apps, as the note under the buttons says. Setup continues after the connection is confirmed. Once you've also answered or skipped the About you questions, Nod starts reading a small sample of recent email in the background to learn what you work on and suggest first ideas. From that sample it keeps only the names of apps that send you notifications, never the email itself. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps.
 
-3. **Connect a model (only if none is set up).** Choose a provider, or select **More providers** to search all supported services. The **OpenAI** row notes that you can sign in with a ChatGPT Plus or Pro plan at no extra cost. See [Connect a model](/connect/models/) for required credentials and cloud settings. Nod skips this step when a model connection already works, including one configured through server environment variables.
+3. **Tell Nod about yourself (optional).** Nod asks where you'd like its help, what you do, how big your company is, and what you'd like to take off your plate. You can choose more than one role and more than one task, or choose **Something else** to type your own. If you run a business, freelance, or work at an agency, Nod also asks whether the help is for you, your clients, or both. **Mostly personal life** skips the company question. **Not now** skips a question, and the pen next to an answer lets you change it. If memory is on, Nod saves your answers as one note in [Memory](/use/memory/) and uses them for your first ideas in chat. Anything you type that looks like a password, key, or card number is left out. When **Share usage data** is on, Nod tells you before the questions that it saves fixed choices on this installation's analytics profile. It never includes what you type in **Something else**; see [Analytics](/deploy/analytics/). If analytics is unavailable, you can retry saving those choices or continue without sharing them.
+
+4. **Connect a model (only if none is set up).** Choose a provider, or select **More providers** to search all supported services. The **OpenAI** row notes that you can sign in with a ChatGPT Plus or Pro plan at no extra cost. See [Connect a model](/connect/models/) for required credentials and cloud settings. Nod skips this step when a model connection already works, including one configured through server environment variables.
 
    To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from Nod's server. Choose a model if prompted, then select **Continue**.
 
-   While setting up a provider, **Back** returns to the provider list. From that list, **Back** returns to email setup.
+   While setting up a provider, **Back** returns to the provider list. From that list, **Back** returns to About you.
 
-4. **Help improve Nod.** Nod asks whether you'll share conversation traces, and says that it shares basic usage data, which is on by default. Select **Share traces** or **Not now**; either one saves your choice and continues, and traces stay off unless you share them. To see what each one includes and what's never shared, select **How Nod uses your data**. You can change both later in **Settings → Privacy & data**; see [What Nod shares with n8n](/trust/privacy/#what-nod-shares-with-n8n). Traces appear only where they're available.
+5. **Help improve Nod.** Nod asks whether you'll share conversation traces, and says that it shares basic usage data, which is on by default. Select **Share traces** or **Not now**; either one saves your choice and continues, and traces stay off unless you share them. To see what each one includes and what's never shared, select **How Nod uses your data**. You can change both later in **Settings → Privacy & data**; see [What Nod shares with n8n](/trust/privacy/#what-nod-shares-with-n8n). Traces appear only where they're available.
+
+6. **Research invitations (optional).** Where the email option is available, enter an address and tick the separate consent box if you want invitations to Nod research. **Start chatting**, or **Continue** in the desktop app, submits the address and finishes setup. Leave the address blank to finish without submitting it. If submission fails, choose **Try again** or **Continue to chat** without retrying. Nod stores a submitted address and consent record on a PostHog person profile linked to this installation's usage, only while **Share usage data** is on. The Nod team may contact you later with research invitations; submitting the form sends no email immediately. Discord and the n8n Labs forum are secondary links here and are also in **Settings → General**.
 
 </Steps>
 
-Setup finishes after the privacy step in the web app or a desktop client connected to a server. For a local assistant, Nod also turns on **Open at login** so it's ready when you sign in to your computer. You can turn it off in **Settings → General**. If its computer is still preparing, Nod shows a loading screen and opens chat when ready. Finishing setup always opens chat, even while first ideas are still being prepared. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
+Setup finishes after the last step in the web app or a desktop client connected to a server. For a local assistant, Nod also turns on **Open at login** so it's ready when you sign in to your computer. You can turn it off in **Settings → General**. If its computer is still preparing, Nod shows a loading screen and opens chat when ready. Finishing setup always opens chat, even while first ideas are still being prepared. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, Nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 

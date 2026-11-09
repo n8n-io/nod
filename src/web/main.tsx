@@ -37,6 +37,8 @@ import './pages/privacy.css';
 import './pages/onboarding/onboarding.css';
 import './pages/onboarding/steps/welcome.css';
 import './pages/onboarding/steps/brain.css';
+import './pages/onboarding/steps/about.css';
+import './pages/onboarding/steps/join.css';
 import './pages/onboarding/steps/personal-connection.css';
 import './components/app-account-manager.css';
 import './components/whatsapp-setup.css';

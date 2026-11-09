@@ -1,6 +1,16 @@
 import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
 import { modelProviders, type ModelProvider } from '../../shared/models';
+import {
+  onboardingSteps,
+  profileCompanySizes,
+  profileScopes,
+  profileWhoFor,
+  type OnboardingStep,
+  type ProfileCompanySize,
+  type ProfileScope,
+  type ProfileWhoFor,
+} from '../../shared/onboarding';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsHost, analyticsRoute, sanitizedAnalyticsUrl } from './analytics-privacy';
 import { feedbackActivity } from './feedback-activity';
@@ -10,10 +20,34 @@ import type { Presentation } from '../../shared/presentation';
 
 type AnalyticsEvents = {
   onboarding_step_viewed: {
-    step: 'welcome' | 'email' | 'brain' | 'privacy';
+    step: OnboardingStep;
     direction: 'forward' | 'back';
   };
   onboarding_step_skipped: { step: 'email' };
+  onboarding_profile_answered: {
+    scope: ProfileScope | 'skipped';
+    role_owner: boolean;
+    role_freelance: boolean;
+    role_agency: boolean;
+    role_engineering: boolean;
+    role_product: boolean;
+    role_gtm: boolean;
+    role_manager: boolean;
+    role_student: boolean;
+    role_not_working: boolean;
+    role_other: boolean;
+    who_for: ProfileWhoFor | 'skipped' | 'not_asked';
+    company_size: ProfileCompanySize | 'skipped' | 'not_asked';
+    job_email: boolean;
+    job_calendar: boolean;
+    job_meetings: boolean;
+    job_errands: boolean;
+    job_research: boolean;
+    job_routines: boolean;
+    job_other: boolean;
+  };
+  onboarding_community_opened: { channel: 'discord' | 'forum' };
+  onboarding_research_contact_submitted: undefined;
   local_setting_changed:
     | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
     | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
@@ -87,6 +121,7 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
+const booleans = [true, false];
 const presentationKinds = [
   'image',
   'map',
@@ -116,10 +151,34 @@ const artifactKinds = [
 ];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   onboarding_step_viewed: {
-    step: ['welcome', 'email', 'brain', 'privacy'],
+    step: onboardingSteps,
     direction: ['forward', 'back'],
   },
   onboarding_step_skipped: { step: ['email'] },
+  onboarding_profile_answered: {
+    scope: [...profileScopes.map((option) => option.id), 'skipped'],
+    role_owner: booleans,
+    role_freelance: booleans,
+    role_agency: booleans,
+    role_engineering: booleans,
+    role_product: booleans,
+    role_gtm: booleans,
+    role_manager: booleans,
+    role_student: booleans,
+    role_not_working: booleans,
+    role_other: booleans,
+    who_for: [...profileWhoFor.map((option) => option.id), 'skipped', 'not_asked'],
+    company_size: [...profileCompanySizes.map((option) => option.id), 'skipped', 'not_asked'],
+    job_email: booleans,
+    job_calendar: booleans,
+    job_meetings: booleans,
+    job_errands: booleans,
+    job_research: booleans,
+    job_routines: booleans,
+    job_other: booleans,
+  },
+  onboarding_community_opened: { channel: ['discord', 'forum'] },
+  onboarding_research_contact_submitted: {},
   local_setting_changed: {
     setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
     value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],

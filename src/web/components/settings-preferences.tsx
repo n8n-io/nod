@@ -13,6 +13,7 @@ import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
+import { communityLinks } from '../../shared/onboarding';
 import {
   dateFormatFrom,
   formatCalendarDate,
@@ -255,6 +256,20 @@ export function GeneralPreferences({
           <p className="field-hint">Open automatically when you sign in.</p>
         </section>
       )}
+      <section className="account-region account-community" aria-labelledby={`${id}-community`}>
+        <h3 id={`${id}-community`}>Community</h3>
+        <p className="field-hint">
+          Talk with other Nod users on{' '}
+          <a href={communityLinks.discord} target="_blank" rel="noreferrer">
+            Discord
+          </a>{' '}
+          or share ideas in the{' '}
+          <a href={communityLinks.forum} target="_blank" rel="noreferrer">
+            n8n Labs forum
+          </a>
+          .
+        </p>
+      </section>
       {error && <Notice>{error}</Notice>}
     </>
   );

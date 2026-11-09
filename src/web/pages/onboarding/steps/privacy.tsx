@@ -10,7 +10,7 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
   const items = [
     ...(traces
       ? [
-          <Bubble>One last thing. Will you help the Nod team make me better?</Bubble>,
+          <Bubble>Will you help the Nod team make me better?</Bubble>,
           <Bubble>
             I can send our conversations, including what I read and do, to the Nod team at n8n so
             they can see where I go wrong. I remove the personal details I can recognize first. Kept
@@ -21,8 +21,9 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
     ...(usageShared
       ? [
           <Bubble>
-            {traces ? 'I also share' : 'I share'} basic usage data, like which screens you open, but
-            never your messages or screen recordings. You can turn it off in Settings.
+            {traces ? 'I also share' : 'I share'} basic usage data, including your fixed About you
+            choices and the screens you open, but never your messages or screen recordings. You can
+            turn it off in Settings.
           </Bubble>,
         ]
       : []),

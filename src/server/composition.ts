@@ -156,6 +156,7 @@ import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
 import { createPersonalService } from './personal.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
+import { createOnboardingProfile } from './onboarding-profile.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createMemoryRecall } from './memory-recall.ts';
@@ -879,6 +880,21 @@ async function initializeApplication(
     ownerId,
     store: memoryStore,
     analytics: captureAnalytics,
+  });
+  const onboardingProfile = createOnboardingProfile({
+    memory,
+    profileAnalytics: analytics.personProfileAvailable
+      ? {
+          enabled: () => analytics.consent(ownerId).enabled,
+          submit: (profile) => analytics.setOnboardingProfileAnswers(ownerId, profile),
+        }
+      : undefined,
+    researchContact: analytics.personProfileAvailable
+      ? {
+          enabled: () => analytics.consent(ownerId).enabled,
+          submit: (email) => analytics.setResearchContactEmail(ownerId, email),
+        }
+      : undefined,
   });
   const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });
@@ -2140,6 +2156,7 @@ async function initializeApplication(
     onboardingMissing: async () => (adapters.model.configured ? null : 'brain'),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
+    researchContact: onboardingProfile.available,
   }).register(app);
   ledger.registerRoutes(app);
   registerSpeechSettings(app, {
@@ -2157,6 +2174,7 @@ async function initializeApplication(
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
+  onboardingProfile.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
