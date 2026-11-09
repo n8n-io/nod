@@ -6634,17 +6634,17 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
   }
 });
 
-test('ready desktop updates reach the focused engine and only its main frame can restart them', async (t) => {
-  const candidate = { version: '0.5.2' };
-  let restarts = 0;
+test('ready desktop updates reach the engine with notifications off and restart only from its main frame', async (t) => {
+  let version = '0.5.2';
+  const restarts = [];
   const updater = {
     ready: undefined,
     async check() {
-      this.ready = candidate;
-      return candidate;
+      this.ready = { version };
+      return this.ready;
     },
     async restart() {
-      restarts++;
+      restarts.push(this.ready.version);
     },
   };
   const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
@@ -6658,19 +6658,24 @@ test('ready desktop updates reach the focused engine and only its main frame can
   const status = f.handlers.get('nod:updates:status');
   const restart = f.handlers.get('nod:updates:restart');
   assert.equal(status(event).readyVersion, undefined);
-  await f.handlers.get('nod:settings:save')(event, { notifications: true });
-  const priorNotifications = f.notifications.length;
+  assert.equal((await f.handlers.get('nod:settings:get')(event)).notifications, false);
 
   await f.checkUpdates(updater, false);
-  assert.equal(f.notifications.length, priorNotifications);
-  assert.equal(status(event).readyVersion, candidate.version);
+  assert.equal(f.notifications.length, 0);
+  assert.equal(status(event).readyVersion, version);
   assert.equal(status(event).checking, false);
   assert.ok(
     window.sent.some(
-      ([channel, value]) =>
-        channel === 'nod:updates:status' && value.readyVersion === candidate.version,
+      ([channel, value]) => channel === 'nod:updates:status' && value.readyVersion === version,
     ),
   );
+
+  await f.handlers.get('nod:settings:save')(event, { notifications: true });
+  const priorNotifications = f.notifications.length;
+  version = '0.5.3';
+  await f.checkUpdates(updater, false);
+  assert.equal(f.notifications.length, priorNotifications);
+  assert.equal(status(event).readyVersion, version);
 
   const subframe = { ...event, senderFrame: { ...event.senderFrame } };
   assert.throws(() => status(subframe), /unavailable/);
@@ -6678,7 +6683,7 @@ test('ready desktop updates reach the focused engine and only its main frame can
   const outside = { sender: {}, senderFrame: event.senderFrame };
   assert.throws(() => status(outside), /unavailable/);
   await assert.rejects(restart(outside), /unavailable/);
-  assert.equal(restarts, 0);
+  assert.deepEqual(restarts, []);
   await restart(event);
-  assert.equal(restarts, 1);
+  assert.deepEqual(restarts, [version]);
 });

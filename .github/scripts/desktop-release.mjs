@@ -574,6 +574,13 @@ async function verifyDelivery(tag, version) {
   const sourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
   const { createUpdateSource } = await import('../../desktop/main/updates.mjs');
   const get = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
+  const checkPublicAsset = async (url, bytes, name) => {
+    const response = await get(url, { method: 'HEAD' });
+    await response.body?.cancel();
+    const length = response.headers.get('content-length');
+    if (!response.ok || (length !== null && Number(length) !== bytes))
+      throw new Error(`the GitHub asset ${name} is unavailable`);
+  };
   let target;
   try {
     if (!sourceUrl && api(`repos/${releaseRepository}`, releaseRepository)?.private !== false)
@@ -617,7 +624,8 @@ async function verifyDelivery(tag, version) {
         }
         if (installer.version !== version || statuses.some((status) => status !== 302))
           throw new Error('its installer, runtime or update is unavailable');
-      }
+      } else if (os === 'darwin')
+        await checkPublicAsset(update.downloadUrl, update.runtime.archive.bytes, 'runtime archive');
       const feed = update.feedUrl && (await get(update.feedUrl));
       if (
         feed &&
@@ -631,11 +639,7 @@ async function verifyDelivery(tag, version) {
       if (!release?.assets?.length) throw new Error('the GitHub release has no assets');
       for (const asset of release.assets) {
         const url = `https://github.com/${releaseRepository}/releases/download/${tag}/${encodeURIComponent(asset.name)}`;
-        const response = await get(url, { method: 'HEAD' });
-        await response.body?.cancel();
-        const length = response.headers.get('content-length');
-        if (!response.ok || (length !== null && Number(length) !== asset.size))
-          throw new Error(`the GitHub asset ${asset.name} is unavailable`);
+        await checkPublicAsset(url, asset.size, asset.name);
       }
     }
   } catch (error) {

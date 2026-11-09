@@ -927,7 +927,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (source && String(url).startsWith(source + '/')) return broker(state, new URL(url), source);
   const address = new URL(url);
   if (address.origin === 'https://github.com' && address.pathname.startsWith('/synthetic/nod/releases/latest/download/')) {
-    const release = Object.values(state.releases).find(entry => !entry.draft);
+    const release = Object.values(state.releases).filter(entry => !entry.draft).sort((a, b) => b.tag_name.localeCompare(a.tag_name, undefined, { numeric: true }))[0];
     const name = address.pathname.slice('/synthetic/nod/releases/latest/download/'.length);
     if (!release || !state.contents[release.tag_name + '/' + name]) return new Response(null, { status: 404 });
     return new Response(null, { status: 302, headers: { location: 'https://github.com/synthetic/nod/releases/download/' + release.tag_name + '/' + name } });
@@ -936,7 +936,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (!match) throw new Error('Unexpected network access');
   const [, tag, name] = match;
   const bytes = state.contents[tag + '/' + name];
-  if (state.releases[tag]?.draft || !bytes || state.failPublicDownload) return new Response(null, { status: 404 });
+  if (state.releases[tag]?.draft || !bytes || state.failPublicDownload || (options.method === 'HEAD' && state.missingHead === String(url))) return new Response(null, { status: 404 });
   const body = Buffer.from(bytes, 'base64');
   return new Response(options.method === 'HEAD' ? null : body, { headers: { 'content-length': String(body.length) } });
 };
@@ -1309,10 +1309,11 @@ test('one official release waits for verified runtime and downloaded app bytes',
 });
 
 test('all three checked bundles publish together as one regular Nod release', async (t) => {
-  for (const { isPublic, updateSourceUrl, recovery = false } of [
+  for (const { isPublic, updateSourceUrl, recovery = false, reusedRuntime = false } of [
     { isPublic: false, updateSourceUrl: 'https://releases.example.invalid/nod' },
     { isPublic: true },
     { isPublic: true, updateSourceUrl: 'https://releases.example.invalid/nod', recovery: true },
+    { isPublic: true, reusedRuntime: true },
   ]) {
     const f = await releaseFixture(t, {
       isPublic,
@@ -1334,6 +1335,16 @@ test('all three checked bundles publish together as one regular Nod release', as
       'nod-arm64.zip',
     ];
     for (const directory of [arm, intel, windows]) await mkdir(directory, { recursive: true });
+    const reusedTag = 'nod-v0.0.9';
+    const armRuntime = reusedRuntime
+      ? {
+          ...f.release,
+          releaseTag: reusedTag,
+          url: `https://github.com/synthetic/nod/releases/download/${reusedTag}/${f.release.archive.file}`,
+        }
+      : f.release;
+    if (reusedRuntime)
+      await writeFile(join(f.output, 'runtime-release.json'), JSON.stringify(armRuntime));
     for (const name of names) await copyFile(join(f.output, name), join(arm, name));
     const fingerprint = JSON.parse(
       (
@@ -1349,11 +1360,11 @@ test('all three checked bundles publish together as one regular Nod release', as
       ).stdout,
     ).fingerprint;
     const runtime = {
-      ...f.release,
+      ...armRuntime,
       platform: 'darwin-x64',
       fingerprint,
-      archive: { ...f.release.archive, file: f.release.archive.file.replace('arm64', 'x64') },
-      ...(isPublic ? { url: f.release.url.replace('arm64', 'x64') } : {}),
+      archive: { ...armRuntime.archive, file: armRuntime.archive.file.replace('arm64', 'x64') },
+      ...(isPublic ? { url: armRuntime.url.replace('arm64', 'x64') } : {}),
     };
     const metadata = {
       ...f.metadata,
@@ -1383,6 +1394,35 @@ test('all three checked bundles publish together as one regular Nod release', as
       join(f.assets, f.release.archive.file),
       join(f.assets, 'x64', runtime.archive.file),
     );
+    if (reusedRuntime) {
+      const oldAssets = [
+        [armRuntime.archive.file, await readFile(join(f.assets, armRuntime.archive.file))],
+        [runtime.archive.file, await readFile(join(f.assets, 'x64', runtime.archive.file))],
+        [
+          `runtime-darwin-arm64-${armRuntime.fingerprint}.json`,
+          Buffer.from(JSON.stringify(armRuntime)),
+        ],
+        [`runtime-darwin-x64-${runtime.fingerprint}.json`, Buffer.from(JSON.stringify(runtime))],
+      ];
+      const state = await f.readState();
+      state.releases[reusedTag] = {
+        id: 90,
+        tag_name: reusedTag,
+        target_commitish: f.source,
+        draft: false,
+        prerelease: false,
+        assets: oldAssets.map(([name, bytes], index) => ({
+          id: index + 1,
+          name,
+          size: bytes.length,
+          digest: `sha256:${f.digest(bytes)}`,
+          state: 'uploaded',
+        })),
+      };
+      for (const [name, bytes] of oldAssets)
+        state.contents[`${reusedTag}/${name}`] = bytes.toString('base64');
+      await f.writeState(state);
+    }
     const installer = Buffer.from('Synthetic Windows installer');
     const pack = Buffer.from('Synthetic Windows runtime');
     const win = {
@@ -1435,7 +1475,7 @@ test('all three checked bundles publish together as one regular Nod release', as
       `${win.installer.sha256}  ${win.installer.file}\n${win.runtime.sha256}  ${win.runtime.file}\n`,
     );
     await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
-    if (!recovery) {
+    if (!recovery && !reusedRuntime) {
       for (const missing of ['reopened', 'signatures']) {
         await writeFile(
           join(windows, 'windows-check.json'),
@@ -1493,6 +1533,13 @@ test('all three checked bundles publish together as one regular Nod release', as
         await f.writeState({ ...(await f.readState()), brokerHides: [] });
       }
     }
+    if (reusedRuntime) {
+      const missingHead = armRuntime.url;
+      await f.writeState({ ...(await f.readState()), missingHead });
+      await assert.rejects(f.invoke('draft-all'), /runtime archive is unavailable/);
+      assert.equal((await f.readState()).releases[f.appTag].draft, true);
+      await f.writeState({ ...(await f.readState()), missingHead: undefined });
+    }
     await f.invoke('draft-all');
     const completed = await f.readState();
     assert.equal(completed.created, 1);
@@ -1506,8 +1553,7 @@ test('all three checked bundles publish together as one regular Nod release', as
       'nod-arm64.dmg',
       'nod-x64.dmg',
       'nod-Setup-x64.exe',
-      runtime.archive.file,
-      f.release.archive.file,
+      ...(!reusedRuntime ? [runtime.archive.file, f.release.archive.file] : []),
       win.runtime.file,
       windowsManifest,
       'nod-install.sh',
@@ -1539,10 +1585,14 @@ test('all three checked bundles publish together as one regular Nod release', as
       const checkedAssets = completed.calls
         .filter((call) => call[0] === 'fetch' && call[1] === 'HEAD' && call[3] === false)
         .map((call) => call[2].split('/').at(-1));
-      assert.deepEqual(
-        new Set(checkedAssets),
-        new Set(completed.releases[f.appTag].assets.map((asset) => asset.name)),
+      const expectedChecked = new Set(
+        completed.releases[f.appTag].assets.map((asset) => asset.name),
       );
+      if (reusedRuntime) {
+        expectedChecked.add(armRuntime.archive.file);
+        expectedChecked.add(runtime.archive.file);
+      }
+      assert.deepEqual(new Set(checkedAssets), expectedChecked);
     }
     if (recovery)
       assert(
