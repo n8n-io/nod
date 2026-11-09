@@ -10,8 +10,8 @@ import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const privacyUrl = 'https://nod-docs.pages.dev/trust/privacy/#email-updates';
-
-type Notice = { kind: 'hint' | 'error'; text: string };
+const consentRequired = 'Tick the box to sign up with this email.';
+const emailInvalid = 'Enter a valid email address.';
 
 export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps) {
   const { revealed, typing, done, skip } = useReveal([{ typing: 450 }, { wait: 200 }], {
@@ -21,21 +21,14 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
   const [email, setEmail] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notice, setNotice] = useState('');
+  const failed = Boolean(notice) && notice !== consentRequired && notice !== emailInvalid;
 
   async function finish() {
     const address = email.trim();
-    if (!updates || !address || notice) return onNext();
-    if (!agreed)
-      return setNotice({
-        kind: 'hint',
-        text: 'Tick the box to get updates, or select Start chatting again to continue without them.',
-      });
-    if (field.current && !field.current.checkValidity())
-      return setNotice({
-        kind: 'error',
-        text: 'Check the email address, or select Start chatting again to continue without updates.',
-      });
+    if (!updates || !address || failed) return onNext();
+    if (field.current && !field.current.checkValidity()) return setNotice(emailInvalid);
+    if (!agreed) return setNotice(consentRequired);
     setSaving(true);
     try {
       await api('/api/onboarding/updates', {
@@ -45,14 +38,14 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
       captureAnalytics('onboarding_updates_subscribed');
       onNext();
     } catch (cause) {
-      setNotice({ kind: 'error', text: errorMessage(cause) });
+      setNotice(errorMessage(cause));
     } finally {
       setSaving(false);
     }
   }
 
   function edited() {
-    setNotice(null);
+    setNotice('');
   }
 
   return (
@@ -89,6 +82,8 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
               placeholder="you@example.com"
               value={email}
               data-analytics-private
+              aria-invalid={notice === emailInvalid || undefined}
+              aria-describedby={notice === emailInvalid ? 'ob-join-note' : undefined}
               onChange={(event) => {
                 setEmail(event.target.value);
                 edited();
@@ -97,6 +92,8 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
             <label className="ob-join-consent">
               <Checkbox
                 checked={agreed}
+                aria-invalid={notice === consentRequired || undefined}
+                aria-describedby={notice === consentRequired ? 'ob-join-note' : undefined}
                 onChange={(event) => {
                   setAgreed(event.target.checked);
                   edited();
@@ -111,12 +108,8 @@ export function Join({ arrived, onNext, onBack, nextLabel, updates }: StepProps)
               </span>
             </label>
             {notice && (
-              <p
-                className="ob-join-note"
-                data-kind={notice.kind}
-                role={notice.kind === 'error' ? 'alert' : 'status'}
-              >
-                {notice.text}
+              <p className="ob-join-note" id="ob-join-note" role="alert">
+                {notice}
               </p>
             )}
           </div>

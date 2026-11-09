@@ -169,13 +169,14 @@
   margin-top: 1px;
   cursor: pointer;
 }
+.ob-join-consent > .checkbox[aria-invalid='true'] {
+  outline: 2px solid var(--error);
+  outline-offset: 1px;
+}
 .ob-join-note {
   margin: 0;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
-.ob-join-note[data-kind='error'] {
   color: var(--error);
+  font-size: var(--text-control);
 }
 .ob-join-links {
   display: flex;
