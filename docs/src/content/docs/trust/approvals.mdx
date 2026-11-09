@@ -80,7 +80,7 @@ flowchart TD
   check -- no --> ask[Ask you]:::accent
 ```
 
-If the checker can't answer, Nod requires confirmation. In a scheduled run or background work, nobody is waiting to answer, so the action doesn't run and Nod doesn't ask you; the work gets the reason and can try again. A clear no from the checker still asks you. If the model can't write or check that confirmation, the action stays blocked. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
+If the checker can't answer, Nod requires confirmation. In a scheduled run or background work, nobody is waiting to answer, so the action doesn't run and Nod doesn't ask you; the work gets the reason and can try again. When the checker does answer but your words don't clearly cover the action, Nod still asks you. If the model can't write or check that confirmation, the action stays blocked. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
 
 ## Browser steps
 
