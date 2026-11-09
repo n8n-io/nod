@@ -305,6 +305,7 @@ export type AgentEvent =
       contextExhausted?: boolean;
     }
   | { type: 'text_delta'; text: string }
+  | { type: 'thinking'; title: string }
   | { type: 'final'; text: string }
   | ModelUsageObservation
   | { type: 'error'; message: string };
