@@ -237,6 +237,8 @@ Preparing a report sends recent app activity and errors to your Nod runtime for 
 
 In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Reopening a draft keeps its original screenshot. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. You can annotate or remove the screenshot. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided.
 
+If delivery cannot be confirmed, Nod keeps the draft and checks its status for several minutes while the dialog is open. You can also select **Check submission status** or reopen the dialog later. **Send feedback** stays unavailable for that draft until Nod confirms the result, so an uncertain submission is not sent again. If only some attachments arrived, you can retry the missing files on the same feedback issue or finish without them. Discarding a draft removes its local text and files but cannot cancel feedback already received; sending the same feedback again could create a duplicate.
+
 ## Related resources
 
 - [Track tasks](/use/tasks/)

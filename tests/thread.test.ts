@@ -7979,7 +7979,8 @@ async function feedbackFixture(t: TestContext) {
   const state = {
     content: JSON.stringify({ messages: ['Synthetic reviewed conversation'] }),
     envelopes: [] as FeedbackEnvelope[],
-    statusRequests: [] as Array<{ action: 'status'; submissionId: string }>,
+    statusRequests: [] as Array<{ action: 'status'; submissionId: string; payloadHash: string }>,
+    receiptStatus: 'submitted' as FeedbackReceipt['status'],
     beforeDeliver: undefined as (() => Promise<void>) | undefined,
   };
   const delivery = createN8nFeedback({
@@ -7992,10 +7993,12 @@ async function feedbackFixture(t: TestContext) {
       await state.beforeDeliver?.();
       const receipt: FeedbackReceipt = {
         submissionId: input.submissionId,
-        status: 'submitted',
-        issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback',
+        status: state.receiptStatus,
+        ...(state.receiptStatus === 'submitted' || state.receiptStatus === 'partial'
+          ? { issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback' }
+          : {}),
       };
-      return Response.json(receipt);
+      return Response.json(receipt, { status: state.receiptStatus === 'rejected' ? 400 : 200 });
     },
   });
   const context = {
@@ -8185,6 +8188,147 @@ test(
     ).rows;
     assert.ok(!JSON.stringify(foreign).includes(input.feedback));
     assert.ok(!JSON.stringify(foreign).includes(snapshot.content));
+  },
+);
+
+test(
+  'feedback status recovers a lost receipt without resubmitting',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission();
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic receipt lost after dispatch');
+    };
+
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.deepEqual(first.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'unknown',
+    });
+    assert.equal(f.state.envelopes.length, 1);
+    f.state.beforeDeliver = undefined;
+
+    const waiting = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(waiting.json<FeedbackReceipt>().status, 'unknown');
+    assert.equal(f.state.statusRequests.length, 0);
+    assert.equal(
+      (
+        await app.inject({ method: 'POST', url: '/api/feedback', payload: input })
+      ).json<FeedbackReceipt>().status,
+      'unknown',
+    );
+    assert.equal(f.state.envelopes.length, 1);
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const recovered = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(recovered.json<FeedbackReceipt>().status, 'submitted');
+    assert.equal(f.state.statusRequests.length, 1);
+    assert.equal(f.state.statusRequests[0].submissionId, input.submissionId);
+    assert.equal(f.state.envelopes.length, 1);
+    const stored = await f.pool.query(
+      'SELECT payload_hash,status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.equal(f.state.statusRequests[0].payloadHash, stored.rows[0].payload_hash);
+    assert.equal(stored.rows[0].status, 'submitted');
+  },
+);
+
+test(
+  'feedback status confirms non-delivery without resubmitting',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission();
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic collector request interrupted before acceptance');
+    };
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(first.json<FeedbackReceipt>().status, 'unknown');
+    f.state.beforeDeliver = undefined;
+    f.state.receiptStatus = 'rejected';
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const checked = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.deepEqual(checked.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'rejected',
+    });
+    assert.equal(f.state.statusRequests.length, 1);
+    assert.equal(f.state.envelopes.length, 1);
+    const stored = await f.pool.query(
+      'SELECT status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.equal(stored.rows[0].status, 'rejected');
+    assert.equal(
+      (
+        await app.inject({ method: 'POST', url: '/api/feedback', payload: input })
+      ).json<FeedbackReceipt>().status,
+      'rejected',
+    );
+    assert.equal(f.state.envelopes.length, 1);
+  },
+);
+
+test(
+  'feedback status recovers partial delivery and repairs the original submission',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission({
+      attachments: [
+        {
+          name: 'synthetic.txt',
+          mimeType: 'text/plain',
+          data: Buffer.from('Synthetic attachment').toString('base64'),
+        },
+      ],
+    });
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic receipt lost after dispatch');
+    };
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(first.json<FeedbackReceipt>().status, 'unknown');
+    assert.equal(f.state.envelopes.length, 1);
+    f.state.beforeDeliver = undefined;
+    f.state.receiptStatus = 'partial';
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const recovered = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.deepEqual(recovered.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'partial',
+      issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback',
+      canRetryAttachments: true,
+    });
+    assert.equal(f.state.envelopes.length, 1);
+
+    f.state.receiptStatus = 'submitted';
+    const repaired = await app.inject({
+      method: 'POST',
+      url: `/api/feedback/${input.submissionId}/retry`,
+      payload: {},
+    });
+    assert.equal(repaired.json<FeedbackReceipt>().status, 'submitted');
+    assert.equal(f.state.envelopes.length, 2);
+    assert.equal(f.state.envelopes[1].action, 'repair');
+    assert.equal(f.state.envelopes[1].submissionId, input.submissionId);
+    assert.equal(f.state.envelopes[1].payloadHash, f.state.envelopes[0].payloadHash);
+    assert.deepEqual(f.state.envelopes[1].attachments, f.state.envelopes[0].attachments);
   },
 );
 
