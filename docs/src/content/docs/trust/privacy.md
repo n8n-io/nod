@@ -15,7 +15,7 @@ The desktop app checks n8n's update service for new versions, which sees your IP
 
 ## What Nod shares with n8n
 
-Nod shares a little data with the Nod team at n8n so they can find where Nod gets stuck and fix it. During setup, select **How Nod uses your data** to see this summary in the app. You can turn either kind of sharing off anytime in **Settings → Privacy & data**.
+Nod shares a little data with the Nod team at n8n so they can find where Nod gets stuck and fix it. To see this summary in the app, select **How Nod uses your data** during setup or in **Settings → Privacy & data**. You can turn either kind of sharing off anytime in **Settings → Privacy & data**.
 
 |                 | Usage data                                                                                                             | Conversation traces                                                                                                   |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |

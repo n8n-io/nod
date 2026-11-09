@@ -30,7 +30,8 @@
   margin-bottom: 28px;
 }
 .settings-sidebar h1,
-.settings-category > h2 {
+.settings-category > h2,
+.settings-category-heading > h2 {
   margin: 0;
   font-size: 24px;
   font-weight: 550;
@@ -115,8 +116,28 @@
   padding: 30px clamp(24px, 4vw, 56px) 36px;
   container: account-settings / inline-size;
 }
-.settings-category > h2 {
+.settings-category > h2,
+.settings-category-heading {
   margin-bottom: 24px;
+}
+.settings-category-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+.settings-data-sharing {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+.settings-data-sharing:hover {
+  color: var(--link-hover);
 }
 .settings-category + .settings-category {
   margin-top: 48px;
@@ -536,8 +557,12 @@
   .account-settings-body {
     padding: 24px 20px 28px;
   }
-  .settings-category > h2 {
+  .settings-category > h2,
+  .settings-category-heading > h2 {
     font-size: 21px;
+  }
+  .settings-category > h2,
+  .settings-category-heading {
     margin-bottom: 20px;
   }
   .settings-category + .settings-category {

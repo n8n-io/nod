@@ -1,10 +1,10 @@
 import { useState } from 'react';
+import { DataSharing } from '../../../components/data-sharing';
 import { Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
-import { DataSharing } from './data-sharing';
 
 export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShared }: StepProps) {
   const items = [
@@ -55,7 +55,11 @@ export function Privacy({ arrived, onNext, onBack, nextLabel, traces, usageShare
       <Messages revealed={revealed} typing={typing} items={items} />
       <Rise show={done} className="ob-choices">
         {(usageShared || traces) && (
-          <DataSharing usage={Boolean(usageShared)} traces={traces?.enabled} />
+          <DataSharing
+            className="ob-link ob-data-sharing"
+            usage={usageShared || undefined}
+            traces={traces?.enabled}
+          />
         )}
         {traces ? (
           <>

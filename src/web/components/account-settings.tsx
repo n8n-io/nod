@@ -20,6 +20,7 @@ import {
   Notice,
   Switch,
 } from './ui';
+import { DataSharing } from './data-sharing';
 import { ModelSettings } from './models';
 import { VoiceSettings } from './voice-settings';
 import { Memory, type MemoryNavigationState } from '../pages/memory';
@@ -36,7 +37,6 @@ import {
 import { guardNavigation } from '../lib/navigation';
 import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
 import { errorMessage } from '../lib/api';
-import { posthogConfig } from '../../shared/analytics';
 
 export const settingsSections = [
   { id: 'general', label: 'General', path: '/settings', icon: Settings },
@@ -460,9 +460,16 @@ export function AccountSettings({
                     />
                   </section>
                   <section className="settings-category" aria-labelledby={`${id}-privacy`}>
-                    <h2 id={`${id}-privacy`} tabIndex={-1}>
-                      Privacy & data
-                    </h2>
+                    <div className="settings-category-heading">
+                      <h2 id={`${id}-privacy`} tabIndex={-1}>
+                        Privacy & data
+                      </h2>
+                      <DataSharing
+                        className="settings-data-sharing"
+                        usage={account.usageData}
+                        traces={account.traces}
+                      />
+                    </div>
                     <section className="account-region">
                       <div className="account-preference-row">
                         <span>Share usage data</span>
@@ -479,10 +486,7 @@ export function AccountSettings({
                         />
                       </div>
                       <p className="field-hint">
-                        Share how you use Nod, without your messages or screen recordings.{' '}
-                        <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                          What’s shared <ArrowUpRight size={13} aria-hidden="true" />
-                        </a>
+                        Share how you use Nod, without your messages or screen recordings.
                       </p>
                     </section>
                     {account.traces !== undefined && (
@@ -501,16 +505,7 @@ export function AccountSettings({
                             }}
                           />
                         </div>
-                        <p className="field-hint">
-                          Help improve replies.{' '}
-                          <a
-                            href="https://nod.n8n.io/docs/trust/conversation-traces/"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            What this includes <ArrowUpRight size={13} aria-hidden="true" />
-                          </a>
-                        </p>
+                        <p className="field-hint">Help improve replies.</p>
                         <p className="field-hint">
                           Kept for 14 days. Never used to train AI models.
                         </p>

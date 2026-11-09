@@ -41,6 +41,7 @@ import './pages/onboarding/steps/personal-connection.css';
 import './components/app-account-manager.css';
 import './components/whatsapp-setup.css';
 import './components/account-settings.css';
+import './components/data-sharing.css';
 import './components/time-picker.css';
 import './components/voice-settings.css';
 import './components/feedback.css';

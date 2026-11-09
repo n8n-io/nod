@@ -5,7 +5,7 @@ import {
   LockKeyhole,
   MessageSquareText,
   type IconComponent,
-} from '../../../components/icons';
+} from './icons';
 import {
   Button,
   Dialog,
@@ -14,7 +14,7 @@ import {
   DialogDescription,
   DialogTitle,
   DialogTrigger,
-} from '../../../components/ui';
+} from './ui';
 
 const detailsUrl = 'https://nod.n8n.io/docs/trust/privacy/#what-nod-shares-with-n8n';
 
@@ -43,11 +43,21 @@ function Item({
   );
 }
 
-export function DataSharing({ usage, traces }: { usage: boolean; traces?: boolean }) {
+const state = (on: boolean) => (on ? 'On' : 'Off');
+
+export function DataSharing({
+  usage,
+  traces,
+  className,
+}: {
+  usage?: boolean;
+  traces?: boolean;
+  className?: string;
+}) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <button type="button" className="ob-link ob-data-sharing">
+        <button type="button" className={className}>
           How Nod uses your data
         </button>
       </DialogTrigger>
@@ -57,18 +67,14 @@ export function DataSharing({ usage, traces }: { usage: boolean; traces?: boolea
           A little data shows the Nod team at n8n where Nod gets stuck, so they can make it better.
         </DialogDescription>
         <ul>
-          {usage && (
-            <Item icon={ChartColumn} title="Usage data" state="On">
+          {usage !== undefined && (
+            <Item icon={ChartColumn} title="Usage data" state={state(usage)}>
               Which screens and features you use, the kinds of tasks you ask for, and what fails.
               Never your messages.
             </Item>
           )}
           {traces !== undefined && (
-            <Item
-              icon={MessageSquareText}
-              title="Conversation traces"
-              state={traces ? 'On' : 'Only if you share'}
-            >
+            <Item icon={MessageSquareText} title="Conversation traces" state={state(traces)}>
               Your chats with Nod, after it removes the personal details it can recognize. Deleted
               after 14 days and never used to train AI.
             </Item>
@@ -77,7 +83,7 @@ export function DataSharing({ usage, traces }: { usage: boolean; traces?: boolea
             Saved passwords and cards, your memory, or screen recordings.
           </Item>
         </ul>
-        <p>Stored in the EU. You can turn sharing off anytime in Settings.</p>
+        <p>Stored in the EU. You can turn sharing off anytime.</p>
         <div className="data-sharing-actions">
           <a href={detailsUrl} target="_blank" rel="noreferrer">
             Full details <ArrowUpRight size={14} aria-hidden="true" />

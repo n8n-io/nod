@@ -9,12 +9,14 @@ Conversation traces let the Nod team at n8n see how Nod handles real requests, s
 
 This page describes n8n's trace service, used by official desktop builds. A server operator can configure another receiver; that receiver controls access and retention.
 
-![Settings → General, Privacy group, with Share conversation traces turned on and its explanation underneath.](../../../assets/screens/conversation-traces-setting.png)
+![Settings → Privacy & data, with Share usage data and Share conversation traces turned on, and How Nod uses your data beside the heading.](../../../assets/screens/conversation-traces-setting.png)
 
 ## Turn traces on or off
 
-1. Open **Settings → General**.
+1. Open **Settings → Privacy & data**.
 2. Turn on **Share conversation traces**.
+
+Select **How Nod uses your data** beside the heading for a short summary of both switches.
 
 Turn the switch off to stop sending at once. A trace that was already on its way can still arrive. Traces already sent are deleted when they expire, 14 days after they arrive.
 
