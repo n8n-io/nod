@@ -661,7 +661,11 @@ export async function createApprovals(
     };
   }
 
-  async function retireScheduleConfirmations(client: PoolClient, id: string, waitForSend: boolean) {
+  async function retireScheduleConfirmationsInTransaction(
+    client: PoolClient,
+    id: string,
+    waitForSend: boolean,
+  ) {
     const pending = (
       await client.query<{
         id: string;
@@ -699,6 +703,10 @@ export async function createApprovals(
           statusCode: 409,
         });
       }
+    await client.query(
+      'SELECT id FROM turns WHERE owner_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR NO KEY UPDATE NOWAIT',
+      [ownerId, turnIds],
+    );
     await client.query(
       "UPDATE approvals SET status='expired' WHERE owner_id=$1 AND id=ANY($2::uuid[])",
       [ownerId, approvalIds],
@@ -753,6 +761,20 @@ export async function createApprovals(
       abortTurns(turnIds);
       for (const row of pending) changed('expired', row.action, row.source);
     });
+  }
+
+  async function retireScheduleConfirmations(client: PoolClient, id: string, waitForSend: boolean) {
+    try {
+      await retireScheduleConfirmationsInTransaction(client, id, waitForSend);
+    } catch (cause) {
+      const error = cause as { code?: string; statusCode?: number };
+      if (error?.code !== '55P03' || error.statusCode === 409) throw cause;
+      throw Object.assign(new Error('This schedule or task is still being updated. Try again.'), {
+        code: '55P03',
+        notRun: true,
+        statusCode: 409,
+      });
+    }
   }
 
   async function isRetirableScheduleConfirmation(messageId: string) {

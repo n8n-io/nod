@@ -230,13 +230,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
       [ownerId, thread.id],
     );
-    const hiddenMetadata = messageRows.then(() =>
-      pool.query<{ count: number; ids: string[] }>(
+    const hiddenMetadata = messageRows.then(({ rows }) =>
+      pool.query<{ count: number; ids: string[]; visibleIds: string[] }>(
         `SELECT
           (SELECT count(*)::int FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL) AS count,
           ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL
-            ORDER BY hidden_at DESC,id DESC LIMIT 150) AS ids`,
-        [ownerId, thread.id],
+            ORDER BY hidden_at DESC,id DESC LIMIT 150) AS ids,
+          ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2
+            AND id=ANY($3::uuid[]) AND hidden_at IS NULL) AS "visibleIds"`,
+        [ownerId, thread.id, rows.map((message) => message.id)],
       ),
     );
     const [messages, hiddenMessages, turns, pendingChoices, verificationRequests, activity] =
@@ -261,10 +263,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
         dependencies.activity?.() ?? [],
       ]);
     const hasEarlierMessages = messages.rows.length > 150;
-    const hiddenIds = new Set(hiddenMessages.rows[0]!.ids);
+    const visibleIds = new Set(hiddenMessages.rows[0]!.visibleIds);
     const visibleMessages = messages.rows
       .slice(hasEarlierMessages ? 1 : 0)
-      .filter((message) => !hiddenIds.has(message.id));
+      .filter((message) => visibleIds.has(message.id));
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
