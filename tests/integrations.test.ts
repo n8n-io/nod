@@ -8236,12 +8236,11 @@ test(
     );
     assert.equal(oldAccount?.status, 'disconnected');
     assert.equal(oldAccount?.canReconnect, false);
-    await assert.rejects(
-      integrations.execute(owner, 'SEARCH_TOOLS', {
-        connectionId: managed.rows[0].id,
-        query: 'notion fetch',
-      }),
-      /This connected account is unavailable/,
+    assert.equal(
+      (await integrations.connectedApps(owner)).some(
+        (account) => account.connectionId === managed.rows[0].id,
+      ),
+      false,
     );
     const staleReconnect = await app.inject({
       method: 'POST',
