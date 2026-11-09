@@ -1173,9 +1173,10 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
-  await dependencies
-    .taskChecks?.(threadId)
-    .catch((error) => logFailure('task_check_failed', error, { threadId }));
+  await dependencies.taskChecks?.(threadId).catch(async (error) => {
+    logFailure('task_check_failed', error, { threadId });
+    await sendDrain(undefined, threadId, new Date(Date.now() + 60_000)).catch(() => {});
+  });
   const claimed = await claimTurns(threadId);
   if (claimed.length) refresh();
   for (const turn of claimed) {

@@ -203,12 +203,14 @@ function Workspace({
           unreadCount={unread.count}
           unreadPending={unread.pending}
           presence={
-            state?.turns[0]?.status === 'waiting' ||
-            state?.tasks?.some((task) => task.status === 'needs_you')
-              ? 'waiting'
-              : state?.activity?.some((item) => !item.background)
-                ? 'working'
-                : undefined
+            !connected
+              ? undefined
+              : state?.turns[0]?.status === 'waiting' ||
+                  state?.tasks?.some((task) => task.status === 'needs_you')
+                ? 'waiting'
+                : state?.activity?.some((item) => !item.background)
+                  ? 'working'
+                  : undefined
           }
           onToggle={toggleSidebar}
           onNavigate={navigate}
@@ -267,7 +269,9 @@ function Workspace({
             )}
             {path === '/apps' && <Apps configuration={state?.configuration} onAsk={askInChat} />}
             {path === '/channels' && <Channels />}
-            {path === '/tasks' && <Scheduled onAsk={askInChat} activity={state?.activity} />}
+            {path === '/tasks' && (
+              <Scheduled onAsk={askInChat} activity={connected ? state?.activity : undefined} />
+            )}
             {preparedWorkId(path) && <PreparedWork key={path} id={preparedWorkId(path)!} />}
             {settings}
             {!settingsPage(path) &&

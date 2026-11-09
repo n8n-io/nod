@@ -238,9 +238,9 @@ Nod chooses whether an activity update would help you follow longer work and ski
 | Milestone           | Send a verified result the user can use now. Include the result, an attachment or a checked link.                  | Give the user something they can inspect before the whole job is done.  |
 | Something needs you | Send a question, blocker or decision as a message.                                                                 | Make a required response clear.                                         |
 | End                 | Deliver the final result. State a failure, interruption or spending limit when it stops requested work.            | Mark the actual outcome and avoid repeating messages already delivered. |
+| After               | Make at most one relevant offer. Do not repeat an offer the user ignored or declined.                              | Keep follow-up useful and easy to dismiss.                              |
 
-A turn you started never ends silently. If it ends with nothing delivered, or leaves a message you sent mid-work unanswered, it fails with that cause and Nod posts the failure in your language. A failed schedule run, or a failed task Nod started on its own, names that work in its failure message. A task's planned check resumes the task's own session when it's due.
-| After | Make at most one relevant offer. Do not repeat an offer the user ignored or declined. | Keep follow-up useful and easy to dismiss. |
+A turn that stops on an error tells you what stopped it, in your language. A failed schedule run, or a failed task Nod started on its own, names that work in its failure message. A task's planned check resumes the task's own session when it's due.
 
 Nod reports progress when you can use a result now, a change affects your next step, or it needs your help. A claim that work was created, updated or completed needs a successful tool result. The message includes the result, an attachment or a checked link you can open. Internal record changes and private preparation stay quiet unless you ask about them. These instructions guide the model. For a proactive nudge, the server also adds the saved result's verified link.
 

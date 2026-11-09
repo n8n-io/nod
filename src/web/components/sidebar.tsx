@@ -41,14 +41,13 @@ export function Sidebar({
           ? `${unreadCount} or more unread messages`
           : 'Checking unread messages'
         : `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`;
-  const chatLabel =
-    unreadCount || unreadPending
-      ? `Chat, ${unreadLabel}`
-      : presence === 'waiting'
-        ? 'Chat, waiting for you'
-        : presence === 'working'
-          ? 'Chat, Nod is working'
-          : 'Chat';
+  const chatLabel = [
+    'Chat',
+    unreadCount || unreadPending ? unreadLabel : null,
+    presence === 'waiting' ? 'waiting for you' : presence === 'working' ? 'Nod is working' : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
   const unreadBadge =
     unreadCount || unreadPending ? (
       <span className="chat-unread-badge" aria-hidden="true">

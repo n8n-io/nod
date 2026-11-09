@@ -176,15 +176,7 @@ test(
       {
         models,
         agent: {
-          async open(session) {
-            let finished = false;
-            const options = {
-              ...session,
-              onEvent: (event: Parameters<typeof session.onEvent>[0]) => {
-                if (event.type === 'final') finished = true;
-                session.onEvent(event);
-              },
-            };
+          async open(options) {
             reportClosingUsage = () =>
               options.onEvent({
                 type: 'provider_usage',
@@ -209,87 +201,82 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
-                await act(text);
-                if (!finished && !options.shouldStop())
-                  options.onEvent({ type: 'final', text: 'Synthetic personal request handled.' });
-              },
-            };
-            async function act(text: string) {
-              prompts.set(options.turnId, text);
-              const tool = (name: string) => options.tools.find((item) => item.name === name)!;
-              if (repeatAfterConfirm && text.includes('executed once by the trusted worker')) {
-                const call = repeatAfterConfirm;
-                repeatAfterConfirm = undefined;
-                results.set(options.turnId, await tool('apps').execute(call));
-                return;
-              }
-              const part = parts.get(
-                /one part of the owner's request: (\S+)/.exec(text)?.[1] ?? '',
-              );
-              if (part) {
-                if (--partsWaiting === 0) partsArrived();
-                await partsReady;
-                await tool('apps')
-                  .execute(part)
-                  .catch(() => {});
-                return;
-              }
-              const batch =
-                phase === 0
-                  ? batches.get(
-                      JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
-                        .currentInstruction,
-                    )
-                  : undefined;
-              if (batch) {
-                if (batch.sequential) {
-                  for (const call of batch.calls) await tool('apps').execute(call);
+                prompts.set(options.turnId, text);
+                const tool = (name: string) => options.tools.find((item) => item.name === name)!;
+                if (repeatAfterConfirm && text.includes('executed once by the trusted worker')) {
+                  const call = repeatAfterConfirm;
+                  repeatAfterConfirm = undefined;
+                  results.set(options.turnId, await tool('apps').execute(call));
                   return;
                 }
-                await Promise.allSettled(
-                  batch.calls.map((call, index) => {
-                    if (call.tool)
-                      return tool(call.tool)
-                        .execute({ action: call.action, ...call.args })
-                        .catch((error: Error) => batchErrors.push(error.message));
-                    if (!batch.subagents) return tool('apps').execute(call);
-                    const title = `${options.turnId}-${index}`;
-                    parts.set(title, call);
-                    return tool('delegate').execute({ title, instruction: 'Run this part.' });
-                  }),
+                const part = parts.get(
+                  /one part of the owner's request: (\S+)/.exec(text)?.[1] ?? '',
                 );
-                return;
-              }
-              if (held) {
-                held.entered(options.turnId);
-                await held.wait;
-                const messages = (await options.nextMessages?.()) ?? [];
-                held.messages.push(...messages.map((message) => message.text));
-                assert.equal(messages.length, 1);
-                text = messages[0]!.text;
-              }
-              const plan =
-                phase === 0
-                  ? plans.get(
-                      JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
-                        .currentInstruction,
-                    )
-                  : undefined;
-              if (plan) {
-                const result = await options.tools
-                  .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
-                  .execute(
-                    plan.tool === 'read_source'
-                      ? plan.args
-                      : plan.tool === 'browser' || plan.tool === 'sign_in'
-                        ? { action: plan.action, ...plan.args }
-                        : { action: plan.action, args: plan.args },
+                if (part) {
+                  if (--partsWaiting === 0) partsArrived();
+                  await partsReady;
+                  await tool('apps')
+                    .execute(part)
+                    .catch(() => {});
+                  return;
+                }
+                const batch =
+                  phase === 0
+                    ? batches.get(
+                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                          .currentInstruction,
+                      )
+                    : undefined;
+                if (batch) {
+                  if (batch.sequential) {
+                    for (const call of batch.calls) await tool('apps').execute(call);
+                    return;
+                  }
+                  await Promise.allSettled(
+                    batch.calls.map((call, index) => {
+                      if (call.tool)
+                        return tool(call.tool)
+                          .execute({ action: call.action, ...call.args })
+                          .catch((error: Error) => batchErrors.push(error.message));
+                      if (!batch.subagents) return tool('apps').execute(call);
+                      const title = `${options.turnId}-${index}`;
+                      parts.set(title, call);
+                      return tool('delegate').execute({ title, instruction: 'Run this part.' });
+                    }),
                   );
-                results.set(options.turnId, result);
-                return;
-              }
-              options.onEvent({ type: 'final', text: 'Synthetic personal request handled.' });
-            }
+                  return;
+                }
+                if (held) {
+                  held.entered(options.turnId);
+                  await held.wait;
+                  const messages = (await options.nextMessages?.()) ?? [];
+                  held.messages.push(...messages.map((message) => message.text));
+                  assert.equal(messages.length, 1);
+                  text = messages[0]!.text;
+                }
+                const plan =
+                  phase === 0
+                    ? plans.get(
+                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                          .currentInstruction,
+                      )
+                    : undefined;
+                if (plan) {
+                  const result = await options.tools
+                    .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
+                    .execute(
+                      plan.tool === 'read_source'
+                        ? plan.args
+                        : plan.tool === 'browser' || plan.tool === 'sign_in'
+                          ? { action: plan.action, ...plan.args }
+                          : { action: plan.action, args: plan.args },
+                    );
+                  results.set(options.turnId, result);
+                  return;
+                }
+                options.onEvent({ type: 'final', text: 'Synthetic personal request handled.' });
+              },
+            };
           },
           dispose() {
             if (recordClosingUsage) reportClosingUsage();

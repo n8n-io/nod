@@ -9093,7 +9093,7 @@ test(
       const live = async () => (await activity.read()).find((item) => item.turnId === chat)!;
       let item = await live();
       assert.equal(item.step, 'Comparing synthetic prices');
-      assert.equal(item.receivedMessageId, message);
+      assert.deepEqual(item.receivedMessageIds, [message]);
       assert.equal(item.doing, 'model');
       assert.ok(Date.parse(item.quietSince) <= Date.now() - 3 * 60_000);
       await pool.query(

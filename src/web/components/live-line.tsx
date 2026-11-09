@@ -17,9 +17,11 @@ function useQuietMinutes(since: string, enabled: boolean) {
 
 export function liveSummary(item: Activity) {
   const step = item.step?.trim();
+  const site = item.doing === 'tool' ? item.site : null;
   return {
-    primary: step || item.site || (item.doing === 'model' ? 'Thinking…' : 'Working…'),
-    site: step && item.doing === 'tool' ? item.site : null,
+    primary: step || site || (item.doing === 'model' ? 'Thinking…' : 'Working…'),
+    site: step ? site : null,
+    described: Boolean(step || site),
   };
 }
 

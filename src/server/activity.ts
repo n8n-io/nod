@@ -7,7 +7,7 @@ import { ownerStarted } from './thread.ts';
 export type LiveWork = Activity & {
   channel: string;
   messageId?: string;
-  receivedMessageId?: string;
+  receivedMessageIds?: string[];
 };
 
 const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESCE(u.started_at,u.created_at) AS since,
@@ -16,9 +16,9 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESC
     COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
       AND m.role='assistant' ORDER BY m.created_at,m.id LIMIT 1)) AS message_id,
     CASE WHEN w.steered>COALESCE(s.created_at,'-infinity') THEN NULL ELSE COALESCE(s.summary,t.now_text) END AS step,
-    CASE WHEN u.status='running' THEN (SELECT q.message_id FROM turns q WHERE q.owner_id=u.owner_id
+    CASE WHEN u.status='running' THEN ARRAY(SELECT q.message_id FROM turns q WHERE q.owner_id=u.owner_id
       AND q.session_id=u.session_id AND q.status='queued' AND q.source IN ('user','task') AND q.message_id IS NOT NULL
-      ORDER BY q.created_at DESC,q.id DESC LIMIT 1) END AS received_message_id
+      ORDER BY q.created_at,q.id) END AS received_message_ids
   FROM turns u
   JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
   LEFT JOIN LATERAL (SELECT id,title,now_text,message_id FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
@@ -63,8 +63,8 @@ export function createActivity({ pool, ownerId }: { pool: Pool; ownerId: string 
         quietSince: row.quiet_since.toISOString(),
         channel: row.channel,
         ...(row.message_id ? { messageId: row.message_id } : {}),
-        ...(row.received_message_id
-          ? { received: true as const, receivedMessageId: row.received_message_id }
+        ...(row.received_message_ids?.length
+          ? { received: true as const, receivedMessageIds: row.received_message_ids }
           : {}),
         ...(row.owner_started ? {} : { background: true as const }),
       }))
@@ -73,7 +73,7 @@ export function createActivity({ pool, ownerId }: { pool: Pool; ownerId: string 
 
   const visible = (items: LiveWork[]): Activity[] =>
     items.map(
-      ({ channel: _channel, messageId: _message, receivedMessageId: _received, ...item }) => item,
+      ({ channel: _channel, messageId: _message, receivedMessageIds: _received, ...item }) => item,
     );
 
   function publish() {

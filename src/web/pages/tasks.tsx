@@ -387,6 +387,9 @@ export function Scheduled({
       {schedules.error && (
         <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
       )}
+      {tasks.error && (
+        <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
+      )}
       {open.length > 0 && (
         <div className="saved-plan-list open-task-list">
           {open.map((task) => (

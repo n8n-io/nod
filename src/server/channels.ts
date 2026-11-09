@@ -1479,7 +1479,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   async function acknowledgeStep(work: LiveWork[]) {
-    const pending = new Set(work.flatMap((item) => item.receivedMessageId ?? []));
+    const pending = new Set(work.flatMap((item) => item.receivedMessageIds ?? []));
     const changes: Array<[string, string | null]> = [
       ...[...pending]
         .filter((id) => !acknowledged.has(id))
@@ -1490,16 +1490,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     ];
     for (const [messageId, reaction] of changes) {
       if (presenceUnavailable()) return;
-      if (reaction) acknowledged.add(messageId);
-      else acknowledged.delete(messageId);
       const free = await pool.query(
         "SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' AND assistant_reaction IS NULL",
         [messageId, ownerId],
       );
-      if (free.rowCount)
-        await react(messageId, reaction, AbortSignal.timeout(5000)).catch((cause) =>
-          logFailure('channel_reaction_failed', cause),
-        );
+      const sent = free.rowCount
+        ? await react(messageId, reaction, AbortSignal.timeout(5000)).then(
+            () => true,
+            (cause) => {
+              logFailure('channel_reaction_failed', cause);
+              return false;
+            },
+          )
+        : true;
+      if (!sent) continue;
+      if (reaction) acknowledged.add(messageId);
+      else acknowledged.delete(messageId);
     }
   }
 

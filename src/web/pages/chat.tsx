@@ -42,7 +42,7 @@ import {
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
-import { LiveLine } from '../components/live-line';
+import { LiveLine, liveSummary } from '../components/live-line';
 import { recordingSource } from '../lib/recording';
 import type { ImagePreview } from '../components/attachment-images';
 import { reuseFile } from '../components/file-actions';
@@ -119,7 +119,7 @@ function Working({
   quiet?: boolean;
 }) {
   const work = items.filter((item) => !item.background);
-  const described = work.filter((item) => item.step?.trim() || item.site);
+  const described = work.filter((item) => liveSummary(item).described);
   const shown = described.length ? described : work.slice(0, 1);
   if (!work.length && !label && !sending) return null;
   const receipt = sending
@@ -1693,7 +1693,11 @@ export function Chat({
               ))}
               {planning ? (
                 <Working
-                  label={state.planningStep || 'Pulling together a few ideas to get started'}
+                  label={
+                    connected
+                      ? state.planningStep || 'Pulling together a few ideas to get started'
+                      : undefined
+                  }
                 />
               ) : (
                 <Working

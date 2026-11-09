@@ -33,14 +33,14 @@ Open **Scheduled** to review open tasks and upcoming schedules. Open tasks appea
 | -------------- | --------------------------------------------------------------------------------- |
 | Title          | The task in a few words                                                           |
 | Status         | Where the task stands, such as **Working** or **Needs you**                       |
-| Now line       | What Nod is doing, with the website it's waiting on, or the question it asked you |
+| Now line       | What Nod is doing, with the website it's working in, or the question it asked you |
 | **Waiting on** | Who Nod is waiting for, and how, such as an email reply                           |
 | **Next check** | When Nod will look again                                                          |
 | **Done when**  | What finished looks like                                                          |
 
-A compact task preview appears in chat with its title, status and current activity. While a task works, its line is the chat's live line: the current step, the website or app it waits on, and how long it has been quiet.
+A compact task preview appears in chat with its title, status and current activity. While a task works, its line is the chat's live line: the current step, the website or app it's working in, and how long it has been quiet.
 
-Select the preview to see its plan as a checklist and its controls; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
+Select the preview to see its controls and, when it has planned steps, its plan as a checklist; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
 
 Tasks Nod starts on its own, such as a reply your notification rule asks for, show the same line on their card, with no typing indicator or chat status line. Useful, verified milestones arrive as chat messages, with what is complete and what remains.
 

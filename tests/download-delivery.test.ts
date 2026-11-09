@@ -978,9 +978,6 @@ test(
                         .execute({ action: 'share_screenshot', name: 'page.png' });
                     if (!available) {
                       await assert.rejects(capture(), /available screenshot/);
-                      await tools.get('send_message')!.execute({
-                        text: 'The page screenshot is unavailable.',
-                      });
                       return;
                     }
                     const result = await capture();
@@ -1031,7 +1028,7 @@ test(
                   [turn.turnId],
                 )
               ).rows;
-              assert.equal(saved.length, 1);
+              assert.equal(saved.length, available ? 1 : 0);
               if (available) {
                 assert.equal(saved[0].presentation.artifactId, screenshotId);
                 assert.deepEqual(

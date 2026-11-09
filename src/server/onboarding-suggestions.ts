@@ -585,7 +585,10 @@ export function createOnboardingSuggestions(options: {
               logFailure('first_tasks_fallback', error);
               return {
                 ...fallbackSuggestions({ gmail: false, telegram: false }),
-                accounts: await options.discovery.accounts(),
+                accounts: await abortable(
+                  options.discovery.accounts(),
+                  AbortSignal.timeout(10_000),
+                ).catch(() => []),
               };
             }
             if (!stale || options.signal?.aborted) throw error;
