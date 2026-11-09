@@ -3432,8 +3432,13 @@ test('a turn that crosses the compaction line answers first, then compacts at th
   const access = smallContextAccess('compatible', 'fixture-large', 300_000);
   access.effort = 'high';
   access.read = async () => ({ type: 'endpoint', url });
-  access.definition.choice.efforts = ['off', 'low', 'high'];
-  access.definition.spec = { ...access.definition.spec, baseUrl: url, reasoning: true };
+  access.definition.choice.efforts = ['low', 'high'];
+  access.definition.spec = {
+    ...access.definition.spec,
+    baseUrl: url,
+    reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, medium: null },
+  };
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-crossing-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const agent = createPiAgent({
@@ -3475,7 +3480,7 @@ test('a turn that crosses the compaction line answers first, then compacts at th
   assert.deepEqual(bodies.map(summary), [false, false, false, false, true]);
   assert.deepEqual(
     bodies.map((body) => body.reasoning_effort),
-    ['high', 'high', 'high', 'high', undefined],
+    ['high', 'high', 'high', 'high', 'low'],
   );
   const answered = events.findIndex(
     (event) => event.type === 'final' && event.text === 'Synthetic answer 4',
