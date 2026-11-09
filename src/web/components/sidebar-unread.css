@@ -23,3 +23,26 @@
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+.sidebar .chat-status-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+}
+.sidebar .chat-status-dot[data-state='working'] {
+  background: var(--muted-foreground);
+  animation: chat-status-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-status-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar .chat-status-dot[data-state='working'] {
+    animation: none;
+  }
+}

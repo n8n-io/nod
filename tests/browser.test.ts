@@ -6055,12 +6055,21 @@ test('chat shows pending sends and active work before a model step', async () =>
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
         assert.equal(stops, 1);
-        for (const detail of [{ site: 'example.test' }, { title: 'Synthetic task', taskId: 'synthetic-task' }, { step: '   ' }]) {
+        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, 'Thinking…'], [{ title: 'Synthetic task', taskId: 'synthetic-task' }, 'Synthetic taskWorking…'], [{ step: '   ' }, 'Working…'], [{ doing: 'model' }, 'Thinking…']]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
-          assert.equal(document.querySelector('.thinking')?.textContent, 'Working…');
+          assert.equal(document.querySelector('.thinking')?.textContent, line);
           assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         }
+        state = { ...state, activity: [{ ...activity, doing: 'tool', site: 'example.test', step: 'Comparing prices',
+          quietSince: new Date(Date.now() - 150_000).toISOString(), received: true }] };
+        await render();
+        assert.equal(document.querySelector('.thinking .working-text')?.textContent, 'Comparing prices · example.test · 2 min');
+        assert.ok(document.querySelector('.thinking .working-receipt'));
+        state = { ...state, activity: [{ ...activity, background: true }] };
+        await render();
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
+        assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
         state = { ...state, activity: [activity, { ...activity, turnId: 'synthetic-described-turn',
           title: 'Synthetic task', step: 'Comparing **flight prices**' }] };
         await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });

@@ -94,7 +94,7 @@ Usage on a ChatGPT plan counts at the model's API price here, so plan tasks chec
 Tell Nod in chat, for example "Check in when a task passes $20" or "Stop checking in on tasks". You can also ask what the current check-in amount is.
 
 :::note
-Nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Nod ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.** When the background observer stops at its check-in without asking, it waits on that notice, and checks resume once you reply to it.
+Nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Nod pauses and waits for you with a notice such as **Paused at the $5 check-in. Reply to keep going.** The task shows **Needs you**, and your reply continues it. The background observer works the same way: its checks resume once you reply.
 :::
 
 ## Check usage from Telegram or WhatsApp

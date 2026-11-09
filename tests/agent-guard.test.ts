@@ -1529,15 +1529,14 @@ test('past the spending check-in a turn stops working but can ask, and one that 
   );
   assert.equal(asked.result.status, 'waiting_user');
   assert.equal(reads.length, 2);
-  await assert.rejects(
-    fixture(
-      async (tools, emit, options) => {
-        emit(usage(6));
-        while (!options.shouldStop()) await read(tools).catch(() => {});
-      },
-      { integration, checkIn },
-    ),
+  const kept = await fixture(
+    async (tools, emit, options) => {
+      emit(usage(6));
+      while (!options.shouldStop()) await read(tools).catch(() => {});
+    },
+    { integration, checkIn },
   );
+  assert.equal(kept.result.status, 'waiting_user');
   assert.equal(reads.length, 2);
   await fixture(
     async (tools, emit) => {

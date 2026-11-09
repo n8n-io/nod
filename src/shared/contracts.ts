@@ -65,6 +65,10 @@ export interface Activity {
   step: string | null;
   site: string | null;
   since: string;
+  doing: 'queued' | 'model' | 'tool';
+  quietSince: string;
+  received?: true;
+  background?: true;
 }
 export interface VaultLoginEntry {
   kind: 'login';
@@ -240,6 +244,7 @@ export interface AppState {
   pendingAnswerChoiceMessageIds?: string[];
   verificationRequests?: VerificationRequest[];
   planningTasks?: boolean;
+  planningStep?: string;
   messages: Message[];
   turns: Turn[];
   activity?: Activity[];
@@ -256,15 +261,7 @@ export interface CurrentBrowser {
   lastActivityAt: string;
 }
 export type TaskStatus =
-  | 'queued'
-  | 'working'
-  | 'needs_you'
-  | 'waiting'
-  | 'scheduled'
-  | 'stalled'
-  | 'failed'
-  | 'done'
-  | 'cancelled';
+  'queued' | 'working' | 'needs_you' | 'waiting' | 'scheduled' | 'failed' | 'done' | 'cancelled';
 export interface TaskWait {
   who: string;
   via: string;

@@ -1,7 +1,6 @@
 import { Tooltip } from '../components/tooltip';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import Markdown from 'react-markdown';
 import { ArrowDown, Check, CornerUpLeft, LoaderCircle, Repeat } from '../components/icons';
 import type {
   Activity,
@@ -43,6 +42,7 @@ import {
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { NodGlyph, Rise } from '../components/motion';
+import { LiveLine, liveSummary } from '../components/live-line';
 import { recordingSource } from '../lib/recording';
 import type { ImagePreview } from '../components/attachment-images';
 import { reuseFile } from '../components/file-actions';
@@ -107,27 +107,41 @@ function Welcome() {
     </div>
   );
 }
-function Working({ items = [], label }: { items?: Activity[]; label?: string }) {
-  const details = items.filter((item) => item.step?.trim());
-  if (!items.length && !label) return null;
+function Working({
+  items = [],
+  label,
+  sending = false,
+  quiet = true,
+}: {
+  items?: Activity[];
+  label?: string;
+  sending?: boolean;
+  quiet?: boolean;
+}) {
+  const work = items.filter((item) => !item.background);
+  const described = work.filter((item) => liveSummary(item).described);
+  const shown = described.length ? described : work.slice(0, 1);
+  if (!work.length && !label && !sending) return null;
+  const receipt = sending
+    ? 'Sending…'
+    : work.some((item) => item.received)
+      ? 'Got your message. I’ll read it after this step.'
+      : null;
   return (
     <div className="thinking" role="status">
       <NodGlyph size={28} mode="thinking" />
       <div className="working-details">
-        {details.length ? (
-          details.map((item) => (
+        {shown.length ? (
+          shown.map((item) => (
             <span className="working-text" key={item.turnId}>
               {item.title && <strong>{item.title}</strong>}
-              <span key={item.step}>
-                <Markdown allowedElements={[]} unwrapDisallowed>
-                  {item.step}
-                </Markdown>
-              </span>
+              <LiveLine item={item} quiet={quiet} />
             </span>
           ))
         ) : (
-          <span className="working-text">{label ?? 'Working…'}</span>
+          <span className="working-text">{label ?? 'Sending…'}</span>
         )}
+        {work.length > 0 && receipt && <span className="working-receipt">{receipt}</span>}
       </div>
     </div>
   );
@@ -271,6 +285,7 @@ export function Chat({
   ownerId,
   state,
   streams,
+  connected = true,
   refresh,
   initialFocusMessageId,
   toolbarActions,
@@ -287,6 +302,7 @@ export function Chat({
   ownerId: string;
   state: AppState;
   streams: Record<string, string>;
+  connected?: boolean;
   refresh(): Promise<void>;
   initialFocusMessageId?: string;
   toolbarActions?: HTMLElement | null;
@@ -521,7 +537,7 @@ export function Chat({
       .map((item) => item.message),
   ];
   const live = state.activity ?? [];
-  const working = live.length > 0;
+  const working = live.some((item) => !item.background);
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
@@ -1676,9 +1692,19 @@ export function Chat({
                 </Fragment>
               ))}
               {planning ? (
-                <Working label="Pulling together a few ideas to get started" />
+                <Working
+                  label={
+                    connected
+                      ? state.planningStep || 'Pulling together a few ideas to get started'
+                      : undefined
+                  }
+                />
               ) : (
-                <Working items={live} label={sending ? 'Sending…' : undefined} />
+                <Working
+                  items={connected ? live : []}
+                  sending={sending}
+                  quiet={!streamEntries.length}
+                />
               )}
             </div>
             <div ref={bottom} />

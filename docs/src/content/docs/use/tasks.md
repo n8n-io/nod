@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Task previews in chat show what Nod is working on and what needs your attention. The **Scheduled** page holds schedules and their recent runs. Select **New schedule** to open chat, where Nod helps you decide what to do and when.
+Task previews in chat show what Nod is working on and what needs your attention. The **Scheduled** page holds open tasks, schedules and their recent runs. Select **New schedule** to open chat, where Nod helps you decide what to do and when.
 
 Nod keeps quick answers, simple lookups and status questions in chat. It starts a saved task for substantial work, including multi-step work it can finish in one sitting, such as research across sources, checked comparisons or report creation, and for an outside wait, such as a person, a reply or an action elsewhere, or work you ask it to track. You never pick an execution mode: Nod starts the task itself and lets it finish the assigned work.
 
@@ -23,20 +23,26 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## Scheduled work
 
-Open **Scheduled** to review upcoming schedules. Expand **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
+Open **Scheduled** to review open tasks and upcoming schedules. Open tasks appear first, with the same live line as in chat. Expand **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
+
+![The Scheduled page with a working task and a task that needs you above two recurring schedules.](../../../assets/screens/scheduled-open-tasks.png)
 
 ## What a card shows
 
-| Part           | What it tells you                                                                          |
-| -------------- | ------------------------------------------------------------------------------------------ |
-| Title          | The task in a few words                                                                    |
-| Status         | Where the task stands, such as **Working** or **Needs you**                                |
-| Now line       | What Nod is doing, with the website it's on while it browses, or the question it asked you |
-| **Waiting on** | Who Nod is waiting for, and how, such as an email reply                                    |
-| **Next check** | When Nod will look again                                                                   |
-| **Done when**  | What finished looks like                                                                   |
+| Part           | What it tells you                                                                 |
+| -------------- | --------------------------------------------------------------------------------- |
+| Title          | The task in a few words                                                           |
+| Status         | Where the task stands, such as **Working** or **Needs you**                       |
+| Now line       | What Nod is doing, with the website it's working in, or the question it asked you |
+| **Waiting on** | Who Nod is waiting for, and how, such as an email reply                           |
+| **Next check** | When Nod will look again                                                          |
+| **Done when**  | What finished looks like                                                          |
 
-A compact task preview appears in chat. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and the progress indicator at the bottom of the chat show its current activity and, while it browses, the website it is on. Useful, verified milestones also arrive as chat messages, with what is complete and what remains. Inside the details, select **Show activity** to read Nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
+A compact task preview appears in chat with its title, status and current activity. While a task works, its line is the chat's live line: the current step, the website or app it's working in, and how long it has been quiet.
+
+Select the preview to see its controls and, when it has planned steps, its plan as a checklist; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
+
+Tasks Nod starts on its own, such as a reply your notification rule asks for, show the same line on their card, with no typing indicator or chat status line. Useful, verified milestones arrive as chat messages, with what is complete and what remains.
 
 The progress indicator shows the task title above its current step. Both wrap so you can read the full text.
 
@@ -109,8 +115,7 @@ Telegram, WhatsApp and web use the same task record and saved session. Task comm
 | **Working**       | Nod is on it right now.                                              |
 | **Needs you**     | Nod asked you a question or needs an approval. Reply to its message. |
 | **Waiting**       | Nod is waiting on someone else.                                      |
-| **Checking back** | Nod has a check planned for later.                                   |
-| **Stalled**       | Nothing is planned next. Tell Nod to keep going or stop.             |
+| **Checking back** | Nod has a check planned and resumes the task at that time.           |
 | **Done**          | Finished, with the result on the card.                               |
 | **Stopped**       | Closed before it finished.                                           |
 
@@ -124,17 +129,16 @@ stateDiagram-v2
   needs --> Working: you reply
   Working --> Waiting: waits on someone
   Working --> checking: check planned
-  Working --> Stalled: nothing planned
   checking --> Working: check runs
   Working --> Done
   needs --> Stopped: you move on
 ```
 
-A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stalled task opens its card, so **Reply** and **Stop** are in view. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that Nod is working.
+A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed task opens its card, so **Reply** and **Stop** are in view. A task that stops without a plan or a result shows **Needs you** with a note to reply to continue. A task that fails, including one Nod started on its own, says so in chat with the task's name and what stopped it. When a task reaches its spending check-in, it shows **Needs you** with the check-in question. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that Nod is working.
 
 ## Task status and permission
 
-A card is a view of the work. It does not grant permission or schedule a check. **Schedule task** creates an ordinary [schedule](/use/schedules/). Every outside action still goes through the [trust check](/trust/approvals/).
+A card is a view of the work. It does not grant permission. A planned check resumes the task's own session with the same permission as the task. **Schedule task** creates an ordinary [schedule](/use/schedules/). Every outside action still goes through the [trust check](/trust/approvals/).
 
 To change a task, tell Nod in [chat](/use/chat/).
 

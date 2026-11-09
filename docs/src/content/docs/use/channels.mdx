@@ -168,8 +168,11 @@ While Nod works on something you asked for in this chat, including a task it sta
 
 - **Telegram** adds a quoted progress section in your language, or the website or app Nod is using, when the task's first message, or the opening message for work in chat, arrives as one short text message. It updates quietly in place and is removed when the work stops. The answer arrives separately. You can keep typing and sending messages, or reply to that first message to correct the task while it works. Long or split messages, attachments, visual cards, files and private sign-in or payment links keep typing status only.
 - **WhatsApp** shows **typing…** while connected. The Meta Cloud API also marks your latest message as read and stops typing after its 24-hour reply window closes. The QR connection has no reply window.
+- **A message you send while Nod works** gets a 👀 reaction in both apps until Nod reads it, so you know it's queued. Nod leaves its own reaction to that message alone.
 
-Nod still sends real messages for its opening line, useful milestones or partial results, questions, blockers, the final result and failures. Live status can continue while those messages arrive. See [Message cadence](/how-it-works/agent-runtime/#message-cadence).
+Typing stays on through slow steps without extra messages. Work Nod starts on its own, such as a reply your notification rule asks for, shows no typing.
+
+Nod still sends real messages for its opening line, useful milestones or partial results, questions, blockers, the final result and failures. If work stops on an error, Nod says what stopped it. Live status can continue while those messages arrive. See [Message cadence](/how-it-works/agent-runtime/#message-cadence).
 
 ## Reactions
 

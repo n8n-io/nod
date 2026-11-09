@@ -90,8 +90,7 @@ export function suggestedTaskStatus(
     if (tasks.every((item) => item.status === 'done')) return 'done';
     if (tasks.some((item) => item.status === 'failed' || item.status === 'cancelled'))
       return 'idle';
-    if (tasks.some((item) => item.status === 'needs_you' || item.status === 'stalled'))
-      return 'needs_you';
+    if (tasks.some((item) => item.status === 'needs_you')) return 'needs_you';
     return tasks.some((item) => item.status === 'queued' || item.status === 'working')
       ? 'working'
       : 'waiting';

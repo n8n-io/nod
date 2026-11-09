@@ -131,9 +131,11 @@ export interface ThreadDependencies {
   currentModel?: () => { provider: string; name: string; configured: boolean };
   present?: (
     threadId: string,
-    input: { kind: 'interrupted' } | { kind: 'failed'; error: string },
+    input:
+      { kind: 'interrupted'; work?: string } | { kind: 'failed'; error: string; work?: string },
   ) => Promise<string>;
   observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
+  taskChecks?: (threadId: string) => Promise<void>;
   taskClassification?: boolean;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
@@ -269,6 +271,10 @@ export async function withTurnLock<T>(
 
 let drainWorker: string | undefined;
 
+export async function wakeThreadAt(client: PoolClient, at: Date) {
+  await sendDrain(client, (await lockThread(client)).id, at);
+}
+
 async function sendDrain(client: PoolClient | undefined, threadId: string, startAfter?: Date) {
   await boss.send(
     queue,
@@ -370,7 +376,17 @@ export async function insertAssistantMessage(
       });
     attachments = [...attached.values()];
   }
-  replyToMessageId ??= turn.taskMessageId;
+  replyToMessageId ??=
+    turn.taskMessageId ??
+    (
+      await client.query<{ id: string }>(
+        `SELECT a.id FROM (SELECT id,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
+           AND role='user' ORDER BY created_at DESC,id DESC LIMIT 1) a
+         WHERE EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2
+           AND (m.created_at,m.id)>(a.created_at,a.id) AND m.turn_id IS DISTINCT FROM $3)`,
+        [ownerId, turn.threadId, turn.turnId],
+      )
+    ).rows[0]?.id;
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
   const id = randomUUID();
   await client.query(
@@ -841,7 +857,7 @@ export async function reactToAssistantMessage(
   return result;
 }
 
-async function resumeTurn(
+export async function resumeTurn(
   turnId: string,
   sourceId: string,
   prompt: string,
@@ -988,12 +1004,15 @@ async function failTurn(
         thread_id: string;
         owner_started: boolean;
         task_id: string | null;
+        work: string | null;
         latest_user_message_id: string | null;
       }>(
         `${turnChainSql()}, origin AS (
           SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
           ORDER BY u.created_at,u.id LIMIT 1
         ) SELECT u.thread_id,${ownerStarted()} AS owner_started,to_jsonb(u)->>'task_id' AS task_id,
+         COALESCE((SELECT t.title FROM tasks t WHERE t.id=(to_jsonb(u)->>'task_id')::uuid AND t.owner_id=u.owner_id),
+           CASE WHEN u.source='schedule' THEN split_part(u.prompt,E'\n',1) END) AS work,
          (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
           WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
             AND (m.turn_id IN (SELECT id FROM chain)
@@ -1017,25 +1036,28 @@ async function failTurn(
     return { ...turn, taskMessageId: task?.message_id as string | undefined };
   }, pool);
   if (!turn) return false;
-  if (!turn.owner_started && !turn.taskMessageId) return true;
+  if (!turn.owner_started && !turn.work) return true;
+  const work = turn.owner_started ? undefined : turn.work!;
   const presented = await present?.(
     turn.thread_id,
-    error === interrupted ? { kind: 'interrupted' } : { kind: 'failed', error },
+    error === interrupted
+      ? { kind: 'interrupted', ...(work ? { work } : {}) }
+      : { kind: 'failed', error, ...(work ? { work } : {}) },
   ).catch(() => undefined);
   const message =
     typeof presented === 'string' && presented.trim()
       ? presented
       : error === interrupted
-        ? 'I was interrupted before I finished. Check anything I may have started before you ask me to continue.'
-        : `I couldn't finish this. ${error}`;
+        ? `I was interrupted before I finished${work ? ` “${work}”` : ''}. Check anything I may have started before you ask me to continue.`
+        : `I couldn't finish ${work ? `“${work}”` : 'this'}. ${error}`;
   await transaction(async (client) => {
     if ((await lockThread(client)).id !== turn.thread_id) return;
     const current = await client.query(
       `SELECT u.id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
        AND status='failed' AND error=$7
-       AND (($6::uuid IS NULL AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
+       AND ((NOT $6::boolean AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
             ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid)
-         OR ($6::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))))
+         OR ($6::boolean AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))))
        AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
       [
         turnId,
@@ -1043,7 +1065,7 @@ async function failTurn(
         turn.thread_id,
         `failure:${turnId}`,
         turn.latest_user_message_id,
-        turn.task_id,
+        Boolean(turn.task_id || work),
         error,
       ],
     );
@@ -1151,6 +1173,10 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
+  await dependencies.taskChecks?.(threadId).catch(async (error) => {
+    logFailure('task_check_failed', error, { threadId });
+    await sendDrain(undefined, threadId, new Date(Date.now() + 60_000)).catch(() => {});
+  });
   const claimed = await claimTurns(threadId);
   if (claimed.length) refresh();
   for (const turn of claimed) {
