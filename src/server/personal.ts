@@ -67,7 +67,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       const id = z.uuid().parse(rawId);
       return { id, ...(await schedules.validateUpdate(id, raw, expectedRevision, client)) };
     }
-    if (action === 'schedule_cancel') {
+    if (action === 'schedule_pause' || action === 'schedule_cancel') {
       const input = z.object({ id: z.uuid() }).strict().parse(args);
       await schedules.validateUpdate(input.id, { enabled: false }, expectedRevision, client);
       return input;
@@ -165,7 +165,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       const { id, ...input } = args;
       return schedules.update(String(id || ''), input, provenance, undefined, options?.client);
     }
-    if (action === 'schedule_cancel')
+    if (action === 'schedule_pause' || action === 'schedule_cancel')
       return schedules.update(
         String(args.id || ''),
         { enabled: false },

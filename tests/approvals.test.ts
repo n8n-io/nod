@@ -1734,14 +1734,14 @@ test(
           ]);
           const before = calls.length;
           const results = await Promise.all(
-            turns.map((turn) => approvals.request(turn, 'NOD_schedule_cancel', args)),
+            turns.map((turn) => approvals.request(turn, 'NOD_schedule_pause', args)),
           );
           for (const result of results) assert.ok(result[appConfirmation]);
           assert.equal(results[0][appConfirmation], results[1][appConfirmation]);
           const records = (
             await db.pool.query(
               'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
-              [ownerId, turns[0]!.threadId, 'NOD_schedule_cancel', args],
+              [ownerId, turns[0]!.threadId, 'NOD_schedule_pause', args],
             )
           ).rows;
           assert.equal(records.length, 1);
@@ -1753,11 +1753,11 @@ test(
             1,
           );
           const original = turns.find((turn) => turn.turnId === records[0].turn_id)!;
-          await assert.rejects(approvals.request(original, 'NOD_schedule_cancel', args), {
+          await assert.rejects(approvals.request(original, 'NOD_schedule_pause', args), {
             statusCode: 409,
           });
           const other = await begin('A different schedule needs a pause.', { source: 'event' });
-          await propose(other, 'NOD_schedule_cancel', { id: randomUUID() });
+          await propose(other, 'NOD_schedule_pause', { id: randomUUID() });
           assert.equal(await assistantMessages(other.turnId), 1);
           assert.equal(calls.length, before);
         },

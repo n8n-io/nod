@@ -310,7 +310,10 @@ export function MessageBubble({
   handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
-  const visibleText = message.audioCaption ?? message.text;
+  const visibleText =
+    (message.role === 'user' ? message.displayText : undefined) ??
+    message.audioCaption ??
+    message.text;
   const canCopy = Boolean(
     visibleText.trim() || presentationSchema.safeParse(message.presentation).success,
   );
