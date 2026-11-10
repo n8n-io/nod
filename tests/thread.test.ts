@@ -733,6 +733,117 @@ test(
       let firstUserTurnId = '';
       const firstClientMessageId = randomUUID();
 
+      await t.test('web message limits apply after access and only to text and audio', async () => {
+        const isolated = await createApp();
+        const textAttempt = () =>
+          isolated.inject({ method: 'POST', url: '/api/messages', headers, payload: { text: '' } });
+        const audioAttempt = () =>
+          isolated.inject({ method: 'POST', url: '/api/messages/audio', headers, payload: '' });
+        try {
+          assert.equal(
+            (
+              await isolated.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers: { host: headers.host, origin: headers.origin },
+                payload: { text: '' },
+              })
+            ).statusCode,
+            401,
+          );
+          for (let attempt = 0; attempt < 120; attempt++)
+            assert.equal((await textAttempt()).statusCode, 400);
+          const textExceeded = await textAttempt();
+          assert.equal(textExceeded.statusCode, 429);
+          assert.ok(Number(textExceeded.headers['retry-after']) > 0);
+          for (let attempt = 0; attempt < 120; attempt++)
+            assert.equal((await audioAttempt()).statusCode, 406);
+          assert.equal((await audioAttempt()).statusCode, 429);
+          assert.equal(
+            (await isolated.inject({ url: '/api/configuration', headers })).statusCode,
+            200,
+          );
+          assert.equal(
+            (
+              await isolated.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers: { host: headers.host, origin: headers.origin },
+                payload: { text: '' },
+              })
+            ).statusCode,
+            401,
+          );
+        } finally {
+          await isolated.close();
+        }
+      });
+
+      await t.test('large literal messages pass web transport limits', async () => {
+        const isolated = await createApp();
+        const text = '\t\n'.repeat(49_999) + 'x\n';
+        const displayText = '<span>\t</span><br>'.repeat(49_999) + 'x<br>\n';
+        const message = JSON.stringify({ text, displayText, verificationRequestId: randomUUID() });
+        const boundary = 'synthetic-message-size-boundary';
+        const audioField = (value: string) =>
+          Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${value}\r\n--${boundary}--\r\n`,
+          );
+        try {
+          assert.equal(text.length, 100_000);
+          assert.ok(displayText.length > 700_000);
+          assert.ok(Buffer.byteLength(message) > 1024 * 1024);
+          assert.equal(
+            (
+              await isolated.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers: { ...headers, 'content-type': 'application/json' },
+                payload: message,
+              })
+            ).statusCode,
+            409,
+          );
+          const audio = await isolated.inject({
+            method: 'POST',
+            url: '/api/messages/audio',
+            headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+            payload: audioField(message),
+          });
+          assert.equal(audio.statusCode, 400);
+          assert.equal(audio.json().error, 'Choose an audio recording.');
+          const overDisplay = await isolated.inject({
+            method: 'POST',
+            url: '/api/messages',
+            headers: { ...headers, 'content-type': 'application/json' },
+            payload: JSON.stringify({ text: 'x', displayText: 'y'.repeat(1_000_001) }),
+          });
+          assert.equal(overDisplay.statusCode, 400);
+          const oversized = JSON.stringify({ text: 'x', displayText: 'y'.repeat(8 * 1024 * 1024) });
+          assert.equal(
+            (
+              await isolated.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers: { ...headers, 'content-type': 'application/json' },
+                payload: oversized,
+              })
+            ).statusCode,
+            413,
+          );
+          const overAudio = await isolated.inject({
+            method: 'POST',
+            url: '/api/messages/audio',
+            headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+            payload: audioField(oversized),
+          });
+          assert.equal(overAudio.statusCode, 400);
+          assert.equal(overAudio.json().error, 'Check the voice message details.');
+        } finally {
+          await isolated.close();
+        }
+      });
+
       await t.test(
         'declared task outcomes follow committed transitions and caller consent',
         async (t) => {

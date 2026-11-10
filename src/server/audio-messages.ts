@@ -14,6 +14,8 @@ import type { SubmitMessageResponse } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { questionAnswerSchema } from '../shared/answer-choices.ts';
 
+const audioMessageOptions = { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } };
+
 export const messageInput = z
   .object({
     text: z
@@ -21,7 +23,7 @@ export const messageInput = z
       .max(100_000)
       .transform((value) => (value.trim() ? value : ''))
       .default(''),
-    displayText: z.string().max(700_000).optional(),
+    displayText: z.string().max(1_000_000).optional(),
     attachmentIds: z.array(z.uuid()).default([]),
     replyToMessageId: z.uuid().optional(),
     questionAnswer: questionAnswerSchema.optional(),
@@ -66,7 +68,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
     suspensions++;
     cancel();
   });
-  app.post('/api/messages/audio', async (request, reply) => {
+  app.post('/api/messages/audio', audioMessageOptions, async (request, reply) => {
     if (suspensions)
       throw privateConflict('Work is stopping. Send the recording again when it finishes.');
     const controller = new AbortController();
@@ -88,7 +90,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           files: 1,
           fields: 1,
           parts: 2,
-          fieldSize: 1024 * 1024,
+          fieldSize: 8 * 1024 * 1024,
         },
       })) {
         signal.throwIfAborted();
