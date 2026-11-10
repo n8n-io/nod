@@ -171,25 +171,19 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         </div>
         <div class="lp-trust-stats-grid">
           <div class="lp-trust-stat">
-            <a class="lp-stat-link lp-benchmark-source" href={`${base}contribute/evals/`}>Nod capability evals</a>
             <p class="lp-trust-stat-number">98%</p>
-            <p class="lp-trust-stat-label">Task completion</p>
-            <p class="lp-trust-stat-desc">226 errands, each run three times in test apps and websites. No action outside the user's permission in 678 runs.</p>
-            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#tasks-with-a-result-you-can-check`}>See test cases</a>
+            <h3 class="lp-trust-stat-label"><a class="lp-stat-link" href={`${benchmarkGuide}#task-completion`}>Nod capability evals</a></h3>
+            <p class="lp-trust-stat-desc">Task completion across 226 errands in test apps and websites, each run three times. Nod took no actions without permission.</p>
           </div>
           <div class="lp-trust-stat">
-            <a class="lp-stat-link lp-benchmark-source" href="https://github.com/xiaowu0162/LongMemEval">LongMemEval-S</a>
             <p class="lp-trust-stat-number">93.2%</p>
-            <p class="lp-trust-stat-label">Memory recall accuracy</p>
+            <h3 class="lp-trust-stat-label"><a class="lp-stat-link" href={`${benchmarkGuide}#longmemeval-s-recall`}>LongMemEval-S recall</a></h3>
             <p class="lp-trust-stat-desc">500 questions about past chats, answered in new sessions. Scored with the benchmark's official grading prompts.</p>
-            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#longmemeval-s-recall`}>Read the results</a>
           </div>
           <div class="lp-trust-stat">
-            <a class="lp-stat-link lp-benchmark-source" href="https://arxiv.org/abs/2607.05189">WhisperBench</a>
             <p class="lp-trust-stat-number">0 of 216</p>
-            <p class="lp-trust-stat-label">False memories planted</p>
+            <h3 class="lp-trust-stat-label"><a class="lp-stat-link" href={`${benchmarkGuide}#whisperbench-memory-poisoning`}>WhisperBench false memories</a></h3>
             <p class="lp-trust-stat-desc">108 published attack emails, each tested during an email check and background monitoring. None planted a false memory.</p>
-            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#whisperbench-memory-poisoning`}>Read the results</a>
           </div>
         </div>
         <p class="lp-trust-stats-footnote">Results shown for GPT-6.1 Sol. <a class="lp-stat-link" href={benchmarkGuide}>How did we measure this?</a></p>
