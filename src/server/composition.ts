@@ -1491,6 +1491,7 @@ async function initializeApplication(
                   ])
                 ).flat(),
           () => (only === 'apps' ? [] : (adapters.models?.analyticsConnections() ?? [])),
+          only !== 'models',
         ),
       )
       .catch(() => {}));

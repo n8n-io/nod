@@ -9,6 +9,7 @@ import {
   type AnalyticsDelivery,
 } from '../src/server/analytics.ts';
 import { analyticsEvent } from '../src/server/analytics-events.ts';
+import { captureConnectionInventory } from '../src/server/analytics-connections.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import {
   profileJobs,
@@ -573,6 +574,72 @@ test('accepted owner messages do not inherit an unrelated run context', async ()
     assert.equal(Object.hasOwn(captured[1]!.properties, 'run_id'), false);
     assert.equal(Object.hasOwn(captured[1]!.properties, 'work_type'), false);
     assert.equal(captured[1]!.properties.channel, 'telegram');
+  } finally {
+    await analytics.shutdown();
+  }
+});
+
+test('connection inventory captures zero and distinct safe app types only after a consented read', async () => {
+  const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+  const analytics = await createAnalytics({
+    provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    environment: 'production',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  const owner = 'synthetic-owner';
+  const inventory = () => captured.filter(({ event }) => event === 'connection_inventory_observed');
+  try {
+    analytics.setUsageData(owner, true);
+    await captureConnectionInventory(analytics, owner, async () => []);
+    assert.deepEqual(inventory()[0]?.properties.connected_app_types, []);
+    assert.equal(inventory()[0]?.properties.connected_app_type_count, 0);
+
+    await captureConnectionInventory(analytics, owner, async () => [
+      { app: 'gmail', publicApp: true, connection_method: 'managed_app' },
+      { app: 'gmail', publicApp: true, connection_method: 'managed_app' },
+      {
+        app: 'private-service-name',
+        publicApp: false,
+        connection_method: 'mcp',
+        endpoint: 'https://private-service.invalid',
+      },
+    ]);
+    assert.deepEqual(inventory()[1]?.properties.connected_app_types, ['custom', 'gmail']);
+    assert.equal(inventory()[1]?.properties.connected_app_type_count, 2);
+    assert.doesNotMatch(JSON.stringify(inventory()), /private-service/);
+
+    await captureConnectionInventory(analytics, owner, async () => []);
+    assert.deepEqual(inventory()[2]?.properties.connected_app_types, []);
+    assert.equal(inventory()[2]?.properties.connected_app_type_count, 0);
+
+    await captureConnectionInventory(
+      analytics,
+      owner,
+      async () => [],
+      () => [],
+      false,
+    );
+    assert.equal(inventory().length, 3);
+
+    await assert.rejects(
+      captureConnectionInventory(analytics, owner, async () => {
+        throw new Error('Synthetic inventory read failure.');
+      }),
+    );
+    assert.equal(inventory().length, 3);
+
+    await captureConnectionInventory(analytics, owner, async () => {
+      analytics.setUsageData(owner, false);
+      return [];
+    });
+    assert.equal(inventory().length, 3);
+    let read = false;
+    await captureConnectionInventory(analytics, owner, async () => {
+      read = true;
+      return [];
+    });
+    assert.equal(read, false);
   } finally {
     await analytics.shutdown();
   }

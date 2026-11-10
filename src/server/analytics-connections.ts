@@ -154,11 +154,28 @@ export async function captureConnectionInventory(
     AnalyticsEvent,
     { event: 'model_connection_observed' }
   >['properties'][] = () => [],
+  includeApps = true,
 ) {
   const consent = analytics.consent(ownerId);
   if (!consent.enabled || !(await analytics.permitted(ownerId))) return;
   const connections = await read();
   if (consent.signal.aborted || analytics.consent(ownerId).version !== consent.version) return;
+  if (includeApps) {
+    const connectedAppTypes = [
+      ...new Set(connections.map((connection) => properties(connection).app)),
+    ].sort();
+    analytics.capture(
+      ownerId,
+      {
+        event: 'connection_inventory_observed',
+        properties: {
+          connected_app_types: connectedAppTypes,
+          connected_app_type_count: connectedAppTypes.length,
+        },
+      },
+      { consentRevision: consent.revision },
+    );
+  }
   const seen = new Set<string>();
   for (const connection of connections) {
     const value = properties(connection);

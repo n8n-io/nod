@@ -335,6 +335,17 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('connection_inventory_observed'),
+      properties: z
+        .object({
+          connected_app_types: z.array(connectionProperties.shape.app).max(1000),
+          connected_app_type_count: z.number().int().nonnegative().max(1000),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('vault_imported'),
       properties: z
         .object({

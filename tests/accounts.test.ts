@@ -3377,6 +3377,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       'fixture-owner',
       async () => [],
       () => owner.analyticsConnections(),
+      false,
     );
     assert.deepEqual(
       captured.map(({ event, properties }) => {
