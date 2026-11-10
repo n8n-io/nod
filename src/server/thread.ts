@@ -554,6 +554,7 @@ export async function submitUserMessage(
   const channel = options.channel ?? 'web';
   const confirmation = {
     text,
+    displayText: options.displayText,
     channel,
     replyToMessageId: options.replyToMessageId,
     seenMessageId: options.seenMessageId,

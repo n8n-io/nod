@@ -44,6 +44,7 @@ export interface ApprovalDescription {
 
 export interface ChatConfirmationInput {
   text: string;
+  displayText?: string;
   channel: string;
   threadId: string;
   replyToMessageId?: string;
@@ -564,8 +565,16 @@ export async function createApprovals(
       ownerId,
     ]);
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6)",
-      [messageId, ownerId, input.text, input.threadId, turnId, input.replyToMessageId ?? null],
+      "INSERT INTO messages(id,owner_id,role,text,display_text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
+      [
+        messageId,
+        ownerId,
+        input.text,
+        input.displayText ?? null,
+        input.threadId,
+        turnId,
+        input.replyToMessageId ?? null,
+      ],
     );
     await client.query('UPDATE approvals SET status=$2,execution_turn_id=$3 WHERE id=$1', [
       approval.id,

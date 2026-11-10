@@ -2042,13 +2042,15 @@ test(
           const previousObserver = inspectObserver;
           const previousConfirmation = dependencies.executeConfirmation;
           let confirmedActions = 0;
+          const confirmationText = 'Yes, preserve __init__ and <after>';
+          const confirmationDisplayText = 'Yes, preserve \\_\\_init\\_\\_ and \\<after>';
           const analyticsApprovals = await createApprovals(
             async () => {
               confirmedActions++;
               return {};
             },
             undefined,
-            async (reply) => (reply === 'Yes' ? true : undefined),
+            async (reply) => (reply === confirmationText ? true : undefined),
             async () => 'Confirm the synthetic action?',
           );
           const confirmingMessages = thread.createUserMessageService({
@@ -2119,10 +2121,44 @@ test(
               [waitingApproval],
             )
           ).rows[0]!;
-          const confirmed = await confirmingMessages.submit('Yes', [], {
+          const confirmationInput = {
             replyToMessageId: confirmation.confirmation_message_id,
-          });
+            clientMessageId: randomUUID(),
+            displayText: confirmationDisplayText,
+          };
+          const confirmed = await confirmingMessages.submit(
+            confirmationText,
+            [],
+            confirmationInput,
+          );
           await completed(confirmed.turnId, 'background', true);
+          assert.equal(confirmedActions, 1);
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT text,display_text FROM messages WHERE id=$1', [
+                confirmed.messageId,
+              ])
+            ).rows[0],
+            { text: confirmationText, display_text: confirmationDisplayText },
+          );
+          const visibleConfirmation = (
+            await request('GET', `/api/messages/around/${confirmed.messageId}`)
+          )
+            .json<Array<{ id: string; text: string; displayText?: string }>>()
+            .find((message) => message.id === confirmed.messageId);
+          assert.equal(visibleConfirmation?.text, confirmationText);
+          assert.equal(visibleConfirmation?.displayText, confirmationDisplayText);
+          assert.deepEqual(
+            await confirmingMessages.submit(confirmationText, [], confirmationInput),
+            confirmed,
+          );
+          await assert.rejects(
+            confirmingMessages.submit(confirmationText, [], {
+              ...confirmationInput,
+              displayText: `${confirmationDisplayText} changed`,
+            }),
+            (error: unknown) => (error as { statusCode?: number }).statusCode === 409,
+          );
           assert.equal(confirmedActions, 1);
           assert.equal(
             (await db.pool.query('SELECT source FROM turns WHERE id=$1', [confirmed.turnId]))
