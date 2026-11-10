@@ -79,6 +79,19 @@ const width = (text: string, size: number) =>
     size) /
   1000;
 
+function wrap(text: string, size: number, room: number) {
+  const rows: string[] = [];
+  let row = '';
+  for (const word of text.split(' ')) {
+    const next = row ? `${row} ${word}` : word;
+    if (row && width(next, size) > room) {
+      rows.push(row);
+      row = word;
+    } else row = next;
+  }
+  return [...rows, row];
+}
+
 function fit(text: string, size: number, room: number) {
   if (width(text, size) <= room) return text;
   let cut = text;
@@ -114,7 +127,10 @@ export function usagePdf(report: UsageReport, exported: Date) {
     false,
     24,
   );
-  for (const text of [summary(view), month(report)]) line(text, 10, false, 16);
+  for (const text of [summary(view), month(report)]) {
+    const rows = wrap(text, 10, 483);
+    rows.forEach((row, index) => line(row, 10, false, index === rows.length - 1 ? 16 : 13));
+  }
   y -= 12;
   line('This month’s runs', 12, true, 22);
   let day = '';

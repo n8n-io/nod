@@ -292,6 +292,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
             'remember',
             'skill',
             'transcribe',
+            'synthesize',
           ]),
           status: choice(details.status, outcomes),
           durationMs: amount(details.durationMs),

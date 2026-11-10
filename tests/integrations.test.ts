@@ -8991,6 +8991,20 @@ test(
       const limited = (await app.inject('/api/trust')).json();
       assert.deepEqual(limited.limit, { monthlyUsd: 1, reached: true });
       assert.equal(Math.round(limited.month.backgroundUsd * 100) / 100, 0.6);
+      const reply = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,source,prompt,thread_id,session_id) VALUES($1,'owner','user','Owner reply',$2,$3)",
+        [reply, conversation, scheduled],
+      );
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('reply','owner',$1,0.2)",
+        [reply],
+      );
+      assert.equal(
+        Math.round((await app.inject('/api/trust')).json().month.backgroundUsd * 100) / 100,
+        0.6,
+      );
+      await pool.query("DELETE FROM model_usage WHERE id='reply'");
       assert.deepEqual(limited.month.outside, [{ kind: 'other', costUsd: 0.5 }]);
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);

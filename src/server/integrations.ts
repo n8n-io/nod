@@ -2053,7 +2053,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         AND watch_requested AND account_active AND NOT revoked AND account_id IS NOT NULL
         AND ($4::text IS NULL OR configuration_id=$4)
         AND ($6::uuid[] IS NULL AND (activity_poll_at IS NULL OR activity_poll_at<=now()) OR id=ANY($6::uuid[]))
-        ORDER BY activity_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+        ORDER BY activity_poll_at NULLS FIRST LIMIT CASE WHEN $6::uuid[] IS NULL THEN 4 END FOR UPDATE SKIP LOCKED)
         UPDATE app_connections c SET activity_poll_at=now()+interval '30 minutes',activity_claim_id=$5
         FROM due WHERE c.id=due.id RETURNING c.*`,
         [
@@ -2136,7 +2136,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
          AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
          AND ($4::text IS NULL OR configuration_id=$4)
          AND ($5::uuid[] IS NULL AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) OR id=ANY($5::uuid[]))
-         ORDER BY inbox_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+         ORDER BY inbox_poll_at NULLS FIRST LIMIT CASE WHEN $5::uuid[] IS NULL THEN 4 END FOR UPDATE SKIP LOCKED)
          UPDATE app_connections c SET inbox_poll_at=now()+interval '15 minutes',inbox_claim_id=$3
          FROM due WHERE c.id=due.id RETURNING c.*`,
         [

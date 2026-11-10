@@ -1210,7 +1210,7 @@ export function createProactivity(options: {
       }
       quiet &&= canContinue();
       if (held && quiet) holdUntil = quietEnd;
-      if (!quiet && unchanged && canContinue())
+      if (!quiet && unchanged && canContinue() && !changed.some((record) => record.error))
         handed = reads.map(({ read, result }) => {
           const { remainingReads: _, ...rest } = result as Record<string, unknown>;
           return { read, result: rest };

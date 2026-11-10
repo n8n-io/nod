@@ -564,7 +564,7 @@ export function createLedger({
         cost: number;
       }>(
         `WITH spent AS (
-           SELECT m.cost_usd,m.turn_id,m.details,u.session_id,u.thread_id FROM model_usage m
+           SELECT m.cost_usd,m.turn_id,m.details,u.session_id,u.thread_id,u.source FROM model_usage m
            LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
            WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.cost_usd>0),
          origin AS (
@@ -573,7 +573,7 @@ export function createLedger({
          SELECT s.turn_id IS NULL AS outside,CASE WHEN s.turn_id IS NULL THEN s.details->>'category' END AS category,
            CASE WHEN s.turn_id IS NULL THEN s.details->>'operation' END AS operation,sum(s.cost_usd)::float8 AS cost
          FROM spent s LEFT JOIN origin o ON o.session_id=s.session_id
-         WHERE s.turn_id IS NULL OR (s.session_id<>s.thread_id AND o.source NOT IN ('user','task'))
+         WHERE s.turn_id IS NULL OR (s.session_id<>s.thread_id AND s.source<>'user' AND o.source NOT IN ('user','task'))
          GROUP BY 1,2,3`,
         [ownerId],
       ),

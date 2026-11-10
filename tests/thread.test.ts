@@ -6566,7 +6566,7 @@ test(
               }
             });
             await t.test(
-              'screening ends a quiet batch and hands an escalated batch with its reads to the full check',
+              'screening ends a quiet batch and hands an escalated batch with its reads to the full check unless a read failed',
               async () => {
                 await reset();
                 let verdict = false;
@@ -6580,9 +6580,22 @@ test(
                 let rotateSource = false;
                 let allowed = true;
                 let stopAfterCheck = false;
+                let failRecord = false;
                 const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
+                  read: async (turn: unknown, input: Record<string, unknown>) => {
+                    const result = await options.read(turn, input);
+                    return failRecord
+                      ? {
+                          ...result,
+                          records: result.records.map((record) => ({
+                            ...record,
+                            error: 'unavailable' as const,
+                          })),
+                        }
+                      : result;
+                  },
                   sources: async () => {
                     const result = (await options.sources()).map((source) => ({
                       ...source,
@@ -6722,6 +6735,10 @@ test(
                 fail = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, beforeRetry + 1);
+                failRecord = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                failRecord = false;
+                assert.deepEqual(await screen(false), [true, false]);
                 verdict = true;
                 assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
                 const afterFull = checks;
