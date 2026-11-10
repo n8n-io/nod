@@ -3715,8 +3715,7 @@ test(
   async (t) => {
     const { createActivity } = await import('../src/server/activity.ts');
     const { pool, threadId, receive, turnOf, reply, create } = await outboxFixture(t);
-    await pool.query(`ALTER TABLE turns ADD COLUMN started_at timestamptz, ADD COLUMN IF NOT EXISTS message_id uuid;
-      CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,message_id uuid,created_at timestamptz);
+    await pool.query(`CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,message_id uuid,created_at timestamptz);
       CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text,site text,call_id uuid,created_at timestamptz DEFAULT clock_timestamp());`);
     const channels = await create();
     const activity = createActivity({ pool, ownerId: 'local-development' });
