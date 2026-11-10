@@ -67,8 +67,8 @@ export const legalLinks = {
   privacy: 'https://n8n.io/legal/privacy/',
 } as const;
 export const updatesEmailConsent = {
-  version: 1,
-  text: 'I agree that n8n GmbH links my email to my Nod usage data and sends me updates about Nod and other n8n products.',
+  version: 2,
+  text: 'I agree that n8n GmbH links my email to my Nod usage data and emails me about Nod and other n8n products.',
   privacyUrl: legalLinks.privacy,
 } as const;
 export function connectedGmail(connection: Connection) {

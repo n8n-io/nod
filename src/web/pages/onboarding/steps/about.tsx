@@ -455,7 +455,7 @@ export function About({ arrived, quiet, onNext, onBack, usageShared }: StepProps
                 <Bubble>
                   <strong>Tell me a bit about yourself so I can help from day one.</strong>
                   {usageShared &&
-                    ' I also share your answers with the Nod team to improve onboarding. You can turn that off in Settings.'}
+                    ' I also share your answers with the Nod team to improve Nod. You can turn that off in Settings.'}
                 </Bubble>,
               ]
             : []),

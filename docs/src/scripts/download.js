@@ -2,6 +2,7 @@ const installers = {
   'darwin-arm64': { path: 'mac', label: 'Download for Mac' },
   'darwin-x64': { path: 'mac-intel', label: 'Download for Mac' },
   'win32-x64': { path: 'windows', label: 'Download for Windows' },
+  mobile: { href: '/docs/get-started/install-desktop/', label: 'Install on your computer' },
 };
 
 async function detectPlatform(nav) {
@@ -10,7 +11,7 @@ async function detectPlatform(nav) {
     /iPhone|iPad|iPod|Android/i.test(agent) ||
     (/Macintosh/.test(agent) && nav.maxTouchPoints > 1)
   )
-    return null;
+    return 'mobile';
   const hints = nav.userAgentData;
   const platform = hints?.platform || nav.platform || agent;
   let architecture = '';
@@ -28,7 +29,7 @@ export function startDownload() {
     const installer = installers[platform];
     if (!installer) return;
     for (const link of links) {
-      link.href = link.href.replace(/[^/]+$/, installer.path);
+      link.href = installer.href ?? link.href.replace(/[^/]+$/, installer.path);
       if (link.dataset.download === 'label') link.textContent = installer.label;
     }
   });

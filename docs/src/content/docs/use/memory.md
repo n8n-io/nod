@@ -38,7 +38,7 @@ Before a skill is saved, the memory model replaces names, addresses, contact det
 
 Something Nod picks up from one message is **Mentioned once**: Nod uses it, but as less certain. It becomes **Learned** when a second message repeats it.
 
-Nod selects relevant facts for your current question and searches your earlier messages in the current conversation, so it can answer from the conversation itself, with the date you said it. It can use related concepts to find useful context, so advice can use a preference without the same words. When evidence, a memory model and spending capacity are available, it checks personal claims before delivery. A failed check keeps the original answer. These model steps can make mistakes and count toward usage. After you reset the conversation, the old one isn't searched.
+Nod selects relevant facts for your current question and searches your earlier messages in the current conversation, so it can answer from the conversation itself, with the date you said it. It can use related concepts to find useful context, so advice can use a preference without the same words. These model steps can make mistakes and count toward usage. After you reset the conversation, the old one isn't searched.
 
 ```mermaid
 stateDiagram-v2

@@ -1794,8 +1794,17 @@ body.lp {
     padding: 0.625em 0.9375em;
   }
   .lp-hero {
-    padding: 40px 0;
+    padding: 40px 0 0;
     gap: 40px;
+  }
+  .lp-demo-photo {
+    padding: 12px;
+  }
+  .lp-footer-nav {
+    gap: 0 8px;
+  }
+  .lp-footer-nav a {
+    padding: 12px 8px;
   }
   .lp-hero-headline-frame {
     padding: 24px 9px;

@@ -10,7 +10,7 @@ export function currentUserTime(timeZone: string | undefined, now = new Date()) 
   const utc = `Current UTC time: ${now.toISOString()}.`;
   if (!timeZone) return `${utc} User time zone: unknown, so ask before relying on local time.`;
   const local = localTimestamp(timeZone, now);
-  return `Current local time: ${local}. User time zone: ${timeZone}. Convert instants and deadlines to this zone with code; Z means UTC. Keep posted local hours in their original zone unless a conversion is requested. Label conversions.`;
+  return `Current local time: ${local}. User time zone: ${timeZone}. A result's Local times line already converts its instants to this zone; convert other instants and deadlines with code. Z means UTC. Keep posted local hours in their original zone unless a conversion is requested. Label conversions.`;
 }
 
 export function localResultTimes(texts: string[], timeZone: string | undefined, jsonLines = false) {
