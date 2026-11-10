@@ -590,6 +590,15 @@ test('connection inventory captures zero and distinct safe app types only after 
   const owner = 'synthetic-owner';
   const inventory = () => captured.filter(({ event }) => event === 'connection_inventory_observed');
   try {
+    analytics.setUsageData(owner, false);
+    let read = false;
+    await captureConnectionInventory(analytics, owner, async () => {
+      read = true;
+      return [];
+    });
+    assert.equal(read, false);
+    assert.equal(captured.length, 0);
+
     analytics.setUsageData(owner, true);
     await captureConnectionInventory(analytics, owner, async () => []);
     assert.deepEqual(inventory()[0]?.properties.connected_app_types, []);
@@ -607,7 +616,15 @@ test('connection inventory captures zero and distinct safe app types only after 
     ]);
     assert.deepEqual(inventory()[1]?.properties.connected_app_types, ['custom', 'gmail']);
     assert.equal(inventory()[1]?.properties.connected_app_type_count, 2);
-    assert.doesNotMatch(JSON.stringify(inventory()), /private-service/);
+    assert.doesNotMatch(JSON.stringify(captured), /private-service/);
+    for (const properties of [
+      { connected_app_types: ['gmail', 'gmail'], connected_app_type_count: 2 },
+      { connected_app_types: ['gmail'], connected_app_type_count: 0 },
+    ])
+      assert.equal(
+        analyticsEvent.safeParse({ event: 'connection_inventory_observed', properties }).success,
+        false,
+      );
 
     await captureConnectionInventory(analytics, owner, async () => []);
     assert.deepEqual(inventory()[2]?.properties.connected_app_types, []);
@@ -634,7 +651,7 @@ test('connection inventory captures zero and distinct safe app types only after 
       return [];
     });
     assert.equal(inventory().length, 3);
-    let read = false;
+    read = false;
     await captureConnectionInventory(analytics, owner, async () => {
       read = true;
       return [];

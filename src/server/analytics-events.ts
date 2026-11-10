@@ -341,7 +341,12 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           connected_app_types: z.array(connectionProperties.shape.app).max(1000),
           connected_app_type_count: z.number().int().nonnegative().max(1000),
         })
-        .strict(),
+        .strict()
+        .refine(
+          ({ connected_app_types, connected_app_type_count }) =>
+            connected_app_type_count === connected_app_types.length &&
+            new Set(connected_app_types).size === connected_app_types.length,
+        ),
     })
     .strict(),
   z
