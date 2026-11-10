@@ -8134,19 +8134,27 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
   ];
   assert.equal(owner, 'fixture-owner');
   assert.deepEqual(configuration.connectedAccounts, accounts);
-  assert.ok(configuration.toolkits.includes('granola_mcp'));
-  assert.ok(configuration.toolkits.includes('retired_mcp'));
-  await session.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback');
-  await assert.rejects(session.authorize('private_api', 'http://localhost:4310/api/apps/callback'));
+  assert.deepEqual(configuration.toolkits, ['retired_mcp']);
+  await assert.rejects(session.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback'));
+  await assert.rejects(session.search('Find notes'));
+  const authorization = await provider.createSession('fixture-owner', {});
+  const authorizationConfig = create.mock.calls[1]!.arguments[1] as { toolkits: string[] };
+  assert.ok(authorizationConfig.toolkits.includes('granola_mcp'));
+  await authorization.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback');
   await assert.rejects(
-    session.authorize('custom_oauth', 'http://localhost:4310/api/apps/callback'),
+    authorization.authorize('private_api', 'http://localhost:4310/api/apps/callback'),
   );
   await assert.rejects(
-    session.authorize('unconfigured_app', 'http://localhost:4310/api/apps/callback'),
+    authorization.authorize('custom_oauth', 'http://localhost:4310/api/apps/callback'),
   );
-  await assert.rejects(session.authorize('no_auth', 'http://localhost:4310/api/apps/callback'));
+  await assert.rejects(
+    authorization.authorize('unconfigured_app', 'http://localhost:4310/api/apps/callback'),
+  );
+  await assert.rejects(
+    authorization.authorize('no_auth', 'http://localhost:4310/api/apps/callback'),
+  );
   assert.equal(authorize.mock.callCount(), 1);
-  assert.deepEqual(Object.keys((await session.search('Find notes')).tools as object), [
+  assert.deepEqual(Object.keys((await authorization.search('Find notes')).tools as object), [
     'GRANOLA_MCP_SEARCH_NOTES',
   ]);
   assert.equal(listing.mock.callCount(), 2);
@@ -8377,6 +8385,233 @@ test(
   },
 );
 
+test('account-bound Composio sessions search only owned toolkits without waiting for the catalog', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  const listing = t.mock.method(client.getClient().toolkits, 'list', async () => {
+    await gate.promise;
+    return { items: [], next_cursor: null };
+  });
+  const search = t.mock.fn(async (_input: unknown) => ({
+    success: true,
+    error: null,
+    toolSchemas: {
+      GMAIL_FETCH_EMAILS: {
+        toolSlug: 'GMAIL_FETCH_EMAILS',
+        toolkit: 'gmail',
+        inputSchema: { type: 'object' },
+      },
+    },
+    results: [],
+  }));
+  const create = t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'fixture-session',
+    search,
+  }));
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
+  const session = await provider.createSession(
+    'fixture-owner',
+    { gmail: ['owned-gmail-account'] },
+    AbortSignal.timeout(1000),
+  );
+  assert.equal(listing.mock.callCount(), 0);
+  assert.deepEqual(create.mock.calls[0]!.arguments[1], {
+    toolkits: ['gmail'],
+    connectedAccounts: { gmail: ['owned-gmail-account'] },
+    multiAccount: {
+      enable: true,
+      maxAccountsPerToolkit: 10,
+      requireExplicitSelection: true,
+    },
+    manageConnections: false,
+    sandbox: { enable: false },
+  });
+  assert.deepEqual(
+    Object.keys((await session.search('Find recent Gmail messages')).tools as object),
+    ['GMAIL_FETCH_EMAILS'],
+  );
+  assert.deepEqual(search.mock.calls[0]!.arguments[0], {
+    query: 'Find recent Gmail messages',
+    toolkits: ['gmail'],
+  });
+});
+
+test('large Gmail searches hydrate visible schemas and exact names without loading the rest', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  const slugs = Array.from({ length: 25 }, (_, index) => `GMAIL_SYNTHETIC_${index}`);
+  const incomplete = (slug: string) => ({
+    toolSlug: slug,
+    toolkit: 'gmail',
+    hasFullSchema: false,
+    schemaRef: {
+      tool: 'COMPOSIO_GET_TOOL_SCHEMAS',
+      args: { toolSlugs: [slug] },
+    },
+  });
+  let advertised: Record<string, ReturnType<typeof incomplete>> = Object.fromEntries(
+    slugs.map((slug) => [slug, incomplete(slug)]),
+  );
+  t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'fixture-session',
+    search: async () => ({ success: true, error: null, toolSchemas: advertised, results: [] }),
+  }));
+  const requests: string[][] = [];
+  t.mock.method(
+    client.getClient().toolRouter.session,
+    'executeMeta',
+    async (_id: string, input: { arguments: { tool_slugs: string[] } }) => {
+      const batch = input.arguments.tool_slugs;
+      requests.push(batch);
+      return {
+        error: null,
+        data: {
+          success: true,
+          tool_schemas: Object.fromEntries(
+            batch.map((slug) => [
+              slug,
+              { tool_slug: slug, toolkit: 'gmail', input_schema: { type: 'object' } },
+            ]),
+          ),
+        },
+      };
+    },
+  );
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
+  const session = await provider.createSession('fixture-owner', { gmail: ['owned-gmail-account'] });
+  const broad = (await session.search('Find recent messages')).tools as Record<
+    string,
+    { hasFullSchema?: boolean }
+  >;
+  assert.deepEqual(requests, [slugs.slice(0, 3)]);
+  assert.ok(slugs.slice(0, 3).every((slug) => broad[slug]?.hasFullSchema === true));
+  assert.ok(slugs.slice(3).every((slug) => broad[slug]?.hasFullSchema === false));
+
+  requests.length = 0;
+  const exact = (await session.search(slugs[18]!)).tools as Record<
+    string,
+    { hasFullSchema?: boolean }
+  >;
+  assert.deepEqual(requests, [[slugs[18]]]);
+  assert.equal(exact[slugs[18]!]!.hasFullSchema, true);
+  assert.ok(
+    slugs.filter((slug) => slug !== slugs[18]).every((slug) => !exact[slug]?.hasFullSchema),
+  );
+
+  requests.length = 0;
+  const mixedQuery = (await session.search(`${slugs[18]}, CONNECTED_HTTP`)).tools as Record<
+    string,
+    { hasFullSchema?: boolean }
+  >;
+  assert.deepEqual(requests, [slugs.slice(0, 3)]);
+  assert.equal(mixedQuery[slugs[18]!]!.hasFullSchema, false);
+
+  requests.length = 0;
+  advertised = Object.fromEntries(slugs.slice(0, 5).map((slug) => [slug, incomplete(slug)]));
+  await session.search('Find Gmail messages');
+  assert.deepEqual(requests, [slugs.slice(0, 5)]);
+
+  requests.length = 0;
+  advertised = Object.fromEntries(slugs.map((slug) => [slug, incomplete(slug)]));
+  advertised[slugs[24]!]!.schemaRef.args.toolSlugs = ['GMAIL_UNADVERTISED'];
+  await assert.rejects(session.search('Find recent messages'), /schemas could not be loaded/);
+  assert.deepEqual(requests, []);
+});
+
+test('mixed built-in app searches hydrate visible schemas and dynamic apps keep full hydration', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const entries = Array.from({ length: 8 }, (_, index) => {
+    const toolkit = index % 2 ? 'slack' : 'gmail';
+    const slug = `${toolkit.toUpperCase()}_SYNTHETIC_${index}`;
+    return [slug, toolkit] as const;
+  });
+  const slugs = entries.map(([slug]) => slug);
+  const toolSchemas = Object.fromEntries(
+    entries.map(([slug, toolkit]) => [
+      slug,
+      {
+        toolSlug: slug,
+        toolkit,
+        hasFullSchema: false,
+        schemaRef: { tool: 'COMPOSIO_GET_TOOL_SCHEMAS', args: { toolSlugs: [slug] } },
+      },
+    ]),
+  );
+  t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'fixture-session',
+    search: async () => ({ success: true, error: null, toolSchemas, results: [] }),
+  }));
+  const requests: string[][] = [];
+  t.mock.method(
+    client.getClient().toolRouter.session,
+    'executeMeta',
+    async (_id: string, input: { arguments: { tool_slugs: string[] } }) => {
+      const batch = input.arguments.tool_slugs;
+      requests.push(batch);
+      return {
+        error: null,
+        data: {
+          success: true,
+          tool_schemas: Object.fromEntries(
+            batch.map((slug) => [
+              slug,
+              {
+                tool_slug: slug,
+                toolkit: entries.find(([name]) => name === slug)![1],
+                input_schema: { type: 'object' },
+              },
+            ]),
+          ),
+        },
+      };
+    },
+  );
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
+  const accounts = { gmail: ['owned-gmail-account'], slack: ['owned-slack-account'] };
+  const session = await provider.createSession('fixture-owner', accounts);
+  const broad = (await session.search('Find a message')).tools as Record<
+    string,
+    { hasFullSchema?: boolean }
+  >;
+  assert.deepEqual(requests, [slugs.slice(0, 3)]);
+  assert.ok(slugs.slice(0, 3).every((slug) => broad[slug]?.hasFullSchema === true));
+  assert.ok(slugs.slice(3).every((slug) => broad[slug]?.hasFullSchema === false));
+
+  requests.length = 0;
+  await session.search(slugs[7]!);
+  assert.deepEqual(requests, [[slugs[7]]]);
+
+  requests.length = 0;
+  const dynamic = await provider.createSession('fixture-owner', {
+    ...accounts,
+    native_mcp: ['owned-native-account'],
+  });
+  await dynamic.search('Find a message');
+  assert.deepEqual(requests, [slugs]);
+});
+
 test('Composio catalog failures preserve owned accounts', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -8412,9 +8647,11 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
   });
   const session = await provider.createSession('fixture-owner', { retired_mcp: ['owned-account'] });
   const configuration = create.mock.calls[0]!.arguments[1] as unknown as { toolkits: string[] };
-  assert.ok(configuration.toolkits.includes('retired_mcp'));
+  assert.deepEqual(configuration.toolkits, ['retired_mcp']);
   const callback = 'http://localhost:4310/api/apps/callback';
-  await session.authorize('outlook', callback);
+  await assert.rejects(session.authorize('outlook', callback));
+  const authorization = await provider.createSession('fixture-owner', {});
+  await authorization.authorize('outlook', callback);
   assert.deepEqual(authorize.mock.calls[0]!.arguments, ['outlook', callback]);
   assert.equal(listing.mock.callCount(), 1);
   await session.execute('RETIRED_MCP_LIST', {}, 'owned-account');
@@ -8442,7 +8679,8 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   const session = await createComposioProvider({
     proxy: composioProxyFixture(client, 'local-development'),
   }).createSession('local-development', {
-    slackbot: 'fixture-slackbot-account',
+    gmail: 'fixture-account',
+    slack: 'fixture-account',
   });
   for (const failure of [
     { data: {}, error: 'Fixture rate limit', logId: 'log-fixture', resultType: 'failed' },

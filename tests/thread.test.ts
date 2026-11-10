@@ -8404,12 +8404,16 @@ test(
     const ownerId = randomUUID();
     const otherOwner = randomUUID();
     const turnId = randomUUID();
+    const nullTurnId = randomUUID();
+    const oversizedTurnId = randomUUID();
     const foreignTurn = randomUUID();
     const sessionId = randomUUID();
     const mainRun = randomUUID();
     const childRun = randomUUID();
     const callId = randomUUID();
     const messageId = randomUUID();
+    const nullMessageId = randomUUID();
+    const oversizedMessageId = randomUUID();
     const scheduleId = randomUUID();
     const privateValues = [
       'Marta Vidal',
@@ -8430,10 +8434,17 @@ test(
       path: privateValues[6],
       message: 'Gmail fetch failed with HTTP 503 after 4321 ms.',
     });
+    const oversizedText = 'x'.repeat(65_537);
     await f.pool.query(
       `INSERT INTO turns VALUES($1,$2,NULL,$3,'task','web','failed',$4,true,'approval',now()-interval '5 minutes',now()-interval '4 minutes',now()-interval '3 minutes'),
        ($5,$6,NULL,$7,'user','telegram','succeeded',$4,false,NULL,now(),now(),now())`,
       [turnId, ownerId, sessionId, privateText, foreignTurn, otherOwner, randomUUID()],
+    );
+    await f.pool.query(
+      `INSERT INTO turns(id,owner_id,session_id,source,channel,status,error,background)
+       VALUES($1,$2,$3,'user','web','succeeded',NULL,false),
+       ($4,$2,$3,'task','web','failed',$5,false)`,
+      [nullTurnId, ownerId, sessionId, oversizedTurnId, oversizedText],
     );
     await f.pool.query(
       `INSERT INTO messages(id,owner_id,turn_id,role,text,attachments) VALUES($1,$2,$3,'assistant',$4,$5),($6,$7,$8,'user','foreign-owner', '[]');
@@ -8448,6 +8459,11 @@ test(
         otherOwner,
         foreignTurn,
       ],
+    );
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,turn_id,role,text)
+       VALUES($1,$2,$3,'user',NULL),($4,$2,$5,'assistant',$6)`,
+      [nullMessageId, ownerId, nullTurnId, oversizedMessageId, oversizedTurnId, oversizedText],
     );
     await f.pool.query(
       `INSERT INTO messages(id,owner_id,role,text,created_at) VALUES($1,$2,'user','old-message',now()-interval '2 days'),($3,$2,'user','future-message',now()+interval '1 day')`,
@@ -8636,12 +8652,16 @@ test(
       ownerId,
       otherOwner,
       turnId,
+      nullTurnId,
+      oversizedTurnId,
       foreignTurn,
       sessionId,
       mainRun,
       childRun,
       callId,
       messageId,
+      nullMessageId,
+      oversizedMessageId,
       scheduleId,
       'foreign-owner',
       'foreign-event',
@@ -8654,23 +8674,46 @@ test(
     assert.equal(report.format, 'nod-feedback-report-v3');
     assert.equal(report.coverage.contentIncluded, true);
     assert.equal(report.coverage.redaction, 'best-effort');
-    assert.match(report.messages[0].text, /Gmail fetch failed with HTTP 503/);
-    assert.match(report.turns[0].error, /Gmail fetch failed with HTTP 503/);
+    const shortMessage = report.messages.find((row: any) => row.characters === privateText.length);
+    const nullMessage = report.messages.find((row: any) => row.characters === null);
+    const oversizedMessage = report.messages.find(
+      (row: any) => row.characters === oversizedText.length,
+    );
+    const shortTurn = report.turns.find((row: any) => row.background);
+    const nullTurn = report.turns.find((row: any) => row.status === 'succeeded');
+    const oversizedTurn = report.turns.find(
+      (row: any) => row.status === 'failed' && !row.background,
+    );
+    assert.ok(shortMessage);
+    assert.ok(nullMessage);
+    assert.ok(oversizedMessage);
+    assert.ok(shortTurn);
+    assert.ok(nullTurn);
+    assert.ok(oversizedTurn);
+    assert.match(shortMessage.text, /Gmail fetch failed with HTTP 503/);
+    assert.match(shortTurn.error, /Gmail fetch failed with HTTP 503/);
+    assert.equal('text' in nullMessage, false);
+    assert.equal('error' in nullTurn, false);
+    assert.equal(nullTurn.errorPresent, false);
+    assert.equal(oversizedMessage.text, '[message omitted: content limit]');
+    assert.equal(oversizedTurn.error, '[error omitted: content limit]');
+    assert.equal(oversizedTurn.errorPresent, true);
     assert.ok(
       Object.values(report.coverage.sections).every(
         (section: any) => section.status === 'collected',
       ),
     );
-    assert.equal(report.messages.length, 1);
-    assert.equal(report.messages[0].characters, privateText.length);
-    assert.equal(report.messages[0].attachmentCount, 1);
-    assert.equal(report.turns.length, 1);
-    assert.equal(report.messages[0].turnId, report.turns[0].id);
-    assert.equal(report.turns[0].status, 'failed');
-    assert.equal(report.turns[0].queueMs, 60_000);
-    assert.equal(report.turns[0].durationMs, 60_000);
-    assert.equal(report.turns[0].errorPresent, true);
-    assert.equal(report.turns[0].screened, true);
+    assert.equal(report.messages.length, 3);
+    assert.equal(shortMessage.attachmentCount, 1);
+    assert.equal(report.turns.length, 3);
+    assert.equal(shortMessage.turnId, shortTurn.id);
+    assert.equal(nullMessage.turnId, nullTurn.id);
+    assert.equal(oversizedMessage.turnId, oversizedTurn.id);
+    assert.equal(shortTurn.status, 'failed');
+    assert.equal(shortTurn.queueMs, 60_000);
+    assert.equal(shortTurn.durationMs, 60_000);
+    assert.equal(shortTurn.errorPresent, true);
+    assert.equal(shortTurn.screened, true);
     assert.equal(report.execution.length, 8);
     assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
     assert.ok(report.execution.some((row: any) => row.tool === 'web'));
@@ -8794,14 +8837,14 @@ test(
       assert.deepEqual(fallback.logs, []);
       assert.ok(fallback.messages.every((row: any) => !('text' in row)));
       assert.ok(fallback.turns.every((row: any) => !('error' in row)));
-      assert.equal(fallback.turns[0].status, 'failed');
+      assert.equal(fallback.turns.find((row: any) => row.background)?.status, 'failed');
       assert.equal(fallback.modelUsage[0].inputTokens, 123);
     }
     await f.pool.query('DROP TABLE model_usage');
     const unavailable = JSON.parse(await buildFeedbackReport(options));
     assert.equal(unavailable.coverage.sections.modelUsage.status, 'unavailable');
     assert.deepEqual(unavailable.modelUsage, []);
-    assert.equal(unavailable.turns[0].status, 'failed');
+    assert.equal(unavailable.turns.find((row: any) => row.background)?.status, 'failed');
     assert.equal(unavailable.messages.length, 200);
     const runtime = await f.open(ownerId, () => buildFeedbackReport(options));
     const prepared = await runtime.app.inject({ method: 'POST', url: '/api/feedback/report' });
