@@ -433,6 +433,7 @@ async function runningDesktop(
     packaged = false,
     existingProfileRoot = false,
     buildMetadata,
+    nativeMetadataRead = () => {},
     nativeAnalyticsResponse = () => Response.json({ status: 'Ok' }),
     version = '0.0.0-test',
     argv = [],
@@ -586,7 +587,9 @@ async function runningDesktop(
     appendFile,
     readFile: (file, ...args) =>
       buildMetadata && file === fileURLToPath(new URL('../package.json', import.meta.url))
-        ? Promise.resolve(JSON.stringify({ nodBuild: buildMetadata }))
+        ? Promise.resolve(nativeMetadataRead()).then(() =>
+            JSON.stringify({ nodBuild: buildMetadata }),
+          )
         : readFile(file, ...args),
     open: openFile,
     rename,
@@ -854,6 +857,8 @@ async function runningDesktop(
       close: async () => { quitting = true; await lifecycle.close(); },
       profileRoot,
       profileOwner,
+      nativeOpening: () => freshAppOpenCapture,
+      captureStartupPath,
       showEngine,
       showSettings,
       replayOnboarding,
@@ -1119,6 +1124,47 @@ test('opting out on Welcome stops later startup path events', async (t) => {
     await f.close();
   }
 });
+
+test(
+  'native opening and path captures stop when Welcome opts out during metadata loading',
+  { timeout: 15_000 },
+  async (t) => {
+    for (const event of ['app_opened', 'startup_path_selected']) {
+      await t.test(event, async (t) => {
+        const metadata = deferred();
+        const loading = deferred();
+        let metadataReads = 0;
+        const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+          initialState: 'fresh',
+          packaged: true,
+          buildMetadata: { release: true },
+          version: '0.1.17',
+          existingProfileRoot: event === 'startup_path_selected',
+          nativeMetadataRead: () => {
+            if (++metadataReads === 1) return;
+            loading.resolve();
+            return metadata.promise;
+          },
+        });
+        try {
+          if (event === 'startup_path_selected')
+            await f.storage.store.save({ welcome: { usageData: true, continued: false } });
+          await f.launch();
+          const capture =
+            event === 'app_opened' ? f.nativeOpening() : f.captureStartupPath('remote');
+          await loading.promise;
+          await f.storage.store.save({ welcome: { usageData: false, continued: false } });
+          metadata.resolve();
+          await capture;
+          assert.deepEqual(f.nativeAnalytics, []);
+        } finally {
+          metadata.resolve();
+          await f.close();
+        }
+      });
+    }
+  },
+);
 
 test('a later local choice replaces an earlier remote startup path under the same ID', async (t) => {
   const options = {

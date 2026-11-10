@@ -1115,6 +1115,8 @@ function analyticsEnvironment(metadata) {
 async function captureNativeAnalytics({ event, distinctId, openedAt, uuid, properties }) {
   try {
     const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+    const saved = await settings.get();
+    if (appOpeningDeferred || saved.welcome?.usageData === false) return false;
     const response = await fetch(`${posthogConfig.host}/i/v0/e/`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1203,7 +1205,7 @@ function captureFreshAppOpen() {
 function captureStartupPath(path) {
   if (appOpeningDeferred || onboardingCompleted || welcomePassed || remoteConnection) return;
   const openedAt = Date.now();
-  void Promise.resolve(freshAppOpenCapture)
+  return Promise.resolve(freshAppOpenCapture)
     .then(async () => {
       if (appOpeningDeferred) return;
       const saved = await settings.get();
