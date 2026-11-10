@@ -4871,7 +4871,7 @@ const client={init(_key,options){this.options=options;options.loaded?.()},captur
 setAnalyticsClient(client);
 const configuration={enabled:true,distinctId:'local:theme-owner',environment:'development'};
 const restore=()=>{setRequestAccount('theme-owner');configureAnalytics(configuration,'desktop')};
-restore();captureAnalytics('settings_viewed',{tab:'general'});assert.equal(events.length,1,'analytics capture is enabled');
+restore();captureAnalytics('settings_viewed',{tab:'general'});assert.deepEqual(events.map(({event})=>event),['app_opened','settings_viewed'],'analytics capture is enabled');
 const settings=theme=>({theme,resolvedTheme:theme==='system'?'dark':theme,notifications:false,launchAtLogin:false});
 let releaseRead,rejectRead,listener,readCalls,saveCalls,persisted,rejectSave;
 function bridge(theme){
