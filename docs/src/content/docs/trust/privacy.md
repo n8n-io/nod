@@ -122,7 +122,7 @@ Nod sends the address only when you enter it, tick that box, and select **Start 
 
 The checkbox controls the email, not the fixed About you answers. Ordinary usage events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
 
-Submitting the form sends no email immediately. Updates require a later email confirmation flow before they are sent. If submission fails partway through, your address may already be in PostHog or Customer.io; you can retry or request deletion. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates; it does not delete data already in PostHog or Customer.io. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
+Submitting the form sends no email immediately. Updates require a later email confirmation flow before they are sent. If submission fails partway through, your address may already be in PostHog or Customer.io; you can retry or request deletion. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates, but a submission already in flight may still finish. It does not delete data already in PostHog or Customer.io. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
 
 ## What memory learns from
 

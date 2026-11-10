@@ -71,7 +71,7 @@ Require the deployment gate, configured contact workflow, and **Share usage data
 
 The public n8n webhook cannot verify control of an email address. It upserts an unverified Customer.io Labs profile by email with the checkbox claim, receipt time, version, exact wording, privacy policy link, and only the fixed About you choices shared successfully. It stamps its own receipt time, never sends typed **Something else** text, and never changes an existing unsubscribe state.
 
-Submission sends no email. Do not send updates until a double opt-in flow confirms the address. Opt-out stops later data sends. Deleting an address or answers already stored in PostHog or Customer.io requires a request to the Nod team.
+Submission sends no email. Do not send updates until a double opt-in flow confirms the address. Turning off **Share usage data** stops new sends, but a submission already in flight may still finish. Deleting an address or answers already stored in PostHog or Customer.io requires a request to the Nod team.
 
 ### Outputs
 
