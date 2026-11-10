@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { regexes } from 'zod';
-import { communityLinks } from '../../../../shared/onboarding';
+import { communityLinks, updatesEmailConsent } from '../../../../shared/onboarding';
 import { ArrowUpRight } from '../../../components/icons';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Input } from '../../../components/ui';
@@ -8,8 +8,6 @@ import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analytics';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages } from '../motion';
-
-const privacyUrl = 'https://n8n.io/legal/privacy/';
 
 export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: StepProps) {
   const [email, setEmail] = useState('');
@@ -115,9 +113,8 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
                 }}
               />
               <span>
-                I agree that n8n GmbH links my email to my Nod usage data and sends me updates about
-                Nod and other n8n products.{' '}
-                <a href={privacyUrl} target="_blank" rel="noreferrer">
+                {updatesEmailConsent.text}{' '}
+                <a href={updatesEmailConsent.privacyUrl} target="_blank" rel="noreferrer">
                   Privacy policy
                 </a>
               </span>

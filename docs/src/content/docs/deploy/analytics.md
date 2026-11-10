@@ -57,7 +57,7 @@ The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary 
 | `onboarding_company_size` | Fixed choice, `skipped`, or `not_asked`                              |
 | `onboarding_jobs`         | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
 
-The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same profile.
+The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, version, wording and privacy policy link to the same profile.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 
