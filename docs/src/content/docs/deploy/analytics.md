@@ -114,7 +114,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 | `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                         |
 | `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.                                                |
 | `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source.                                        |
-| `owner_message_accepted`                          | Newly committed owner message by bounded channel, excluding duplicates, channel commands, and private verification. No content or ID.               |
+| `owner_message_accepted`                          | Newly committed owner message by bounded channel. Excludes duplicates, commands, private verification, message text, and private message/turn IDs.  |
 | `chat_stop_requested`                             | Stop requested in the app.                                                                                                                          |
 | `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                                                              |
 | `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                                                               |
