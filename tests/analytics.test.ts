@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { build } from 'esbuild';
+import { sourceAnalyticsVersion } from '../scripts/source-version.ts';
 import { runProcess } from '../src/providers/process.ts';
 import {
   analyticsModel,
@@ -22,6 +28,35 @@ import {
   onboardingPersonProperties,
   onboardingProfileAnswers,
 } from '../src/shared/onboarding-analytics.ts';
+
+test('source analytics version uses explicit values or a clean checkout revision', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-analytics-version-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runGit = (args: string[]) =>
+    promisify(execFile)('git', ['-C', root, ...args], { timeout: 5000 });
+  await runGit(['init', '--quiet']);
+  await runGit(['config', 'user.name', 'Nod test']);
+  await runGit(['config', 'user.email', 'nod@example.test']);
+  const file = join(root, 'sample.txt');
+  await writeFile(file, 'original');
+  await runGit(['add', 'sample.txt']);
+  await runGit(['commit', '--quiet', '-m', 'Initial']);
+  const revision = (await runGit(['rev-parse', 'HEAD'])).stdout.trim();
+
+  assert.equal(await sourceAnalyticsVersion(root, true), revision);
+  assert.equal(await sourceAnalyticsVersion(root, false), undefined);
+  assert.equal(await sourceAnalyticsVersion(root, true, '1.2.3', '4.5.6'), '1.2.3');
+  assert.equal(await sourceAnalyticsVersion(root, true, undefined, '4.5.6'), '4.5.6');
+  const copied = join(root, 'copied-nod');
+  await mkdir(copied);
+  await writeFile(join(copied, 'sample.txt'), 'copied');
+  await runGit(['add', 'copied-nod/sample.txt']);
+  await runGit(['commit', '--quiet', '-m', 'Add copied source']);
+  assert.equal(await sourceAnalyticsVersion(copied, true), undefined);
+  await writeFile(file, 'modified');
+  assert.equal(await sourceAnalyticsVersion(root, true), undefined);
+  assert.equal(await sourceAnalyticsVersion(join(root, 'missing'), true), undefined);
+});
 
 test('usage sharing captures bounded events without recording screens or reviving old consent', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

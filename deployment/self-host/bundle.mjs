@@ -45,6 +45,7 @@ const bundle = join(output, name);
 await mkdir(output, { recursive: true, mode: 0o700 });
 await mkdir(bundle, { mode: 0o700 });
 const compose = parse(await readFile(join(directory, 'compose.yaml'), 'utf8'));
+compose.services.server.environment.NOD_APP_VERSION = revision;
 for (const image of images) {
   delete compose.services[image.service].build;
   compose.services[image.service].image = image.reference;

@@ -10,6 +10,7 @@ import {
   verifyLocalDatabase,
   withLocalDatabase,
 } from './local-database.ts';
+import { sourceAnalyticsVersion } from './source-version.ts';
 
 process.chdir(fileURLToPath(new URL('..', import.meta.url)));
 const production = process.argv.includes('--production');
@@ -32,9 +33,16 @@ try {
   if (production) await run('pnpm', ['run', 'build']);
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
+    const appVersion = await sourceAnalyticsVersion(
+      process.cwd(),
+      production,
+      process.env.NOD_APP_VERSION,
+      settings.NOD_APP_VERSION,
+    );
     const environment = {
       ...localDatabaseEnvironment(database),
       NOD_DATA_ROOT: resolve(process.env.NOD_DATA_ROOT || settings.NOD_DATA_ROOT || '.local'),
+      ...(appVersion !== undefined ? { NOD_APP_VERSION: appVersion } : {}),
     };
     await prepareLocalDirectories(environment.NOD_DATA_ROOT);
     await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
