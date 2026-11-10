@@ -16,6 +16,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
 const n8n = 'https://n8n.io';
 const installGuide = `${base}get-started/install-desktop/`;
+const benchmarkGuide = `${base}how-it-works/benchmarks/`;
 const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
 const description =
@@ -163,25 +164,35 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         </div>
       </section>
 
-      <section class="lp-trust-stats" data-count-up-group>
+      <section class="lp-trust-stats" aria-labelledby="benchmark-heading">
+        <div class="lp-benchmark-intro">
+          <h2 id="benchmark-heading">Real tasks. Measured results.</h2>
+          <p>Our task categories draw on <strong>900,000+ anonymised production workflows</strong>. We run real tasks through Nod's apps, browser, and computer, then check what changed.</p>
+        </div>
         <div class="lp-trust-stats-grid">
           <div class="lp-trust-stat">
-            <p class="lp-trust-stat-number" data-count-to="98" data-suffix="%">98%</p>
-            <p class="lp-trust-stat-label">Errands finished</p>
-            <p class="lp-trust-stat-desc">678 runs of 226 errands, each run three times in a simulated environment.</p>
+            <a class="lp-stat-link lp-benchmark-source" href={`${base}contribute/evals/`}>Nod capability evals</a>
+            <p class="lp-trust-stat-number">98%</p>
+            <p class="lp-trust-stat-label">Task completion</p>
+            <p class="lp-trust-stat-desc">226 errands, each run three times in test apps and websites. No action outside the user's permission in 678 runs.</p>
+            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#tasks-with-a-result-you-can-check`}>See test cases</a>
           </div>
           <div class="lp-trust-stat">
-            <p class="lp-trust-stat-number" data-count-to="678" data-prefix="0 of ">0 of 678</p>
-            <p class="lp-trust-stat-label">Unsafe actions</p>
-            <p class="lp-trust-stat-desc">Never sent, paid, booked, posted or deleted anything you hadn't approved.</p>
+            <a class="lp-stat-link lp-benchmark-source" href="https://github.com/xiaowu0162/LongMemEval">LongMemEval-S</a>
+            <p class="lp-trust-stat-number">93.2%</p>
+            <p class="lp-trust-stat-label">Memory recall accuracy</p>
+            <p class="lp-trust-stat-desc">500 questions about past chats, answered in new sessions. Scored with the benchmark's official grading prompts.</p>
+            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#longmemeval-s-recall`}>Read the results</a>
           </div>
           <div class="lp-trust-stat">
-            <p class="lp-trust-stat-number" data-count-to="13" data-prefix="0 of ">0 of 13</p>
-            <p class="lp-trust-stat-label">Traps that worked</p>
-            <p class="lp-trust-stat-desc">Errands where a page, an email, or a message tried to trick Nod into acting.</p>
+            <a class="lp-stat-link lp-benchmark-source" href="https://arxiv.org/abs/2607.05189">WhisperBench</a>
+            <p class="lp-trust-stat-number">0 of 216</p>
+            <p class="lp-trust-stat-label">False memories planted</p>
+            <p class="lp-trust-stat-desc">108 published attack emails, each tested during an email check and background monitoring. None planted a false memory.</p>
+            <a class="lp-stat-link lp-benchmark-record" href={`${benchmarkGuide}#whisperbench-memory-poisoning`}>Read the results</a>
           </div>
         </div>
-        <p class="lp-trust-stats-footnote">Run 17 Oct 2026 with GPT-6.1 Sol on test apps and lookalike sites, no real accounts.</p>
+        <p class="lp-trust-stats-footnote">Results shown for GPT-6.1 Sol. <a class="lp-stat-link" href={benchmarkGuide}>How did we measure this?</a></p>
       </section>
 
       <section class="lp-hard-ones-heading">
@@ -204,7 +215,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                 for each call.
               </p>
               <p class="lp-claim-paragraph">
-                It does the prep on your computer, and what it learns about your clients stays there.
+                Nod stores the brief on the computer or server that runs it. Your model service receives the information needed for the task.
               </p>
             </div>
           </div>
@@ -277,7 +288,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                 from your own pricing sheet.
               </p>
               <p class="lp-claim-paragraph">
-                It waits for your yes before it sends. The rule that makes it wait is in the open code, for anyone to read.
+                You decide what it may send. Nod checks each action against your request and rules, and asks when they don't cover it.
               </p>
             </div>
           </div>
@@ -327,7 +338,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                 Tell Nod to keep an eye on a client's pricing page. It checks every few hours and only speaks up when
                 something changes.
               </p>
-              <p class="lp-claim-paragraph">Every check runs on your own AI key, and Nod shows what each check costs.</p>
+              <p class="lp-claim-paragraph">Each check uses the model service you choose. Nod shows estimated model costs in Usage.</p>
             </div>
           </div>
           <div class="lp-panel-photo">
@@ -414,24 +425,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         <p class="lp-hard-ones-sub">Say once that Anna, not Bob, handles invoices. It remembers.</p>
       </section>
 
-      <section class="lp-trust-stats" data-count-up-group>
-        <div class="lp-trust-stats-grid">
-          <div class="lp-trust-stat">
-            <p class="lp-trust-stat-number" data-count-to="93.2" data-decimals="1" data-suffix="%">93.2%</p>
-            <p class="lp-trust-stat-label">
-              <a class="lp-stat-link" href="https://github.com/xiaowu0162/LongMemEval" target="_blank" rel="noopener">LongMemEval<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14 14h-1.5V4.56l-9.75 9.75-1.06-1.06 9.75-9.75H2V2h12z"></path></svg></a>
-            </p>
-            <p class="lp-trust-stat-desc">500 questions about months of past chats, answered in a fresh session.</p>
-          </div>
-          <div class="lp-trust-stat">
-            <p class="lp-trust-stat-number" data-count-to="216" data-prefix="0 of ">0 of 216</p>
-            <p class="lp-trust-stat-label">
-              <a class="lp-stat-link" href="https://arxiv.org/abs/2607.05189" target="_blank" rel="noopener">WhisperBench<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14 14h-1.5V4.56l-9.75 9.75-1.06-1.06 9.75-9.75H2V2h12z"></path></svg></a>
-            </p>
-            <p class="lp-trust-stat-desc">Attack emails trying to plant a false memory. Nod learns only from you.</p>
-          </div>
-        </div>
-      </section>
+      <p class="lp-memory-evidence">See how <a class="lp-stat-link" href={`${benchmarkGuide}#longmemeval-s-recall`}>LongMemEval-S</a> tests recall and <a class="lp-stat-link" href={`${benchmarkGuide}#whisperbench-memory-poisoning`}>WhisperBench</a> tests whether attack emails can plant false memories.</p>
 
       <ol class="lp-feature-list">
         <li>
@@ -478,7 +472,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           <li class="lp-roadmap-featured-row">
             <span class="lp-number-badge"><span class="lp-circle-pink"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.75 15.75h-1.5v-3h1.5zM5.06 12 1.5 15.56.44 14.5 4 10.94zm10.5 2.5-1.06 1.06L10.94 12 12 10.94zM8.25 4.75a3 3 0 0 1 3 3v.5a3 3 0 0 1-3 3h-.5a3 3 0 0 1-3-3v-.5a3 3 0 0 1 3-3zm-.5 1.5a1.5 1.5 0 0 0-1.5 1.5v.5a1.5 1.5 0 0 0 1.5 1.5h.5a1.5 1.5 0 0 0 1.5-1.5v-.5a1.5 1.5 0 0 0-1.5-1.5zM3.256 8.745h-3v-1.5h3zm12.5 0h-3v-1.5h3zM5.06 4 4 5.06.44 1.5 1.5.44zm10.5-2.5L12 5.06 10.94 4 14.5.44zM8.75 3.25h-1.5v-3h1.5z"></path></svg></span></span>
             <p class="lp-roadmap-featured">
-              <b>Run while your machine is asleep.</b> Hosted, so the morning brief still arrives.
+              <b>Managed hosting.</b> An always-on Nod without running your own server.
             </p>
           </li>
           <li>
@@ -523,8 +517,8 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         <details class="lp-faq">
           <summary>What does it cost?</summary>
           <p>
-            Nod is free to download. You bring your own AI provider, they bill you directly, and Nod <a
-              href={`${base}use/spending/`} target="_blank" rel="noopener">shows what each task cost</a
+            Nod is free to download. Connect an AI service or a supported plan. Provider fees apply, and Nod <a
+              href={`${base}use/spending/`} target="_blank" rel="noopener">shows estimated model costs in Usage</a
             >.
           </p>
         </details>
@@ -552,29 +546,28 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         <details class="lp-faq">
           <summary>Where does my data go?</summary>
           <p>
-            Nod's database, files, memory, and saved logins <a href={`${base}trust/privacy/`} target="_blank" rel="noopener">stay on your machine</a>. Your AI
-            provider gets what it needs for each task, and app connections go through a <a href={`${base}connect/apps/`} target="_blank" rel="noopener"
-              >connection service</a
-            >, which n8n hosts by default. Nod also checks for updates and shares basic usage data with n8n, which you can turn off in Settings. Feedback goes to n8n only when you send it.
+            Nod <a href={`${base}trust/privacy/`} target="_blank" rel="noopener">stores your database, files, memory, and saved logins</a> on the computer or server that runs it.
+            Model services, apps, and websites receive the data they need for your tasks. App connections use n8n and Composio by default.
+            Nod also checks for updates and shares usage data with n8n. You can turn usage sharing off and control conversation traces in Settings.
+            Feedback goes to n8n only when you send it.
           </p>
         </details>
         <details class="lp-faq">
           <summary>Does it work when my laptop is closed?</summary>
           <p>
-            Not yet. <a href={`${base}use/schedules/`} target="_blank" rel="noopener">Schedules</a> run while your machine is on. Some testers run it on a <a
-              href={`${base}deploy/mac-mini/`} target="_blank" rel="noopener">Mac mini</a
-            > that stays on. A hosted version is coming soon.
+            Nod needs the computer running it to stay on and awake. To keep <a href={`${base}use/schedules/`} target="_blank" rel="noopener">schedules</a> running while your laptop is closed,
+            run Nod on <a href={`${base}deploy/self-host/`} target="_blank" rel="noopener">your own server</a> or a <a href={`${base}deploy/mac-mini/`} target="_blank" rel="noopener">Mac mini</a> that stays on.
           </p>
         </details>
         <details class="lp-faq">
           <summary>Can I run it in the cloud?</summary>
-          <p>Not yet. A hosted, always-on Nod is coming soon.</p>
+          <p>Yes. You can <a href={`${base}deploy/self-host/`} target="_blank" rel="noopener">host Nod on your own server</a> for one person. A managed hosted version is on the roadmap.</p>
         </details>
         <details class="lp-faq">
           <summary>Can it make mistakes?</summary>
           <p>
             Yes. Its <a href={`${base}trust/`} target="_blank" rel="noopener">safety check</a> is a model's judgement, and Nod is an experiment. That is why it
-            asks before anything you didn't ask for, and why everything it did is on record.
+            asks before actions your request does not cover. <a href={`${base}use/spending/`} target="_blank" rel="noopener">Usage</a> shows recorded app actions, sign-ins, and model costs.
           </p>
         </details>
         <details class="lp-faq">
@@ -583,7 +576,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
             Start with the <a href={base} target="_blank" rel="noopener">docs</a>, which cover setup and the <a href={`${base}deploy/troubleshooting/`} target="_blank" rel="noopener"
               >common problems</a
             >. If something goes wrong, choose <a href={`${base}use/chat/#send-feedback`} target="_blank" rel="noopener">Send feedback</a> in the chat. It goes
-            to the Nod team at n8n, with a diagnostic report if you add one.
+            to the Nod team at n8n. You can review the diagnostic report before you send it.
           </p>
         </details>
       </div>
@@ -669,7 +662,6 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 
     <script>
       import { startCarousel } from '../scripts/carousel.js';
-      import { startCountUp } from '../scripts/count-up.js';
       import { startDownload } from '../scripts/download.js';
       import { startEqualPanels } from '../scripts/equal-panels.js';
       import { startHeroGlyph } from '../scripts/hero-glyph.js';
@@ -677,7 +669,6 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
       import { startRoadmapLine } from '../scripts/roadmap-line.js';
 
       startCarousel();
-      startCountUp();
       startDownload();
       startEqualPanels();
       startRoadmapLine();

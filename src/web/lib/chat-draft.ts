@@ -1,3 +1,4 @@
+import type { JSONContent } from '@tiptap/core';
 import type { Artifact, Message } from '../../shared/contracts';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ownedArtifactUrl } from './attachment-url';
@@ -7,6 +8,7 @@ type ChatDraft = {
   reply: Message['replyTo'];
   attachments: Artifact[];
   missing: string[];
+  content?: JSONContent;
 };
 
 export function readChatDraft(key: string): ChatDraft | null {
@@ -40,6 +42,10 @@ export function readChatDraft(key: string): ChatDraft | null {
           ownedArtifactUrl(item.url),
       ),
       missing: saved.missing.filter((name: unknown) => typeof name === 'string'),
+      content:
+        saved.content?.type === 'doc' && Array.isArray(saved.content.content)
+          ? saved.content
+          : undefined,
     };
   } catch {
     return null;

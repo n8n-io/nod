@@ -52,8 +52,18 @@ function literal(value: string): PhrasingContent[] {
   return result;
 }
 
-function inline(nodes: JSONContent[], linked = false): PhrasingContent[] {
+function inline(
+  nodes: JSONContent[],
+  linked = false,
+  rawText = false,
+  display = false,
+): PhrasingContent[] {
   const result: PhrasingContent[] = [];
+  const appendRaw = (value: string) => {
+    const last = result.at(-1);
+    if (last?.type === 'html') last.value += value;
+    else result.push({ type: 'html', value });
+  };
   for (let index = 0; index < nodes.length; index++) {
     const node = nodes[index];
     const mark = node.marks?.[0];
@@ -71,8 +81,27 @@ function inline(nodes: JSONContent[], linked = false): PhrasingContent[] {
       const children = inline(
         span.map((item) => ({ ...item, marks: item.marks!.slice(1) })),
         linked || mark.type === 'link',
+        mark.type === 'rawPaste' && rawText,
+        display,
       );
-      if (mark.type === 'link')
+      if (mark.type === 'rawPaste') {
+        let lineStart = true;
+        for (const child of children) {
+          if (display && lineStart && child.type === 'text') {
+            const spaces = child.value.match(/^[ \t]+/)?.[0];
+            if (spaces) {
+              result.push({ type: 'html', value: `<span>${spaces}</span>` });
+              if (spaces.length < child.value.length)
+                result.push({ ...child, value: child.value.slice(spaces.length) });
+              lineStart = false;
+              continue;
+            }
+          }
+          if (!display && child.type === 'html') appendRaw(child.value);
+          else result.push(child);
+          lineStart = child.type === 'break' || (child.type === 'html' && child.value === '<br>');
+        }
+      } else if (mark.type === 'link')
         result.push({
           type: 'link',
           url: mark.attrs?.href ?? '',
@@ -85,28 +114,38 @@ function inline(nodes: JSONContent[], linked = false): PhrasingContent[] {
       else if (mark.type === 'underline')
         result.push({ type: 'html', value: '<u>' }, ...children, { type: 'html', value: '</u>' });
       else result.push(...children);
-    } else if (node.type === 'hardBreak') result.push({ type: 'break' });
-    else if (node.type === 'text')
-      result.push(
-        ...(linked
-          ? [{ type: 'text' as const, value: node.text ?? '' }]
-          : literal(node.text ?? '')),
-      );
-    else result.push(...inline(node.content ?? [], linked));
+    } else if (node.type === 'hardBreak') {
+      if (rawText) appendRaw('\n');
+      else result.push({ type: 'html', value: '<br>' });
+    } else if (node.type === 'text') {
+      if (rawText) appendRaw(node.text ?? '');
+      else
+        result.push(
+          ...(linked
+            ? [{ type: 'text' as const, value: node.text ?? '' }]
+            : literal(node.text ?? '')),
+        );
+    } else result.push(...inline(node.content ?? [], linked, rawText, display));
   }
   return result;
 }
 
-function blocks(nodes: JSONContent[]): RootContent[] {
+function blocks(nodes: JSONContent[], display = false): RootContent[] {
   return nodes.flatMap((node): RootContent[] => {
     const content = node.content ?? [];
     switch (node.type) {
       case 'paragraph':
-        return [{ type: 'paragraph', children: inline(content) }];
+        return [{ type: 'paragraph', children: inline(content, false, !display, display) }];
       case 'heading':
-        return [{ type: 'heading', depth: node.attrs?.level ?? 1, children: inline(content) }];
+        return [
+          {
+            type: 'heading',
+            depth: node.attrs?.level ?? 1,
+            children: inline(content, false, !display, display),
+          },
+        ];
       case 'blockquote':
-        return [{ type: 'blockquote', children: blocks(content) as BlockContent[] }];
+        return [{ type: 'blockquote', children: blocks(content, display) as BlockContent[] }];
       case 'bulletList':
       case 'orderedList':
       case 'taskList':
@@ -120,7 +159,7 @@ function blocks(nodes: JSONContent[]): RootContent[] {
               type: 'listItem',
               checked: item.type === 'taskItem' ? Boolean(item.attrs?.checked) : null,
               spread: false,
-              children: blocks(item.content ?? []) as BlockContent[],
+              children: blocks(item.content ?? [], display) as BlockContent[],
             })),
           },
         ];
@@ -145,7 +184,7 @@ function blocks(nodes: JSONContent[]): RootContent[] {
                 children: tableInline(
                   (cell.content ?? []).flatMap((paragraph, index) => [
                     ...(index ? [{ type: 'break' as const }] : []),
-                    ...inline(paragraph.content ?? []),
+                    ...inline(paragraph.content ?? [], false, !display, display),
                   ]),
                 ),
               })),
@@ -153,7 +192,7 @@ function blocks(nodes: JSONContent[]): RootContent[] {
           },
         ];
       default:
-        return blocks(content);
+        return blocks(content, display);
     }
   });
 }
@@ -162,15 +201,37 @@ function tableInline(nodes: PhrasingContent[]): PhrasingContent[] {
   return nodes.map((node) =>
     node.type === 'break'
       ? { type: 'html', value: '<br>' }
-      : 'children' in node
-        ? { ...node, children: tableInline(node.children) }
-        : node,
+      : node.type === 'html'
+        ? {
+            ...node,
+            value: node.value
+              .replace(
+                /(\\*)\|/g,
+                (_, slashes: string) => `${'\\'.repeat(slashes.length * 2 + 1)}|`,
+              )
+              .replaceAll('\n', '<br>'),
+          }
+        : 'children' in node
+          ? { ...node, children: tableInline(node.children) }
+          : node,
   );
 }
 
+function serializeComposerMarkdown(document: ProseMirrorNode, display = false) {
+  const content: JSONContent[] = document.toJSON().content ?? [];
+  const tree: Root = { type: 'root', children: blocks(content, display) };
+  const last = content.at(-1);
+  const trailingBreak = last?.type === 'paragraph' && last.content?.at(-1)?.type === 'hardBreak';
+  const value = markdown.stringify(tree);
+  return trailingBreak ? value : value.replace(/\n$/, '');
+}
+
 export function composerMarkdown(document: ProseMirrorNode) {
-  const tree: Root = { type: 'root', children: blocks(document.toJSON().content ?? []) };
-  return markdown.stringify(tree).replace(/\n$/, '');
+  return serializeComposerMarkdown(document);
+}
+
+export function composerDisplayMarkdown(document: ProseMirrorNode) {
+  return serializeComposerMarkdown(document, true);
 }
 
 function text(value: string, marks: JSONContent['marks'] = []): JSONContent[] {

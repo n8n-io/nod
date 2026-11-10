@@ -101,6 +101,7 @@ export function trustBasis(
   const settings = [
     'NOD_schedule_create',
     'NOD_schedule_update',
+    'NOD_schedule_pause',
     'NOD_schedule_cancel',
     'NOD_limits_update',
     'NOD_notification_preferences_update',

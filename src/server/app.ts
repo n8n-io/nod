@@ -2,6 +2,7 @@ import { presentationSchema, presentationText } from '../shared/presentation.ts'
 import { answerChoicesSchema } from '../shared/answer-choices.ts';
 import Fastify, { type FastifyReply } from 'fastify';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { SpeechService } from './speech.ts';
@@ -51,8 +52,12 @@ import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { messagePreview } from './message-preview.ts';
 
-const messageFields = `m.id,m.role,m.text,m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
+const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
+const textMessageOptions = {
+  bodyLimit: 8 * 1024 * 1024,
+  config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+};
 function visualText(presentation: unknown) {
   const visual = presentationSchema.safeParse(presentation);
   return visual.success ? presentationText(visual.data) : '';
@@ -62,6 +67,7 @@ function messageView(row: Message & { assistantReaction?: MessageReaction | null
   const {
     assistantReaction,
     presentation,
+    displayText,
     audioCaption,
     answerChoices,
     answerChoicesPending,
@@ -73,6 +79,7 @@ function messageView(row: Message & { assistantReaction?: MessageReaction | null
     message.role === 'assistant' ? answerChoicesSchema.safeParse(answerChoices) : undefined;
   return {
     ...message,
+    ...(message.role === 'user' && typeof displayText === 'string' ? { displayText } : {}),
     ...(typeof audioCaption === 'string' ? { audioCaption } : {}),
     ...(visual?.success ? { presentation: visual.data } : {}),
     ...(choices?.success
@@ -118,7 +125,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ];
     const targets = replyIds.length
       ? await pool.query<{ id: string; role: string; text: string; presentation: unknown }>(
-          'SELECT id,role,COALESCE(audio_caption,text) AS text,presentation FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND hidden_at IS NULL',
+          "SELECT id,role,COALESCE(CASE WHEN role='user' THEN display_text END,audio_caption,text) AS text,presentation FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND hidden_at IS NULL",
           [ownerId, replyIds],
         )
       : { rows: [] };
@@ -195,6 +202,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
             ? known?.message
             : 'This request could not be completed. Check the local service and try again.',
     });
+  });
+  await app.register(rateLimit, {
+    global: false,
+    keyGenerator: () => ownerId,
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
   const audioMessages = registerAudioMessages(app, dependencies);
@@ -396,7 +407,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reset;
     }, threadId);
   });
-  app.post('/api/messages', async (request) => {
+  app.post('/api/messages', textMessageOptions, async (request) => {
     const input = messageInput
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .refine(
@@ -437,6 +448,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ),
       {
         channel: 'web',
+        displayText: input.displayText,
         replyToMessageId: input.replyToMessageId,
         replyQuote: input.replyQuote,
         seenMessageId: input.seenMessageId,
@@ -445,7 +457,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
         questionAnswer: input.questionAnswer,
       },
     );
-    return submitted;
+    return {
+      ...submitted,
+      ...(input.displayText !== undefined ? { displayText: input.displayText } : {}),
+    };
   });
   app.post('/api/thread/stop', () => {
     const capture = snapshotAnalytics(dependencies.analytics);

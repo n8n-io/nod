@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
 import {
   ArrowUp,
   Paperclip,
@@ -18,7 +19,11 @@ import { isEditingTarget, shortcutLabel } from '../lib/navigation';
 import { Tooltip } from './tooltip';
 import { captureAnalytics } from '../lib/analytics';
 import { createComposerExtensions } from '../lib/composer-editor';
-import { composerMarkdown, parseComposerMarkdown } from '../lib/composer-markdown';
+import {
+  composerDisplayMarkdown,
+  composerMarkdown,
+  parseComposerMarkdown,
+} from '../lib/composer-markdown';
 import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
 import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
@@ -49,6 +54,7 @@ interface DraftAttachment {
 export interface ComposerHandle {
   focus(): void;
   hasDraft(): boolean;
+  prependText(value: string): boolean;
   upload(files: File[]): void;
 }
 
@@ -68,7 +74,12 @@ interface ComposerProps {
   replyPreviewPending?: boolean;
   retryReplyPreview?(): void;
   clearReply(): void;
-  onSend(text: string, attachments: Artifact[], recording?: File): Promise<ComposerSendResult>;
+  onSend(
+    text: string,
+    attachments: Artifact[],
+    recording?: File,
+    displayText?: string,
+  ): Promise<ComposerSendResult>;
   onStop?(): void;
   stopping?: boolean;
 }
@@ -143,11 +154,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const uploadQueue = useRef(Promise.resolve());
   const previewUrls = useRef(new Set<string>());
   const lastText = useRef(text);
+  const restoringText = useRef(false);
   const sends = useRef(0);
   const pendingSends = useRef(0);
-  const unsent = useRef<Array<{ sequence: number; text: string; attachments: DraftAttachment[] }>>(
-    [],
-  );
+  const unsent = useRef<
+    Array<{ sequence: number; content: JSONContent; attachments: DraftAttachment[] }>
+  >([]);
   const actions = useRef({
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
@@ -207,6 +219,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           pendingSends.current ||
           unsent.current.length,
         ),
+      prependText: (value) => {
+        if (!editor || editor.isDestroyed) return false;
+        const content = [
+          ...(parseComposerMarkdown(value).content ?? []),
+          ...(composerMarkdown(editor.state.doc) ? (editor.state.doc.toJSON().content ?? []) : []),
+        ];
+        return editor.commands.setContent({ type: 'doc', content });
+      },
       upload: (files) => upload(files, 'drop'),
     }),
     [editor, recorder.phase, recorder.recording],
@@ -217,14 +237,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const saved = restored;
     attachmentValues.current = attachments;
     if (saved) {
-      if (!text) setText(saved.text);
+      if (!text) {
+        if (saved.content) {
+          try {
+            const document = editor.schema.nodeFromJSON(saved.content);
+            if (composerMarkdown(document) === saved.text) {
+              editor.commands.setContent(saved.content, { emitUpdate: false });
+              lastText.current = saved.text;
+              restoringText.current = true;
+            }
+          } catch {}
+        }
+        setText(saved.text);
+      }
       if (!replyTo) restoreReply?.(saved.reply);
       if (saved.missing.length) setError(`Attach these files again: ${saved.missing.join(', ')}`);
       void renewAttachments(saved.attachments.map((item) => item.id));
     }
   }, [editor]);
   useEffect(() => {
-    if (draftKey && restoredOnce.current)
+    if (restoringText.current && !text) return;
+    if (draftKey && restoredOnce.current) {
+      let content: JSONContent | undefined;
+      if (
+        editor &&
+        composerMarkdown(editor.state.doc) === text &&
+        composerDisplayMarkdown(editor.state.doc) !== text
+      )
+        content = editor.state.doc.toJSON();
       writeChatDraft(
         draftKey,
         {
@@ -232,10 +272,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           reply: replyTo,
           attachments: attachments.flatMap((item) => (item.artifact ? [item.artifact] : [])),
           missing: attachments.filter((item) => !item.artifact).map((item) => item.name),
+          content,
         },
         privateReply,
       );
-  }, [draftKey, text, replyTo, attachments, privateReply]);
+    }
+  }, [draftKey, text, replyTo, attachments, privateReply, editor]);
   useEffect(() => {
     const receive = (event: Event) => {
       const item = (event as CustomEvent<ImagePreview>).detail;
@@ -308,6 +350,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [speech?.transcription, preparingAudio]);
   useEffect(() => {
+    if (restoringText.current && !text) return;
+    restoringText.current = false;
     if (editor && text !== lastText.current) {
       lastText.current = text;
       editor.commands.setContent(parseComposerMarkdown(text), { emitUpdate: false });
@@ -503,13 +547,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function restoreUnsent() {
     const items = unsent.current.splice(0).sort((a, b) => a.sequence - b.sequence);
     if (!items.length || !editor || editor.isDestroyed || !mounted.current) return;
-    editor.commands.setContent(
-      parseComposerMarkdown(
-        [...items.map((item) => item.text), composerMarkdown(editor.state.doc)]
-          .filter(Boolean)
-          .join('\n\n'),
-      ),
-    );
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        ...items.flatMap((item) => item.content.content ?? []),
+        ...(composerMarkdown(editor.state.doc) ? (editor.state.doc.toJSON().content ?? []) : []),
+      ],
+    });
     updateAttachments([...items.flatMap((item) => item.attachments), ...attachmentValues.current]);
     void renewAttachments(
       items.flatMap((item) => item.attachments.map((attachment) => attachment.id)),
@@ -578,7 +622,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       attachmentValues.current.some((item) => item.state !== 'ready')
     )
       return;
-    const sentText = composerMarkdown(editor.state.doc).trim();
+    const sentContent = editor.state.doc.toJSON();
+    const serializedText = composerMarkdown(editor.state.doc);
+    const sentText = serializedText.trim() ? serializedText : '';
+    const renderedText = sentText ? composerDisplayMarkdown(editor.state.doc) : '';
+    const displayText = renderedText === sentText ? undefined : renderedText;
     const sentAttachments = attachmentValues.current;
     const includesAudio = recorder.phase === 'recording' || Boolean(recorder.recording);
     if (!sentText && !sentAttachments.length && !includesAudio) return;
@@ -607,6 +655,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         sentText,
         sentAttachments.map((item) => item.artifact!),
         sentRecording,
+        displayText,
       );
     } catch (cause) {
       if (mounted.current && !(cause instanceof DOMException && cause.name === 'AbortError'))
@@ -623,7 +672,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (result.sent || !result.restoreText)
         for (const item of sentAttachments) releasePreview(item);
       else {
-        unsent.current.push({ sequence, text: sentText, attachments: sentAttachments });
+        unsent.current.push({ sequence, content: sentContent, attachments: sentAttachments });
         setTimeout(restoreUnsent);
       }
       if (mounted.current && !editor.isDestroyed) restoreFocus();

@@ -1,0 +1,180 @@
+html:has(.benchmark-report) {
+  --sl-content-width: 56rem;
+}
+
+html:has(.benchmark-report) main h1#_top {
+  max-width: 15ch;
+  font-size: clamp(2.5rem, 4.5vw, 4rem);
+  font-weight: 550;
+  line-height: 1.05;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+.benchmark-report .benchmark-deck {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--sl-color-white);
+  font-size: clamp(1.25rem, 2vw, 1.6rem);
+  font-weight: 450;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+
+.benchmark-report .benchmark-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+  padding: 1.25rem 0;
+  border-block: 1px solid var(--nod-divider);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.benchmark-meta dt {
+  margin-bottom: 0.25rem;
+  color: var(--sl-color-gray-3);
+}
+
+.benchmark-meta dd {
+  margin: 0;
+  color: var(--sl-color-white);
+  font-weight: 500;
+}
+
+.benchmark-meta a {
+  color: var(--nod-link);
+  text-underline-offset: 0.2em;
+}
+
+.benchmark-report .benchmark-abstract {
+  margin-block: 2rem;
+  padding: 1.5rem 1.75rem;
+  border-inline-start: 3px solid var(--sl-color-accent);
+  border-radius: 0 1rem 1rem 0;
+  background: var(--nod-surface-raised);
+  font-size: 0.9375rem;
+}
+
+.benchmark-report .benchmark-abstract-title {
+  margin: 0 0 0.5rem;
+  color: var(--sl-color-white);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.benchmark-report .benchmark-abstract p + p {
+  margin-top: 0;
+}
+
+.benchmark-report .benchmark-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin: 2.5rem 0 3rem;
+}
+
+.benchmark-highlights > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.benchmark-highlights strong {
+  color: var(--sl-color-accent);
+  font-size: clamp(2rem, 3.7vw, 3.25rem);
+  font-weight: 550;
+  letter-spacing: -0.06em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.benchmark-highlights strong span {
+  font-size: 0.55em;
+  letter-spacing: -0.03em;
+}
+
+.benchmark-highlights > div > span {
+  color: var(--sl-color-white);
+  font-size: 0.875rem;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.benchmark-highlights small {
+  color: var(--sl-color-gray-3);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.benchmark-report .sl-heading-wrapper.level-h2 {
+  margin-top: 3.5rem;
+}
+
+.benchmark-report .nod-table {
+  margin-block: 1.5rem;
+}
+
+.benchmark-report .nod-table strong {
+  color: var(--sl-color-accent);
+}
+
+.benchmark-report .benchmark-sources {
+  padding-inline-start: 1.5rem;
+}
+
+.benchmark-sources li {
+  padding-inline-start: 0.5rem;
+}
+
+.benchmark-sources li::marker {
+  color: var(--sl-color-gray-3);
+  font-size: 0.8125rem;
+}
+
+.benchmark-sources li + li {
+  margin-top: 1.25rem;
+}
+
+.benchmark-sources p {
+  margin-top: 0.25rem;
+  color: var(--sl-color-gray-3);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 40rem) {
+  .benchmark-report .benchmark-meta {
+    grid-template-columns: 1fr;
+    gap: 0.875rem;
+    margin-block: 1.5rem;
+  }
+
+  .benchmark-meta > div {
+    display: grid;
+    grid-template-columns: 1fr 1.25fr;
+    gap: 0.75rem;
+  }
+
+  .benchmark-report .benchmark-abstract {
+    padding: 1.25rem;
+  }
+
+  .benchmark-report .benchmark-highlights {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .benchmark-highlights > div {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    column-gap: 1rem;
+  }
+
+  .benchmark-highlights strong {
+    grid-row: span 2;
+    font-size: 2.5rem;
+  }
+}

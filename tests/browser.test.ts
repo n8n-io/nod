@@ -4188,6 +4188,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       const { createElement, useState, StrictMode, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { Composer } = await import('./src/web/components/composer.tsx');
+      const { MessageBubble } = await import('./src/web/components/message.tsx');
+      const { parseComposerMarkdown } = await import('./src/web/lib/composer-markdown.ts');
       const { fileBytes } = await import('./src/shared/files.ts');
       const { ArtifactDrawerContext } = await import('./src/web/components/artifact-context.tsx');
       const { setRequestAccount } = await import('./src/web/lib/api.ts');
@@ -4219,8 +4221,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             replyTo: null,
             clearReply() {},
             onStop() { workStops++; },
-            onSend: async (text, attachments, recording) => {
-              sends.push({ text, attachments, ...(recording ? { recording } : {}) });
+            onSend: async (text, attachments, recording, displayText) => {
+              sends.push({ text, attachments, ...(recording ? { recording } : {}), ...(displayText ? { displayText } : {}) });
               return result;
             },
           }),
@@ -4310,6 +4312,221 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         localStorage.setItem('nod.send-with-enter', 'false');
         await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
         await settle(() => document.querySelector('[contenteditable]'));
+        const jsonPaste = [
+          '[',
+          '  {"id":101,"email":"ada@example.test","notes":"*priority* # call <after> __init__ _legacy_"},',
+          '  {"id":102,"email":"ben@example.test","notes":"1. follow up"}',
+          ']',
+        ].join('\n');
+        const csvPaste = [
+          'id,email,notes',
+          '101,ada@example.test,"__init__ _legacy_ # call <after>"',
+          '102,ben@example.test,"*priority* 1. follow up"',
+        ].join('\n');
+        const indentedPaste = [
+          '  id\tnotes',
+          '\t101\t*priority*',
+          '    102\t# call',
+          '',
+        ].join('\n');
+        const paste = async (literalPaste, html = '') => {
+          await act(async () => {
+            const field = document.querySelector('[contenteditable]');
+            field.focus();
+            const event = new Event('paste', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'clipboardData', {
+              value: {
+                files: [],
+                getData: (type) => type === 'text/plain' ? literalPaste : type === 'text/html' ? html : '',
+              },
+            });
+            field.dispatchEvent(event);
+          });
+        };
+        const pasteAtEnd = async (selector, literalPaste) => {
+          await act(async () => {
+            const field = document.querySelector('[contenteditable]');
+            field.focus();
+            const target = field.querySelector(selector);
+            assert.ok(target);
+            window.getSelection().collapse(target.lastChild, target.lastChild.textContent.length);
+            document.dispatchEvent(new Event('selectionchange'));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          });
+          await paste(literalPaste);
+        };
+        const displayHost = document.createElement('div');
+        document.body.append(displayHost);
+        const displayRoot = createRoot(displayHost);
+        const assertVisiblePaste = async (sent, expected) => {
+          assert.equal(typeof sent.displayText, 'string');
+          await act(async () => displayRoot.render(createElement(MessageBubble, {
+            message: {
+              id: 'synthetic-pasted-message',
+              role: 'user',
+              text: sent.text,
+              displayText: sent.displayText,
+              attachments: [],
+              turnId: null,
+              createdAt: '2026-11-10T12:00:00Z',
+            },
+          })));
+          const visible = displayHost.querySelector('.message-text');
+          assert.ok(visible);
+          const paragraph = visible.querySelector('p');
+          assert.ok(paragraph);
+          const rendered = Array.from(paragraph.childNodes)
+            .map((node) => node.nodeName === 'BR' ? '\n' : (node.textContent ?? '').replaceAll('\n', ''))
+            .join('');
+          assert.equal(rendered.replaceAll('\u00a0', ' '), expected);
+          return visible;
+        };
+        result = { sent: true };
+        for (const literalPaste of [jsonPaste, csvPaste, indentedPaste]) {
+          const richPaste = '<pre>' + literalPaste.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') + '</pre>';
+          for (const html of ['', richPaste]) {
+            await act(async () => replaceText(''));
+            await paste(literalPaste, html);
+            await submit();
+            const sent = sends.at(-1);
+            assert.equal(sent.text, literalPaste);
+            assert.deepEqual(sent.attachments, []);
+            await assertVisiblePaste(sent, literalPaste);
+          }
+        }
+        const spacedPaste = '  ["__init__", "<after>", "ada@example.test"]  \n';
+        await act(async () => replaceText(''));
+        await paste(spacedPaste);
+        await submit();
+        assert.equal(sends.at(-1).text, spacedPaste);
+        const spacedVisible = await assertVisiblePaste(sends.at(-1), spacedPaste);
+        assert.ok(spacedVisible.querySelector('br') || spacedVisible.textContent.endsWith('\n'));
+        const typedInput = 'Email ada@example.test; JSON {"name":"__init__","note":"<after>"}';
+        await act(async () => replaceText(''));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          const paragraph = field.querySelector('p');
+          paragraph.textContent = typedInput;
+          window.getSelection().collapse(paragraph.firstChild, typedInput.length);
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        await settle(() => currentText.includes('example.test'));
+        await submit();
+        assert.equal(sends.at(-1).text, typedInput);
+        await act(async () => replaceText('**bold\\*star** next'));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          const paragraph = field.querySelector('p');
+          window.getSelection().collapse(paragraph.lastChild, paragraph.lastChild.textContent.length);
+          document.dispatchEvent(new Event('selectionchange'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        await paste(' *literal*');
+        await submit();
+        assert.equal(sends.at(-1).text, '**bold\\*star** next *literal*');
+        const richVisible = await assertVisiblePaste(sends.at(-1), 'bold*star next *literal*');
+        assert.equal(richVisible.querySelector('strong')?.textContent, 'bold*star');
+        await act(async () => replaceText('| label | value |\n| --- | --- |\n| first | second |'));
+        await pasteAtEnd('table tr:last-child td:first-child p', 'A|B\\|C\nD');
+        await submit();
+        const parsedTable = parseComposerMarkdown(sends.at(-1).text);
+        assert.equal(parsedTable.content.length, 1);
+        assert.equal(parsedTable.content[0].type, 'table');
+        assert.equal(parsedTable.content[0].content.length, 2);
+        const pastedCell = parsedTable.content[0].content[1].content[0].content[0].content;
+        assert.equal(pastedCell.map((node) => node.type === 'hardBreak' ? '\n' : node.text ?? '').join(''), 'firstA|B\\|C\nD');
+        assert.equal(parsedTable.content[0].content[1].content[1].content[0].content[0].text, 'second');
+        for (const [source, selector, expected, block] of [
+          ['- first', 'li p', '- firstA\n  B', 'bulletList'],
+          ['> first', 'blockquote p', '> firstA\n> B', 'blockquote'],
+        ]) {
+          await act(async () => replaceText(source));
+          await pasteAtEnd(selector, 'A\nB');
+          await submit();
+          assert.equal(sends.at(-1).text.trimEnd(), expected);
+          assert.equal(parseComposerMarkdown(sends.at(-1).text).content[0].type, block);
+        }
+        await act(async () => replaceText('Review this synthetic data:'));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          const paragraph = field.querySelector('p');
+          window.getSelection().collapse(paragraph.firstChild, paragraph.textContent.length);
+          document.dispatchEvent(new Event('selectionchange'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        await enter({ shiftKey: true });
+        const intro = currentText;
+        assert.equal(intro, 'Review this synthetic data:\n');
+        await paste(jsonPaste);
+        const introPaste = 'Review this synthetic data:\n' + jsonPaste;
+        result = { sent: false, restoreText: true };
+        await submit();
+        assert.equal(sends.at(-1).text, introPaste);
+        await assertVisiblePaste(sends.at(-1), introPaste);
+        await settle(() => currentText === introPaste && document.querySelector('[contenteditable]').textContent.includes('__init__'));
+        result = { sent: true };
+        await submit();
+        assert.equal(sends.at(-1).text, introPaste);
+        await assertVisiblePaste(sends.at(-1), introPaste);
+        await act(async () => root.unmount());
+        closed = true;
+        const literalDraftKey = 'synthetic-owner.literal-paste';
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: literalDraftKey }))));
+        await settle(() => document.querySelector('[contenteditable]'));
+        await paste(jsonPaste);
+        await settle(() => JSON.parse(localStorage.getItem(literalDraftKey) ?? 'null')?.text === jsonPaste);
+        await act(async () => root.unmount());
+        closed = true;
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: literalDraftKey }))));
+        await settle(() => document.querySelector('[contenteditable]').textContent.includes('__init__'));
+        await submit();
+        assert.equal(sends.at(-1).text, jsonPaste);
+        await assertVisiblePaste(sends.at(-1), jsonPaste);
+        await act(async () => root.unmount());
+        closed = true;
+        const typedDraftKey = 'synthetic-owner.typed-literal-draft';
+        const typedDraft = '  __init__ _legacy_ <after> ada@example.test {"note":"*priority*"}';
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: typedDraftKey }))));
+        await settle(() => document.querySelector('[contenteditable]'));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          const paragraph = field.querySelector('p');
+          paragraph.textContent = typedDraft;
+          window.getSelection().collapse(paragraph.firstChild, typedDraft.length);
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        await settle(() => currentText === typedDraft && JSON.parse(localStorage.getItem(typedDraftKey) ?? 'null')?.text === typedDraft);
+        await act(async () => root.unmount());
+        closed = true;
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: typedDraftKey }))));
+        await settle(() => currentText === typedDraft && document.querySelector('[contenteditable]')?.textContent === typedDraft);
+        await submit();
+        assert.equal(sends.at(-1).text, typedDraft);
+        await assertVisiblePaste(sends.at(-1), typedDraft);
+        await act(async () => displayRoot.unmount());
+        displayHost.remove();
+        await act(async () => root.unmount());
+        closed = true;
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
+        await settle(() => document.querySelector('[contenteditable]'));
+        sends.length = 0;
+        result = { sent: false, restoreText: true };
         await edit();
         const field = document.querySelector('[contenteditable]');
         const input = document.querySelector('input[type="file"]');
@@ -4375,7 +4592,11 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           assert.equal(currentText.replaceAll('\\\n', '\n'), 'First line\nSecond line');
           const expected = currentText;
           await enter(modifiers);
-          assert.deepEqual(sends.at(-1), { text: expected, attachments: [] });
+          assert.deepEqual(sends.at(-1), {
+            text: expected,
+            attachments: [],
+            displayText: 'First line<br>Second line',
+          });
           assert.equal(sends.length, count + 1);
         }
         await edit();
@@ -4459,6 +4680,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             document.querySelector('[contenteditable]').textContent.includes('Synthetic review request'),
         );
         assert.deepEqual(sends[0].attachments, [artifact]);
+        assert.equal(sends[0].displayText, undefined);
         assert.equal(revoked.includes(created[0].url), false);
         assert.deepEqual(JSON.parse(renewals.at(-1).options.body), { ids: [artifact.id] });
         await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
@@ -7108,6 +7330,31 @@ test('chat shows pending sends and active work before a model step', async () =>
         await render();
         assert.equal(Boolean(document.querySelector('.thinking')), false);
         assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
+        const pastedDraft = '*priority* # call';
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          const event = new Event('paste', { bubbles: true, cancelable: true });
+          Object.defineProperty(event, 'clipboardData', {
+            value: { files: [], getData: (type) => type === 'text/plain' ? pastedDraft : '' },
+          });
+          field.dispatchEvent(event);
+        });
+        assert.equal(document.querySelector('[contenteditable]').textContent, pastedDraft);
+        messageRequest = undefined;
+        releaseMessage = undefined;
+        await render({ requestedMessage: { id: 'synthetic-failed-send', text: 'Synthetic failed request' } });
+        await settle(() => messageRequest?.text === 'Synthetic failed request' && releaseMessage);
+        await act(async () => releaseMessage(Response.json({ error: 'Synthetic unavailable request' }, { status: 503 })));
+        await settle(() => document.querySelector('[contenteditable]').textContent.includes('Synthetic failed request'));
+        assert.ok(document.querySelector('[contenteditable]').textContent.includes(pastedDraft));
+        await act(async () => document.querySelector('form').dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => messageRequest?.text.includes(pastedDraft));
+        assert.equal(messageRequest.text, 'Synthetic failed request\n\n' + pastedDraft);
+        await act(async () => releaseMessage(Response.json({
+          messageId: messageRequest.clientMessageId, turnId: 'synthetic-restored-turn',
+        })));
       } finally {
         await act(async () => root.unmount());
         dom.window.close();
