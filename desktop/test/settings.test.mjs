@@ -1134,18 +1134,28 @@ test(
         const metadata = deferred();
         const loading = deferred();
         let metadataReads = 0;
-        const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-          initialState: 'fresh',
-          packaged: true,
-          buildMetadata: { release: true },
-          version: '0.1.17',
-          existingProfileRoot: event === 'startup_path_selected',
-          nativeMetadataRead: () => {
-            if (++metadataReads === 1) return;
-            loading.resolve();
-            return metadata.promise;
+        const f = await runningDesktop(
+          t,
+          async (url) =>
+            Response.json(
+              new URL(url).pathname === '/api/account'
+                ? { settings: { usageData: true } }
+                : { ok: true },
+            ),
+          {
+            initialState: 'fresh',
+            allowStart: true,
+            packaged: true,
+            buildMetadata: { release: true },
+            version: '0.1.17',
+            existingProfileRoot: event === 'startup_path_selected',
+            nativeMetadataRead: () => {
+              if (++metadataReads === 1) return;
+              loading.resolve();
+              return metadata.promise;
+            },
           },
-        });
+        );
         try {
           if (event === 'startup_path_selected')
             await f.storage.store.save({ welcome: { usageData: true, continued: false } });
@@ -1153,10 +1163,35 @@ test(
           const capture =
             event === 'app_opened' ? f.nativeOpening() : f.captureStartupPath('remote');
           await loading.promise;
-          await f.storage.store.save({ welcome: { usageData: false, continued: false } });
+          if (event === 'app_opened') {
+            const setup = f.windows[0];
+            await f.handlers.get('nod:settings:save')(
+              { sender: setup.webContents, senderFrame: setup.webContents.mainFrame },
+              { welcome: { usageData: false, continued: false } },
+            );
+          } else await f.storage.store.save({ welcome: { usageData: false, continued: false } });
           metadata.resolve();
           await capture;
           assert.deepEqual(f.nativeAnalytics, []);
+          if (event === 'app_opened') {
+            const enabledAt = Date.now();
+            const setup = f.windows[0];
+            await f.handlers.get('nod:settings:save')(
+              { sender: setup.webContents, senderFrame: setup.webContents.mainFrame },
+              { welcome: { usageData: true, continued: true } },
+            );
+            await f.prepare();
+            const engine = f.windows.find((window) => window.url?.startsWith('http://'));
+            assert.ok(engine);
+            const distinctId = `local:${(await readFile(join(f.profileRoot, 'analytics-id'), 'utf8')).trim()}`;
+            const opening = await f.handlers.get('nod:analytics:opening')(
+              { sender: engine.webContents, senderFrame: engine.webContents.mainFrame },
+              true,
+              distinctId,
+            );
+            assert.equal(opening.entry, 'app_ui');
+            assert.ok(opening.openedAt >= enabledAt);
+          }
         } finally {
           metadata.resolve();
           await f.close();

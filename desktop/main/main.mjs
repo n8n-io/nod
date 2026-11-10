@@ -132,6 +132,12 @@ let appOpeningDeferred = false;
 let appOpeningConsentVersion = 0;
 const claimedAppOpens = new Set();
 const appUIOpenings = new Map();
+function deferAppOpening() {
+  appOpeningDeferred = true;
+  appOpeningConsentVersion++;
+  freshAppOpening = undefined;
+  appUIOpenings.clear();
+}
 let setupWindow;
 let setupWindowLoaded;
 let engineWindow;
@@ -1116,7 +1122,8 @@ async function captureNativeAnalytics({ event, distinctId, openedAt, uuid, prope
   try {
     const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
     const saved = await settings.get();
-    if (appOpeningDeferred || saved.welcome?.usageData === false) return false;
+    if (saved.welcome?.usageData === false) deferAppOpening();
+    if (appOpeningDeferred) return false;
     const response = await fetch(`${posthogConfig.host}/i/v0/e/`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2425,9 +2432,7 @@ else {
         )
           throw new Error('This action is unavailable.');
         if (!consented) {
-          appOpeningDeferred = true;
-          appOpeningConsentVersion++;
-          appUIOpenings.clear();
+          deferAppOpening();
           return null;
         }
         if (
@@ -2538,6 +2543,7 @@ else {
           }
           throw error;
         }
+        if (value.welcome?.usageData === false) deferAppOpening();
         if (value.welcome?.continued === false) captureStartupPath('local');
         onboardingCompleted = remoteConnection ? true : saved.onboardingCompleted;
         if (onboardingCompleted) nativePreferencesPending = false;
