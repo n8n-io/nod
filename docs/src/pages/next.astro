@@ -1,78 +1,26 @@
 ---
+import { Picture } from 'astro:assets';
 import '../styles/nod.css';
-
-import n8n from '../assets/n8n-logo.svg?url';
+import n8nLogo from '../assets/landing/n8n-logo.svg?url';
+import crosshair from '../assets/landing/crosshair.svg?url';
+import githubIcon from '../assets/landing/github.svg?url';
+import nodMark from '../assets/landing/nod-mark.svg?url';
+import heroCollage from '../assets/landing/hero-collage.png';
+import briefCollage from '../assets/landing/brief-collage.png';
+import replyCollage from '../assets/landing/reply-collage.png';
+import watchCollage from '../assets/landing/watch-collage.png';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
-const privacy = 'https://n8n.io/legal/privacy/';
-const download = 'https://internal.users.n8n.cloud/webhook/nod/download';
+const download = 'https://internal.users.n8n.cloud/webhook/nod/download/mac';
+const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
 const description =
   'Nod is a personal agent that gets real-world jobs done. Open source, runs on your Mac, Windows PC or your own server, with the model provider you choose.';
 const url = 'https://nod.n8n.io/';
 const image = new URL(`${base}nod-og.png`, Astro.site);
-const logos = import.meta.glob('../../../public/logos/*.svg', { query: '?url', import: 'default', eager: true });
-const logo = (key) => logos[`../../../public/logos/${key}.svg`];
-
-const caps = [
-  { title: 'Proactive', sub: 'Spots what you can hand off' },
-  { title: 'Real-world jobs', sub: 'Finishes the hard ones' },
-  { title: 'Asks first', sub: 'Waits for your nod' },
-  { title: 'Your provider', sub: 'The model provider you choose' },
-];
-const providers = [
-  { key: 'openai', name: 'OpenAI', note: 'Your ChatGPT plan or API key' },
-  { key: 'anthropic', name: 'Anthropic', note: 'Your Anthropic API key' },
-  { key: 'google', name: 'Google Gemini', note: 'Your AI Studio API key' },
-  { key: 'openrouter', name: 'OpenRouter', note: 'Hundreds of models, one key' },
-  { key: 'local', name: 'Open-weight', note: 'Runs on your computer' },
-];
-const apps = [
-  { key: 'gmail', name: 'Gmail' },
-  { key: 'googlecalendar', name: 'Google Calendar' },
-  { key: 'googledrive', name: 'Google Drive' },
-  { key: 'googlesheets', name: 'Google Sheets' },
-  { key: 'slack', name: 'Slack' },
-  { key: 'notion', name: 'Notion' },
-  { key: 'linear', name: 'Linear' },
-  { key: 'outlook', name: 'Outlook' },
-];
-const months = ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-const checks = [
-  { action: 'Download Q3 invoices', reason: 'You asked for this', ok: true },
-  { action: 'Pay €212 for flights', reason: 'Every payment with a saved card checks with you' },
-  { action: 'Email all 15 clients', reason: 'Came from an email, not from you' },
-];
-const faqs = [
-  [
-    'Is it for work or personal stuff?',
-    'Both. Most people start with life admin, like a refund or a booking. Then they hand it work: invoices, Slack, email.',
-  ],
-  [
-    'What does it cost?',
-    "Nod is free. You bring your own AI provider, which bills you directly, and Nod shows what each task cost. You can set a monthly limit. A model on your own computer costs nothing per request.",
-  ],
-  ['Do I need n8n?', 'No. Nod is its own app, made by the team behind n8n. If you use n8n, Nod can run your workflows too.'],
-  ['Which computers?', 'Mac with macOS 14 or later, on Apple silicon or Intel, and Windows 11 x64. You can also run it on your own server.'],
-  [
-    'Can I message it from my phone?',
-    'Yes. Connect Telegram or WhatsApp and message Nod from anywhere. It is the same conversation as in the app.',
-  ],
-  [
-    'Does it work when my laptop is closed?',
-    'Nod on your computer works while the computer is on and awake. Run it on your own server to keep it working around the clock.',
-  ],
-  [
-    'Can it make mistakes?',
-    "Yes. It's an n8n Labs experiment, and its safety check is a model's judgement. That's why it asks before anything you didn't ask for, and keeps a record of every sign-in, card use and action in your apps.",
-  ],
-];
-const tag = "font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;color:#87003c";
-const job = 'margin:10px 0 0;font-size:24px;font-weight:700;letter-spacing:-0.03em;line-height:1.12;text-wrap:balance';
-const detail = 'margin:12px 0 0;font-size:14px;line-height:1.45;color:#3d3a3b';
-const card = 'position:relative;overflow:hidden;flex:none;width:280px;height:360px;padding:26px;border-radius:30px;color:#191919;box-sizing:border-box';
-const split = `${card};display:flex;flex-direction:column;justify-content:space-between`;
+const photo = { formats: ['avif', 'webp'], fallbackFormat: 'jpg', quality: 80, alt: '', class: 'bg' } as const;
+const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 ---
 
 <!doctype html>
@@ -96,258 +44,610 @@ const split = `${card};display:flex;flex-direction:column;justify-content:space-
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={image} />
-    <meta name="theme-color" content="#f6f5f5" />
+    <meta name="theme-color" content="#fafafa" />
     <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
     <link rel="apple-touch-icon" href={`${base}nod-touch-icon.png`} />
+    <link rel="preconnect" href="https://n8n.io" crossorigin />
+    <link rel="preload" href={`${fonts}/n8n-baumer-variable.woff2`} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={`${fonts}/n8n-baumer-mono-variable.woff2`} as="font" type="font/woff2" crossorigin />
   </head>
-  <body>
-    <div class="nod">
-      <section class="hero">
-        <nod-field class="backdrop" shape="field" cell="6" drift="6" scatter="1" alpha="0.65"></nod-field>
-        <div class="hero-inner">
-          <header class="top">
-            <a class="labs" href="https://n8n.io">
-              <img src={n8n} alt="n8n" width="80" height="16" />
-              <span class="rule"></span>
-              <span class="name">Labs</span>
-            </a>
-            <span class="status">Research preview</span>
-          </header>
+  <body class="lp">
+    <div class="lp-page">
+      <header class="lp-header">
+        <div class="lp-logo">
+          <img class="lockup" src={n8nLogo} alt="n8n" width="180" height="36" />
+        </div>
+        <div class="lp-header-right">
+          <div class="lp-capsules">
+            <span class="lp-dot"></span>
+            <span class="lp-capsule gray-tertiary mono">n8n labs</span>
+            <span class="lp-dot"></span>
+            <span class="lp-capsule lp-pink mono">NOD</span>
+            <span class="lp-dot"></span>
+            <span class="lp-capsule gray-secondary mono">Research Preview</span>
+            <span class="lp-dot"></span>
+            <a class="lp-capsule gray-tertiary" href={github} target="_blank" rel="noopener" aria-label="Nod on GitHub"
+              ><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"
+                ><path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+                ></path></svg
+              ></a>
+            <span class="lp-dot"></span>
+          </div>
+        </div>
+      </header>
 
-          <h1><nod-glyph mark nod-on="load hover" delay="900" nod-every="4600" nod-depth="38" nod-twice>nod</nod-glyph>to get the job done.</h1>
-          <p class="lede">A personal agent that gets <strong>real-world jobs</strong> done. It's yours: <strong>open source</strong>, runs <strong>on your computer</strong>, with the AI provider you choose.</p>
-
-          <div class="get">
-            <a class="download" id="download" href={`${download}/mac`}>
-              <span class="badge"><nod-glyph size="22" nod-on="hover"></nod-glyph></span>
-              <span class="label" id="download-label">Download for Mac</span>
-            </a>
-            <p class="platforms" id="platforms">
-              <span>Also for</span>
-              <a href={`${download}/mac`} data-platform="darwin-arm64" hidden>Mac with Apple silicon</a>
-              <a href={`${download}/mac-intel`} data-platform="darwin-x64">Intel Mac</a>
-              <a href={`${download}/windows`} data-platform="win32-x64">Windows</a>
+      <section class="lp-hero">
+        <div class="lp-hero-top">
+          <div class="lp-capsules">
+            <span class="lp-dot lp-dot-pink"></span>
+            <span class="lp-capsule gray-tertiary mono">More tasks than time?</span>
+            <span class="lp-dot lp-dot-pink"></span>
+          </div>
+          <div class="lp-hero-headline-frame lp-dot-grid-bg">
+            <h1 class="lp-hero-headline">
+              <span class="lp-hero-lines"
+                ><span class="lp-hero-line1"
+                  ><span class="lp-hero-glyph" id="heroGlyph"
+                    ><svg viewBox="0 0 21 21" width="48" height="48" aria-hidden="true" style="display:block;overflow:visible"
+                      ><circle cx="9" cy="12" r="7.375" fill="none" stroke="#191919" stroke-width="3.25"></circle><g
+                        class="lp-glyph-dot"><circle cx="17" cy="4" r="3.45" fill="#ff91ac"></circle></g
+                      ></svg
+                    ></span
+                  ><span>Open source personal agent</span></span
+                ><span>with its own computer</span></span
+              >
+            </h1>
+          </div>
+          <p class="lp-hero-copy">
+            It chases invoices, preps your calls and cancels trials, on real websites. On your machine, and it asks before it
+            acts for you.
+          </p>
+          <div class="lp-hero-cta">
+            <div class="lp-hero-buttons">
+              <div class="lp-cta-frame">
+                <a class="lp-download-btn mono" href={download}>Download for Mac</a>
+                <img class="lp-crosshair tl" src={crosshair} alt="" />
+                <img class="lp-crosshair tr" src={crosshair} alt="" />
+                <img class="lp-crosshair bl" src={crosshair} alt="" />
+                <img class="lp-crosshair br" src={crosshair} alt="" />
+              </div>
+              <div class="lp-cta-frame">
+                <a class="lp-download-btn lp-download-btn-grey mono" href={github} target="_blank" rel="noopener"
+                  ><img class="lp-btn-icon" src={githubIcon} alt="" />View the code</a
+                >
+                <img class="lp-crosshair tl" src={crosshair} alt="" />
+                <img class="lp-crosshair tr" src={crosshair} alt="" />
+                <img class="lp-crosshair bl" src={crosshair} alt="" />
+                <img class="lp-crosshair br" src={crosshair} alt="" />
+              </div>
+            </div>
+            <p class="lp-platforms">
+              macOS 14 or later · Windows 11 preview · Apache 2.0 · free · use your ChatGPT plan or an AI key
             </p>
           </div>
-          <div class="source">
-            <a href={github} target="_blank" rel="noopener">
-              <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-              <span>View on GitHub</span><span aria-hidden="true">↗</span>
-            </a>
-          </div>
+        </div>
 
-          <div class="demo">
-            <div class="caps">
-              {caps.map((cap, index) => (
-                <button class="cap" type="button" data-index={index}>
-                  <span class="cap-title">{cap.title}</span>
-                  <span class="cap-sub">{cap.sub}</span>
-                </button>
-              ))}
-            </div>
-            <div class="chat" aria-label="A sample conversation with nod">
-              <div class="log">
-                <div class="feed" id="feed" aria-live="polite"></div>
-              </div>
-              <div class="typing" id="typing"><nod-glyph size="26" mood="working"></nod-glyph></div>
-              <div class="composer" aria-hidden="true">
-                <span class="hint">Ask Nod to take something on…</span>
-                <span class="model" id="model">{providers[1].name}</span>
-                <span class="send">↑</span>
-              </div>
-            </div>
+        <div class="lp-demo-photo">
+          <Picture
+            src={heroCollage}
+            {...photo}
+            widths={[640, 960, 1312, 1920, 2560]}
+            sizes="(min-width: 1440px) 1312px, 92vw"
+            loading="eager"
+            fetchpriority="high"
+          />
+          <div class="lp-hero-video" id="heroVideoFrame">
+            <div id="heroYT"></div>
+            <button type="button" class="lp-video-unmute" id="heroUnmuteBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"
+                ><path d="M9 2 4.5 5.5H1.5v5H4.5L9 14V2Z" fill="currentColor"></path><path
+                  d="M11.5 5.5a4 4 0 0 1 0 5M13.3 3.5a6.8 6.8 0 0 1 0 9"
+                  stroke="currentColor"
+                  stroke-width="1.3"
+                  stroke-linecap="round"></path></svg
+              >
+              <span>Unmute</span>
+            </button>
           </div>
         </div>
       </section>
 
-      <section class="pillars">
-        <div class="wrap">
-          <h2>Capable to run your business.<br /><span class="pink">Open to be yours.</span></h2>
-          <div class="stack">
-            <nod-reveal>
-              <article class="pillar">
-                <div class="claim">
-                  <div class="word">Capable.</div>
-                  <p><strong>Its own computer and browser.</strong> It works in your apps and on any website, and finishes the job instead of handing you a to-do list.</p>
-                  <div class="punch"><p>Hand it the jobs that eat your week. It does the clicking, the forms and the follow-ups.</p></div>
-                </div>
-                <div class="panel">
-                  <nod-field class="backdrop" shape="glow" cell="7" alpha="0.75"></nod-field>
-                  <div class="apps">
-                    {apps.map((app) => (
-                      <span class="app"><img src={logo(app.key)} alt={app.name} width="28" height="28" loading="lazy" /></span>
-                    ))}
-                  </div>
-                  <div class="browser" aria-hidden="true">
-                    <span class="dots"><i></i><i></i><i></i></span>
-                    <span class="address">any website</span>
-                    <nod-glyph size="20" mood="working"></nod-glyph>
-                  </div>
-                </div>
-              </article>
-            </nod-reveal>
+      <section class="lp-trust-stats" data-count-up-group>
+        <div class="lp-trust-stats-grid">
+          <div class="lp-trust-stat">
+            <p class="lp-trust-stat-number" data-count-to="98" data-suffix="%">98%</p>
+            <p class="lp-trust-stat-label">Errands finished</p>
+            <p class="lp-trust-stat-desc">678 runs of 226 errands, each run three times in a simulated environment.</p>
+          </div>
+          <div class="lp-trust-stat">
+            <p class="lp-trust-stat-number" data-count-to="678" data-prefix="0 of ">0 of 678</p>
+            <p class="lp-trust-stat-label">Unsafe actions</p>
+            <p class="lp-trust-stat-desc">Never sent, paid, booked, posted or deleted anything you hadn't approved.</p>
+          </div>
+          <div class="lp-trust-stat">
+            <p class="lp-trust-stat-number" data-count-to="13" data-prefix="0 of ">0 of 13</p>
+            <p class="lp-trust-stat-label">Traps that worked</p>
+            <p class="lp-trust-stat-desc">Errands where a page, an email, or a message tried to trick Nod into acting.</p>
+          </div>
+        </div>
+        <p class="lp-trust-stats-footnote">Run 17 Oct 2026 with GPT-6.1 Sol on test apps and lookalike sites, no real accounts.</p>
+      </section>
 
-            <nod-reveal>
-              <article class="pillar">
-                <div class="claim">
-                  <div class="word">Smart.</div>
-                  <p><strong>93.2% on LongMemEval</strong>, among the best published memory systems.</p>
-                  <div class="punch"><p>It remembers months of your conversations, so you don't have to keep reminding it what you want.</p></div>
-                </div>
-                <div class="panel">
-                  <nod-field class="arc" shape="arc" cell="6" aria-hidden="true"></nod-field>
-                  <div class="months">
-                    {months.map((month, index) => (
-                      <span class={index === 0 || index === months.length - 1 ? 'lit' : undefined}><i></i>{month}</span>
-                    ))}
-                  </div>
-                  <div class="exchange">
-                    <div class="you"><p class="said">Book the usual for Lisbon.</p></div>
-                    <div class="row">
-                      <nod-glyph size="24" mood="idle"></nod-glyph>
-                      <p class="bubble">Window seat and the hotel by the river, same as in March. Want me to book it?</p>
+      <section class="lp-hard-ones-heading">
+        <div class="lp-hard-ones-frame wide lp-dot-grid-bg">
+          <h2>On your machine, on your <span class="lp-pink-accent">word</span></h2>
+        </div>
+        <p class="lp-hard-ones-sub">It gets on with the work, and asks before it speaks for you.</p>
+      </section>
+
+      <div class="lp-stack">
+        <div class="lp-pillar">
+          <div class="lp-claim">
+            <div class="lp-claim-header">
+              <p class="lp-claim-eyebrow">On your machine</p>
+              <h3 class="lp-claim-heading">Walk into every call prepared</h3>
+            </div>
+            <div class="lp-claim-body">
+              <p class="lp-claim-paragraph">
+                Every morning, Nod reads your threads, your calendar and the client's latest news, and writes a one-page brief
+                for each call.
+              </p>
+              <p class="lp-claim-paragraph">
+                It does the prep on your computer, and what it learns about your clients stays there.
+              </p>
+            </div>
+          </div>
+          <div class="lp-panel-photo">
+            <Picture src={briefCollage} {...photo} widths={[640, 960, 1280, 1616]} sizes={panelSizes} loading="lazy" />
+            <div class="overlay"></div>
+            <div class="lp-panel">
+              <div class="nod-screen nod-brief-screen">
+                <div class="nod-chat">
+                  <div class="nod-msg">
+                    <div class="nod-bubble">
+                      <div class="nod-text"><p>Your brief for Brightline is ready.</p></div>
+                      <div class="nod-attachment">
+                        <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                          ><path d="M14.75 15.25H1.25V.75h13.5zm-12-1.5h10.5V2.25H2.75zm8-3.25h-5.5V9h5.5zm0-3.5h-5.5V5.5h5.5z"
+                          ></path></svg
+                        >
+                        <span class="nod-attachment-text"
+                          ><span class="nod-attachment-name">Brightline Studio – call brief.pdf</span><span
+                            class="nod-attachment-meta">PDF · 1 page · 40 KB</span
+                          ></span
+                        >
+                      </div>
                     </div>
                   </div>
                 </div>
-              </article>
-            </nod-reveal>
-
-            <nod-reveal>
-              <article class="pillar">
-                <div class="claim">
-                  <div class="word">Yours.</div>
-                  <p>Connect OpenAI, Anthropic, Google Gemini, OpenRouter and many more, or a model on your own computer. Run it on your Mac, your Windows PC or your own server. The code is open, every rule it follows included.</p>
-                  <div class="punch"><p>No lock-in. You pay your provider directly and switch whenever you like.</p></div>
-                </div>
-                <div class="panel snug">
-                  <nod-field class="backdrop" shape="glow" cell="7" alpha="0.75"></nod-field>
-                  <div class="providers">
-                    {providers.map((provider, index) => (
-                      <button class:list={['provider', { on: index === 1 }]} type="button" data-key={provider.key} data-name={provider.name} data-note={provider.note} aria-pressed={index === 1 ? 'true' : 'false'}>
-                        <span class:list={['logo', provider.key]} aria-hidden="true"></span>
-                        <span class="text"><b>{provider.name}</b><small>{provider.note}</small></span>
-                        <span class="radio" aria-hidden="true"></span>
-                      </button>
-                    ))}
+                <article class="brief">
+                  <div class="brief-kicker">Call brief</div>
+                  <h1>Brightline Studio</h1>
+                  <div class="brief-meta">Tuesday, 27 October 2026 · 11:00–11:30 · Sara Kim, producer</div>
+                  <h3>Where things stand</h3>
+                  <div class="brief-box">
+                    <p>
+                      Sara wants 3 short videos for the Brightline launch. She asked about pricing in Slack last week and is
+                      waiting on an answer.
+                    </p>
                   </div>
-                  <a class="read-code" href={github}>Read the code on GitHub<span aria-hidden="true">→</span></a>
-                </div>
-              </article>
-            </nod-reveal>
+                  <h3>From your last emails</h3>
+                  <ul>
+                    <li>Launch date moved to 20 November.</li>
+                    <li>They liked the cut-down format of the September reel.</li>
+                    <li>Brand assets folder still to be shared.</li>
+                  </ul>
+                  <h3>Their latest news</h3>
+                  <ul>
+                    <li>New pricing page: 3 plans from $1,200.</li>
+                    <li>Opened a second studio in Lisbon.</li>
+                  </ul>
+                  <h3>Ask on the call</h3>
+                  <ul>
+                    <li>Deadline for the first cut?</li>
+                    <li>Who signs off on scripts?</li>
+                    <li>Budget range for 3 videos?</li>
+                  </ul>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
 
-            <nod-reveal>
-              <article class="pillar" id="trust">
-                <div class="claim">
-                  <div class="word">Safe.</div>
-                  <p>Nod asks before it sends, pays, posts or deletes anything you didn't ask for. A web page or an email can't give it permission.</p>
-                  <a class="more" href={`${base}trust/`}>Read more about the trust layer<span aria-hidden="true">→</span></a>
-                  <div class="punch"><p>Hand it real accounts and cards. Anything you didn't ask for waits for your nod.</p></div>
-                </div>
-                <div class="panel trust">
-                  <nod-field class="backdrop" shape="sides" cell="7" alpha="0.75"></nod-field>
-                  <div class="check-head"><nod-glyph size="16" mood="idle"></nod-glyph>trust layer · checking 3 actions</div>
-                  <div class="checks">
-                    {checks.map((check) => (
-                      <div class="item">
-                        <span class="text"><b>{check.action}</b><small>{check.reason}</small></span>
-                        <span class:list={['pill', { ok: check.ok }]}>{check.ok ? 'Allowed' : 'Needs your nod'}</span>
+        <div class="lp-pillar">
+          <div class="lp-claim">
+            <div class="lp-claim-header">
+              <p class="lp-claim-eyebrow">On your word</p>
+              <h3 class="lp-claim-heading">Nothing slips through</h3>
+            </div>
+            <div class="lp-claim-body">
+              <p class="lp-claim-paragraph">
+                Nod finds the question you never answered, like a client's pricing ask from last week, and drafts the reply
+                from your own pricing sheet.
+              </p>
+              <p class="lp-claim-paragraph">
+                It waits for your yes before it sends. The rule that makes it wait is in the open code, for anyone to read.
+              </p>
+            </div>
+          </div>
+          <div class="lp-panel-photo">
+            <Picture src={replyCollage} {...photo} widths={[640, 1024]} sizes={panelSizes} loading="lazy" />
+            <div class="overlay"></div>
+            <div class="lp-panel">
+              <div class="nod-screen nod-slack-screen">
+                <div class="nod-chat">
+                  <div class="nod-msg">
+                    <div class="nod-bubble">
+                      <div class="nod-text">
+                        <p>
+                          Also: Sara asked in Slack last week, “What would pricing look like for 3 videos?” and it was never
+                          answered. I pulled your pricing sheet from Notion and drafted a reply:
+                        </p>
+                        <blockquote>
+                          <p>
+                            Hi Sara! For three launch videos it’s $3,600 ($1,200 each), first cuts in 10 working days. Happy
+                            to walk you through it on a call.
+                          </p>
+                        </blockquote>
+                        <p>Reply to Sara in Slack?</p>
                       </div>
-                    ))}
+                    </div>
+                  </div>
+                  <div class="nod-msg is-you">
+                    <div class="nod-bubble"><div class="nod-text"><p>Yes, reply</p></div></div>
+                  </div>
+                  <div class="nod-msg">
+                    <div class="nod-bubble"><div class="nod-text"><p>Replied in Slack.</p></div></div>
                   </div>
                 </div>
-              </article>
-            </nod-reveal>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lp-pillar">
+          <div class="lp-claim">
+            <div class="lp-claim-header">
+              <p class="lp-claim-eyebrow">On your key</p>
+              <h3 class="lp-claim-heading">Hear about it when it matters</h3>
+            </div>
+            <div class="lp-claim-body">
+              <p class="lp-claim-paragraph">
+                Tell Nod to keep an eye on a client's pricing page. It checks every few hours and only speaks up when
+                something changes.
+              </p>
+              <p class="lp-claim-paragraph">Every check runs on your own AI key, and Nod shows what each check costs.</p>
+            </div>
+          </div>
+          <div class="lp-panel-photo">
+            <Picture src={watchCollage} {...photo} widths={[640, 960, 1280, 1616]} sizes={panelSizes} loading="lazy" />
+            <div class="overlay"></div>
+            <div class="lp-panel">
+              <div class="nod-screen nod-watch-screen">
+                <div class="mac-note" role="img" aria-label="Notification from Nod: Brightline pricing changed">
+                  <div class="mac-note-icon">
+                    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"
+                      ><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"></circle><circle
+                        cx="25"
+                        cy="6"
+                        r="4"
+                        fill="var(--nod-pink)"></circle></svg
+                    >
+                  </div>
+                  <div class="mac-note-body">
+                    <div class="mac-note-head"><b>Nod</b><small>now</small></div>
+                    <span>Brightline pricing changed: 3 plans from $1,500, was $1,200.</span>
+                  </div>
+                </div>
+                <article class="nod-plan">
+                  <div class="nod-plan-title">
+                    <h2>Brightline pricing page</h2>
+                    <span class="nod-plan-status">Recurring</span>
+                    <span class="nod-switch" role="switch" aria-checked="true" aria-label="Active"><span></span></span>
+                  </div>
+                  <p class="nod-plan-meta">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                      ><path
+                        d="M6.25 2.75h3.5V.25h1.5v2.5h4V15H.75V2.75h4V.25h1.5zm-4 10.75h11.5V4.25h-2.5v2.5h-1.5v-2.5h-3.5v2.5h-1.5v-2.5h-2.5z"
+                      ></path></svg
+                    >
+                    <span>Every 6 hours</span><span>Next 27 Oct, 12:00</span>
+                  </p>
+                  <div class="nod-plan-details">
+                    <p class="nod-plan-description">
+                      Check brightline.studio/pricing and tell me when their plans or prices change
+                    </p>
+                    <p class="nod-plan-note">Baseline: 3 plans from $1,200 · 26 Oct, 18:00</p>
+                  </div>
+                  <div class="nod-plan-footer">
+                    <span class="nod-btn nod-plan-more"
+                      >Hide details<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                        ><path d="M15.56 5.25 8 12.81.44 5.25 1.5 4.19l6.5 6.5 6.5-6.5z"></path></svg
+                      ></span
+                    >
+                    <span class="nod-plan-actions">
+                      <span class="nod-btn nod-btn-filled"
+                        ><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                          ><path
+                            d="m15.81 5.75-9.5 9.5H.75V9.69l9.5-9.5zm-13.56 8h2.99a3.25 3.25 0 0 0-1.996-2.753 3.3 3.3 0 0 0-.994-.237zm.914-4.354a4.75 4.75 0 0 1 3.225 2.787q.13.319.215.652l3.632-3.634a3.8 3.8 0 0 0-.271-1.137 3.75 3.75 0 0 0-3.168-2.302zM8.07 4.49a5.25 5.25 0 0 1 2.143 1.298A5.25 5.25 0 0 1 11.51 7.93l2.18-2.18-3.439-3.44z"
+                          ></path></svg
+                        >Edit schedule</span
+                      >
+                      <span class="nod-btn"
+                        ><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                          ><path
+                            d="M6.474 1.106c.562-1.36 2.49-1.36 3.051 0l1.567 3.8 3.801 1.568c1.361.562 1.361 2.49 0 3.051l-3.8 1.567-1.568 3.801c-.561 1.361-2.49 1.361-3.05 0l-1.57-3.8-3.799-1.568c-1.36-.562-1.36-2.490 0-3.05l3.8-1.569zM8 1.585a.16.16 0 0 0-.084.022.14.14 0 0 0-.055.07l-1.686 4.09-.12.288-.288.12-4.09 1.686a.14.14 0 0 0-.07.055.16.16 0 0 0-.022.084q.002.052.022.084c.01.017.03.038.07.054l4.09 1.687.288.12.12.287 1.686 4.09a.14.14 0 0 0 .055.07.16.16 0 0 0 .084.023.16.16 0 0 0 .084-.023.14.14 0 0 0 .054-.07l1.687-4.09.119-.288.288-.12 4.09-1.686a.14.14 0 0 0 .07-.054.16.16 0 0 0 .023-.084.16.16 0 0 0-.023-.084.14.14 0 0 0-.07-.055l-4.09-1.686-.288-.12-.12-.288-1.686-4.090a.14.14 0 0 0-.054-.07A.16.16 0 0 0 8 1.585"
+                          ></path></svg
+                        >Ask Nod</span
+                      >
+                      <span class="nod-btn nod-btn-icon" aria-label="Delete"
+                        ><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+                          ><path
+                            d="M3.25 13.75h9.5V6.5h1.5v8.75H1.75V6.5h1.5zm3.6-2.5h-1.5V6.5h1.5zm3.8 0h-1.5V6.5h1.5zm-1.9-8.5h6.5v1.5H.75v-1.5h6.5V.25h1.5z"
+                          ></path></svg
+                        ></span
+                      >
+                    </span>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="lp-hard-ones-heading">
+        <div class="lp-hard-ones-frame lp-dot-grid-bg">
+          <h2>A memory like an <span class="lp-pink-accent">elephant</span></h2>
+        </div>
+        <p class="lp-hard-ones-sub">Say once that Anna, not Bob, handles invoices. It remembers.</p>
+      </section>
+
+      <section class="lp-trust-stats" data-count-up-group>
+        <div class="lp-trust-stats-grid">
+          <div class="lp-trust-stat">
+            <p class="lp-trust-stat-number" data-count-to="93.2" data-decimals="1" data-suffix="%">93.2%</p>
+            <p class="lp-trust-stat-label">LongMemEval</p>
+            <p class="lp-trust-stat-desc">500 questions about months of past chats, answered in a fresh session.</p>
+          </div>
+          <div class="lp-trust-stat">
+            <p class="lp-trust-stat-number" data-count-to="216" data-prefix="0 of ">0 of 216</p>
+            <p class="lp-trust-stat-label">WhisperBench</p>
+            <p class="lp-trust-stat-desc">Attack emails trying to plant a false memory. Nod learns only from you.</p>
           </div>
         </div>
       </section>
 
-      <section class="jobs">
-        <div class="jobs-head">
-          <h2>Hand it the <span class="pink">hard ones.</span></h2>
-          <p>Jobs that take an afternoon of tabs, logins and forms. Nod finishes them start to end.</p>
-        </div>
-        <div class="jobs-row">
-          <nod-drift-row interval="3400" duration="1800">
-            <article data-tilt="-1.6" style={`${card};background:oklch(0.88 0.072 60)`}>
-              <span style={tag}>Shopping</span>
-              <h3 style={job}>Watch a price and tell you when it drops</h3>
-              <p style={`${detail};max-width:12em`}>Checks on your schedule and speaks up only when it changes</p>
-              <nod-glyph size="210" nod-on="hover" nod-depth="30" style="position:absolute;right:-62px;bottom:-70px"></nod-glyph>
-            </article>
+      <ol class="lp-feature-list">
+        <li>
+          <div class="lp-capsules">
+            <span class="lp-dot lp-dot-pink"></span><span class="lp-capsule gray-tertiary mono small">Every note, visible.</span
+            ><span class="lp-dot lp-dot-pink"></span>
+          </div>
+          <p>See, edit or forget each one, with the message it came from.</p>
+        </li>
+        <li>
+          <div class="lp-capsules">
+            <span class="lp-dot lp-dot-pink"></span><span class="lp-capsule gray-tertiary mono small"
+              >Drafts that sound like you.</span
+            ><span class="lp-dot lp-dot-pink"></span>
+          </div>
+          <p>Learns your style from sent emails, no names or numbers.</p>
+        </li>
+        <li>
+          <div class="lp-capsules">
+            <span class="lp-dot lp-dot-pink"></span><span class="lp-capsule gray-tertiary mono small">Tell it once.</span><span
+              class="lp-dot lp-dot-pink"></span>
+          </div>
+          <p>Say something changed, and it uses the new fact from then on.</p>
+        </li>
+        <li>
+          <div class="lp-capsules">
+            <span class="lp-dot lp-dot-pink"></span><span class="lp-capsule gray-tertiary mono small"
+              >It learns how to do a task.</span
+            ><span class="lp-dot lp-dot-pink"></span>
+          </div>
+          <p>Reuses the steps and fixes them when a site changes.</p>
+        </li>
+      </ol>
 
-            <article data-tilt="1.2" style={`${split};background:oklch(0.87 0.065 245)`}>
-              <div style="display:flex;align-items:center;gap:12px">
-                <nod-glyph size="44" mood="working"></nod-glyph>
-                <span style="font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;color:#3d3a3b">working…</span>
-              </div>
-              <div>
-                <span style={tag}>Life admin</span>
-                <h3 style={job}>Fill the grocery basket from recipe photos</h3>
-                <p style={detail}>Every ingredient in the cart, then it stops so you can check out</p>
-              </div>
-            </article>
-
-            <article data-tilt="-0.8" style={`${card};background:oklch(0.86 0.065 305)`}>
-              <span style={tag}>Travel</span>
-              <h3 style={job}>Book the hotel for the Lisbon offsite</h3>
-              <p style={`${detail};max-width:13em`}>By the river, booked once you said go</p>
-              <nod-glyph size="190" ink="#191919" nod-on="hover" nod-every="5200" nod-depth="40" style="position:absolute;left:50%;bottom:-96px;margin-left:-95px"></nod-glyph>
-            </article>
-
-            <article data-tilt="1.6" style={`${split};background:oklch(0.92 0.08 95)`}>
-              <div style="display:flex;align-items:flex-end;gap:10px">
-                <nod-glyph size="52" nod-on="load" nod-every="3800" delay="200"></nod-glyph>
-                <nod-glyph size="34" nod-on="load" nod-every="3800" delay="500"></nod-glyph>
-                <nod-glyph size="22" nod-on="load" nod-every="3800" delay="800"></nod-glyph>
-              </div>
-              <div>
-                <span style={tag}>Finance</span>
-                <h3 style={job}>Chase 3 unpaid invoices</h3>
-                <p style={detail}>Polite reminders, and it asks you before a second nudge</p>
-              </div>
-            </article>
-
-            <article data-tilt="-1.2" style={`${card};background:#ffbccc`}>
-              <span style={tag}>Life admin</span>
-              <h3 style={job}>Cancel a subscription and get your refund</h3>
-              <p style={`${detail};max-width:12em;color:#2e2a2c`}>Turns down the retention offers on the way</p>
-              <nod-glyph size="150" mood="idle" ink="#87003c" style="position:absolute;right:-30px;bottom:-34px;transform:rotate(-24deg)"></nod-glyph>
-            </article>
-
-            <article data-tilt="0.9" style={`${split};background:oklch(0.89 0.065 165)`}>
-              <nod-glyph mark nod-on="hover" nod-depth="38" nod-twice style="font-size:44px">nod</nod-glyph>
-              <div>
-                <span style={tag}>Work</span>
-                <h3 style={job}>Catch up on Slack and draft your replies</h3>
-                <p style={detail}>What needs you, with replies in your voice</p>
-              </div>
-            </article>
-          </nod-drift-row>
+      <section class="lp-hard-ones-heading">
+        <div class="lp-hard-ones-frame lp-dot-grid-bg">
+          <h2>Next on the <span class="lp-pink-accent">list</span></h2>
         </div>
       </section>
 
-      <section class="faqs">
-        <div class="wrap">
-          <h2>Straight answers</h2>
-          <div class="faq-list">
-            {faqs.map(([question, answer], index) => (
-              <details class="faq" name="faq" open={index === 0}>
-                <summary>{question}</summary>
-                <p>{answer}</p>
-              </details>
-            ))}
+      <div class="lp-roadmap-track" id="roadmapTrack">
+        <div class="lp-roadmap-connector" id="roadmapConnector" aria-hidden="true"></div>
+        <ol class="lp-feature-list single-col">
+          <li class="lp-roadmap-featured-row">
+            <span class="lp-number-badge"><span class="lp-circle-pink"></span></span>
+            <p class="lp-roadmap-featured">
+              <b>Run while your machine is asleep.</b> Hosted, so the morning brief still arrives.
+            </p>
+          </li>
+          <li>
+            <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
+            <p><b>Call businesses on the phone.</b> For the errands that still need a voice.</p>
+          </li>
+          <li>
+            <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
+            <p><b>Logins from 1Password.</b> Pick a login when Nod signs in, no vault export.</p>
+          </li>
+          <li>
+            <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
+            <p><b>One Nod for your team.</b> Today one owner per Nod. Next, a few people sharing one.</p>
+          </li>
+          <li>
+            <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
+            <p><b>Make it your own.</b> Change how Nod works in the open code, and send it back.</p>
+          </li>
+        </ol>
+      </div>
+
+      <section class="lp-hard-ones-heading">
+        <div class="lp-hard-ones-frame lp-dot-grid-bg">
+          <h2>Straight <span class="lp-pink-accent">answers</span></h2>
+        </div>
+      </section>
+
+      <div class="lp-faq-list">
+        <details class="lp-faq">
+          <summary>How do I set it up?</summary>
+          <p>
+            <a href={`${base}get-started/install-desktop/`} target="_blank" rel="noopener">Install the app</a> on your machine and add your <a
+              href={`${base}connect/models/`} target="_blank" rel="noopener">AI provider</a
+            >: OpenAI, Anthropic, OpenRouter, or your ChatGPT plan. <a href={`${base}connect/apps/`} target="_blank" rel="noopener">Connect your apps</a> (Gmail,
+            Slack, Notion, Drive, Calendar) with one sign-in, and save the logins Nod may use on websites. Then ask for something,
+            in the app or on <a href={`${base}use/channels/`} target="_blank" rel="noopener">Telegram</a>. About ten minutes.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Is it for work or personal stuff?</summary>
+          <p>
+            Built for people who run their own work: client calls, follow-ups, invoices, supplier portals. It handles life admin
+            too, like a refund or a booking.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>What does it cost?</summary>
+          <p>
+            Nod is free to download. You bring your own AI provider, they bill you directly, and Nod <a
+              href={`${base}use/spending/`} target="_blank" rel="noopener">shows what each task cost</a
+            >.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Do I need n8n?</summary>
+          <p>
+            No, Nod is its own app, made by the team behind <a href="https://n8n.io" target="_blank" rel="noopener">n8n</a>. It is
+            not the n8n AI Assistant.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Which computers?</summary>
+          <p>
+            Mac with macOS 14 or later, Windows 11 in preview, or <a href={`${base}deploy/self-host/`} target="_blank" rel="noopener">your own server</a> for one
+            person.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Can I use it in Europe?</summary>
+          <p>
+            Yes. Nod runs on your own computer, so it works wherever your computer does, including the EU, the UK and
+            Switzerland. Your AI provider's own terms still apply.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Where does my data go?</summary>
+          <p>
+            Nod's database, files, memory, and saved logins <a href={`${base}trust/privacy/`} target="_blank" rel="noopener">stay on your machine</a>. Your AI
+            provider gets what it needs for each task, and app connections go through a <a href={`${base}connect/apps/`} target="_blank" rel="noopener"
+              >connection service</a
+            >. Beyond update checks, nothing goes to n8n unless you turn on usage data or send feedback.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Does it work when my laptop is closed?</summary>
+          <p>
+            Not yet. <a href={`${base}use/schedules/`} target="_blank" rel="noopener">Schedules</a> run while your machine is on. Some testers run it on a <a
+              href={`${base}deploy/mac-mini/`} target="_blank" rel="noopener">Mac mini</a
+            > that stays on. A hosted version is coming soon.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Can I run it in the cloud?</summary>
+          <p>Not yet. A hosted, always-on Nod is coming soon. Join the waitlist and we will tell you when it is ready.</p>
+        </details>
+        <details class="lp-faq">
+          <summary>Can it make mistakes?</summary>
+          <p>
+            Yes. Its <a href={`${base}trust/`} target="_blank" rel="noopener">safety check</a> is a model's judgement, and Nod is an experiment. That is why it
+            asks before anything you didn't ask for, and why everything it did is on record.
+          </p>
+        </details>
+        <details class="lp-faq">
+          <summary>Where can I get help?</summary>
+          <p>
+            Start with the <a href={base} target="_blank" rel="noopener">docs</a>, which cover setup and the <a href={`${base}deploy/troubleshooting/`} target="_blank" rel="noopener"
+              >common problems</a
+            >. If something goes wrong, choose <a href={`${base}use/chat/#send-feedback`} target="_blank" rel="noopener">Send feedback</a> in the chat. It goes
+            to the Nod team at n8n, with a diagnostic report if you add one.
+          </p>
+        </details>
+      </div>
+
+      <section class="lp-hard-ones-heading">
+        <div class="lp-hard-ones-frame lp-dot-grid-bg">
+          <h2>Hand it the <span class="lp-pink-accent">hard ones</span></h2>
+        </div>
+        <p class="lp-hard-ones-sub wide">Jobs that take an afternoon of tabs, logins and forms. Nod finishes them start to end.</p>
+      </section>
+
+      <div class="lp-carousel" id="hardOnesCarousel">
+        <div class="lp-cards-row" id="hardOnesTrack">
+          <div class="lp-usecase-card pat-finance align-bottom" style="background:#e7e6dd">
+            <p class="lp-usecase-category mono">Finance</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Chase it until it's paid</p>
+              <p class="lp-usecase-desc">Friendly reminders, and it asks before a second nudge</p>
+            </div>
+          </div>
+          <div class="lp-usecase-card pat-lifeadmin align-top" style="background:var(--gray-15)">
+            <p class="lp-usecase-category mono">Life Admin</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Get your money back</p>
+              <p class="lp-usecase-desc">Cancels, turns down the offers to stay, asks for a refund</p>
+            </div>
+          </div>
+          <div class="lp-usecase-card pat-work align-bottom" style="background:var(--pink-10)">
+            <p class="lp-usecase-category mono">Work</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Client requests into tasks</p>
+              <p class="lp-usecase-desc">From email and Slack into Linear, skipping duplicates</p>
+            </div>
+          </div>
+          <div class="lp-usecase-card pat-shopping align-top" style="background:#d2ceca">
+            <p class="lp-usecase-category mono">Reports</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Your weekly numbers, with what changed</p>
+              <p class="lp-usecase-desc">Every Monday, from behind the login into your sheet</p>
+            </div>
+          </div>
+          <div class="lp-usecase-card pat-grocery align-bottom" style="background:var(--gray-20)">
+            <p class="lp-usecase-category mono">Admin</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Month-end paperwork, done</p>
+              <p class="lp-usecase-desc">Bank and tax statements, downloaded and filed by name</p>
+            </div>
+          </div>
+          <div class="lp-usecase-card pat-travel align-bottom" style="background:#f2effe">
+            <p class="lp-usecase-category mono">Travel</p>
+            <div class="lp-usecase-body">
+              <p class="lp-usecase-title">Book the team offsite</p>
+              <p class="lp-usecase-desc">Compares three spaces, books the best once you say go</p>
+            </div>
           </div>
         </div>
+      </div>
+
+      <section class="lp-final-cta">
+        <div class="lp-cta-frame">
+          <a class="lp-download-btn lp-final-cta-btn mono" href={download}>Start building</a>
+          <img class="lp-crosshair tl" src={crosshair} alt="" />
+          <img class="lp-crosshair tr" src={crosshair} alt="" />
+          <img class="lp-crosshair bl" src={crosshair} alt="" />
+          <img class="lp-crosshair br" src={crosshair} alt="" />
+        </div>
       </section>
 
-      <footer class="foot">
-        <div class="note">
-          <nod-glyph size="18" mood="idle"></nod-glyph>
-          <span>An n8n Labs experiment. It may or may not become a product.</span>
-        </div>
-        <nav>
-          <a href={privacy} target="_blank" rel="noopener">Privacy</a>
-          <a href="https://n8n.io/imprint/" target="_blank" rel="noopener">Imprint</a>
+      <footer class="lp-footer">
+        <p class="lp-logo-tag"><img class="glyph" src={nodMark} alt="" />Nod by n8n labs</p>
+        <nav class="lp-footer-nav">
+          <a href="https://n8n.io/legal/privacy/">Privacy</a>
+          <a href="https://n8n.io/imprint/">Imprint</a>
           <a href={base}>Docs</a>
           <a href={github}>GitHub</a>
         </nav>
@@ -355,14 +655,19 @@ const split = `${card};display:flex;flex-direction:column;justify-content:space-
     </div>
 
     <script>
-      import '../scripts/nod-glyph.js';
-      import '../scripts/nod-field.js';
-      import '../scripts/nod-drift-row.js';
-      import { startDemo } from '../scripts/nod-demo.js';
-      import { startDownload } from '../scripts/nod-download.js';
+      import { startCarousel } from '../scripts/carousel.js';
+      import { startCountUp } from '../scripts/count-up.js';
+      import { startEqualPanels } from '../scripts/equal-panels.js';
+      import { startHeroGlyph } from '../scripts/hero-glyph.js';
+      import { startHeroVideo } from '../scripts/hero-video.js';
+      import { startRoadmapLine } from '../scripts/roadmap-line.js';
 
-      startDemo();
-      startDownload();
+      startCarousel();
+      startCountUp();
+      startEqualPanels();
+      startRoadmapLine();
+      startHeroGlyph();
+      startHeroVideo();
     </script>
   </body>
 </html>
