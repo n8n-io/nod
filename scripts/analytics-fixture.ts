@@ -3,7 +3,7 @@ import { gunzipSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer as createViteServer } from 'vite';
 
 const port = Number(process.env.NOD_ANALYTICS_FIXTURE_PORT ?? '0');
@@ -157,10 +157,22 @@ const vite = await createViteServer({
       name: 'synthetic-analytics-destination',
       enforce: 'pre',
       transform(code, id) {
-        if (id.endsWith('/src/shared/analytics.ts'))
-          return code.replace(/phc_[A-Za-z0-9]+/, 'phc_synthetic_fixture');
-        if (id.endsWith('/src/shared/posthog-host.json'))
-          return code.replace('https://eu.i.posthog.com', origin);
+        if (!id.endsWith('/src/shared/posthog-host.json')) return;
+        const config = JSON.parse(code);
+        if (
+          config.host !== 'https://eu.i.posthog.com' ||
+          typeof config.key !== 'string' ||
+          createHash('sha256').update(config.key).digest('hex') !==
+            '2e3bc72156d3973a771353bf9e39fcda57fcc9641b2d59ca579d3718b14dc6e0' ||
+          config.schemaVersion !== 'v4' ||
+          Object.keys(config).length !== 3
+        )
+          throw new Error('The synthetic analytics destination could not be verified.');
+        return JSON.stringify({
+          host: origin,
+          key: 'phc_synthetic_fixture',
+          schemaVersion: config.schemaVersion,
+        });
       },
     },
   ],

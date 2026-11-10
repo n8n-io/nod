@@ -1323,12 +1323,24 @@ describe('account routes', () => {
         installationId: randomUUID(),
       });
       t.after(() => analytics.shutdown());
-      const f = await fixture(analytics, undefined, undefined, undefined, () => ({
+      const model = {
         provider,
         name: 'PRIVATE_MODEL_CANARY',
-        configured: true,
-      }));
+        configured: false,
+      };
+      const f = await fixture(analytics, undefined, undefined, undefined, () => model);
       t.after(() => f.app.close());
+      assert.equal(
+        (
+          await f.app.inject({
+            method: 'POST',
+            url: '/api/account/model-setup',
+            headers: { origin },
+          })
+        ).statusCode,
+        409,
+      );
+      model.configured = true;
       const complete = () =>
         f.app.inject({
           method: 'PATCH',
@@ -1343,8 +1355,70 @@ describe('account routes', () => {
       assert.equal(events[0].properties.provider, expected);
       assert.equal(Object.hasOwn(events[0].properties, 'model_provider'), false);
       assert.equal(Object.hasOwn(events[0].properties, 'model'), false);
+      const setup = captured.filter(({ event }) => event === 'model_setup_completed');
+      assert.equal(setup.length, 1);
+      assert.equal(setup[0].properties.provider, expected);
+      assert.equal(setup[0].properties.model, 'custom');
       assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
     }
+  });
+
+  test('model setup records a usable selected model before onboarding completion with consent', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'development',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    t.after(() => analytics.shutdown());
+    const selected = {
+      provider: 'openai',
+      name: 'openai/gpt-6-luna-decisions',
+      configured: false,
+    };
+    const f = await fixture(analytics, undefined, undefined, undefined, () => selected);
+    t.after(() => f.app.close());
+    const completeModelSetup = () =>
+      f.app.inject({ method: 'POST', url: '/api/account/model-setup', headers: { origin } });
+    const update = (payload: object) =>
+      f.app.inject({ method: 'PATCH', url: '/api/account', headers: { origin }, payload });
+
+    assert.equal((await completeModelSetup()).statusCode, 409);
+    selected.configured = true;
+    assert.equal((await completeModelSetup()).statusCode, 200);
+    assert.equal(captured.filter(({ event }) => event === 'model_setup_completed').length, 0);
+
+    assert.equal((await update({ usageData: true })).statusCode, 200);
+    assert.equal((await completeModelSetup()).statusCode, 200);
+    let setup = captured.filter(({ event }) => event === 'model_setup_completed');
+    assert.equal(setup.length, 1);
+    assert.equal(setup[0].properties.provider, 'openai');
+    assert.equal(setup[0].properties.model, 'openai/gpt-6-luna-decisions');
+    assert.equal(
+      captured.some(({ event }) => event === 'onboarding_completed'),
+      false,
+    );
+
+    selected.provider = 'compatible';
+    selected.name = 'https://private-model.example.test/account';
+    assert.equal((await completeModelSetup()).statusCode, 200);
+    setup = captured.filter(({ event }) => event === 'model_setup_completed');
+    assert.equal(setup.length, 2);
+    assert.equal(setup[1].properties.provider, 'compatible');
+    assert.equal(setup[1].properties.model, 'custom');
+    assert.doesNotMatch(JSON.stringify(captured), /private-model/);
+
+    assert.equal((await update({ onboardingCompleted: true })).statusCode, 200);
+    assert.equal((await completeModelSetup()).statusCode, 409);
+    setup = captured.filter(({ event }) => event === 'model_setup_completed');
+    assert.equal(setup.length, 3);
+    assert.equal(setup[2].properties.provider, 'compatible');
+    assert.equal(setup[2].properties.model, 'custom');
+    assert.deepEqual(
+      captured.slice(-2).map(({ event }) => event),
+      ['model_setup_completed', 'onboarding_completed'],
+    );
   });
 
   test('conversation traces stay off until the owner opts in, stop at once and leave without personal data', async (t) => {

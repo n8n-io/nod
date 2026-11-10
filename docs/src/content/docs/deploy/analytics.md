@@ -13,7 +13,7 @@ Messages, generated content, connected-app results, and credentials are excluded
 
 ## Turn usage sharing on or off
 
-Change **Share usage data** in **Settings → Privacy & data**. Existing owners keep their saved choice. The welcome screen, About you's opening message and onboarding's privacy step say that usage data is shared; the native Welcome window sends no events.
+Change **Share usage data** in **Settings → Privacy & data**. Existing owners keep their saved choice. The welcome screen, About you's opening message and onboarding's privacy step say that usage data is shared. A fresh packaged local app records when its first native setup window becomes visible while sharing is on by default; returning profiles wait for their saved choice before recording an app open.
 
 The deployment must also allow collection. `NOD_ANALYTICS_ENABLED=false` always disables it.
 
@@ -32,7 +32,7 @@ flowchart LR
 
 Restart Nod after changing either variable. To disable the separate feedback collector too, set `NOD_FEEDBACK_ENABLED=false`. Model providers, connected services, and software updates have separate network access.
 
-Opt-out drops unsent events. Turning sharing back on doesn't revive events from the earlier sharing period. It can't recall events already transmitted.
+Opt-out drops unsent events. Turning sharing back on doesn't revive events from the earlier sharing period. It can't recall an opening event already sent under the default-on setting or other events already transmitted.
 
 ### Stop sharing or delete past data
 
@@ -40,7 +40,7 @@ Turning sharing off stops new analytics events and person-profile updates. It do
 
 ## Identity and environments
 
-Analytics groups observed events by a pseudonymous analytics ID (`local:<UUID>`) stored with the server data root. A local desktop uses its local profile; web and desktop clients connected to one server share that server's ID. The team counts each unique ID once as an observed install; there is no separate install event. First observation can happen after installation or first open. Distinct-ID charts count observed sharing runtime profiles, not downloads, verified client installations, devices, or people.
+Analytics groups observed events by a pseudonymous analytics ID (`local:<UUID>`) stored with the server data root. A local desktop uses its local profile; web and desktop clients connected to one server share that server's ID. The team counts each unique ID once as an observed install; there is no separate install event. A fresh packaged local app can first appear when its native setup window opens. Other IDs can first appear later than installation or first open. A local desktop ID is not joined to the different server ID if that desktop later connects to a remote server. Distinct-ID charts count observed sharing runtime profiles, not downloads, verified client installations, devices, or people.
 
 The ID persists across updates while its data root exists; removing that data creates a new ID, while a copied profile or explicitly supplied server ID can reuse one. An ID's first recorded `v4` production event marks when it entered the observed sample, not its install or first-open time. Events appear only while collection and sharing are enabled.
 
@@ -85,7 +85,7 @@ Events use `analytics_schema=v4`, `environment`, and `app_version` when availabl
 
 UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Server events add `capture_source=server`.
 
-Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
+Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The native first-open event has its time and UUID but no browser session or window metadata. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
 The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Ordinary events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`). Explicit `$set` calls add the fixed About you choices and, after separate consent, `email` and consent metadata under the analytics ID.
 
@@ -104,11 +104,14 @@ Model events use one `provider` property. Onboarding completion and execution st
 | Event                                             | What it records                                                                                                                                     |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                                       | Normalized app route. URLs use the placeholder `https://app.example` host.                                                                          |
-| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `about`, `brain`, `privacy`, `join`) and direction. Native Welcome isn't observed.                                        |
+| `app_opened`                                      | First visible native setup window for a fresh packaged local profile, or first consented primary app UI session, with a fixed entry and route.      |
+| `startup_path_selected`                           | Fresh native Welcome navigation: local Get started, opening the remote-server form, or returning to Welcome. It does not confirm server connection. |
+| `onboarding_step_viewed`                          | Step (`welcome`, `email`, `about`, `brain`, `privacy`, `join`) and direction. The native setup window has no step-view event.                       |
 | `onboarding_step_skipped`                         | Skipped `email` step.                                                                                                                               |
 | `onboarding_profile_answered`                     | Finished About you: scope, one true/false per role and task, conditional who-for answer, company size, and fixed skip/other markers. No typed text. |
 | `onboarding_community_opened`                     | Discord or forum opened from Join us.                                                                                                               |
 | `onboarding_updates_email_submitted`              | Updates email accepted by PostHog after its consent box was ticked, without the address in this event.                                              |
+| `model_setup_completed`                           | A usable selected model verified when setup reaches Privacy: provider and catalog-safe model, or `custom`.                                          |
 | `onboarding_completed`                            | First saved completion and selected model provider, when available.                                                                                 |
 | `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                                                            |
 | `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                         |
@@ -128,7 +131,9 @@ Model events use one `provider` property. Onboarding completion and execution st
 
 Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
-Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the PostHog person profile tied to the analytics ID, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately. Model setup can be bypassed when already configured. `onboarding_completed` follows a successful required-model check and can identify its provider, but only among IDs that finished setup. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
+Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the PostHog person profile tied to the analytics ID, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately. Model setup can be bypassed when already configured. On reaching Privacy, Nod verifies the selected model and emits `model_setup_completed` while sharing is on; this includes the preconfigured path. Successful final setup also emits this milestone as a fallback if the Privacy request was missed. A return to Privacy can emit another observation, so model-mix insights select one milestone per analytics ID. `onboarding_completed` follows a successful final required-model check and can identify its provider, but only among IDs that finished setup. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; the native setup window has no step-view event.
+
+Native setup-opening and startup-path events use the local desktop ID. Opening the server form records a remote path choice, and returning to Welcome records a new path choice. A connected server uses its own analytics ID, so native-to-server activation cannot be joined across those IDs. If sharing is turned off after the opening event, later path and setup events are absent; missing continuation is not confirmed abandonment.
 
 ### Runs, models, and connected services
 
@@ -146,6 +151,7 @@ Connecting email is optional. About you answers are counted as fixed choices in 
 | `model_connection_changed`, `model_connection_observed` | Provider, API-key/subscription/OAuth method, status or selected-model state, and bounded effort.                                                                                     |
 | `connection_changed`, `connection_observed`             | Public app or `custom`, connection method, and status/bounded failure reason where applicable.                                                                                       |
 | `connection_inventory_observed`                         | Zero-inclusive latest observed connected app types and their count. Public app slugs and `custom` only; no account count or names.                                                   |
+| `channel_connection_observed`                           | Telegram or WhatsApp and a bounded disabled, setup-pending, connected, or configured-unverified state. No handle, number, or account ID.                                             |
 | `service_used`                                          | App, method, outcome, milliseconds, bounded failure reason, and optional preparation phase.                                                                                          |
 | `source_read`                                           | Source category (`connected_app`, `tasks`, `other`), discovery/record-read operation, outcome, milliseconds, and bounded record/unavailable counts.                                  |
 | `confirmation_changed`                                  | Asked/approved/declined/executed/expired/uncertain, fixed action kind, and turn source.                                                                                              |
@@ -167,6 +173,8 @@ Task completion records a declared status, not verified success. `notified` mean
 An explicitly reported API cost of zero remains zero. A zero estimate without a reported charge is unpriced and has no `cost_usd`. Positive plan estimates remain priced even when the provider reports no charge. Costs are rounded to six decimal places after pricing is classified, so a tiny known cost can display as zero.
 
 Saved connections don't prove access works. Successful service calls don't prove task success. Connection observations occur at startup, when sharing turns on, and after changes. Individual `connection_observed` events omit the zero state and can include older connections. `connection_inventory_observed` adds one zero-inclusive app-type snapshot after a successful read; the latest snapshot is the latest observed state, not continuously verified live inventory. Several accounts of the same public app, or several custom connections, count as one type. Source reads measure observed calls and bounded results, without source identifiers or content.
+
+Channel observations include both channels, including disabled ones, after a successful settings read while sharing is on. Telegram reports `connected` only after an owner is paired and its configured polling or registered webhook mode is ready. Linked WhatsApp reports `connected` only while the link reports that state; a configured cloud webhook remains `configured_unverified`. These states describe observed setup, not successful message delivery.
 
 Setting changes exclude rejected and unchanged writes. Turning usage sharing off prevents capture of that change too. Local browser notification choices are `enabled`, `disabled`, or `dismissed`. `dismissed` means saving **Not now**, not closing a delivered notification. Theme values are `light`, `dark`, or `system`. Launch-at-login and desktop notifications use `enabled` or `disabled`.
 

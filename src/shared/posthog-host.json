@@ -1,3 +1,5 @@
 {
-  "host": "https://eu.i.posthog.com"
+  "host": "https://eu.i.posthog.com",
+  "key": "phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV",
+  "schemaVersion": "v4"
 }

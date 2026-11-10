@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
     return () => settingsListeners.delete(listener);
   },
   getPreferences: () => invoke('nod:preferences:get'),
+  takeAppOpening: (consented, distinctId) => invoke('nod:analytics:opening', consented, distinctId),
   getFeedbackContext: () => invoke('nod:feedback:context'),
   captureFeedbackScreenshot: () => invoke('nod:feedback:capture'),
   onFeedbackRequested: (listener) => {

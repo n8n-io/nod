@@ -53,18 +53,19 @@ code, findings = scan(f'{sql}; api_key = "{candidate}"')
 if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
     raise SystemExit("A generated secret beside the SQL assignment must fail secret scanning.")
 
-analytics_path = "src/shared/analytics.ts"
+analytics_path = "src/shared/posthog-host.json"
 analytics = (config.parent / analytics_path).read_text()
 code, findings = scan(analytics, analytics_path)
 if code != 0 or findings:
     raise SystemExit("The public PostHog ingestion token must pass secret scanning.")
 
 for secret in ["phx_" + candidate[:44], "phs_" + candidate[:44], "phc_" + candidate[:44], candidate]:
-    code, findings = scan(f'{analytics}\napi_key = "{secret}"', analytics_path)
+    with_secret = {**json.loads(analytics), "api_key": secret}
+    code, findings = scan(json.dumps(with_secret), analytics_path)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("Other tokens beside the public token must fail secret scanning.")
 
-for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
+for filename in ["app.ts", "nested/src/shared/posthog-host.json"]:
     code, findings = scan(analytics, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")

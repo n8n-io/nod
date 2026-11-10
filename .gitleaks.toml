@@ -27,7 +27,7 @@ regexes = ["^waiting_credentials',waiting_reason='$"]
 description = "The public PostHog ingestion token is intentionally bundled with the client."
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['^src/shared/analytics\.ts$', '^deployment/n8n/desktop-releases\.mjs$']
+paths = ['^src/shared/analytics\.ts$', '^src/shared/posthog-host\.json$', '^deployment/n8n/desktop-releases\.mjs$']
 regexTarget = "secret"
 regexes = ['^phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV$']
 

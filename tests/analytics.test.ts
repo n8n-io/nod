@@ -52,15 +52,23 @@ const analytics=await import('./src/web/lib/analytics.ts');
 const {setRequestAccount}=await import('./src/web/lib/api.ts');
 const {setAnalyticsClient,configureAnalytics,capturePageview,captureAnalytics,analyticsForCurrentSession}=analytics;
 const checks=[];const check=(id,pass)=>checks.push({id,pass});
-const configuration={enabled:true,distinctId:'local:synthetic-owner-one',environment:'production'};
-setRequestAccount('synthetic-owner-one');setAnalyticsClient(client);configureAnalytics(configuration,'web');flushFrames();
+const appOpens=()=>captured.filter(event=>event.event==='app_opened');
+const configuration={enabled:true,distinctId:'local:synthetic-owner-one',environment:'production',appVersion:'1.2.3'};
+setRequestAccount('synthetic-owner-one');setAnalyticsClient(client);configureAnalytics({...configuration,enabled:false,distinctId:null},'web');flushFrames();
+check('AO-no-consent',appOpens().length===0);
+configureAnalytics({...configuration,distinctId:null},'web');flushFrames();
+check('AO-no-id',appOpens().length===0);
+configureAnalytics(configuration,'web');flushFrames();
+check('AO-first',appOpens().length===1&&appOpens()[0].properties.route==='/settings'&&appOpens()[0].properties.surface==='web'&&appOpens()[0].properties.environment==='production'&&appOpens()[0].properties.app_version==='1.2.3');
+configureAnalytics(configuration,'web');flushFrames();
+check('AO-no-refresh-duplicate',appOpens().length===1);
 check('NR1-config',client.options.disable_session_recording===true&&client.options.disable_external_dependency_loading===true);
 client._send_request({url:client.options.api_host+'/flags/?v=2',method:'POST',data:{token:client.token,distinct_id:configuration.distinctId}});
 client._send_request({url:client.options.api_host+'/array/'+client.token+'/config',method:'GET'});
-check('NR1-flags',sent.length===0);
+check('NR1-flags',sent.length===1);
 capturePageview(window.location.href);
-check('NR4-pageview',sent.length===1&&sent[0].data[0].event==='$pageview'&&sent[0].data[0].properties.$current_url==='https://app.example/settings');
-check('NE1-schema',sent[0].data[0].properties.analytics_schema==='v4');
+check('NR4-pageview',sent.length===2&&sent[1].data[0].event==='$pageview'&&sent[1].data[0].properties.$current_url==='https://app.example/settings');
+check('NE1-schema',sent[1].data[0].properties.analytics_schema==='v4');
 const snapshot={event:'$snapshot',properties:{$snapshot_data:[{data:{textContent:'PRIVATE_SCREEN_CANARY'}}],$snapshot_bytes:20,$snapshot_source:'web'}};
 check('NR2-snapshot',client.options.before_send(snapshot)===null);
 check('NR2-unknown',client.options.before_send({event:'$autocapture',properties:{text:'PRIVATE_SCREEN_CANARY'}})===null);
@@ -91,21 +99,93 @@ captureAnalytics('settings_viewed',{tab:'general'});
 client._send_request({url:client.options.api_host+'/e/',data:[queued]});
 check('NR5-disabled',sent.length===before&&client.options.before_send(snapshot)===null);
 configureAnalytics(configuration,'web');flushFrames();
+check('AO-no-consent-duplicate',appOpens().length===1);
 staleCapture('settings_viewed',{tab:'memory'});
 client._send_request({url:client.options.api_host+'/e/',data:[queued]});
 client._retryQueue.retriableRequest({url:client.options.api_host+'/e/',data:[queued]});
 check('NR5-stale',sent.length===before);
 captureAnalytics('settings_viewed',{tab:'models'});
 check('NR5-current',sent.length===before+1&&sent.at(-1).data[0].properties.tab==='models');
+window.history.replaceState(null,'','/browser');
 setRequestAccount('synthetic-owner-two');configureAnalytics({...configuration,distinctId:'local:synthetic-owner-two'},'desktop');flushFrames();
+check('AO-no-secondary-route',appOpens().length===1);
+window.history.replaceState(null,'','/apps');
 capturePageview('/apps');
+check('AO-primary-after-secondary',appOpens().length===2&&appOpens()[1].properties.route==='/apps'&&appOpens()[1].properties.surface==='desktop');
 check('NR1-owner-change',sent.at(-1).data[0].properties.surface==='desktop'&&configurations.every(options=>options.disable_session_recording===true));
+window.opener={};
+setRequestAccount('synthetic-owner-three');configureAnalytics({...configuration,distinctId:'local:synthetic-owner-three'},'desktop');flushFrames();
+check('AO-no-secondary-window',appOpens().length===2);
+window.opener=null;
 check('NR1-never-started',recordingStarts===0&&remoteLoads===0);
 check('NR3-no-replay-api',!Object.hasOwn(analytics,'analyticsReplaySession'));
 check('NR4-no-private-content',!JSON.stringify(sent).includes('PRIVATE_')&&!JSON.stringify(sent).includes('private-host'));
 configureAnalytics(undefined);dom.window.close();
 console.log(JSON.stringify({checks,eventCount:captured.length}));
 assert.ok(checks.every(check=>check.pass),checks.filter(check=>!check.pass).map(check=>check.id).join(', '));
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+});
+
+test('desktop first-open capture follows consent changes while its bridge is pending', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html>',{url:'https://app.example/onboarding'});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document});
+const calls=[];const captured=[];let resolveFirst;let accepted=0;let nativeFallback=false;
+const first=new Promise(resolve=>{resolveFirst=resolve});
+window.nodDesktop={
+ getSettings:async()=>({}),
+ takeAppOpening(consented,distinctId){
+  calls.push({consented,distinctId});
+  if(!consented)return Promise.resolve(null);
+  if(++accepted===1)return first;
+  if(nativeFallback)return Promise.resolve({openedAt:1700000002000,uuid:'00000000-0000-4000-8000-000000000004',entry:'native_setup'});
+  return Promise.resolve({openedAt:1700000001000,uuid:'00000000-0000-4000-8000-000000000002',entry:'app_ui'});
+ },
+};
+const client={
+ init(_key,options){this.options=options;options.loaded?.()},
+ capture(event,properties,options){
+  const value=this.options.before_send({event,properties,uuid:options?.uuid,timestamp:options?.timestamp});
+  if(value)captured.push(value);
+  return value;
+ },
+ _send_request(){},reset(){},set_config(options){this.options={...this.options,...options}},
+};
+const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setRequestAccount}=await import('./src/web/lib/api.ts');
+const settle=async()=>{for(let i=0;i<12;i++)await new Promise(setImmediate)};
+const distinctId='local:00000000-0000-4000-8000-000000000001';
+const configuration={enabled:true,distinctId,environment:'production',appVersion:'1.2.3'};
+setRequestAccount('owner-one');setAnalyticsClient(client);
+configureAnalytics(configuration,'desktop');
+configureAnalytics(configuration,'desktop');
+await settle();
+assert.deepEqual(calls.map(call=>call.consented),[true]);
+configureAnalytics({...configuration,enabled:false,distinctId:null},'desktop');
+configureAnalytics(configuration,'desktop');
+resolveFirst({openedAt:1700000000000,uuid:'00000000-0000-4000-8000-000000000003',entry:'native_setup'});
+await settle();
+assert.deepEqual(calls.map(call=>call.consented),[true,false,true]);
+assert.equal(captured.length,1);
+assert.equal(captured[0].properties.entry,'app_ui');
+assert.equal(captured[0].properties.route,'/onboarding');
+assert.equal(captured[0].uuid,'00000000-0000-4000-8000-000000000002');
+assert.equal(new Date(captured[0].timestamp).getTime(),1700000001000);
+nativeFallback=true;
+window.history.replaceState(null,'','/apps');
+setRequestAccount('owner-two');
+configureAnalytics({...configuration,distinctId:'local:00000000-0000-4000-8000-000000000005'},'desktop');
+await settle();
+assert.equal(captured.length,2);
+assert.equal(captured[1].properties.entry,'native_setup');
+assert.equal(captured[1].properties.route,'/onboarding');
+configureAnalytics(undefined,'desktop');dom.window.close();
 `,
   });
   assert.equal(result.exitCode, 0, result.stdout + result.stderr);
@@ -410,14 +490,14 @@ try{
   const first=eventsById.get(firstId);
   const second=eventsById.get(secondId);
   assert.deepEqual(first.map(event=>event.event),[
-    'onboarding_profile_answered','onboarding_updates_email_submitted',
+    'app_opened','onboarding_profile_answered','onboarding_updates_email_submitted',
   ]);
-  assert.deepEqual(second.map(event=>event.event),['onboarding_profile_answered']);
+  assert.deepEqual(second.map(event=>event.event),['app_opened','onboarding_profile_answered']);
   for(const [key,value] of Object.entries(fullAnswers))
-    assert.equal(first[0].properties[key],value,key);
-  assert.equal(second[0].properties.role_agency,true);
-  assert.equal(second[0].properties.who_for,'me');
-  assert.equal(second[0].properties.company_size,'11_100');
+    assert.equal(first[1].properties[key],value,key);
+  assert.equal(second[1].properties.role_agency,true);
+  assert.equal(second[1].properties.who_for,'me');
+  assert.equal(second[1].properties.company_size,'11_100');
   assert.equal(eventsById.has(thirdId),false);
   assert.equal(personRequests.length,3);
   assert.ok(personRequests.every(request=>request.event==='$set'));

@@ -77,6 +77,8 @@ The trace also includes Nod's instructions, the model name, token counts, and co
 
 Both switches are in **Settings → Privacy & data**. Turning one off stops new sends at once. It does not delete data already sent, including About you answers and a consented email. To request deletion, use **Send feedback**. A server operator can turn either switch off for everyone.
 
+On a fresh packaged desktop profile, the default-on usage setting can send the first native setup-window open before you reach this switch. Turning sharing off later stops new sends but cannot recall that opening event.
+
 Select **How Nod uses your data** next to the **Privacy & data** heading to see this summary in Nod.
 
 ![The How Nod uses your data panel, with usage data on and conversation traces off.](../../../assets/screens/how-nod-uses-your-data.png)

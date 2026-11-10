@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import {
   ChannelSetupFailure,
+  telegramSecret,
   telegramUserId,
   type ChannelSetupConfiguration,
   type ChannelSetupVerifier,
@@ -18,6 +19,71 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { ChannelPairingRequest } from '../ports/messaging.ts';
 
 const providerSchema = z.enum(['telegram', 'whatsapp']);
+export type ChannelConnectionObservation = {
+  channel: ChannelProvider;
+  state: 'disabled' | 'setup_pending' | 'connected' | 'configured_unverified';
+};
+
+function managedConfigurationReady(provider: ChannelProvider, values: Record<string, string>) {
+  if (provider === 'telegram')
+    return (
+      /^\d+:[A-Za-z0-9_-]+$/.test(values.TELEGRAM_BOT_TOKEN ?? '') &&
+      telegramSecret.test(values.TELEGRAM_WEBHOOK_SECRET_TOKEN ?? '')
+    );
+  if (values.WHATSAPP_POLICY_CONFIRMED !== 'true') return false;
+  if (values.WHATSAPP_MODE === 'bot' || values.WHATSAPP_MODE === 'self-chat')
+    return (
+      values.WHATSAPP_MODE === 'self-chat' ||
+      /^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
+    );
+  return (
+    values.WHATSAPP_MODE === 'cloud' &&
+    [
+      'WHATSAPP_ACCESS_TOKEN',
+      'WHATSAPP_APP_SECRET',
+      'WHATSAPP_PHONE_NUMBER_ID',
+      'WHATSAPP_ALLOWED_NUMBER',
+      'WHATSAPP_VERIFY_TOKEN',
+    ].every((name) => Boolean(values[name])) &&
+    /^\d+$/.test(values.WHATSAPP_PHONE_NUMBER_ID ?? '') &&
+    /^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
+  );
+}
+
+export function channelConnectionObservations(
+  channels: ChannelSetupSummary[],
+  managed: Partial<Record<ChannelProvider, Record<string, string>>> = {},
+): ChannelConnectionObservation[] {
+  const telegram = channels.find((channel) => channel.provider === 'telegram');
+  const whatsapp = channels.find((channel) => channel.provider === 'whatsapp');
+  const telegramState: ChannelConnectionObservation['state'] = !telegram?.enabled
+    ? 'disabled'
+    : (managed.telegram && !managedConfigurationReady('telegram', managed.telegram)) ||
+        !telegram.allowedUserId ||
+        telegram.pairingExpiresAt ||
+        telegram.webhookStatus === 'registration_pending'
+      ? 'setup_pending'
+      : telegram.mode === 'polling' ||
+          (telegram.mode === 'webhook' && telegram.webhookStatus === 'registered')
+        ? 'connected'
+        : 'configured_unverified';
+  const whatsappState: ChannelConnectionObservation['state'] = !whatsapp?.enabled
+    ? 'disabled'
+    : managed.whatsapp && !managedConfigurationReady('whatsapp', managed.whatsapp)
+      ? 'setup_pending'
+      : whatsapp.mode === 'linked'
+        ? whatsapp.connectionState === 'connected'
+          ? 'connected'
+          : 'setup_pending'
+        : whatsapp.mode === 'webhook'
+          ? 'configured_unverified'
+          : 'setup_pending';
+  return [
+    { channel: 'telegram', state: telegramState },
+    { channel: 'whatsapp', state: whatsappState },
+  ];
+}
+
 const summarySchema = z.object({
   provider: providerSchema,
   enabled: z.boolean(),
@@ -279,6 +345,7 @@ export async function createChannelSettings(
     cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
     unlink?(): Promise<void>;
     paired?(candidate: TelegramPairingCandidate, client: PoolClient): Promise<() => void>;
+    observed?(): (channels: ChannelConnectionObservation[]) => void;
   },
 ) {
   const owner = z.string().min(1).max(200).parse(options.ownerId);
@@ -313,6 +380,10 @@ export async function createChannelSettings(
     return result;
   }
   async function status() {
+    let observed: ((channels: ChannelConnectionObservation[]) => void) | undefined;
+    try {
+      observed = options.observed?.();
+    } catch {}
     const rows = (await store.read()).filter((row) => !managed[row.provider]);
     for (const provider of ['telegram', 'whatsapp'] as const) {
       const values = managed[provider];
@@ -336,7 +407,7 @@ export async function createChannelSettings(
     )
       ? await options.linkStatus?.().catch(() => undefined)
       : undefined;
-    return {
+    const result = {
       ready: options.keyStore.configured,
       channels: rows.map((row) =>
         summarySchema.parse({
@@ -353,6 +424,10 @@ export async function createChannelSettings(
         }),
       ),
     };
+    try {
+      observed?.(channelConnectionObservations(result.channels, managed));
+    } catch {}
+    return result;
   }
   async function activate(provider: ChannelProvider, configuration: ChannelSetupConfiguration) {
     if (!options.verifier.register) throw new ChannelSetupFailure('activation_pending');

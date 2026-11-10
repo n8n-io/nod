@@ -160,6 +160,11 @@ export function Onboarding({
     }
   }, [step, user.id]);
 
+  useEffect(() => {
+    if (step !== 'privacy') return;
+    void api('/api/account/model-setup', { method: 'POST', body: '{}' }).catch(() => {});
+  }, [step, user.id, usageShared]);
+
   useLayoutEffect(() => {
     if (main.current) {
       main.current.scrollTop = 0;

@@ -679,6 +679,7 @@ async function initializeApplication(
     appVersion: process.env.NOD_APP_VERSION,
   });
   let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
+  let observeChannels: (() => Promise<void>) | undefined;
   const feedbackActivity = createFeedbackActivity('runtime');
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     feedbackActivity.record(event.event, 'properties' in event ? event.properties : undefined);
@@ -702,6 +703,8 @@ async function initializeApplication(
       (event.event === 'settings_updated' && event.properties.section === 'models')
     )
       void observeConnections?.('models');
+    if (event.event === 'settings_updated' && event.properties.section === 'channels')
+      void observeChannels?.();
   };
   captureAnalytics.snapshot = () => {
     const consent = analytics.consent(ownerId);
@@ -1494,7 +1497,10 @@ async function initializeApplication(
       )
       .catch(() => {}));
   const stopConnectionInventory = analytics.subscribe(ownerId, (enabled) => {
-    if (enabled) void observeConnections?.();
+    if (enabled) {
+      void observeConnections?.();
+      void observeChannels?.();
+    }
   });
   void observeConnections();
   await clearConversationAnalytics(pool, ownerId);
@@ -2210,6 +2216,7 @@ async function initializeApplication(
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
+  let lastChannelObservation: { consentVersion: number; signature: string } | undefined;
   if (options.channels !== false && (adapters.messaging || adapters.messagingSetup)) {
     const setup = adapters.messagingSetup;
     if (setup) {
@@ -2234,6 +2241,29 @@ async function initializeApplication(
         paired: async (candidate, client) => {
           if (!channels) throw new Error('Messaging is not ready.');
           return channels.announcePairing(candidate, client);
+        },
+        observed: () => {
+          const consent = analytics.consent(ownerId);
+          return (states) => {
+            if (
+              !consent.enabled ||
+              consent.signal.aborted ||
+              consent.version !== analytics.consent(ownerId).version
+            )
+              return;
+            const signature = JSON.stringify(states);
+            if (
+              lastChannelObservation?.consentVersion === consent.version &&
+              lastChannelObservation.signature === signature
+            )
+              return;
+            for (const properties of states)
+              captureAnalytics(
+                { event: 'channel_connection_observed', properties },
+                { consentRevision: consent.revision },
+              );
+            lastChannelObservation = { consentVersion: consent.version, signature };
+          };
         },
       });
       channelSettings.registerRoutes(app);
@@ -2342,6 +2372,13 @@ async function initializeApplication(
     });
     channels.registerRoutes(app);
     await channelSettings?.recover();
+    if (channelSettings) {
+      const settings = channelSettings;
+      observeChannels = async () => {
+        await settings.status().catch(() => {});
+      };
+      void observeChannels();
+    }
   }
   await onboardingSuggestions.initialize();
   if (adapters.model.configured)

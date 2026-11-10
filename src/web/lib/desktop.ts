@@ -44,6 +44,12 @@ type DesktopFeedbackContext = {
   platform: string | null;
 };
 
+type DesktopAppOpening = {
+  openedAt: number;
+  uuid: string;
+  entry: 'native_setup' | 'app_ui';
+};
+
 type DesktopWindow = Window & {
   nodDesktop?: {
     remote?: boolean;
@@ -58,6 +64,10 @@ type DesktopWindow = Window & {
     onNavigate?(listener: (path: string) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
+    takeAppOpening?(
+      consented: boolean,
+      distinctId: string | null,
+    ): Promise<DesktopAppOpening | null>;
     getFeedbackContext?(): Promise<DesktopFeedbackContext>;
     captureFeedbackScreenshot?(): Promise<Uint8Array | null>;
     onFeedbackRequested?(listener: () => void): () => void;
@@ -151,6 +161,14 @@ export function saveDesktopChatReadCursor(
 
 export function desktopLinksAvailable() {
   return typeof (window as DesktopWindow).nodDesktop?.openExternal === 'function';
+}
+
+export function desktopAppOpeningAvailable() {
+  return typeof (window as DesktopWindow).nodDesktop?.takeAppOpening === 'function';
+}
+
+export function takeDesktopAppOpening(consented: boolean, distinctId: string | null) {
+  return (window as DesktopWindow).nodDesktop?.takeAppOpening?.(consented, distinctId);
 }
 
 export async function openConnection(url: string) {

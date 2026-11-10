@@ -71,9 +71,7 @@ window.addEventListener('unhandledrejection', (event) =>
 );
 sessionStore.subscribe(() => {
   const { session } = sessionStore.getSnapshot();
-  configureAnalytics(
-    session?.user || session?.analytics?.distinctId === null ? session?.analytics : undefined,
-  );
+  configureAnalytics(session?.user ? session.analytics : undefined);
 });
 
 if (window.location.pathname === '/trust')

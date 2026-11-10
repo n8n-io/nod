@@ -431,7 +431,9 @@ async function runningDesktop(
     environment = {},
     platform = process.platform === 'win32' ? 'win32' : 'darwin',
     packaged = false,
+    existingProfileRoot = false,
     buildMetadata,
+    nativeAnalyticsResponse = () => Response.json({ status: 'Ok' }),
     version = '0.0.0-test',
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
@@ -452,8 +454,11 @@ async function runningDesktop(
     });
     await storage.store.save({ notifications: false, launchAtLogin: false });
   }
+  if (packaged && (existingProfileRoot || storedProfile || initialState !== 'fresh'))
+    await mkdir(join(dirname(storage.path), 'nod', 'profiles', 'local'), { recursive: true });
   const windows = [];
   const children = [];
+  const nativeAnalytics = [];
   const helpers = [];
   const paths = new Map();
   const handlers = new Map();
@@ -596,7 +601,13 @@ async function runningDesktop(
     Date,
     setTimeout,
     clearTimeout,
-    fetch: request,
+    fetch: (resource, options) => {
+      if (String(resource) === `${posthogHost.host}/i/v0/e/`) {
+        nativeAnalytics.push(JSON.parse(options.body));
+        return nativeAnalyticsResponse(resource, options);
+      }
+      return request(resource, options);
+    },
     createSettingsStore: () => storage.store,
     createMacEncryption,
     serverOrigin,
@@ -865,6 +876,7 @@ async function runningDesktop(
     openLink: (value) => appEvents.emit('open-url', { preventDefault() {} }, value),
     windows,
     children,
+    nativeAnalytics,
     helpers,
     storage,
     handlers,
@@ -936,6 +948,292 @@ test('the normal engine uses the release boundary for analytics during first set
           assert.ok(
             f.children.every((child) => child.environment.NOD_ANALYTICS_ENABLED === 'false'),
           );
+      } finally {
+        await f.close();
+      }
+    });
+  }
+});
+
+test('fresh packaged Welcome captures one bounded opening and preserves an uncertain send for the app', async (t) => {
+  for (const accepted of [true, false]) {
+    await t.test(accepted ? 'accepted' : 'offline', async (t) => {
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            new URL(url).pathname === '/api/account'
+              ? { settings: { usageData: true } }
+              : { ok: true },
+          ),
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          packaged: true,
+          buildMetadata: { release: true },
+          version: '0.1.17',
+          nativeAnalyticsResponse: accepted
+            ? undefined
+            : async () => {
+                throw new Error('Synthetic offline capture');
+              },
+        },
+      );
+      try {
+        await f.launch();
+        for (let attempt = 0; !f.nativeAnalytics.length && attempt < 100; attempt++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(f.nativeAnalytics.length, 1);
+        const event = f.nativeAnalytics[0];
+        assert.equal(event.api_key, posthogHost.key);
+        assert.equal(event.event, 'app_opened');
+        assert.match(event.distinct_id, /^local:[0-9a-f-]{36}$/);
+        assert.equal(event.properties.analytics_schema, posthogHost.schemaVersion);
+        assert.equal(event.properties.environment, 'production');
+        assert.equal(event.properties.surface, 'desktop');
+        assert.equal(event.properties.app_version, '0.1.17');
+        assert.equal(event.properties.entry, 'native_setup');
+        assert.equal(event.properties.$geoip_disable, true);
+        assert.equal(event.properties.$process_person_profile, false);
+        assert.deepEqual(
+          Object.keys(event.properties).sort(),
+          [
+            '$current_url',
+            '$geoip_disable',
+            '$host',
+            '$pathname',
+            '$process_person_profile',
+            'analytics_schema',
+            'app_version',
+            'entry',
+            'environment',
+            'route',
+            'surface',
+          ].sort(),
+        );
+        let setup = f.windows[0];
+        let setupEvent = {
+          sender: setup.webContents,
+          senderFrame: setup.webContents.mainFrame,
+        };
+        if (accepted) {
+          await f.handlers.get('nod:connection:open')(setupEvent);
+          const server = f.windows.at(-1);
+          assert.notEqual(server, setup);
+          f.handlers.get('nod:connection:close')({
+            sender: server.webContents,
+            senderFrame: server.webContents.mainFrame,
+          });
+          setup = f.windows.at(-1);
+          assert.notEqual(setup, server);
+          setupEvent = {
+            sender: setup.webContents,
+            senderFrame: setup.webContents.mainFrame,
+          };
+          await f.handlers.get('nod:settings:save')(setupEvent, {
+            welcome: { usageData: true, continued: false },
+          });
+          await waitFor(
+            () => {
+              const paths = f.nativeAnalytics
+                .filter((item) => item.event === 'startup_path_selected')
+                .map((item) => item.properties.path);
+              assert.deepEqual(paths, ['remote', 'welcome', 'local']);
+              return paths;
+            },
+            { attempts: 40, interval: 10 },
+          );
+          assert.ok(f.nativeAnalytics.every((item) => item.distinct_id === event.distinct_id));
+        }
+        await f.handlers.get('nod:settings:save')(setupEvent, {
+          welcome: { usageData: true, continued: true },
+        });
+        await f.prepare();
+        const engine = f.windows.find((window) => window.url?.startsWith('http://'));
+        assert.ok(engine);
+        const engineEvent = {
+          sender: engine.webContents,
+          senderFrame: engine.webContents.mainFrame,
+        };
+        const take = f.handlers.get('nod:analytics:opening');
+        await assert.rejects(take(setupEvent, true, event.distinct_id));
+        const opening = await take(engineEvent, true, event.distinct_id);
+        if (accepted) assert.equal(opening, null);
+        else {
+          assert.equal(opening.uuid, event.uuid);
+          assert.equal(opening.openedAt, new Date(event.timestamp).getTime());
+          assert.equal(opening.entry, 'native_setup');
+          assert.deepEqual(await take(engineEvent, true, event.distinct_id), opening);
+          await take(engineEvent, false, null);
+          const enabledAt = Date.now();
+          const resumed = await take(engineEvent, true, event.distinct_id);
+          assert.equal(resumed.entry, 'app_ui');
+          assert.ok(resumed.openedAt >= enabledAt);
+          assert.notEqual(resumed.uuid, event.uuid);
+        }
+        if (accepted) {
+          const beforeSettings = f.nativeAnalytics.length;
+          await f.showConnectionSettings();
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          assert.equal(f.nativeAnalytics.length, beforeSettings);
+        }
+        assert.equal(f.nativeAnalytics.filter((item) => item.event === 'app_opened').length, 1);
+      } finally {
+        await f.close();
+      }
+    });
+  }
+});
+
+test('opting out on Welcome stops later startup path events', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    packaged: true,
+    buildMetadata: { release: true },
+    version: '0.1.17',
+  });
+  try {
+    await f.launch();
+    await waitFor(
+      () => {
+        assert.equal(f.nativeAnalytics.length, 1);
+        return f.nativeAnalytics[0];
+      },
+      { attempts: 40, interval: 10 },
+    );
+    const setup = f.windows[0];
+    const setupEvent = {
+      sender: setup.webContents,
+      senderFrame: setup.webContents.mainFrame,
+    };
+    await f.handlers.get('nod:settings:save')(setupEvent, {
+      welcome: { usageData: false, continued: false },
+    });
+    await f.handlers.get('nod:connection:open')(setupEvent);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(
+      f.nativeAnalytics.map((item) => item.event),
+      ['app_opened'],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('a later local choice replaces an earlier remote startup path under the same ID', async (t) => {
+  const options = {
+    initialState: 'fresh',
+    packaged: true,
+    buildMetadata: { release: true },
+    version: '0.1.17',
+  };
+  const first = await runningDesktop(t, async () => Response.json({ ok: true }), options);
+  let distinctId;
+  try {
+    await first.launch();
+    await waitFor(
+      () => {
+        const opened = first.nativeAnalytics.find((item) => item.event === 'app_opened');
+        assert.ok(opened);
+        distinctId = opened.distinct_id;
+        return opened;
+      },
+      { attempts: 40, interval: 10 },
+    );
+    const setup = first.windows[0];
+    await first.handlers.get('nod:connection:open')({
+      sender: setup.webContents,
+      senderFrame: setup.webContents.mainFrame,
+    });
+    await waitFor(
+      () => {
+        const remote = first.nativeAnalytics.find((item) => item.event === 'startup_path_selected');
+        assert.equal(remote?.properties.path, 'remote');
+        return remote;
+      },
+      { attempts: 40, interval: 10 },
+    );
+  } finally {
+    await first.close();
+  }
+
+  const second = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    ...options,
+    storedProfile: first.storage,
+  });
+  try {
+    await second.launch();
+    const setup = second.windows[0];
+    await second.handlers.get('nod:settings:save')(
+      { sender: setup.webContents, senderFrame: setup.webContents.mainFrame },
+      { welcome: { usageData: true, continued: false } },
+    );
+    await waitFor(
+      () => {
+        const local = second.nativeAnalytics.find((item) => item.event === 'startup_path_selected');
+        assert.equal(local?.properties.path, 'local');
+        return local;
+      },
+      { attempts: 40, interval: 10 },
+    );
+    assert.equal(second.nativeAnalytics.length, 1);
+    assert.equal(second.nativeAnalytics[0].distinct_id, distinctId);
+  } finally {
+    await second.close();
+  }
+});
+
+test('native first open waits for consent on disabled and returning profiles', async (t) => {
+  for (const scenario of [
+    { name: 'disabled', environment: { NOD_ANALYTICS_ENABLED: 'false' } },
+    { name: 'injected ID', environment: { NOD_ANALYTICS_ID: randomUUID() } },
+    { name: 'prior profile root', existingProfileRoot: true },
+    {
+      name: 'returning opted-out profile',
+      existingProfileRoot: true,
+      persistedWelcome: { usageData: false, continued: true },
+    },
+    { name: 'isolated test install', buildMetadata: { release: true, testProfile: true } },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            new URL(url).pathname === '/api/account'
+              ? { settings: { usageData: false } }
+              : { ok: true },
+          ),
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          packaged: true,
+          buildMetadata: { release: true },
+          version: '0.1.17',
+          ...scenario,
+        },
+      );
+      try {
+        if (scenario.persistedWelcome)
+          await f.storage.store.save({ welcome: scenario.persistedWelcome });
+        await f.launch();
+        await f.prepare();
+        assert.equal(f.nativeAnalytics.length, 0);
+        if (scenario.name === 'returning profile') {
+          f.showEngine();
+          const engine = f.windows.find((window) => window.url?.startsWith('http://'));
+          assert.ok(engine);
+          const engineEvent = {
+            sender: engine.webContents,
+            senderFrame: engine.webContents.mainFrame,
+          };
+          const take = f.handlers.get('nod:analytics:opening');
+          assert.equal(await take(engineEvent, false, null), null);
+          const enabledAt = Date.now();
+          const opening = await take(engineEvent, true, 'local:' + randomUUID());
+          assert.equal(opening.entry, 'app_ui');
+          assert.ok(opening.openedAt >= enabledAt);
+        }
       } finally {
         await f.close();
       }

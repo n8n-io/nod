@@ -94,8 +94,25 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('model_setup_completed'),
+      properties: z.object({ provider: analyticsModelProvider, model: analyticsModel }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('owner_message_accepted'),
       properties: z.object({ channel: z.enum(['web', 'telegram', 'whatsapp', 'other']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('channel_connection_observed'),
+      properties: z
+        .object({
+          channel: z.enum(['telegram', 'whatsapp']),
+          state: z.enum(['disabled', 'setup_pending', 'connected', 'configured_unverified']),
+        })
+        .strict(),
     })
     .strict(),
   z
