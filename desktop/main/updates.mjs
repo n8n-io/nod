@@ -1,4 +1,4 @@
-const repository = 'n8n-io/nod';
+const defaultRepository = 'n8n-io/nod';
 const hash = /^[a-f0-9]{64}$/;
 const sourceHash = /^[a-f0-9]{40}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -81,37 +81,173 @@ async function json(url, request, signal, accept = 'application/json') {
   throw new Error('The desktop update address redirected too many times.');
 }
 
+async function githubReleaseTag(repository, name, request, signal) {
+  const alias = `https://github.com/${repository}/releases/latest/download/${name}`;
+  const response = await request(alias, {
+    signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]),
+    redirect: 'manual',
+  });
+  await response.body?.cancel();
+  const target = new URL(response.headers.get('location') || '', alias);
+  const prefix = `/${repository}/releases/download/`;
+  const path = target.pathname.slice(prefix.length);
+  const slash = path.indexOf('/');
+  const tag = path.slice(0, slash);
+  if (
+    response.status !== 302 ||
+    target.origin !== 'https://github.com' ||
+    !target.pathname.startsWith(prefix) ||
+    target.search ||
+    target.hash ||
+    slash < 1 ||
+    path.slice(slash + 1) !== name ||
+    !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)
+  )
+    throw new Error('The latest desktop release is invalid.');
+  versionParts(tag.slice(5));
+  return tag;
+}
+
 export function createUpdateSource({
   sourceUrl,
+  repository = defaultRepository,
   os = process.platform === 'win32' ? 'win32' : 'darwin',
   arch = process.platform === 'darwin' ? process.arch : 'arm64',
   fetch: request = fetch,
 } = {}) {
+  if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository))
+    throw new Error('The desktop update repository is invalid.');
   if (os === 'darwin' && !['arm64', 'x64'].includes(arch))
     throw new Error('Unsupported Mac update architecture.');
   if (!['darwin', 'win32'].includes(os)) throw new Error('Unsupported desktop update platform.');
   const platform = os === 'win32' ? 'win32-x64' : `darwin-${arch}`;
   const metadataName = (name) => (arch === 'arm64' ? `${name}.json` : `${name}-darwin-x64.json`);
-  const base = sourceUrl
-    ? https(sourceUrl).replace(/\/$/, '')
-    : `https://api.github.com/repos/${repository}`;
+  const direct = (tag, name) =>
+    `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}`;
+  if (!sourceUrl) {
+    const latestManifest = async (name, currentVersion, signal) => {
+      versionParts(currentVersion);
+      const tag = await githubReleaseTag(repository, name, request, signal);
+      const version = tag.slice(5);
+      if (compareVersions(version, currentVersion) <= 0) return undefined;
+      return {
+        tag,
+        version,
+        manifest: await json(direct(tag, name), request, signal, 'application/octet-stream'),
+      };
+    };
+    if (os === 'win32')
+      return {
+        async runtimeDownloadUrl(runtime) {
+          if (
+            !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime?.releaseTag) ||
+            !hash.test(runtime.guest?.sha256) ||
+            !Number.isSafeInteger(runtime.guest.bytes) ||
+            runtime.guest.bytes < 1
+          )
+            throw new Error('The desktop runtime metadata is incompatible.');
+          return direct(runtime.releaseTag, 'nod-Runtime-win32-x64.tar.gz');
+        },
+        async latest(currentVersion, signal) {
+          const found = await latestManifest('release-win32-x64.json', currentVersion, signal);
+          if (!found) return undefined;
+          const { tag, version, manifest } = found;
+          if (
+            manifest.version !== version ||
+            manifest.platform !== platform ||
+            !sourceHash.test(manifest.source) ||
+            manifest.installer?.file !== 'nod-Setup-x64.exe' ||
+            manifest.runtime?.file !== 'nod-Runtime-win32-x64.tar.gz'
+          )
+            throw new Error('The desktop update metadata is incompatible.');
+          const files = {};
+          for (const key of ['installer', 'runtime']) {
+            const entry = manifest[key];
+            if (!hash.test(entry.sha256) || !Number.isSafeInteger(entry.bytes) || entry.bytes < 1)
+              throw new Error('The desktop update files do not match their metadata.');
+            files[key] = { ...entry, url: direct(tag, entry.file) };
+          }
+          return { version, source: manifest.source, ...files };
+        },
+      };
+    const runtimeDownloadUrl = async (runtime) => {
+      if (
+        ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
+          (value) => typeof value === 'string' && hash.test(value),
+        ) ||
+        runtime.archive.file !== `nod-Runtime-${platform}-${runtime.id.slice(0, 12)}.tar.gz` ||
+        !Number.isSafeInteger(runtime.archive.bytes) ||
+        runtime.archive.bytes < 1 ||
+        runtime.platform !== platform ||
+        !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag)
+      )
+        throw new Error('The desktop runtime metadata is incompatible.');
+      return direct(runtime.releaseTag, runtime.archive.file);
+    };
+    return {
+      runtimeDownloadUrl,
+      async latest(currentVersion, signal) {
+        const found = await latestManifest(metadataName('release'), currentVersion, signal);
+        if (!found) return undefined;
+        const { tag, version, manifest } = found;
+        if (
+          manifest.version !== version ||
+          manifest.platform !== platform ||
+          !sourceHash.test(manifest.source) ||
+          !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
+          !hash.test(manifest.runtime?.fingerprint) ||
+          !hash.test(manifest.runtime?.id) ||
+          manifest.update?.file !== `nod-${arch}.zip` ||
+          !hash.test(manifest.update.sha256) ||
+          !Number.isSafeInteger(manifest.update.bytes) ||
+          manifest.update.bytes < 1
+        )
+          throw new Error('The desktop update metadata is incompatible.');
+        const runtime = await json(
+          direct(tag, metadataName('runtime-release')),
+          request,
+          signal,
+          'application/octet-stream',
+        );
+        if (
+          runtime.id !== manifest.runtime.id ||
+          runtime.fingerprint !== manifest.runtime.fingerprint ||
+          runtime.archive?.file !== manifest.runtime.archive?.file ||
+          runtime.archive?.bytes !== manifest.runtime.archive?.bytes ||
+          runtime.archive?.sha256 !== manifest.runtime.archive?.sha256
+        )
+          throw new Error('The desktop update runtime does not match.');
+        const downloadUrl = await runtimeDownloadUrl(runtime);
+        const feed = await json(
+          direct(tag, metadataName('update')),
+          request,
+          signal,
+          'application/octet-stream',
+        );
+        if (
+          feed.url !== direct(tag, manifest.update.file) ||
+          ![`Nod ${version}`, `nod ${version}`].includes(feed.name)
+        )
+          throw new Error('The desktop update feed does not match.');
+        return {
+          version,
+          source: manifest.source,
+          runtime,
+          downloadUrl,
+          feedUrl: direct(tag, metadataName('update')),
+        };
+      },
+    };
+  }
+  const base = https(sourceUrl).replace(/\/$/, '');
   if (/[?#]/.test(base)) throw new Error('The desktop update source is invalid.');
   const releasePath = (id) => `${base}/releases/${id}`;
   const assetUrl = (release, item) =>
-    sourceUrl
-      ? `${releasePath(release.id)}/assets/${item.id}/${encodeURIComponent(item.name)}`
-      : `${base}/releases/assets/${item.id}`;
+    `${releasePath(release.id)}/assets/${item.id}/${encodeURIComponent(item.name)}`;
   const getAsset = (release, name, signal) =>
     json(assetUrl(release, asset(release, name)), request, signal, 'application/octet-stream');
   const releaseAssetUrl = async (tag, { file, bytes, sha256 }, signal) => {
-    const release = published(
-      await json(
-        sourceUrl ? `${base}/tags/${tag}` : `${base}/releases/tags/${tag}`,
-        request,
-        signal,
-      ),
-      tag,
-    );
+    const release = published(await json(`${base}/tags/${tag}`, request, signal), tag);
     const archive = asset(release, file);
     if (archive.size !== bytes)
       throw new Error('The desktop update runtime archive size does not match.');
@@ -138,12 +274,8 @@ export function createUpdateSource({
   };
   const newest = async (currentVersion, signal, resolve) => {
     versionParts(currentVersion);
-    const releases = await json(
-      `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
-      request,
-      signal,
-    );
-    if (!Array.isArray(releases) || releases.length > (sourceUrl ? 500 : 100))
+    const releases = await json(`${base}/releases`, request, signal);
+    if (!Array.isArray(releases) || releases.length > 500)
       throw new Error('The desktop release list is invalid.');
     const newer = releases
       .filter(
@@ -252,15 +384,7 @@ export function createUpdateSource({
         )
           throw new Error('The desktop update runtime does not match.');
         const downloadUrl = await runtimeDownloadUrl(runtime, signal);
-        let feedUrl;
-        if (sourceUrl)
-          feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=${platform}`;
-        else {
-          const feed = await getAsset(release, metadataName('update'), signal);
-          const expected = `https://github.com/${repository}/releases/download/${release.tag_name}/${zip.name}`;
-          if (feed.url !== expected) throw new Error('The desktop update feed does not match.');
-          feedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/${metadataName('update')}`;
-        }
+        const feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=${platform}`;
         return {
           version,
           source: manifest.source,
@@ -322,7 +446,7 @@ export function createDesktopUpdater({
             const failed = (error) => finish(error);
             const downloaded = (_event, _notes, name) =>
               finish(
-                name === `nod ${candidate.version}`
+                name === `nod ${candidate.version}` || name === `Nod ${candidate.version}`
                   ? undefined
                   : new Error('The downloaded update does not match the selected version.'),
               );

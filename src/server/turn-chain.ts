@@ -7,6 +7,11 @@ export function supersededSql(alias: string, newer: string) {
     AND newer.id<>${alias}.id AND ${newer})`;
 }
 
+export const laterSupersedingTurnSql = `EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
+  AND (n.created_at,n.id)>(u.created_at,u.id)
+  AND NOT (n.status='succeeded' AND n.started_at IS NULL AND n.message_id IS NOT NULL
+    AND n.source IN ('user','task')))`;
+
 export function turnChainSql() {
   return `WITH RECURSIVE chain(id,next,thread_id) AS (
     SELECT u.id,u.parent_turn_id,u.thread_id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3

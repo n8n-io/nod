@@ -1736,7 +1736,8 @@ test('native windows wait for owned renderer readiness before replacing startup'
         await f.storage.store.save({ welcome: { usageData: false, continued: true } });
       try {
         const launched = f.launch();
-        for (let i = 0; !f.windows.length && i < 50; i++) await new Promise(setImmediate);
+        for (let i = 0; !f.windows.length && i < 100; i++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
         const setup = f.windows[0];
         assert.ok(setup);
         assert.equal(setup.isVisible(), false);
@@ -5025,7 +5026,7 @@ test('native preferences reject unsupported fields and invalid values before per
   assert.equal((await f.store.get()).preferences.locale, 'en-GB');
 });
 
-function updateReleaseFixture(sourceUrl, arch = 'arm64') {
+function updateReleaseFixture(sourceUrl, arch = 'arm64', redirectAssets = false) {
   const platform = `darwin-${arch}`;
   const name = (kind) => (arch === 'arm64' ? `${kind}.json` : `${kind}-darwin-x64.json`);
   const archive = {
@@ -5051,7 +5052,7 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64') {
     id: 12,
     tag_name: 'nod-v0.2.0',
     draft: false,
-    prerelease: true,
+    prerelease: Boolean(sourceUrl),
     assets: [
       item(101, name('release'), 300),
       item(103, `nod-${arch}.zip`, 1000),
@@ -5073,33 +5074,35 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64') {
     runtime,
     update: { file: `nod-${arch}.zip`, bytes: 1000, sha256: 'e'.repeat(64) },
   };
-  const base = sourceUrl || 'https://api.github.com/repos/n8n-io/nod';
+  const base = sourceUrl || 'https://github.com/n8n-io/nod/releases';
+  const direct = (tag, file) => `https://github.com/n8n-io/nod/releases/download/${tag}/${file}`;
+  const alias = `https://github.com/n8n-io/nod/releases/latest/download/${name('release')}`;
+  const redirects = new Map([[alias, direct(release.tag_name, name('release'))]]);
+  const feed = { url: direct(release.tag_name, `nod-${arch}.zip`), name: 'Nod 0.2.0' };
   const assetPath = (owner, entry) =>
-    sourceUrl
-      ? `${base}/releases/${owner.id}/assets/${entry.id}/${entry.name}`
-      : `${base}/releases/assets/${entry.id}`;
-  const values = new Map([
-    [
-      `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
-      [
-        { ...release, id: 11, tag_name: 'nod-v0.1.0' },
-        { ...release, id: 13, tag_name: 'nod-v9.0.0', draft: true },
-        { ...release, id: 14, tag_name: 'runtime-darwin-arm64-irrelevant' },
-        release,
-      ],
-    ],
-    [`${base}/releases/12`, release],
-    [`${base}/${sourceUrl ? 'tags' : 'releases/tags'}/${pack.tag_name}`, pack],
-    [assetPath(release, release.assets[0]), manifest],
-    [assetPath(release, release.assets[2]), runtime],
-    [
-      assetPath(release, release.assets[3]),
-      {
-        url: `https://github.com/n8n-io/nod/releases/download/nod-v0.2.0/nod-${arch}.zip`,
-        name: 'nod 0.2.0',
-      },
-    ],
-  ]);
+    `${base}/releases/${owner.id}/assets/${entry.id}/${entry.name}`;
+  const values = sourceUrl
+    ? new Map([
+        [
+          `${base}/releases`,
+          [
+            { ...release, id: 11, tag_name: 'nod-v0.1.0' },
+            { ...release, id: 13, tag_name: 'nod-v9.0.0', draft: true },
+            { ...release, id: 14, tag_name: 'runtime-darwin-arm64-irrelevant' },
+            release,
+          ],
+        ],
+        [`${base}/releases/12`, release],
+        [`${base}/tags/${pack.tag_name}`, pack],
+        [assetPath(release, release.assets[0]), manifest],
+        [assetPath(release, release.assets[2]), runtime],
+        [assetPath(release, release.assets[3]), feed],
+      ])
+    : new Map([
+        [direct(release.tag_name, name('release')), manifest],
+        [direct(release.tag_name, name('runtime-release')), runtime],
+        [direct(release.tag_name, name('update')), feed],
+      ]);
   const calls = [];
   const source = createUpdateSource({
     sourceUrl,
@@ -5107,12 +5110,31 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64') {
     arch,
     fetch: async (url, options) => {
       calls.push(url);
-      assert.equal(options.headers.authorization, undefined);
+      assert.equal(options.headers?.authorization, undefined);
+      if (!sourceUrl) {
+        assert.equal(url.startsWith('https://api.github.com/'), false);
+        if (url === alias)
+          return new Response(null, {
+            status: 302,
+            headers: { location: redirects.get(alias) },
+          });
+      }
+      const cdn = 'https://release-assets.githubusercontent.com/fixture/';
+      if (redirectAssets && !sourceUrl && values.has(url))
+        return new Response(null, {
+          status: 302,
+          headers: { location: `${cdn}${encodeURIComponent(url)}` },
+        });
+      if (redirectAssets && !sourceUrl && url.startsWith(cdn)) {
+        const original = decodeURIComponent(url.slice(cdn.length));
+        assert.ok(values.has(original), `Unexpected release request ${url}`);
+        return Response.json(values.get(original));
+      }
       assert.ok(values.has(url), `Unexpected release request ${url}`);
       return Response.json(values.get(url));
     },
   });
-  return { source, calls, values, release, pack, runtime, manifest, base };
+  return { source, calls, values, release, pack, runtime, manifest, base, alias, redirects, feed };
 }
 
 test('desktop updates bind newer published releases and both source adapters to exact app and runtime assets', async () => {
@@ -5129,7 +5151,7 @@ test('desktop updates bind newer published releases and both source adapters to 
       candidate.downloadUrl,
       sourceUrl
         ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
-        : 'https://api.github.com/repos/n8n-io/nod/releases/assets/201',
+        : `https://github.com/n8n-io/nod/releases/download/nod-v0.1.9/${f.runtime.archive.file}`,
     );
     assert.equal(
       candidate.feedUrl,
@@ -5141,27 +5163,141 @@ test('desktop updates bind newer published releases and both source adapters to 
     f.manifest.runtime = { ...f.runtime, id: 'f'.repeat(64) };
     await assert.rejects(f.source.latest('0.1.0'));
     f.manifest.runtime = f.runtime;
-    f.pack.assets[0].size++;
-    await assert.rejects(f.source.latest('0.1.0'));
-    f.pack.assets[0].size--;
-    f.release.assets[1].digest = `sha256:${'0'.repeat(64)}`;
-    await assert.rejects(f.source.latest('0.1.0'));
-    f.release.assets[1].digest = `sha256:${f.manifest.update.sha256}`;
-    f.release.assets.push({ ...f.release.assets[0], id: 999 });
-    await assert.rejects(f.source.latest('0.1.0'));
+    if (sourceUrl) {
+      f.pack.assets[0].size++;
+      await assert.rejects(f.source.latest('0.1.0'));
+      f.pack.assets[0].size--;
+      f.release.assets[1].digest = `sha256:${'0'.repeat(64)}`;
+      await assert.rejects(f.source.latest('0.1.0'));
+      f.release.assets[1].digest = `sha256:${f.manifest.update.sha256}`;
+      f.release.assets.push({ ...f.release.assets[0], id: 999 });
+      await assert.rejects(f.source.latest('0.1.0'));
+    } else {
+      f.manifest.runtime = { ...f.runtime, archive: { ...f.runtime.archive, bytes: 181 } };
+      await assert.rejects(f.source.latest('0.1.0'), /runtime does not match/);
+      f.manifest.runtime = f.runtime;
+      f.feed.name = 'Other 0.2.0';
+      await assert.rejects(f.source.latest('0.1.0'), /feed does not match/);
+    }
   }
 });
 
 test('an incomplete newest release falls back to the next newer complete release', async () => {
-  for (const sourceUrl of [undefined, 'https://updates.example.invalid/nod-desktop']) {
-    const f = updateReleaseFixture(sourceUrl);
-    const broken = { ...f.release, id: 15, tag_name: 'nod-v0.3.0', assets: [] };
-    f.values.get(`${f.base}/releases${sourceUrl ? '' : '?per_page=100'}`).push(broken);
-    f.values.set(`${f.base}/releases/15`, broken);
-    assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
-    f.release.assets = [];
-    await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop');
+  const broken = { ...f.release, id: 15, tag_name: 'nod-v0.3.0', assets: [] };
+  f.values.get(`${f.base}/releases`).push(broken);
+  f.values.set(`${f.base}/releases/15`, broken);
+  assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
+  f.release.assets = [];
+  await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+
+  const publicRelease = updateReleaseFixture(undefined);
+  publicRelease.manifest.update.bytes = 0;
+  await assert.rejects(publicRelease.source.latest('0.1.0'), /incompatible/);
+});
+
+test('public GitHub metadata redirects resolve to verified Mac runtime and Windows installer downloads', async () => {
+  const mac = updateReleaseFixture(undefined, 'arm64', true);
+  const macUpdate = await mac.source.latest('0.1.0');
+  assert(mac.calls.includes(mac.alias));
+  assert(
+    mac.calls.includes('https://github.com/n8n-io/nod/releases/download/nod-v0.2.0/release.json'),
+  );
+  assert(
+    mac.calls.some((url) =>
+      url.startsWith('https://release-assets.githubusercontent.com/fixture/'),
+    ),
+  );
+  assert.equal(
+    macUpdate.downloadUrl,
+    `https://github.com/n8n-io/nod/releases/download/nod-v0.1.9/${mac.runtime.archive.file}`,
+  );
+  assert.equal(macUpdate.runtime.archive.bytes, mac.runtime.archive.bytes);
+  assert.equal(macUpdate.runtime.archive.sha256, mac.runtime.archive.sha256);
+  const native = new EventEmitter();
+  native.setFeedURL = () => {};
+  native.checkForUpdates = () =>
+    queueMicrotask(() => native.emit('update-downloaded', {}, '', 'Nod 0.2.0'));
+  const updater = createDesktopUpdater({
+    source: { latest: async () => macUpdate },
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async () => {},
+    restart: async () => {},
+  });
+  assert.equal((await updater.check()).version, '0.2.0');
+  updater.dispose();
+  mac.feed.name = 'nod 0.2.0';
+  assert.equal((await mac.source.latest('0.1.0')).version, '0.2.0');
+  for (const redirect of [
+    'https://attacker.invalid/n8n-io/nod/releases/download/nod-v0.2.0/release.json',
+    'https://github.com/other/nod/releases/download/nod-v0.2.0/release.json',
+    'https://github.com/n8n-io/nod/releases/download/other-v0.2.0/release.json',
+    'https://github.com/n8n-io/nod/releases/download/nod-v0.2.0/update.json',
+  ]) {
+    mac.redirects.set(mac.alias, redirect);
+    await assert.rejects(mac.source.latest('0.1.0'), /latest desktop release is invalid/);
   }
+  const intel = updateReleaseFixture(undefined, 'x64', true);
+  assert.equal((await intel.source.latest('0.1.0')).runtime.platform, 'darwin-x64');
+  assert(intel.calls.includes(intel.alias));
+  assert(intel.alias.endsWith('/release-darwin-x64.json'));
+
+  const base = 'https://github.com/n8n-io/nod/releases';
+  const tag = 'nod-v0.5.2';
+  const sha = 'e'.repeat(64);
+  const alias = `${base}/latest/download/release-win32-x64.json`;
+  const manifestUrl = `${base}/download/${tag}/release-win32-x64.json`;
+  const cdn = 'https://release-assets.githubusercontent.com/fixture/windows';
+  const manifest = {
+    version: '0.5.2',
+    platform: 'win32-x64',
+    source: 'a'.repeat(40),
+    installer: { file: 'nod-Setup-x64.exe', bytes: 600, sha256: sha },
+    runtime: { file: 'nod-Runtime-win32-x64.tar.gz', bytes: 700, sha256: sha },
+  };
+  const calls = [];
+  let redirect = manifestUrl;
+  const windows = createUpdateSource({
+    os: 'win32',
+    fetch: async (url, options) => {
+      calls.push([url, options.headers?.accept]);
+      assert.equal(url.startsWith('https://api.github.com/'), false);
+      if (url === alias)
+        return new Response(null, { status: 302, headers: { location: redirect } });
+      if (url === manifestUrl)
+        return new Response(null, {
+          status: 302,
+          headers: { location: cdn },
+        });
+      if (url === cdn) return Response.json(manifest);
+      assert.fail(`Unexpected release request ${url}`);
+    },
+  });
+  const update = await windows.latest('0.5.0');
+  assert(calls.some(([url]) => url === alias));
+  assert(
+    calls.some(([url, accept]) => url === manifestUrl && accept === 'application/octet-stream'),
+  );
+  assert(calls.some(([url]) => url === cdn));
+  assert.equal(update.installer.url, `${base}/download/${tag}/nod-Setup-x64.exe`);
+  assert.equal(update.runtime.url, `${base}/download/${tag}/nod-Runtime-win32-x64.tar.gz`);
+  assert.equal(update.installer.sha256, sha);
+  assert.equal(update.installer.bytes, 600);
+  assert.equal(update.runtime.sha256, sha);
+  assert.equal(update.runtime.bytes, 700);
+  assert.equal(
+    await windows.runtimeDownloadUrl({ releaseTag: tag, guest: { sha256: sha, bytes: 700 } }),
+    update.runtime.url,
+  );
+  manifest.installer.sha256 = 'invalid';
+  await assert.rejects(windows.latest('0.5.0'), /files do not match/);
+  manifest.installer.sha256 = sha;
+  manifest.runtime.bytes = 0;
+  await assert.rejects(windows.latest('0.5.0'), /files do not match/);
+  manifest.runtime.bytes = 700;
+  redirect = 'https://github.com/n8n-io/other/releases/download/nod-v0.5.2/release-win32-x64.json';
+  await assert.rejects(windows.latest('0.5.0'), /latest desktop release is invalid/);
 });
 
 test(
@@ -5347,6 +5483,7 @@ test('background update readiness respects notification permission and quiet tim
     );
     const confirmationCount = Number(scenario.enabled && scenario.supported);
     assert.equal(f.notifications.length, confirmationCount);
+    window.minimize();
     await f.checkUpdates(updater, false);
     await f.checkUpdates(updater, false);
     assert.equal(prompts.length, 0);
@@ -5449,6 +5586,7 @@ test('update notification clicks during refresh wait for the latest verified rel
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: true },
     );
+    window.minimize();
     await f.checkUpdates(updater, false);
     const notification = f.notifications.at(-1);
     version = '0.4.1';
@@ -5540,6 +5678,7 @@ test('update notification requests survive refresh failures and stop safely duri
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: true },
     );
+    window.minimize();
     await f.checkUpdates(updater, false);
     const notification = f.notifications.at(-1);
     version = '0.4.1';
@@ -5649,7 +5788,7 @@ test('first installation resolves its exact published runtime without a newer ap
       await f.source.runtimeDownloadUrl(f.runtime),
       sourceUrl
         ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
-        : 'https://api.github.com/repos/n8n-io/nod/releases/assets/201',
+        : `https://github.com/n8n-io/nod/releases/download/nod-v0.1.9/${f.runtime.archive.file}`,
     );
     for (const change of [
       (runtime) => (runtime.fingerprint = '../other'),
@@ -5666,20 +5805,22 @@ test('first installation resolves its exact published runtime without a newer ap
       await assert.rejects(f.source.runtimeDownloadUrl(runtime));
       assert.deepEqual(f.calls, []);
     }
-    for (const change of [
-      (pack) => (pack.draft = true),
-      (pack) => (pack.tag_name = `runtime-darwin-arm64-${'f'.repeat(64)}`),
-      (pack) => (pack.id = 0),
-      (pack) => (pack.assets[0].id = 0),
-      (pack) => (pack.assets[0].name = 'another-runtime.tar.gz'),
-      (pack) => pack.assets.push({ ...pack.assets[0], id: 202 }),
-      (pack) => (pack.assets[0].state = 'new'),
-      (pack) => pack.assets[0].size++,
-      (pack) => (pack.assets[0].digest = `sha256:${'f'.repeat(64)}`),
-    ]) {
-      const changed = updateReleaseFixture(sourceUrl);
-      change(changed.pack);
-      await assert.rejects(changed.source.runtimeDownloadUrl(changed.runtime));
+    if (sourceUrl) {
+      for (const change of [
+        (pack) => (pack.draft = true),
+        (pack) => (pack.tag_name = `runtime-darwin-arm64-${'f'.repeat(64)}`),
+        (pack) => (pack.id = 0),
+        (pack) => (pack.assets[0].id = 0),
+        (pack) => (pack.assets[0].name = 'another-runtime.tar.gz'),
+        (pack) => pack.assets.push({ ...pack.assets[0], id: 202 }),
+        (pack) => (pack.assets[0].state = 'new'),
+        (pack) => pack.assets[0].size++,
+        (pack) => (pack.assets[0].digest = `sha256:${'f'.repeat(64)}`),
+      ]) {
+        const changed = updateReleaseFixture(sourceUrl);
+        change(changed.pack);
+        await assert.rejects(changed.source.runtimeDownloadUrl(changed.runtime));
+      }
     }
   }
 });
@@ -6591,4 +6732,146 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
     await files.dispose();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('ready desktop updates share Later across engine windows and reopen for a new version', async (t) => {
+  let version = '0.5.2';
+  const restarts = [];
+  const updater = {
+    ready: undefined,
+    async check() {
+      this.ready = { version };
+      return this.ready;
+    },
+    async restart() {
+      restarts.push(this.ready.version);
+    },
+  };
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    notificationsSupported: true,
+  });
+  f.showEngine();
+  await new Promise(setImmediate);
+  const window = f.windows.at(-1);
+  assert.equal(window.isFocused(), true);
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const status = f.handlers.get('nod:updates:status');
+  const dismiss = f.handlers.get('nod:updates:dismiss');
+  const restart = f.handlers.get('nod:updates:restart');
+  assert.equal(status(event).readyVersion, undefined);
+  assert.equal((await f.handlers.get('nod:settings:get')(event)).notifications, false);
+
+  await f.checkUpdates(updater, false);
+  assert.equal(f.notifications.length, 0);
+  assert.equal(status(event).readyVersion, version);
+  assert.equal(status(event).checking, false);
+  assert.ok(
+    window.sent.some(
+      ([channel, value]) => channel === 'nod:updates:status' && value.readyVersion === version,
+    ),
+  );
+
+  const child = new window.constructor({ show: false });
+  window.webContents.emit('did-create-window', child);
+  await child.loadURL('http://127.0.0.1:4310/');
+  const childEvent = { sender: child.webContents, senderFrame: child.webContents.mainFrame };
+  assert.equal(status(childEvent).readyVersion, version);
+  const subframe = { ...event, senderFrame: { ...event.senderFrame } };
+  assert.throws(() => status(subframe), /unavailable/);
+  assert.throws(() => dismiss(subframe, version), /unavailable/);
+  await assert.rejects(restart(subframe), /unavailable/);
+  const outside = { sender: {}, senderFrame: event.senderFrame };
+  assert.throws(() => status(outside), /unavailable/);
+  assert.throws(() => dismiss(outside, version), /unavailable/);
+  await assert.rejects(restart(outside), /unavailable/);
+  dismiss(event, '0.5.1');
+  assert.equal(status(event).dismissedVersion, undefined);
+  dismiss(event, version);
+  assert.equal(status(event).dismissedVersion, version);
+  assert.equal(status(childEvent).dismissedVersion, version);
+  for (const receiver of [window, child])
+    assert.ok(
+      receiver.sent.some(
+        ([channel, value]) =>
+          channel === 'nod:updates:status' && value.dismissedVersion === version,
+      ),
+    );
+
+  child.destroy();
+  window.destroy();
+  f.showEngine();
+  await new Promise(setImmediate);
+  const reopened = f.windows.at(-1);
+  const reopenedEvent = {
+    sender: reopened.webContents,
+    senderFrame: reopened.webContents.mainFrame,
+  };
+  assert.equal(status(reopenedEvent).readyVersion, version);
+  assert.equal(status(reopenedEvent).dismissedVersion, version);
+
+  await f.handlers.get('nod:settings:save')(reopenedEvent, { notifications: true });
+  const priorNotifications = f.notifications.length;
+  version = '0.5.3';
+  await f.checkUpdates(updater, false);
+  assert.equal(f.notifications.length, priorNotifications);
+  assert.equal(status(reopenedEvent).readyVersion, version);
+  assert.notEqual(status(reopenedEvent).readyVersion, status(reopenedEvent).dismissedVersion);
+  dismiss(reopenedEvent, '0.5.2');
+  assert.equal(status(reopenedEvent).dismissedVersion, '0.5.2');
+  assert.deepEqual(restarts, []);
+});
+
+test('in-app update restart keeps Later safe and shares one confirmation', async (t) => {
+  const choice = deferred();
+  const shown = deferred();
+  const prompts = [];
+  const restarts = [];
+  const updater = {
+    ready: undefined,
+    async check() {
+      this.ready = { version: '0.5.2' };
+      return this.ready;
+    },
+    async restart() {
+      restarts.push(this.ready.version);
+    },
+  };
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    prompt: (options) => {
+      prompts.push(options);
+      if (prompts.length === 1) {
+        shown.resolve();
+        return choice.promise;
+      }
+      return { response: 0 };
+    },
+  });
+  f.showEngine();
+  await new Promise(setImmediate);
+  const window = f.windows.at(-1);
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const status = f.handlers.get('nod:updates:status');
+  const restart = f.handlers.get('nod:updates:restart');
+  await assert.rejects(restart(event), /No desktop update is ready/);
+  await f.checkUpdates(updater, false);
+
+  const first = restart(event);
+  await shown.promise;
+  const second = restart(event);
+  assert.equal(prompts.length, 1);
+  assert.equal(status(event).checking, true);
+  assert.equal(f.updateMenu.enabled, false);
+  assert.match(prompts[0].message, /Nod 0\.5\.2 is ready/);
+  assert.deepEqual([...prompts[0].buttons], ['Restart', 'Later']);
+  assert.equal(prompts[0].defaultId, 1);
+  assert.equal(prompts[0].cancelId, 1);
+  choice.resolve({ response: 1 });
+  await Promise.all([first, second]);
+  assert.deepEqual(restarts, []);
+  assert.equal(status(event).readyVersion, '0.5.2');
+  assert.equal(status(event).checking, false);
+
+  await restart(event);
+  assert.equal(prompts.length, 2);
+  assert.deepEqual(restarts, ['0.5.2']);
 });
