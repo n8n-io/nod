@@ -7,7 +7,14 @@ import {
   Undo2,
   Zap,
 } from '../components/icons';
-import type { TrustEntry, TrustModel, TrustPage, TrustSource, TrustView } from '../../shared/trust';
+import type {
+  TrustEntry,
+  TrustModel,
+  TrustOutside,
+  TrustPage,
+  TrustSource,
+  TrustView,
+} from '../../shared/trust';
 import { modelProviderNames, modelSource, type ModelsResponse } from '../../shared/models';
 import type {
   VaultActivity,
@@ -39,10 +46,19 @@ const day = 86_400_000;
 const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   chat: { icon: MessageCircle, label: '' },
   task: { icon: MessageCircle, label: 'Task' },
+  started: { icon: ScanSearch, label: 'Task Nod started' },
   schedule: { icon: CalendarClock, label: 'Schedule' },
   event: { icon: Zap, label: '' },
   check: { icon: ScanSearch, label: 'Activity check' },
-  resume: { icon: Undo2, label: 'Approved action' },
+  resume: { icon: Undo2, label: '' },
+};
+
+const outsideNames: Record<TrustOutside['kind'], string> = {
+  email: 'email checks',
+  memory: 'memory upkeep',
+  style: 'writing style',
+  ideas: 'first task ideas',
+  other: 'other work',
 };
 
 function date(ms: number, format: DateFormat) {
@@ -179,6 +195,10 @@ function Month({ view }: { view: TrustView }) {
     month.planUsd > 0 &&
       `Your ChatGPT plan covered about ${money(month.planUsd)}${month.spentUsd > 0 ? ' more' : ''} at API prices.`,
     month.unpriced && 'Some usage has no price in Nod, such as a local or free model.',
+    month.backgroundUsd > 0 &&
+      `${money(month.backgroundUsd)} was background work: source checks, schedules and tasks Nod started.`,
+    month.outside.length > 0 &&
+      `Of that, ${month.outside.map((item) => `${outsideNames[item.kind]} ${money(item.costUsd)}`).join(', ')} ran outside a check or task.`,
   ].filter((note): note is string => Boolean(note));
   const chart = month.spentUsd > 0 || !notes.length;
   const Note = chart ? 'small' : 'span';

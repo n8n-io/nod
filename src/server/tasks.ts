@@ -520,6 +520,7 @@ export function createTasks(options: {
       `SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
          ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
        FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
+         AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))
          AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
          AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
            AND u.status IN ('queued','running','waiting'))`,
@@ -528,7 +529,8 @@ export function createTasks(options: {
     for (const row of rows)
       await transaction(async (client) => {
         const due = await client.query(
-          'UPDATE tasks SET next_check=NULL WHERE id=$1 AND owner_id=$2 AND next_check=$3',
+          `UPDATE tasks t SET next_check=NULL WHERE t.id=$1 AND t.owner_id=$2 AND t.next_check=$3
+           AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))`,
           [row.id, ownerId, row.next_check],
         );
         if (due.rowCount)
@@ -541,6 +543,10 @@ export function createTasks(options: {
           );
       }, pool);
     if (rows.length) refresh();
+  }
+
+  async function wakeDue() {
+    await resumeDue((await transaction((client) => lockThread(client), pool)).id);
   }
 
   async function inherit(turn: TurnRef) {
@@ -835,6 +841,7 @@ export function createTasks(options: {
     chatCommand,
     read: (thread?: string) => read(pool, { closed: true, thread }),
     resumeDue,
+    wakeDue,
     registerRoutes,
   };
 }

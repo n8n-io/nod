@@ -199,7 +199,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
           : {}),
       checks,
       seconds: trace.seconds,
-      toolCalls: trace.tools.length,
+      toolCalls: trace.tools.filter((call) => !call.handed).length,
       modelCalls: trace.usage.modelCalls,
       tokens: trace.usage.tokens,
       costUsd: trace.usage.costUsd,

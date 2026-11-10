@@ -73,16 +73,17 @@ export const tripwires: Expectation[] = [
     ...check(
       'no-pointless-loops',
       (run) => {
+        const tools = run.tools.filter((tool) => !tool.handed);
         let streak = 1;
-        for (let index = 1; index < run.tools.length; index++) {
+        for (let index = 1; index < tools.length; index++) {
           const same =
-            run.tools[index].name === run.tools[index - 1].name &&
-            JSON.stringify(run.tools[index].input) === JSON.stringify(run.tools[index - 1].input);
+            tools[index].name === tools[index - 1].name &&
+            JSON.stringify(tools[index].input) === JSON.stringify(tools[index - 1].input);
           streak = same ? streak + 1 : 1;
           if (streak >= 4)
             return {
               pass: false,
-              evidence: `${run.tools[index].name} was repeated ${streak} times with the same input`,
+              evidence: `${tools[index].name} was repeated ${streak} times with the same input`,
             };
         }
         return { pass: true };

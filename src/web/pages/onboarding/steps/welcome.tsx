@@ -16,7 +16,7 @@ function differentiators(local: boolean) {
     {
       icon: Sparkles,
       title: 'Works proactively',
-      text: 'Nod keeps up with the apps you connect and only notifies you when it matters.',
+      text: 'Nod checks the apps you connect in the background, using your model, and only notifies you when it matters.',
     },
     {
       icon: LockKeyhole,

@@ -174,6 +174,7 @@ type IntegrationOptions = {
   browserConnections?: (client?: PoolClient) => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
+  paused?(): Promise<boolean>;
 };
 
 function browserService(origin: string) {
@@ -1952,6 +1953,55 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       });
   }
 
+  function changeSignal(row: ConnectionRow) {
+    return (
+      row.account_id &&
+      row.account_active &&
+      row.watch_requested &&
+      !row.revoked &&
+      configurationMatches(row) &&
+      ((inboxPolled(row.slug) && !row.inbox_failed && !row.inbox_reconnect_required) ||
+        (activityReader(row.slug)?.changeToken && !row.activity_failed) ||
+        (row.triggers_enabled && row.trigger_id))
+    );
+  }
+
+  async function watchable(connectionIds: string[]) {
+    const rows = await connectionRows(configuredOwner);
+    return connectionIds.every((id) => rows.some((row) => row.id === id && changeSignal(row)));
+  }
+
+  async function watchState(connectionIds: string[]) {
+    if (!(await watchable(connectionIds))) return null;
+    await Promise.all([pollInboxes(connectionIds), pollActivityChanges(connectionIds)]);
+    const rows = (await connectionRows(configuredOwner)).filter((row) =>
+      connectionIds.includes(row.id),
+    );
+    if (rows.length !== new Set(connectionIds).size || !rows.every(changeSignal)) return null;
+    const events = await pool.query<{ account_id: string; slug: string; latest: string }>(
+      `SELECT account_id,slug,max(created_at)::text AS latest FROM integration_events
+       WHERE owner_id=$1 AND provider_id=$2 AND account_id=ANY($3::text[]) GROUP BY 1,2`,
+      [configuredOwner, providerId, rows.map((row) => row.account_id)],
+    );
+    return createHash('sha256')
+      .update(
+        JSON.stringify(
+          rows
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((row) => [
+              row.id,
+              row.watch_revision,
+              row.inbox_cursor,
+              row.activity_token,
+              events.rows.find(
+                (event) => event.account_id === row.account_id && event.slug === row.slug,
+              )?.latest ?? null,
+            ]),
+        ),
+      )
+      .digest('hex');
+  }
+
   async function readActivity(
     input: ObservationQuery & { connectionId: string },
     signal: AbortSignal,
@@ -1990,18 +2040,20 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
   }
 
-  function pollActivityChanges() {
+  function pollActivityChanges(only?: string[]): Promise<void> {
     const services = Object.entries(provider.activity ?? {})
       .filter(([, reader]) => reader.changeToken)
       .map(([service]) => service);
     if (closed || !provider.configured || !services.length) return Promise.resolve();
-    if (activityPolling) return activityPolling;
+    if (activityPolling)
+      return only ? activityPolling.then(() => pollActivityChanges(only)) : activityPolling;
     activityPolling = (async () => {
       const { rows } = await pool.query<ConnectionRow>(
         `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug=ANY($3::text[])
         AND watch_requested AND account_active AND NOT revoked AND account_id IS NOT NULL
-        AND ($4::text IS NULL OR configuration_id=$4) AND (activity_poll_at IS NULL OR activity_poll_at<=now())
-        ORDER BY activity_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+        AND ($4::text IS NULL OR configuration_id=$4)
+        AND ($6::uuid[] IS NULL AND (activity_poll_at IS NULL OR activity_poll_at<=now()) OR id=ANY($6::uuid[]))
+        ORDER BY activity_poll_at NULLS FIRST LIMIT CASE WHEN $6::uuid[] IS NULL THEN 4 END FOR UPDATE SKIP LOCKED)
         UPDATE app_connections c SET activity_poll_at=now()+interval '30 minutes',activity_claim_id=$5
         FROM due WHERE c.id=due.id RETURNING c.*`,
         [
@@ -2010,6 +2062,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           services,
           provider.configurationId ?? null,
           randomBytes(16).toString('hex'),
+          only ?? null,
         ],
       );
       await Promise.all(
@@ -2073,15 +2126,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return activityPolling;
   }
 
-  function pollInboxes() {
+  function pollInboxes(only?: string[]): Promise<void> {
     if (closed || !provider.configured || !provider.pollInbox) return Promise.resolve();
-    if (polling) return polling;
+    if (polling) return only ? polling.then(() => pollInboxes(only)) : polling;
     polling = (async () => {
+      if (!only && (await options.paused?.())) return;
       const { rows } = await pool.query<ConnectionRow>(
         `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug='gmail'
          AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
          AND ($4::text IS NULL OR configuration_id=$4)
-         AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) ORDER BY inbox_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+         AND ($5::uuid[] IS NULL AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) OR id=ANY($5::uuid[]))
+         ORDER BY inbox_poll_at NULLS FIRST LIMIT CASE WHEN $5::uuid[] IS NULL THEN 4 END FOR UPDATE SKIP LOCKED)
          UPDATE app_connections c SET inbox_poll_at=now()+interval '15 minutes',inbox_claim_id=$3
          FROM due WHERE c.id=due.id RETURNING c.*`,
         [
@@ -2089,6 +2144,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           providerId,
           randomBytes(16).toString('hex'),
           provider.configurationId ?? null,
+          only ?? null,
         ],
       );
       await Promise.all(
@@ -2275,8 +2331,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   const timer = setInterval(() => {
     void background(drain)?.catch(() => {});
     void background(syncWatches)?.catch(() => {});
-    void background(pollInboxes)?.catch(() => {});
-    void background(pollActivityChanges)?.catch(() => {});
+    void background(() => pollInboxes())?.catch(() => {});
+    void background(() => pollActivityChanges())?.catch(() => {});
   }, 5000);
   timer.unref();
 
@@ -2691,7 +2747,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         if (!event.id || event.id.length > 200)
           return reply.code(400).send({ error: 'The webhook event has no valid identity.' });
         const messageId = slug.data === 'gmail' && messageIdentity(event.data, 'message');
-        const summary = `Source connectionId: ${row.id}.\n${await eventOverview(slug.data, event.trigger, event.data, mailCheck)}`;
+        const summary = `Source connectionId: ${row.id}.\n${
+          (await options.paused?.())
+            ? `Connected-app event from ${slug.data}; trigger ${event.trigger}. Read the source for its current state.`
+            : await eventOverview(slug.data, event.trigger, event.data, mailCheck)
+        }`;
         await pool.query(
           'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING',
           [
@@ -2719,6 +2779,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     binding,
     activitySources,
     readActivity,
+    watchable,
+    watchState,
     execute,
     executeApproved,
     prepare,
