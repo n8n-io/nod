@@ -9,6 +9,7 @@
   <a href="https://discord.gg/n8n"><img alt="Discord" src="https://img.shields.io/badge/discord-join_us-ff91ac?style=flat-square&labelColor=191919&logo=discord&logoColor=white" /></a>
   <a href="https://community.n8n.io/c/n8n-labs/48"><img alt="Forum" src="https://img.shields.io/badge/forum-n8n_Labs-ff91ac?style=flat-square&labelColor=191919&logo=discourse&logoColor=white" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-ff91ac?style=flat-square&labelColor=191919" /></a>
+  <a href="https://www.bestpractices.dev/projects/16526"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/16526?style=flat-square&labelColor=191919&color=ff91ac&label=openssf" /></a>
   <img alt="Status" src="https://img.shields.io/badge/status-early_preview-ff91ac?style=flat-square&labelColor=191919" />
 </p>
 
