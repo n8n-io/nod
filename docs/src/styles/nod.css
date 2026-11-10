@@ -52,6 +52,8 @@ body.lp {
   font-family: 'n8n Baumer Uniwidth', sans-serif;
   font-feature-settings: 'liga' 1;
   font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .lp-page {
@@ -669,7 +671,6 @@ body.lp {
   color: var(--nod-ink);
   font-size: 16px;
   line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-kerning: normal;
 }
