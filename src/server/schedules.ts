@@ -17,6 +17,7 @@ import { supersededSql } from './turn-chain.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 import { logFailure } from './failure-log.ts';
+import { lockKey } from './locks.ts';
 
 const queue = 'scheduled-task';
 const timingSchema = z.object({
@@ -773,13 +774,48 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     };
   }
 
+  async function duplicate(
+    client: PoolClient,
+    input: ReturnType<typeof validateCreate>,
+    route: { channel: string; sourceId: string | null },
+  ) {
+    await lockKey(client, `schedules:${ownerId}`);
+    return (
+      await client.query<ScheduleRow>(
+        `SELECT ${columns} FROM schedules WHERE owner_id=$1 AND enabled AND kind=$2
+           AND cron IS NOT DISTINCT FROM $3 AND run_at IS NOT DISTINCT FROM $4::timestamptz AND time_zone=$5
+           AND watch IS NOT DISTINCT FROM $9::jsonb AND delivery_channel=$8 AND ${
+             route.sourceId
+               ? `channel_source_id IN (SELECT source_id FROM channel_inbox WHERE owner_id=$1
+                    AND thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$10 AND owner_id=$1))`
+               : 'channel_source_id IS NULL'
+           }
+           AND (lower(btrim(title))=lower(btrim($6)) OR prompt=$7) ORDER BY created_at LIMIT 1`,
+        [
+          ownerId,
+          input.kind,
+          input.cron ?? null,
+          input.runAt ?? null,
+          input.timeZone,
+          input.title,
+          input.prompt,
+          route.channel,
+          input.watch ? JSON.stringify(input.watch) : null,
+          ...(route.sourceId ? [route.sourceId] : []),
+        ],
+      )
+    ).rows[0];
+  }
+
   async function create(raw: unknown, provenance?: ScheduleProvenance, shared?: PoolClient) {
     const input = validateCreate(raw);
     await validateWatch(input.watch, input.kind);
-    const row = await transaction(async (client) => {
+    const created = await transaction(async (client) => {
       const source = await sourceProvenance(client, provenance);
       const route = await deliveryRoute(client, source);
       const authorized = await authority(client, input.prompt, source);
+      const existing = provenance && (await duplicate(client, input, route));
+      if (existing) return { row: existing, existing: true };
       const saved = (
         await client.query<ScheduleRow>(
           `INSERT INTO schedules(id,owner_id,title,prompt,kind,cron,run_at,time_zone,delivery_channel,channel_source_id,authority_instruction,authority_source_message_id,baseline_observation,watch)
@@ -804,8 +840,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           ],
         )
       ).rows[0]!;
-      return enqueue(client, saved, nextOccurrence(saved));
+      return { row: await enqueue(client, saved, nextOccurrence(saved)), existing: false };
     }, shared);
+    const { row, existing } = created;
+    if (existing) return { ...(await value(row)), existing };
     afterCommit(shared ?? pool, () => {
       refresh();
       dependencies.analytics?.({

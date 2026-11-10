@@ -136,6 +136,11 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
           </form>
         </div>
       )}
+      {canSubscribe && (
+        <p className="ob-join-consent-note">
+          You can withdraw at any time via the unsubscribe link in every email or at privacy@n8n.io.
+        </p>
+      )}
       <div className="ob-join-community" data-analytics-public>
         <div className="ob-join-links">
           <a
