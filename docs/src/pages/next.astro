@@ -14,6 +14,7 @@ import { gtmSnippet } from '../gtm.mjs';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
+const n8n = 'https://n8n.io';
 const download = 'https://internal.users.n8n.cloud/webhook/nod/download';
 const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
@@ -22,6 +23,10 @@ const description =
 const url = 'https://nod.n8n.io/';
 const image = new URL(socialImage.src, Astro.site);
 const photo = { formats: ['avif', 'webp'], fallbackFormat: 'jpg', quality: 80, alt: '', class: 'bg' } as const;
+const stars = await fetch('https://api.github.com/repos/n8n-io/nod')
+  .then((response) => (response.ok ? response.json() : null))
+  .then((repo) => repo?.stargazers_count?.toLocaleString('en-US'))
+  .catch(() => null);
 const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 ---
 
@@ -57,37 +62,35 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
   <body class="lp">
     <div class="lp-page">
       <header class="lp-header">
-        <div class="lp-logo">
+        <a class="lp-logo" href={n8n} target="_blank" rel="noopener">
           <img class="lockup" src={n8nLogo} alt="n8n" width="180" height="36" />
-        </div>
+        </a>
         <div class="lp-header-right">
-          <div class="lp-capsules">
-            <span class="lp-dot"></span>
-            <span class="lp-capsule gray-tertiary mono">n8n labs</span>
-            <span class="lp-dot"></span>
-            <span class="lp-capsule lp-pink mono">NOD</span>
-            <span class="lp-dot"></span>
-            <span class="lp-capsule gray-secondary mono">Research Preview</span>
-            <span class="lp-dot"></span>
-            <a class="lp-capsule gray-tertiary" href={github} target="_blank" rel="noopener" aria-label="Nod on GitHub"
-              ><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"
-                ><path
-                  fill="currentColor"
-                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-                ></path></svg
-              ></a>
-            <span class="lp-dot"></span>
-          </div>
+          <p class="lp-crumb mono">
+            <span class="lp-crumb-dim">n8n labs</span>
+            <span class="lp-crumb-slash" aria-hidden="true">/</span>
+            <span>Nod</span>
+            <span class="lp-crumb-badge">Research preview</span>
+          </p>
+          <a
+            class="lp-capsule lp-star gray-tertiary mono"
+            href={github}
+            target="_blank"
+            rel="noopener"
+            aria-label="Star Nod on GitHub"
+            ><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"
+              ><path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+              ></path></svg
+            ><span>Star</span>{stars && <span class="lp-star-count">{stars}</span>}</a
+          >
         </div>
       </header>
 
       <section class="lp-hero">
         <div class="lp-hero-top">
-          <div class="lp-capsules">
-            <span class="lp-dot lp-dot-pink"></span>
-            <span class="lp-capsule gray-tertiary mono">More tasks than time?</span>
-            <span class="lp-dot lp-dot-pink"></span>
-          </div>
+          <p class="lp-eyebrow mono">More tasks than time?</p>
           <div class="lp-hero-headline-frame lp-dot-grid-bg">
             <h1 class="lp-hero-headline">
               <span class="lp-hero-name"
@@ -102,7 +105,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                 ></span
               >
               <span class="lp-hero-tagline"
-                ><span>The open source personal agent</span> <span>with its own computer</span></span
+                ><span>Open source personal agent</span> <span>with its own computer</span></span
               >
             </h1>
           </div>
@@ -528,7 +531,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         <details class="lp-faq">
           <summary>Do I need n8n?</summary>
           <p>
-            No, Nod is its own app, made by the team behind <a href="https://n8n.io" target="_blank" rel="noopener">n8n</a>. It is
+            No, Nod is its own app, made by the team behind <a href={n8n} target="_blank" rel="noopener">n8n</a>. It is
             not the n8n AI Assistant.
           </p>
         </details>
@@ -650,7 +653,10 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
       </section>
 
       <footer class="lp-footer">
-        <p class="lp-logo-tag"><img class="glyph" src={nodMark} alt="" />Nod by n8n labs</p>
+        <p class="lp-logo-tag"><img class="glyph" src={nodMark} alt="" /><span
+            >Nod by <a href={n8n} target="_blank" rel="noopener">n8n</a> labs</span
+          >
+        </p>
         <nav class="lp-footer-nav">
           <a href="https://n8n.io/legal/privacy/">Privacy</a>
           <a href="https://n8n.io/imprint/">Imprint</a>
