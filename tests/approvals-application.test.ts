@@ -482,7 +482,7 @@ test(
       assert.ok(jobId);
       return { id, jobId: jobId as string };
     }
-    async function assertCancelled(schedule: { id: string; jobId: string }) {
+    async function assertPaused(schedule: { id: string; jobId: string }) {
       assert.deepEqual(
         (
           await pool.query(
@@ -500,7 +500,7 @@ test(
       assert.deepEqual(
         (
           await pool.query(
-            "SELECT id FROM approvals WHERE owner_id=$1 AND action='NOD_schedule_cancel' AND args=$2::jsonb AND status<>'expired'",
+            "SELECT id FROM approvals WHERE owner_id=$1 AND action IN ('NOD_schedule_pause','NOD_schedule_cancel') AND args=$2::jsonb AND status<>'expired'",
             [ownerId, { id: schedule.id }],
           )
         ).rows,
@@ -1118,9 +1118,9 @@ test(
       );
 
       await t.test(
-        'schedule confirmations cannot mutate a revision edited after the question was saved',
+        'schedule pause and edit confirmations cannot mutate a revision edited after the question was saved',
         async () => {
-          for (const action of ['schedule_cancel', 'schedule_update']) {
+          for (const action of ['schedule_pause', 'schedule_update']) {
             const schedule = await reminder();
             const args = {
               id: schedule.id,
@@ -1128,6 +1128,7 @@ test(
             };
             const turn = await propose(action, args);
             const [approval] = await approvalsFor(turn);
+            assert.equal(approval.action, `NOD_${action}`);
             assert.equal(approval.expected_revision, 0);
             const changed = await request('PATCH', `/api/schedules/${schedule.id}`, {
               title: 'A newer synthetic reminder',
@@ -1179,24 +1180,31 @@ test(
               ])
             ).rows[0];
             assert.equal(applied.revision, saved.revision + 1);
-            assert.equal(applied.enabled, action !== 'schedule_cancel');
+            assert.equal(applied.enabled, action !== 'schedule_pause');
             assert.equal(applied.title, args.title ?? saved.title);
+            if (action === 'schedule_pause') {
+              const listed = (await request('GET', '/api/schedules'))
+                .json()
+                .find((item: { id: string }) => item.id === schedule.id);
+              assert.equal(listed.enabled, false);
+              assert.equal(listed.nextRun, null);
+            }
           }
         },
       );
 
       await t.test(
-        'direct schedule cancellation retires an outstanding chat confirmation',
+        'direct schedule pause or deletion retires an outstanding chat confirmation',
         async () => {
           for (const method of ['PATCH', 'DELETE'] as const) {
             const schedule = await reminder({
               kind: 'recurring',
-              cron: '0 0 1 1 *',
+              cron: '0 0 * * 0',
               runAt: null,
             });
             const prompt = `Synthetic scheduled cancellation ${randomUUID()}`;
             const requestedId = method === 'PATCH' ? schedule.id.toUpperCase() : schedule.id;
-            plans.set(prompt, { action: 'schedule_cancel', args: { id: requestedId } });
+            plans.set(prompt, { action: 'schedule_pause', args: { id: requestedId } });
             const turn = await transaction(async (client) => {
               const turnId = await enqueueTurn(prompt, {
                 source: 'schedule',
@@ -1223,7 +1231,7 @@ test(
             await waitFor(turn, 'waiting');
             const [approval] = await approvalsFor(turn);
             assert.equal(approval.status, 'pending');
-            assert.equal(approval.action, 'NOD_schedule_cancel');
+            assert.equal(approval.action, 'NOD_schedule_pause');
             assert.deepEqual(approval.args, { id: requestedId });
             const before = await request('GET', '/api/state');
             assert.equal(before.statusCode, 200, before.body);
@@ -1240,7 +1248,7 @@ test(
               method === 'PATCH' ? { enabled: false } : undefined,
             );
             assert.equal(response.statusCode, 200, response.body);
-            if (method === 'PATCH') await assertCancelled(schedule);
+            if (method === 'PATCH') await assertPaused(schedule);
             else {
               assert.equal(
                 (
@@ -1299,13 +1307,13 @@ test(
       await t.test(
         'retiring a schedule confirmation leaves its saved task open with a reply target',
         async () => {
-          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
           const taskId = randomUUID();
           const parentId = randomUUID();
           const ownerMessageId = randomUUID();
           const prompt = `Synthetic saved task cancellation ${randomUUID()}`;
           const threadId = (await request('GET', '/api/state')).json<AppState>().threadId;
-          plans.set(prompt, { action: 'schedule_cancel', args: { id: schedule.id } });
+          plans.set(prompt, { action: 'schedule_pause', args: { id: schedule.id } });
           const turn = await transaction(async (client) => {
             await client.query(
               `INSERT INTO turns(id,owner_id,thread_id,session_id,source,message_id,prompt,status,finished_at)
@@ -1338,7 +1346,7 @@ test(
           await waitFor(turn, 'waiting');
           const [approval] = await approvalsFor(turn);
           assert.equal(approval.status, 'pending');
-          assert.equal(approval.action, 'NOD_schedule_cancel');
+          assert.equal(approval.action, 'NOD_schedule_pause');
           const before = (await request('GET', '/api/tasks'))
             .json<Task[]>()
             .find((task) => task.id === taskId);
@@ -1524,13 +1532,13 @@ test(
       });
 
       await t.test(
-        'direct schedule cancellation waits for a channel confirmation in flight',
+        'direct schedule pause waits for a channel confirmation already in flight',
         async () => {
-          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
           const prompt = `Synthetic channel cancellation ${randomUUID()}`;
           const sourceId = `channel:telegram:bot:${randomUUID()}`;
           const channel = 'telegram:synthetic';
-          plans.set(prompt, { action: 'schedule_cancel', args: { id: schedule.id } });
+          plans.set(prompt, { action: 'schedule_pause', args: { id: schedule.id } });
           const turn = await transaction(async (client) => {
             const turnId = await enqueueTurn(prompt, {
               source: 'schedule',
@@ -1620,7 +1628,7 @@ test(
                 Boolean(
                   (
                     await pool.query(
-                      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action='NOD_schedule_cancel'",
+                      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action='NOD_schedule_pause'",
                       [ownerId, id],
                     )
                   ).rowCount,
@@ -1664,7 +1672,7 @@ test(
             await sending;
             await channels.drain();
             assert.equal(response.statusCode, 200, response.body);
-            await assertCancelled(schedule);
+            await assertPaused(schedule);
             assert.equal((await approvalsFor(turn))[0].status, 'expired');
             assert.equal(posts.length, 2);
             assert.deepEqual(posts[0], { threadId: 'synthetic-chat', text: confirmationText });
@@ -1708,11 +1716,12 @@ test(
         'legacy schedule approvals without a saved revision cannot execute',
         async () => {
           const schedule = await reminder();
-          const turn = await propose('schedule_cancel', { id: schedule.id });
+          const turn = await propose('schedule_pause', { id: schedule.id });
           const [approval] = await approvalsFor(turn);
-          await pool.query('UPDATE approvals SET expected_revision=NULL WHERE id=$1', [
-            approval.id,
-          ]);
+          await pool.query(
+            "UPDATE approvals SET action='NOD_schedule_cancel',expected_revision=NULL WHERE id=$1",
+            [approval.id],
+          );
           const response = await request('POST', '/api/messages', {
             text: 'Yes',
             replyToMessageId: approval.confirmation_message_id,
@@ -1729,6 +1738,78 @@ test(
             ).rows[0],
             { revision: 0, enabled: true, job_id: schedule.jobId },
           );
+        },
+      );
+
+      await t.test(
+        'legacy schedule cancellation approval still pauses the saved schedule',
+        async () => {
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
+          const turn = await propose('schedule_pause', { id: schedule.id });
+          const [approval] = await approvalsFor(turn);
+          await pool.query("UPDATE approvals SET action='NOD_schedule_cancel' WHERE id=$1", [
+            approval.id,
+          ]);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          const resumed = response.json().turnId as string;
+          await waitFor(resumed, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          assert.match(prompts.get(resumed) ?? '', /The schedule is paused/);
+          const paused = (await request('GET', '/api/schedules'))
+            .json()
+            .find((item: { id: string }) => item.id === schedule.id);
+          assert.equal(paused.enabled, false);
+          assert.equal(paused.nextRun, null);
+        },
+      );
+
+      await t.test(
+        'legacy approval does not call a completed one-time schedule paused',
+        async () => {
+          const schedule = await reminder();
+          const turn = await propose('schedule_pause', { id: schedule.id });
+          const [approval] = await approvalsFor(turn);
+          const threadId = (await request('GET', '/api/state')).json<AppState>().threadId;
+          const finishedTurn = randomUUID();
+          const runAt = '2020-01-01T09:00:00Z';
+          await pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,finished_at)
+             VALUES($1,$2,$3,$3,'schedule','Synthetic completed reminder.','succeeded',now())`,
+            [finishedTurn, ownerId, threadId],
+          );
+          await pool.query(
+            `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone)
+             VALUES($1,$2,$3,0,$4,'Synthetic cancellation reminder',$5,$6,'UTC')`,
+            [randomUUID(), ownerId, schedule.id, randomUUID(), finishedTurn, runAt],
+          );
+          await pool.query(
+            'UPDATE schedules SET enabled=false,run_at=$2,next_run_at=NULL,job_id=NULL WHERE id=$1',
+            [schedule.id, runAt],
+          );
+          await pool.query("UPDATE approvals SET action='NOD_schedule_cancel' WHERE id=$1", [
+            approval.id,
+          ]);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          const resumed = response.json().turnId as string;
+          await waitFor(resumed, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          assert.doesNotMatch(prompts.get(resumed) ?? '', /The schedule is paused/);
+          const saved = (await request('GET', '/api/schedules'))
+            .json()
+            .find((item: { id: string }) => item.id === schedule.id);
+          assert.equal(saved.enabled, false);
+          assert.equal(saved.lastRun.scheduledFor, new Date(runAt).toISOString());
+          assert.equal(saved.lastRun.status, 'succeeded');
         },
       );
 
@@ -1820,7 +1901,7 @@ test(
       );
 
       await t.test(
-        'a schedule cancellation steered into a confirmed turn uses the fresh owner request',
+        'a schedule pause steered into a confirmed turn uses the fresh owner request',
         async () => {
           const schedule = await reminder();
           const proposed = await propose('notification_preferences_update', {
@@ -1857,7 +1938,7 @@ test(
             assert.equal((await approvalsFor(proposed))[0].status, 'completed');
             const text = 'Cancel the synthetic reminder now.';
             asked.add(text);
-            plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
+            plans.set(text, { action: 'schedule_pause', args: { id: schedule.id } });
             const cancellation = await request('POST', '/api/messages', {
               text,
               clientMessageId: randomUUID(),
@@ -1874,7 +1955,7 @@ test(
               ).rows[0].turn_id,
               resumed,
             );
-            await assertCancelled(schedule);
+            await assertPaused(schedule);
           } finally {
             steering = undefined;
             release();

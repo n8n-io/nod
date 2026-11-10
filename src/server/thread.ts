@@ -104,6 +104,7 @@ interface SubmitUserMessageOptions {
   sourceId?: string;
   channel?: string;
   client?: PoolClient;
+  displayText?: string;
   replyToMessageId?: string;
   replyQuote?: string;
   seenMessageId?: string;
@@ -553,6 +554,7 @@ export async function submitUserMessage(
   const channel = options.channel ?? 'web';
   const confirmation = {
     text,
+    displayText: options.displayText,
     channel,
     replyToMessageId: options.replyToMessageId,
     seenMessageId: options.seenMessageId,
@@ -572,7 +574,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,question_answer FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,display_text,audio_caption,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,question_answer FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -582,6 +584,7 @@ export async function submitUserMessage(
           previous.role !== 'user' ||
           previous.thread_id !== thread.id ||
           previous.text !== text ||
+          previous.display_text !== (options.displayText ?? null) ||
           previous.audio_caption !== (options.audioCaption ?? null) ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
           previous.reply_quote !== (options.replyQuote ?? null) ||
@@ -695,11 +698,12 @@ export async function submitUserMessage(
     if (taskTarget) await taskTarget.record(turnId);
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10)",
+      "INSERT INTO messages(id,owner_id,role,text,display_text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10,$11)",
       [
         messageId,
         ownerId,
         text,
+        options.displayText ?? null,
         thread.id,
         turnId,
         JSON.stringify([...attachments, ...prepared]),

@@ -1113,6 +1113,7 @@ export function Chat({
       : 'composer',
     recording?: File,
     questionAnswer?: QuestionAnswer,
+    displayText?: string,
   ): Promise<ComposerSendResult & { error?: string; questionUnavailable?: true }> {
     if (welcoming || spendingPaused) return { sent: false, restoreText: true };
     unreadPositioned.current = currentUnreadVisit.current;
@@ -1158,7 +1159,7 @@ export function Chat({
     const recordingId = recordingKey ? recordingIds.current.get(recordingKey) : null;
     const plainSignature = privateVerification
       ? null
-      : JSON.stringify([value, attachmentIds, null, null, false, recordingId, null]);
+      : JSON.stringify([value, attachmentIds, null, null, false, recordingId, null, displayText]);
     const signature = privateVerification
       ? null
       : JSON.stringify([
@@ -1169,6 +1170,7 @@ export function Chat({
           reply?.isQuote === true,
           recordingId,
           questionAnswer ?? null,
+          displayText,
         ]);
     if (privateVerification) retry.current = null;
     const unresolvedReply =
@@ -1233,6 +1235,7 @@ export function Chat({
       id,
       role: 'user',
       text: privateVerification ? masked : value,
+      ...(!privateVerification && displayText ? { displayText } : {}),
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -1323,6 +1326,7 @@ export function Chat({
           threadId: sentThread,
           clientMessageId: id,
           text: value,
+          ...(displayText ? { displayText } : {}),
           attachmentIds,
           ...(replyId
             ? {
@@ -1404,6 +1408,11 @@ export function Chat({
                   ...item.message,
                   turnId,
                   text: messageText,
+                  ...(privateVerification
+                    ? { displayText: undefined }
+                    : typeof result.displayText === 'string'
+                      ? { displayText: result.displayText }
+                      : {}),
                   ...(typeof result.audioCaption === 'string'
                     ? { audioCaption: result.audioCaption }
                     : {}),
@@ -1537,7 +1546,11 @@ export function Chat({
         .filter((item) => item.result && !item.result.sent && item.result.restoreText)
         .map((item) => item.text);
       requestedSends.current = [];
-      if (unsent.length) setText((current) => [...unsent, current].filter(Boolean).join('\n\n'));
+      if (unsent.length) {
+        const restored = unsent.join('\n\n');
+        if (!composer.current?.prependText(restored))
+          setText((current) => [restored, current].filter(Boolean).join('\n\n'));
+      }
       composer.current?.focus();
     });
   }, [requestedMessage, state.configuration.llmReady, welcoming]);
@@ -2246,7 +2259,10 @@ export function Chat({
                         message.turnId || persistedIds.has(message.id)
                           ? (quote?: string) => {
                               taskReply.current = null;
-                              const preview = message.audioCaption ?? message.text;
+                              const preview =
+                                (message.role === 'user' ? message.displayText : undefined) ??
+                                message.audioCaption ??
+                                message.text;
                               const text =
                                 preview.trim() || !message.presentation
                                   ? preview
@@ -2405,8 +2421,8 @@ export function Chat({
                 taskReply.current = null;
                 setReplyTo(null);
               }}
-              onSend={(value, attachments, recording) =>
-                send(value, attachments, replyTo, undefined, recording)
+              onSend={(value, attachments, recording, displayText) =>
+                send(value, attachments, replyTo, undefined, recording, undefined, displayText)
               }
               onStop={
                 working ||

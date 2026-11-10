@@ -1,4 +1,4 @@
-import { Extension, InputRule, type Editor } from '@tiptap/core';
+import { Extension, InputRule, Mark, type Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -8,7 +8,6 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
-import { parseComposerMarkdown } from './composer-markdown';
 
 export function clipboardFiles(clipboard: DataTransfer): File[] {
   const files = Array.from(clipboard.files ?? []);
@@ -19,38 +18,16 @@ export function clipboardFiles(clipboard: DataTransfer): File[] {
     .filter((file): file is File => file !== null);
 }
 
-function markdownPasteSlice(editor: Editor, value: string) {
+function plainTextPasteSlice(editor: Editor, value: string) {
   const { schema } = editor;
-  const hardBreaks = (count: number) =>
-    Fragment.fromArray(Array.from({ length: count }, () => schema.nodes.hardBreak.create()));
-  if (!value.trim()) {
-    const content = value
-      .split('\n')
-      .flatMap((line, index) => [
-        ...(index ? [schema.nodes.hardBreak.create()] : []),
-        ...(line ? [schema.text(line)] : []),
-      ]);
-    return new Slice(Fragment.from(schema.nodes.paragraph.create(null, content)), 1, 1);
-  }
-  const leading = value.match(/^\n*/)?.[0].length ?? 0;
-  const trailing = value.match(/\n*$/)?.[0].length ?? 0;
-  let content = schema.nodeFromJSON(
-    parseComposerMarkdown(value.slice(leading, value.length - trailing)),
-  ).content;
-  const first = content.firstChild;
-  if (leading && first?.type.name === 'paragraph')
-    content = content.replaceChild(0, first.copy(hardBreaks(leading).append(first.content)));
-  const last = content.lastChild;
-  if (trailing && last?.type.name === 'paragraph')
-    content = content.replaceChild(
-      content.childCount - 1,
-      last.copy(last.content.append(hardBreaks(trailing))),
-    );
-  return new Slice(
-    content,
-    content.firstChild?.type.name === 'paragraph' ? 1 : 0,
-    content.lastChild?.type.name === 'paragraph' ? 1 : 0,
-  );
+  const raw = schema.marks.rawPaste.create();
+  const content = value
+    .split('\n')
+    .flatMap((line, index) => [
+      ...(index ? [schema.nodes.hardBreak.create(null, null, [raw])] : []),
+      ...(line ? [schema.text(line, [raw])] : []),
+    ]);
+  return new Slice(Fragment.from(schema.nodes.paragraph.create(null, content)), 1, 1);
 }
 
 export function createComposerExtensions(callbacks: {
@@ -65,6 +42,17 @@ export function createComposerExtensions(callbacks: {
       link: {
         openOnClick: false,
         isAllowedUri: (url) => Boolean(safeMessageLink(url, window.location.origin)),
+      },
+    }),
+    Mark.create({
+      name: 'rawPaste',
+      inclusive: false,
+      excludes: 'link',
+      parseHTML() {
+        return [{ tag: 'span[data-raw-paste]' }];
+      },
+      renderHTML() {
+        return ['span', { 'data-raw-paste': '' }, 0];
       },
     }),
     Underline,
@@ -144,17 +132,18 @@ export function createComposerExtensions(callbacks: {
                 if (!clipboard) return false;
                 const files = clipboardFiles(clipboard);
                 const text = clipboard.getData('text/plain');
-                if (!files.length && (!text || clipboard.getData('text/html'))) return false;
+                if (!files.length && !text) return false;
                 event.preventDefault();
                 if (files.length) callbacks.upload(files);
                 if (text) {
                   const value = text.replace(/\r\n?/g, '\n');
                   const { tr, selection } = view.state;
-                  if (selection.$from.parent.type.spec.code) tr.insertText(value);
-                  else tr.replaceSelection(markdownPasteSlice(editor, value));
-                  view.dispatch(
-                    tr.scrollIntoView().setMeta('paste', true).setMeta('uiEvent', 'paste'),
-                  );
+                  const code = Boolean(selection.$from.parent.type.spec.code);
+                  if (code) tr.insertText(value);
+                  else tr.replaceSelection(plainTextPasteSlice(editor, value));
+                  tr.scrollIntoView().setMeta('paste', true);
+                  if (code) tr.setMeta('uiEvent', 'paste');
+                  view.dispatch(tr);
                 }
                 return true;
               },
