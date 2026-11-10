@@ -6917,6 +6917,7 @@ test(
                 let rotateSource = false;
                 let allowed = true;
                 let stopAfterCheck = false;
+                let checkedEvents = '';
                 let failRecord = false;
                 const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
@@ -6952,6 +6953,7 @@ test(
                     configured: true,
                     curate: async ({ input }) => {
                       checks++;
+                      checkedEvents = (input as { events?: string }).events ?? '';
                       if (fail) throw new Error('Synthetic failed check');
                       if (stopAfterCheck) allowed = false;
                       return 'quietEnd' in (input as object) ? { urgent } : { attention: verdict };
@@ -7038,8 +7040,28 @@ test(
                   }
                   return [quiet, dirty];
                 };
-                await transaction((client) => engine.signal(sourceId, client), db.pool);
+                await transaction(
+                  (client) => engine.signal(sourceId, client, 'Meeting moved from 10:00 to 09:00.'),
+                  db.pool,
+                );
                 assert.deepEqual(await screen(), [true, false]);
+                assert.ok(checkedEvents.includes('Meeting moved from 10:00 to 09:00.'));
+                assert.ok(checkedEvents.includes('<untrusted_tool_result'));
+                checkedEvents = '';
+                await transaction(
+                  (client) =>
+                    engine.signal(sourceId, client, 'Meeting now overlaps another event.'),
+                  db.pool,
+                );
+                assert.deepEqual(await screen(), [true, false]);
+                assert.ok(checkedEvents.includes('Meeting now overlaps another event.'));
+                assert.ok(!checkedEvents.includes('Meeting moved from 10:00 to 09:00.'));
+                await transaction(
+                  (client) =>
+                    engine.signal(sourceId, client, 'A change not present in the record.'),
+                  db.pool,
+                );
+                assert.deepEqual(await screen(false, false, 'succeeded'), ['handed', false]);
                 const firstChecks = checks;
                 verdict = true;
                 assert.deepEqual(await screen(false), [true, false]);
@@ -7165,6 +7187,87 @@ test(
                 assert.deepEqual(await screen(), ['handed', false]);
                 await preferences.update({ quietHoursEnabled: false });
                 screening.release(turnId);
+              },
+            );
+            await t.test(
+              'screening leaves a report received during a read due for the next turn',
+              async () => {
+                for (const quietHours of [false, true]) {
+                  await reset();
+                  const clock = (offset: number) =>
+                    new Date(Date.now() + offset).toISOString().slice(11, 16);
+                  await preferences.update({
+                    quietHoursEnabled: quietHours,
+                    quietStart: clock(-60_000),
+                    quietEnd: clock(3_600_000),
+                  });
+                  changeToken = 'stable-source-token';
+                  const report = 'Meeting moved from 10:00 to 09:00 during the source read.';
+                  const screening = createProactivity({
+                    ...options,
+                    curator: {
+                      id: 'report-race',
+                      configured: true,
+                      curate: async ({ input }) =>
+                        'quietEnd' in (input as object)
+                          ? { urgent: (input as { events: string }).events.includes(report) }
+                          : { attention: quietHours },
+                    },
+                  });
+                  await transaction((client) => engine.signal(sourceId, client), db.pool);
+                  await db.pool.query(
+                    'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId, turnId],
+                  );
+                  afterRead = async () => {
+                    afterRead = async () => {};
+                    await transaction((client) => engine.signal(sourceId, client, report), db.pool);
+                  };
+                  let handed = false;
+                  try {
+                    const context = (await screening.context(ref))!;
+                    assert.equal(await context.screen!({}, new AbortController().signal), true);
+                    const pending = (
+                      await db.pool.query(
+                        'SELECT events,next_poll,signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                        [ownerId, sourceId],
+                      )
+                    ).rows[0];
+                    assert.equal(pending.dirty, true);
+                    assert.deepEqual(
+                      pending.events.map((event: { summary: string }) => event.summary),
+                      [report],
+                    );
+                    assert.ok(pending.next_poll.getTime() <= Date.now());
+                    await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+                      turnId,
+                    ]);
+                    inspectObserver = async (next) => {
+                      if (!next.prompt.startsWith('Assess the due sources')) return;
+                      assert.ok(next.prompt.includes(report));
+                      const scoped = (await screening.context({
+                        turnId: next.turnId,
+                        threadId: next.threadId,
+                      }))!;
+                      const result = await scoped.screen!({}, next.signal);
+                      handed = Array.isArray(result);
+                      if (Array.isArray(result))
+                        assert.deepEqual(
+                          (result[0] as { result: { events: string[] } }).result.events,
+                          [report],
+                        );
+                      return { status: 'succeeded' };
+                    };
+                    const next = await engine.due();
+                    assert.ok(next && next !== turnId);
+                    await waitFor(settled(next));
+                    assert.equal(handed, true);
+                  } finally {
+                    afterRead = async () => {};
+                    inspectObserver = undefined;
+                    screening.release(turnId);
+                  }
+                }
               },
             );
             await t.test(

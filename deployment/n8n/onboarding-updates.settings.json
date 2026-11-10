@@ -1,0 +1,8 @@
+{
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "none",
+  "saveDataErrorExecution": "none",
+  "saveExecutionProgress": false,
+  "saveManualExecutions": false,
+  "executionTimeout": 30
+}

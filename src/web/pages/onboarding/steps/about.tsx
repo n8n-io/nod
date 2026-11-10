@@ -18,7 +18,10 @@ import {
   type ProfileJob,
   type ProfileRole,
 } from '../../../../shared/onboarding';
-import { onboardingProfileAnswers } from '../../../../shared/onboarding-analytics';
+import {
+  onboardingPersonProperties,
+  onboardingProfileAnswers,
+} from '../../../../shared/onboarding-analytics';
 import { Check, Pencil, X } from '../../../components/icons';
 import { prefersReducedMotion, Rise } from '../../../components/motion';
 import { Notice } from '../../../components/ui';
@@ -264,8 +267,12 @@ export function About({ arrived, quiet, onNext, onBack, usageShared }: StepProps
     const upcoming = list.find((item) => !seen.includes(item)) ?? 'done';
     setError('');
     setCanContinue(false);
-    setState({ current: upcoming, seen, profile, editing: null });
-    if (upcoming === 'done') return void finish(profile);
+    const nextState: State = { current: upcoming, seen, profile, editing: null };
+    setState(nextState);
+    if (upcoming === 'done') {
+      writeStored('about', nextState);
+      return void finish(profile);
+    }
     if (prefersReducedMotion()) return;
     window.clearTimeout(timer.current);
     setTyping(true);
@@ -336,8 +343,13 @@ export function About({ arrived, quiet, onNext, onBack, usageShared }: StepProps
     setCanContinue(false);
     const capture = analyticsForCurrentSession();
     const saved = trimmed(final);
+    writeStored('about-shared', null);
     try {
-      await api('/api/onboarding/profile', { method: 'POST', body: JSON.stringify(saved) });
+      const result = await api<{ shared?: boolean }>('/api/onboarding/profile', {
+        method: 'POST',
+        body: JSON.stringify(saved),
+      });
+      if (result?.shared === true) writeStored('about-shared', onboardingPersonProperties(saved));
       capture('onboarding_profile_answered', onboardingProfileAnswers(saved));
       onNext();
     } catch (cause) {

@@ -1,6 +1,11 @@
 import { useRef, useState } from 'react';
 import { regexes } from 'zod';
-import { communityLinks, updatesEmailConsent } from '../../../../shared/onboarding';
+import {
+  communityLinks,
+  updatesEmailConsent,
+  type OnboardingProfile,
+} from '../../../../shared/onboarding';
+import { onboardingPersonProperties } from '../../../../shared/onboarding-analytics';
 import { ArrowUpRight } from '../../../components/icons';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Input } from '../../../components/ui';
@@ -8,6 +13,7 @@ import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analytics';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages } from '../motion';
+import { readStored } from '../storage';
 
 export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: StepProps) {
   const [email, setEmail] = useState('');
@@ -37,9 +43,24 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
     setError(null);
     const capture = analyticsForCurrentSession();
     try {
+      const about = readStored<{ current?: string; profile?: OnboardingProfile }>('about');
+      const currentProfile =
+        about?.current === 'done' &&
+        Array.isArray(about.profile?.roles) &&
+        Array.isArray(about.profile?.jobs)
+          ? onboardingPersonProperties(about.profile)
+          : undefined;
+      const sharedProfile =
+        readStored<ReturnType<typeof onboardingPersonProperties>>('about-shared');
+      const profile =
+        currentProfile &&
+        sharedProfile &&
+        JSON.stringify(currentProfile) === JSON.stringify(sharedProfile)
+          ? currentProfile
+          : undefined;
       await api('/api/onboarding/updates-email', {
         method: 'POST',
-        body: JSON.stringify({ email: address, consent: true }),
+        body: JSON.stringify({ email: address, consent: true, ...(profile ? { profile } : {}) }),
       });
       capture('onboarding_updates_email_submitted');
       onNext();

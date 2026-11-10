@@ -10,8 +10,8 @@ export async function sourceAnalyticsVersion(
   processVersion?: string,
   savedVersion?: string,
 ) {
-  if (processVersion !== undefined) return processVersion;
-  if (savedVersion !== undefined) return savedVersion;
+  if (processVersion?.trim()) return processVersion;
+  if (savedVersion?.trim()) return savedVersion;
   if (!production) return undefined;
   try {
     const { stdout: topLevel } = await run('git', ['rev-parse', '--show-toplevel'], {

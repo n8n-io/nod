@@ -24,6 +24,7 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import Fastify from 'fastify';
 import { createOnboardingProfile } from '../src/server/onboarding-profile.ts';
+import type { OnboardingEmailProfile } from '../src/ports/onboarding-email.ts';
 import type { OnboardingProfile } from '../src/shared/onboarding.ts';
 
 type Step = {
@@ -1466,6 +1467,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     store: memoryObjectStore(),
   });
   const sent: string[] = [];
+  const sentProfiles: (OnboardingEmailProfile | undefined)[] = [];
   const profiles: OnboardingProfile[] = [];
   let profileAnalyticsFail = false;
   let profileAnalyticsReturnFalse = false;
@@ -1475,14 +1477,16 @@ test('onboarding answers update memory and profile analytics while the updates e
   let disableProfileDuringSubmit = false;
   const updatesEmail = {
     enabled: () => enabled,
-    submit: async (email: string) => {
+    submit: async (email: string, profile?: OnboardingEmailProfile) => {
       sent.push(email);
+      sentProfiles.push(profile);
       if (disableDuringSubmit) enabled = false;
       return accepted;
     },
   };
   const profileAnalytics = {
     enabled: () => enabled,
+    version: () => 0,
     submit: async (profile: OnboardingProfile) => {
       profiles.push(profile);
       if (disableProfileDuringSubmit) enabled = false;
@@ -1511,6 +1515,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     },
   });
   assert.equal(first.statusCode, 200);
+  assert.equal(first.json().shared, true);
   assert.equal(profiles.length, 1);
   assert.deepEqual(profiles[0], {
     scope: 'work',
@@ -1589,6 +1594,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'personal', roles: ['student'], jobs: ['research'] },
   });
   assert.equal(savedWithoutMemory.statusCode, 200);
+  assert.equal(savedWithoutMemory.json().shared, true);
   assert.equal(profiles.length, 5);
   assert.deepEqual(await notes(), []);
 
@@ -1626,6 +1632,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'work', roles: [], jobs: [] },
   });
   assert.equal(retriedAnalytics.statusCode, 200);
+  assert.equal(retriedAnalytics.json().shared, true);
   assert.equal(profiles.length, 7);
   profileAnalyticsReturnFalse = true;
   const rejectedAnalytics = await app.inject({
@@ -1644,6 +1651,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'work', roles: [], jobs: [] },
   });
   assert.equal(optedOutProfile.statusCode, 200);
+  assert.equal(optedOutProfile.json().shared, false);
   assert.equal(profiles.length, 8);
   enabled = true;
   profileAnalyticsFail = true;
@@ -1654,9 +1662,19 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'work', roles: [], jobs: [] },
   });
   assert.equal(revokedDuringProfileSubmit.statusCode, 200);
+  assert.equal(revokedDuringProfileSubmit.json().shared, false);
   assert.equal(profiles.length, 9);
   enabled = true;
   profileAnalyticsFail = false;
+  const acceptedDuringProfileOptOut = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'work', roles: [], jobs: [] },
+  });
+  assert.equal(acceptedDuringProfileOptOut.statusCode, 200);
+  assert.equal(acceptedDuringProfileOptOut.json().shared, false);
+  assert.equal(profiles.length, 10);
+  enabled = true;
   disableProfileDuringSubmit = false;
   const unavailableAnalytics = await unconfigured.inject({
     method: 'POST',
@@ -1664,7 +1682,8 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'work', roles: [], jobs: [] },
   });
   assert.equal(unavailableAnalytics.statusCode, 200);
-  assert.equal(profiles.length, 9);
+  assert.equal(unavailableAnalytics.json().shared, false);
+  assert.equal(profiles.length, 10);
 
   assert.equal(
     (
@@ -1681,6 +1700,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     { email: 'owner@example.test' },
     { email: 'owner@example.test', consent: false },
     { email: 'owner@example.test', consent: true, extra: 'ignored' },
+    { email: 'owner@example.test', consent: true, profile: { roles: [], jobs: [] } },
   ]) {
     const rejected = await app.inject({
       method: 'POST',
@@ -1706,6 +1726,7 @@ test('onboarding answers update memory and profile analytics while the updates e
   });
   assert.equal(subscribed.statusCode, 200);
   assert.deepEqual(sent, ['owner@example.test']);
+  assert.equal(sentProfiles[0], undefined);
   assert.equal(JSON.stringify(await memory.load()), remembered);
   disableDuringSubmit = true;
   const revokedDuringSubmit = await app.inject({
@@ -1736,4 +1757,82 @@ test('onboarding answers update memory and profile analytics while the updates e
     ).statusCode,
     200,
   );
+});
+
+test('updates email keeps fixed answers scoped to each submission across route instances', async (t) => {
+  const sent: (OnboardingEmailProfile | undefined)[] = [];
+  const memory = {
+    enabled: async () => false,
+    edit: async () => {
+      throw new Error('Unexpected memory edit');
+    },
+    restate: async () => {
+      throw new Error('Unexpected memory restate');
+    },
+  } as unknown as Parameters<typeof createOnboardingProfile>[0]['memory'];
+  const createApp = () => {
+    const app = Fastify();
+    t.after(() => app.close());
+    createOnboardingProfile({
+      memory,
+      profileAnalytics: { enabled: () => true, version: () => 0, submit: async () => true },
+      updatesEmail: {
+        enabled: () => true,
+        submit: async (_email, profile) => {
+          sent.push(profile);
+          return true;
+        },
+      },
+    }).registerRoutes(app);
+    return app;
+  };
+  const first = createApp();
+  assert.equal(
+    (
+      await first.inject({
+        method: 'POST',
+        url: '/api/onboarding/profile',
+        payload: { scope: 'personal', roles: ['student'], jobs: ['research'] },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await first.inject({
+        method: 'POST',
+        url: '/api/onboarding/updates-email',
+        payload: { email: 'second@example.test', consent: true },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(sent[0], undefined);
+
+  const restarted = createApp();
+  const fixed = {
+    onboarding_profile_completed: true,
+    onboarding_scope: 'work',
+    onboarding_roles: ['engineering', 'other'],
+    onboarding_who_for: 'not_asked',
+    onboarding_company_size: '2_10',
+    onboarding_jobs: ['research', 'other'],
+  };
+  const signup = (profile: unknown) =>
+    restarted.inject({
+      method: 'POST',
+      url: '/api/onboarding/updates-email',
+      payload: { email: 'owner@example.test', consent: true, profile },
+    });
+  assert.equal((await signup(fixed)).statusCode, 200);
+  assert.deepEqual(sent[1], fixed);
+  for (const invalid of [
+    { ...fixed, roleText: 'Private synthetic role' },
+    { ...fixed, onboarding_roles: ['engineering', 'engineering'] },
+    { ...fixed, onboarding_who_for: 'clients' },
+    { ...fixed, onboarding_company_size: 'not_asked' },
+    { ...fixed, onboarding_scope: 'private answer' },
+  ])
+    assert.notEqual((await signup(invalid)).statusCode, 200);
+  assert.equal(sent.length, 2);
 });

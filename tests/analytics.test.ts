@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { build } from 'esbuild';
 import { sourceAnalyticsVersion } from '../scripts/source-version.ts';
 import { runProcess } from '../src/providers/process.ts';
+import { createN8nOnboardingEmail } from '../src/providers/n8n/onboarding-email.ts';
 import {
   analyticsModel,
   createAnalytics,
@@ -47,6 +48,8 @@ test('source analytics version uses explicit values or a clean checkout revision
   assert.equal(await sourceAnalyticsVersion(root, false), undefined);
   assert.equal(await sourceAnalyticsVersion(root, true, '1.2.3', '4.5.6'), '1.2.3');
   assert.equal(await sourceAnalyticsVersion(root, true, undefined, '4.5.6'), '4.5.6');
+  assert.equal(await sourceAnalyticsVersion(root, true, '', ''), revision);
+  assert.equal(await sourceAnalyticsVersion(root, true, '   ', '4.5.6'), '4.5.6');
   const copied = join(root, 'copied-nod');
   await mkdir(copied);
   await writeFile(join(copied, 'sample.txt'), 'copied');
@@ -56,6 +59,75 @@ test('source analytics version uses explicit values or a clean checkout revision
   await writeFile(file, 'modified');
   assert.equal(await sourceAnalyticsVersion(root, true), undefined);
   assert.equal(await sourceAnalyticsVersion(join(root, 'missing'), true), undefined);
+});
+
+test('onboarding email delivery sends consent and fixed answers without typed answers', async () => {
+  const requests: { url: string; headers: Headers; body: string }[] = [];
+  let accepted = true;
+  const delivery = createN8nOnboardingEmail({
+    url: 'https://internal.example.test/webhook/nod/onboarding-updates',
+    request: async (url, init) => {
+      requests.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: String(init?.body),
+      });
+      return Response.json({ ok: accepted }, { status: accepted ? 200 : 503 });
+    },
+  });
+  assert.equal(delivery.configured, true);
+  const signal = new AbortController().signal;
+  const saved = await delivery.submit(
+    {
+      email: 'owner@example.test',
+      profile: Object.assign(
+        onboardingPersonProperties({
+          scope: 'work',
+          roles: ['agency', 'engineering'],
+          roleText: 'Private synthetic role',
+          whoFor: 'clients',
+          companySize: '2_10',
+          jobs: ['email', 'meetings'],
+          jobsText: 'Private synthetic task',
+        }),
+        { roleText: 'Private synthetic role', jobsText: 'Private synthetic task' },
+      ),
+    },
+    signal,
+  );
+  assert.equal(saved, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.url, 'https://internal.example.test/webhook/nod/onboarding-updates');
+  assert.equal(requests[0]?.headers.get('content-type'), 'application/json');
+  assert.deepEqual(JSON.parse(requests[0]!.body), {
+    version: 1,
+    email: 'owner@example.test',
+    consent: true,
+    consent_version: updatesEmailConsent.version,
+    consent_text: updatesEmailConsent.text,
+    consent_privacy_url: updatesEmailConsent.privacyUrl,
+    profile: {
+      onboarding_profile_completed: true,
+      onboarding_scope: 'work',
+      onboarding_roles: ['agency', 'engineering', 'other'],
+      onboarding_who_for: 'clients',
+      onboarding_company_size: '2_10',
+      onboarding_jobs: ['email', 'meetings', 'other'],
+    },
+  });
+  assert.equal(requests[0]!.body.includes('Private synthetic'), false);
+  accepted = false;
+  assert.equal(await delivery.submit({ email: 'owner@example.test' }, signal), false);
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await delivery.submit({ email: 'owner@example.test' }, aborted.signal), false);
+  assert.equal(requests.length, 2);
+  assert.equal(createN8nOnboardingEmail({}).configured, false);
+  assert.throws(() =>
+    createN8nOnboardingEmail({
+      url: 'http://internal.example.test/webhook/nod/onboarding-updates',
+    }),
+  );
 });
 
 test('usage sharing captures bounded events without recording screens or reviving old consent', async () => {
@@ -433,6 +505,36 @@ test('onboarding answers and updates email update one profile only while usage s
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
     assert.equal(await analytics.setUpdatesEmail(owner, 'owner@example.test'), false);
     assert.equal(profiles.length, 5);
+
+    waitForOptOut = false;
+    analytics.setUsageData(owner, true);
+    const consent = analytics.consent(owner);
+    const fixed = onboardingPersonProperties(full);
+    assert.equal(await analytics.setOnboardingProfileProperties(owner, fixed, consent), true);
+    assert.deepEqual(profiles[5]?.properties, fixed);
+    assert.equal(
+      await analytics.setUpdatesEmail(
+        owner,
+        'owner@example.test',
+        '2026-11-10T10:00:00.000Z',
+        consent,
+      ),
+      true,
+    );
+    assert.equal(profiles.length, 7);
+    analytics.setUsageData(owner, false);
+    analytics.setUsageData(owner, true);
+    assert.equal(await analytics.setOnboardingProfileProperties(owner, fixed, consent), false);
+    assert.equal(
+      await analytics.setUpdatesEmail(
+        owner,
+        'owner@example.test',
+        '2026-11-10T10:01:00.000Z',
+        consent,
+      ),
+      false,
+    );
+    assert.equal(profiles.length, 7);
   } finally {
     await analytics.shutdown();
   }

@@ -10,6 +10,7 @@ import {
   profileWhoFor,
   type OnboardingProfile,
 } from '../shared/onboarding.ts';
+import type { OnboardingEmailProfile } from '../ports/onboarding-email.ts';
 import type { MemoryService } from './memory.ts';
 import { archive, locate, unsafe } from './memory-tree.ts';
 
@@ -48,8 +49,65 @@ const profileInput = z
         message: 'Answer is not applicable.',
       });
   });
+function fixedChoices(ids: readonly string[]) {
+  return z
+    .array(z.string())
+    .min(1)
+    .max(ids.length)
+    .superRefine((values, context) => {
+      if (
+        new Set(values).size !== values.length ||
+        values.some((value) => !ids.includes(value)) ||
+        (values.length > 1 && values.includes('skipped'))
+      )
+        context.addIssue({ code: 'custom', message: 'Choose each option once.' });
+    });
+}
+
+const fixedProfileInput = z
+  .object({
+    onboarding_profile_completed: z.literal(true),
+    onboarding_scope: choice([...profileScopes, { id: 'skipped' }]),
+    onboarding_roles: fixedChoices([...profileRoles.map(({ id }) => id), 'other', 'skipped']),
+    onboarding_who_for: choice([...profileWhoFor, { id: 'skipped' }, { id: 'not_asked' }]),
+    onboarding_company_size: choice([
+      ...profileCompanySizes,
+      { id: 'skipped' },
+      { id: 'not_asked' },
+    ]),
+    onboarding_jobs: fixedChoices([...profileJobs.map(({ id }) => id), 'other', 'skipped']),
+  })
+  .strict()
+  .superRefine((profile, context) => {
+    const business = profileBusinessRoles.some((role) => profile.onboarding_roles.includes(role));
+    if ((profile.onboarding_who_for === 'not_asked') === business)
+      context.addIssue({
+        code: 'custom',
+        path: ['onboarding_who_for'],
+        message: 'Invalid answer.',
+      });
+    if (
+      (profile.onboarding_company_size === 'not_asked') !==
+      (profile.onboarding_scope === 'personal')
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['onboarding_company_size'],
+        message: 'Invalid answer.',
+      });
+    if (
+      profile.onboarding_scope !== 'personal' &&
+      profile.onboarding_roles.some((role) => role === 'student' || role === 'not_working')
+    )
+      context.addIssue({ code: 'custom', path: ['onboarding_roles'], message: 'Invalid answer.' });
+  });
+
 const updatesEmailInput = z
-  .object({ email: z.email().trim().max(254), consent: z.literal(true) })
+  .object({
+    email: z.email().trim().max(254),
+    consent: z.literal(true),
+    profile: fixedProfileInput.optional(),
+  })
   .strict();
 
 function label(list: readonly { id: string; label: string }[], id?: string) {
@@ -82,8 +140,15 @@ export function profileNote(profile: OnboardingProfile) {
 
 export function createOnboardingProfile(options: {
   memory: Pick<MemoryService, 'edit' | 'enabled' | 'restate'>;
-  profileAnalytics?: { enabled(): boolean; submit(profile: OnboardingProfile): Promise<boolean> };
-  updatesEmail?: { enabled(): boolean; submit(email: string): Promise<boolean> };
+  profileAnalytics?: {
+    enabled(): boolean;
+    version(): number;
+    submit(profile: OnboardingProfile): Promise<boolean>;
+  };
+  updatesEmail?: {
+    enabled(): boolean;
+    submit(email: string, profile?: OnboardingEmailProfile): Promise<boolean>;
+  };
 }) {
   function registerRoutes(app: FastifyInstance) {
     app.post('/api/onboarding/profile', async (request, response) => {
@@ -98,18 +163,22 @@ export function createOnboardingProfile(options: {
             if (previous) archive(tree, previous, 'superseded', new Date().toISOString());
           });
       }
+      let shared = false;
       if (options.profileAnalytics?.enabled()) {
+        const version = options.profileAnalytics.version();
         const saved = await options.profileAnalytics.submit(profile).catch(() => false);
-        if (!saved && options.profileAnalytics.enabled())
+        const enabled = options.profileAnalytics.enabled();
+        if (!saved && enabled)
           return response.code(502).send({
             error:
               'Nod couldn’t add your choices to analytics. Try again, or continue without sharing them.',
           });
+        shared = saved && enabled && version === options.profileAnalytics.version();
       }
-      return { ok: true };
+      return { ok: true, shared };
     });
     app.post('/api/onboarding/updates-email', async (request, response) => {
-      const { email } = updatesEmailInput.parse(request.body);
+      const { email, profile } = updatesEmailInput.parse(request.body);
       response.header('cache-control', 'no-store');
       if (!options.updatesEmail)
         return response
@@ -119,16 +188,17 @@ export function createOnboardingProfile(options: {
         return response
           .code(403)
           .send({ error: 'Turn on Share usage data before signing up for updates.' });
-      const saved = await options.updatesEmail.submit(email).catch(() => false);
+      const saved = await options.updatesEmail.submit(email, profile).catch(() => false);
       if (!options.updatesEmail.enabled())
         return response.code(409).send({
           error:
             'Sharing was turned off while submitting. Your email may already have been saved. Use Send feedback to request deletion.',
         });
       if (!saved)
-        return response
-          .code(502)
-          .send({ error: 'Nod couldn’t sign you up for updates. Try again later.' });
+        return response.code(502).send({
+          error:
+            'Nod couldn’t finish signing you up. Your email may already be saved. Try again, or use Send feedback to request deletion.',
+        });
       return { ok: true };
     });
   }
