@@ -179,7 +179,7 @@ When retiring insights, preserve a recoverable definition snapshot outside the r
 
 ## Check a change
 
-1. Run focused regression tests, then `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`.
+1. Run focused regression tests. For capture or consent changes shared across surfaces, also run `pnpm run check`, `pnpm run test:integration`, and `pnpm run build`; scope other checks to the affected behavior as described in [Checks and tests](/contribute/checks-and-tests/).
 2. Run `pnpm exec tsx scripts/analytics-fixture.ts`. It selects an available port and prints its URL. Use synthetic data, exercise the changed UI, and inspect `/__fixture__/summary`.
 3. Confirm the expected event/properties and that both `privateDataLeaked` and `generatedContentLeaked` stay `false`. `captureErrors`, `recordingEvents`, `recordingRequests`, and `remoteConfigurationRequests` must all be zero, with at least one captured event. Set `NOD_ANALYTICS_FIXTURE_OUTPUT` to save captured batches outside the repository.
 4. To check surveys, prepare with `/__fixture__/prepare?sharing=on&surveys=on` and reload. Submit a score and reason, close another survey with an unsent draft, then turn sharing off and on. Inspect `surveyFlagRequests` for bodies containing only the token and analytics ID, and inspect `surveyDefinitionRequests`; neither request type should run before eligibility or while sharing is off. Completed or dismissed surveys should stay hidden for the same installation.
