@@ -177,7 +177,7 @@ The main Stop control ends active work, cancels queued messages and open questio
 
 You can also tell Nod in the main chat, from any app, for example "stop everything" or "stop the flight search". Nod stops every task, scheduled run and app check, or only the task you name, and tells you what it stopped. Nod reads your message after its current step, or after its current reply if you write from another app. For an immediate stop, use the Stop control, or `/stop` in Telegram.
 
-When a run you started stops on an error or on your spending limit, Nod tells you what failed, in the main chat or as a reply to the affected task, with the error's own details, such as low credits or a rejected key with your model provider. Its next turn knows what went wrong. If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
+When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. If an agent model request fails with a recognizable quota or rate limit, Nod gives you a short explanation instead of the provider's raw response. For a temporary limit, Nod includes an approximate wait time when it can read a provider retry delay of up to two minutes. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Other errors still include safe details, such as a rejected model key. Nod's next turn knows what went wrong. If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If Nod may have sent or changed something, verify the result yourself or ask Nod to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
@@ -238,6 +238,8 @@ Select **Review** to inspect the **Chat**, **Activity** and **Connections** tabs
 Preparing a report sends recent app activity and errors to your Nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
 
 In the desktop app, a new draft includes a screenshot of the Nod window when capture is available. Reopening a draft keeps its original screenshot. Nod skips private screens, embedded browsers, open dialogs, and unsent text or files. You can annotate or remove the screenshot. It is separate from the diagnostic report. Your feedback text and attachments are sent as provided.
+
+If delivery cannot be confirmed, Nod keeps the draft and checks its status for several minutes while the dialog is open. You can also select **Check submission status** or reopen the dialog later. **Send feedback** stays unavailable for that draft until Nod confirms the result, so an uncertain submission is not sent again. If only some attachments arrived, you can retry the missing files on the same feedback issue or finish without them. Discarding a draft removes its local text and files but cannot cancel feedback already received; sending the same feedback again could create a duplicate.
 
 ## Related resources
 

@@ -1,7 +1,7 @@
-const labels = {
-  'darwin-arm64': 'Download for Mac',
-  'darwin-x64': 'Download for Mac',
-  'win32-x64': 'Download for Windows',
+const installers = {
+  'darwin-arm64': { path: 'mac', label: 'Download for Mac' },
+  'darwin-x64': { path: 'mac-intel', label: 'Download for Mac' },
+  'win32-x64': { path: 'windows', label: 'Download for Windows' },
 };
 
 async function detectPlatform(nav) {
@@ -23,14 +23,13 @@ async function detectPlatform(nav) {
 }
 
 export function startDownload() {
-  const button = document.getElementById('download');
-  const label = document.getElementById('download-label');
-  const others = [...document.querySelectorAll('#platforms [data-platform]')];
+  const links = document.querySelectorAll('[data-download]');
   detectPlatform(navigator).then((platform) => {
-    if (!platform) return;
-    const same = others.find((link) => link.dataset.platform === platform);
-    button.href = same.href;
-    label.textContent = labels[platform];
-    for (const link of others) link.hidden = link === same;
+    const installer = installers[platform];
+    if (!installer) return;
+    for (const link of links) {
+      link.href = link.href.replace(/[^/]+$/, installer.path);
+      if (link.dataset.download === 'label') link.textContent = installer.label;
+    }
   });
 }

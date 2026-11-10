@@ -4373,6 +4373,150 @@ process.exit(0);
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
+test('feedback reconciles an uncertain submission and fences a discarded status check', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { IDBFactory } from 'fake-indexeddb';
+
+const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+  url: 'http://127.0.0.1:51000/',
+  pretendToBeVisual: true,
+});
+for (const name of ['Node', 'NodeFilter', 'DocumentFragment', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'Event', 'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'MutationObserver', 'File', 'FileReader']) {
+  Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] });
+}
+Object.assign(globalThis, {
+  window: dom.window,
+  document: dom.window.document,
+  indexedDB: new IDBFactory(),
+  IS_REACT_ACT_ENVIRONMENT: true,
+  requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+  getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+});
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+HTMLElement.prototype.scrollIntoView = function () {};
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+
+const ownerId = 'synthetic-feedback-owner';
+const pendingKey = 'nod.feedback.pending.' + ownerId;
+window.localStorage.setItem('nod.feedback.report.' + ownerId, 'false');
+const { saveFeedbackDraft, readFeedbackPending } = await import('./src/web/lib/feedback-draft.ts');
+await saveFeedbackDraft(ownerId, {
+  category: 'bug',
+  feedback: 'Synthetic delivery result was lost.',
+  attachments: [],
+  pendingId: null,
+  reportChoice: false,
+});
+const { setRequestAccount } = await import('./src/web/lib/api.ts');
+setRequestAccount(ownerId);
+let posts = 0;
+let statusChecks = 0;
+let submissionId;
+globalThis.fetch = async (path, options) => {
+  if (path === '/api/feedback/context')
+    return Response.json({ enabled: true, recipient: 'Synthetic feedback service', appVersion: '1.0', appRelease: null, appModified: false, platform: 'darwin', development: false, source: 'local-web' });
+  if (path === '/api/feedback') {
+    posts++;
+    submissionId = JSON.parse(options.body).submissionId;
+    return Response.json({ submissionId, status: 'unknown' });
+  }
+  assert.equal(path, '/api/feedback/' + submissionId);
+  statusChecks++;
+  return Response.json(statusChecks === 1
+    ? { submissionId, status: 'unknown', message: 'Delivery is still being confirmed.' }
+    : { submissionId, status: 'submitted', issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback' });
+};
+
+const nativeSetTimeout = globalThis.setTimeout;
+let reopened = false;
+const pollDelay = (delay) => reopened && posts === 1 && statusChecks < 2 && (delay === 2000 || delay >= 8000) ? 10 : delay;
+globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, pollDelay(delay), ...args);
+
+const { createElement, act, useState } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { FeedbackDialog } = await import('./src/web/components/feedback.tsx');
+let setDialogOpen;
+function Fixture() {
+  const [open, setOpen] = useState(true);
+  setDialogOpen = setOpen;
+  return createElement(FeedbackDialog, { ownerId, open, onOpenChange: setOpen, returnFocus: () => null });
+}
+let root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(Fixture)));
+const submit = () => document.querySelector('.feedback-form button[type="submit"]');
+const settle = async (condition) => {
+  for (let attempt = 0; attempt < 500 && !condition(); attempt++)
+    await act(async () => new Promise((resolve) => nativeSetTimeout(resolve, 10)));
+  assert.ok(condition(), 'Feedback did not reconcile its submission: posts=' + posts + ', checks=' + statusChecks + ', pending=' + readFeedbackPending(pendingKey));
+};
+await settle(() => submit() && !submit().disabled);
+await act(async () => submit().click());
+await settle(() => posts === 1 && readFeedbackPending(pendingKey));
+assert.equal(submit().disabled, true);
+await act(async () => root.unmount());
+assert.equal(statusChecks, 0);
+reopened = true;
+root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(Fixture)));
+await settle(() => statusChecks >= 2 && !readFeedbackPending(pendingKey));
+assert.equal(posts, 1);
+await act(async () => root.unmount());
+
+const discardedId = '00000000-0000-4000-8000-000000000704';
+await saveFeedbackDraft(ownerId, {
+  category: 'bug',
+  feedback: 'Synthetic draft with an uncertain result.',
+  attachments: [],
+  pendingId: discardedId,
+  reportChoice: false,
+});
+window.localStorage.setItem(pendingKey, discardedId);
+const previousFetch = globalThis.fetch;
+let releaseStatus;
+globalThis.fetch = (path, options) => path === '/api/feedback/' + discardedId
+  ? new Promise((resolve) => { releaseStatus = () => resolve(Response.json({ submissionId: discardedId, status: 'unknown' })); })
+  : previousFetch(path, options);
+root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(Fixture)));
+const footerDiscard = () => document.querySelector('.feedback-footer-actions button');
+const statusButton = () => document.querySelector('.feedback-form > .feedback-send-notice[role="alert"] > button.feedback-text-action');
+const confirmDiscard = () => document.querySelector('.feedback-draft-actions button:last-child');
+const closeButton = () => document.querySelector('.feedback-dialog > .dialog-close');
+await settle(() => statusButton());
+await act(async () => statusButton().click());
+await settle(() => releaseStatus);
+await act(async () => closeButton().click());
+assert.equal(document.querySelector('.feedback-dialog'), null);
+const firstStatus = releaseStatus;
+await act(async () => firstStatus());
+assert.equal(readFeedbackPending(pendingKey), discardedId);
+releaseStatus = undefined;
+await act(async () => setDialogOpen(true));
+await settle(() => statusButton() && !statusButton().disabled);
+await act(async () => statusButton().click());
+await settle(() => releaseStatus);
+assert.equal(footerDiscard().disabled, false);
+await act(async () => footerDiscard().click());
+await act(async () => confirmDiscard().click());
+await settle(() => !readFeedbackPending(pendingKey));
+await act(async () => releaseStatus());
+assert.equal(readFeedbackPending(pendingKey), null);
+assert.equal(posts, 1);
+await act(async () => root.unmount());
+dom.window.close();
+console.log(JSON.stringify({ posts, statusChecks, pending: readFeedbackPending(pendingKey) }));
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('local settings and successful UI actions preserve consent and owner boundaries', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 60_000,

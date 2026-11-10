@@ -995,6 +995,42 @@ const interrupted = 'Interrupted.';
 
 function failureText(error: unknown) {
   const text = error instanceof Error ? error.message || error.name : String(error);
+  if (error instanceof ModelRequestError) {
+    const code = /\b429\b/.test(text) ? ' (HTTP 429)' : '';
+    if (/\bsubscription_sharing_workplace_individual_usage_limit_exceeded\b/i.test(text))
+      return `The model provider's workspace usage limit was reached${code}. Ask your workspace admin to review the limit, or wait for it to reset.`;
+    if (
+      /\b(?:GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|subscription_sharing_usage_limit_exceeded)\b/i.test(
+        text,
+      ) ||
+      /["']code["']\s*:\s*["']?1308(?!\d)/i.test(text)
+    )
+      return `The model provider's quota was reached${code}. Wait for it to reset, or check the provider account's usage limits and plan.`;
+    const quota =
+      /\b(?:insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted|reached)|exceeded\s+(?:your\s+)?(?:current\s+)?quota)\b/i.test(
+        text,
+      );
+    if (
+      quota ||
+      /\b(?:429|too many requests|resource_exhausted|rate[ _-]?limit(?:ed|ing|[_ -]?(?:error|exceeded))?)\b/i.test(
+        text,
+      )
+    ) {
+      const retry = text.match(
+        /\b(?:please\s+)?retry\s+in\s+(\d{1,3}(?:\.\d{1,9})?)\s*s(?:econds?)?\b/i,
+      );
+      const seconds = retry ? Math.ceil(Number(retry[1])) : 0;
+      const next =
+        seconds > 0 && seconds <= 120
+          ? `Try again in about ${seconds} second${seconds === 1 ? '' : 's'}.`
+          : quota
+            ? 'Try again later.'
+            : 'Try again shortly.';
+      return quota
+        ? `The model provider's quota was reached${code}. ${next} If it keeps happening, check the provider account's usage limits and billing.`
+        : `The model provider is rate limiting requests${code}. ${next}`;
+    }
+  }
   return redactSecretText(text).trim().slice(0, 2_000) || 'Unknown error.';
 }
 
