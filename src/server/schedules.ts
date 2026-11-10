@@ -784,10 +784,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       await client.query<ScheduleRow>(
         `SELECT ${columns} FROM schedules WHERE owner_id=$1 AND enabled AND kind=$2
            AND cron IS NOT DISTINCT FROM $3 AND run_at IS NOT DISTINCT FROM $4::timestamptz AND time_zone=$5
-           AND delivery_channel=$8 AND ${
+           AND watch IS NOT DISTINCT FROM $9::jsonb AND delivery_channel=$8 AND ${
              route.sourceId
                ? `channel_source_id IN (SELECT source_id FROM channel_inbox WHERE owner_id=$1
-                    AND thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$9 AND owner_id=$1))`
+                    AND thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$10 AND owner_id=$1))`
                : 'channel_source_id IS NULL'
            }
            AND (lower(btrim(title))=lower(btrim($6)) OR prompt=$7) ORDER BY created_at LIMIT 1`,
@@ -800,6 +800,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           input.title,
           input.prompt,
           route.channel,
+          input.watch ? JSON.stringify(input.watch) : null,
           ...(route.sourceId ? [route.sourceId] : []),
         ],
       )
