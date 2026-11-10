@@ -20,7 +20,7 @@ A schedule runs **One time** or is **Recurring**. Nod tells you when it's saved 
 
 Nod uses your time zone, saved from your browser the first time you use Nod. Change it in **Settings → General**. If Nod doesn't know your time zone, it asks.
 
-## Change or cancel a schedule
+## Change, pause or delete a schedule
 
 Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Existing schedules show their timing and next run.
 
@@ -32,7 +32,7 @@ Open **Scheduled**. Select **New schedule** to start a conversation with Nod, wh
 
 Pausing or deleting a schedule here removes any unanswered request to change or cancel it from Nod's chat. A request already sent to Telegram or WhatsApp remains there, but replying to it cannot change the schedule.
 
-You can also tell Nod in chat, for example "stop the morning summary".
+In chat, "stop the morning summary" asks Nod to pause the schedule. If Nod asks for confirmation, it stays active until you approve. Once paused, you can resume it in **Scheduled**; use **Delete schedule** to remove it.
 
 ## What happens when a schedule runs
 

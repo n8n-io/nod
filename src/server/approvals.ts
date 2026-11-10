@@ -645,10 +645,24 @@ export async function createApprovals(
       approval.turn_source,
     );
     signal.throwIfAborted();
-    if (outcome.status === 'completed')
+    if (outcome.status === 'completed') {
+      const legacyPause = approval.action === 'NOD_schedule_cancel';
+      const schedule = legacyPause
+        ? (outcome.result as {
+            kind?: string;
+            enabled?: boolean;
+            runAt?: string | null;
+            lastRun?: { scheduledFor?: string } | null;
+          })
+        : null;
+      const paused =
+        schedule?.enabled === false &&
+        (schedule.kind === 'recurring' ||
+          (schedule.kind === 'once' && schedule.lastRun?.scheduledFor !== schedule.runAt));
       return {
-        prompt: `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(outcome.result))}`,
+        prompt: `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.${paused ? ' The schedule is paused, remains in Scheduled, and can be resumed.' : ''}\n${untrustedBlock(`${legacyPause ? 'NOD_schedule_pause' : approval.action} result`, JSON.stringify(outcome.result))}`,
       };
+    }
     const failure = untrustedBlock(
       `${approval.action} error`,
       outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
@@ -676,7 +690,7 @@ export async function createApprovals(
       }>(
         `SELECT a.id,a.action,a.turn_id,a.confirmation_message_id,u.source
          FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
-         WHERE a.owner_id=$1 AND a.action IN ('NOD_schedule_cancel','NOD_schedule_update')
+         WHERE a.owner_id=$1 AND a.action IN ('NOD_schedule_pause','NOD_schedule_cancel','NOD_schedule_update')
            AND lower(a.args->>'id')=lower($2::text) AND a.status='pending'
          FOR UPDATE OF a`,
         [ownerId, id],
@@ -779,7 +793,7 @@ export async function createApprovals(
 
   async function isRetirableScheduleConfirmation(messageId: string) {
     const result = await pool.query(
-      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action IN ('NOD_schedule_cancel','NOD_schedule_update') LIMIT 1",
+      "SELECT 1 FROM approvals WHERE owner_id=$1 AND confirmation_message_id=$2 AND action IN ('NOD_schedule_pause','NOD_schedule_cancel','NOD_schedule_update') LIMIT 1",
       [ownerId, messageId],
     );
     return Boolean(result.rowCount);

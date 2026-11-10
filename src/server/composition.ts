@@ -1221,6 +1221,7 @@ async function initializeApplication(
         ? { turnId: provenance.turnId, signal: provenance.signal }
         : provenance.turnId;
       const scheduleWrite = [
+        'NOD_schedule_pause',
         'NOD_schedule_cancel',
         'NOD_schedule_create',
         'NOD_schedule_update',
@@ -1289,7 +1290,7 @@ async function initializeApplication(
       if (action === 'NOD_limits_update') limitsInput.parse(args);
       else if (action.startsWith('NOD_')) {
         if (
-          ['NOD_schedule_update', 'NOD_schedule_cancel'].includes(action) &&
+          ['NOD_schedule_update', 'NOD_schedule_pause', 'NOD_schedule_cancel'].includes(action) &&
           expectedRevision === undefined
         )
           throw Object.assign(new Error('This schedule needs a fresh approval.'), {
@@ -1829,7 +1830,7 @@ async function initializeApplication(
             'model_select',
             'schedule_create',
             'schedule_update',
-            'schedule_cancel',
+            'schedule_pause',
           ].includes(action)
         ) {
           if (
@@ -1841,10 +1842,10 @@ async function initializeApplication(
             );
           const input = await personal.validateReview(action, args);
           const schedule =
-            action === 'schedule_cancel' || action === 'schedule_update'
+            action === 'schedule_pause' || action === 'schedule_update'
               ? await personal.getSchedule(String(input.id))
               : undefined;
-          if (action === 'schedule_cancel' && schedule && !schedule.enabled) return schedule;
+          if (action === 'schedule_pause' && schedule && !schedule.enabled) return schedule;
           const current = schedule
             ? {
                 title: schedule.title,
