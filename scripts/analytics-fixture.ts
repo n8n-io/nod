@@ -157,10 +157,10 @@ const vite = await createViteServer({
       name: 'synthetic-analytics-destination',
       enforce: 'pre',
       transform(code, id) {
-        if (!id.endsWith('/src/shared/analytics.ts')) return;
-        return code
-          .replace(/phc_[A-Za-z0-9]+/, 'phc_synthetic_fixture')
-          .replace('https://eu.i.posthog.com', origin);
+        if (id.endsWith('/src/shared/analytics.ts'))
+          return code.replace(/phc_[A-Za-z0-9]+/, 'phc_synthetic_fixture');
+        if (id.endsWith('/src/shared/posthog-host.json'))
+          return code.replace('https://eu.i.posthog.com', origin);
       },
     },
   ],

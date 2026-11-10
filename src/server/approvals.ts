@@ -514,6 +514,7 @@ export async function createApprovals(
   async function acceptChat(
     client: PoolClient,
     input: ChatConfirmationInput,
+    onInserted?: () => void,
   ): Promise<ChatConfirmationResult> {
     const approval = await confirmationFor(client, input, true);
     if (!approval || !input.answer || approval.status !== 'pending') return undefined;
@@ -575,6 +576,7 @@ export async function createApprovals(
     afterCommit(client, () =>
       changed(approved ? 'approved' : 'declined', approval.action, approval.turn_source),
     );
+    onInserted?.();
     return { threadId: input.threadId, turnId, messageId };
   }
 

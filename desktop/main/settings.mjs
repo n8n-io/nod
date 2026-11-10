@@ -6,8 +6,9 @@ import { dirname } from 'node:path';
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 
-export const desktopContentPolicy =
-  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self' https://eu.i.posthog.com; media-src 'self' https: data: blob:; frame-src 'self' blob: data: https://www.openstreetmap.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+export function desktopContentPolicy(posthogHost) {
+  return `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self' ${new URL(posthogHost).origin}; media-src 'self' https: data: blob:; frame-src 'self' blob: data: https://www.openstreetmap.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+}
 
 export function setupResource(value) {
   try {

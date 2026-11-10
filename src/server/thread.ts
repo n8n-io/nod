@@ -123,7 +123,11 @@ export interface SubmitUserMessageResult {
 }
 type ConfirmAction = {
   answer(input: ChatConfirmationInput): Promise<ChatConfirmationInput['answer']>;
-  accept(client: PoolClient, input: ChatConfirmationInput): Promise<ChatConfirmationResult>;
+  accept(
+    client: PoolClient,
+    input: ChatConfirmationInput,
+    onInserted?: () => void,
+  ): Promise<ChatConfirmationResult>;
 };
 
 export interface ThreadDependencies {
@@ -579,6 +583,10 @@ export async function submitUserMessage(
       ? options.answer
       : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
   let inserted = false;
+  const markInserted = () => {
+    inserted = true;
+    options.onInserted?.();
+  };
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -660,11 +668,15 @@ export async function submitUserMessage(
       throw httpError('Select a passage of 4,000 characters or fewer.');
     const confirmed = options.questionAnswer
       ? undefined
-      : await confirmAction?.accept(client, {
-          ...confirmation,
-          threadId: thread.id,
-          answer,
-        });
+      : await confirmAction?.accept(
+          client,
+          {
+            ...confirmation,
+            threadId: thread.id,
+            answer,
+          },
+          markInserted,
+        );
     await assertReplyTarget(client, thread.id, options.replyToMessageId, true);
     if (confirmed && 'turnId' in confirmed) return confirmed;
     await localArtifacts.retainArtifacts(
@@ -725,8 +737,7 @@ export async function submitUserMessage(
       ],
     );
     await sendDrain(client, thread.id);
-    inserted = true;
-    options.onInserted?.();
+    markInserted();
     return { threadId: thread.id, turnId, messageId };
   };
   let result: SubmitUserMessageResult;

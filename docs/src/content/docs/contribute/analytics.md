@@ -146,7 +146,7 @@ These events don't establish uptime, task quality, satisfaction, reasons for lea
 
 The pre-mortem's named-group retention, NPS, and departure-reason questions need audience information and a sufficient response sample. Survey collection alone doesn't answer them. A fresh cohort needs 35 days before its complete W4 window can be read. Model costs exclude independent browser and integration bills, and execution duration isn't time to the first useful answer.
 
-Use `owner_message_accepted` for fresh owner return across channels after its release. It records a newly committed message once and has no analytics run ID. Exclude its pre-release period from message-based cohorts. `chat_message_sent` remains a web and desktop UI event and is not the cross-channel denominator.
+Use `owner_message_accepted` for fresh owner return across channels after its release. It records a newly committed message once, including explicit yes/no confirmation replies, and has no analytics run ID. Exclude its pre-release period from message-based cohorts. `chat_message_sent` remains a web and desktop UI event and is not the cross-channel denominator.
 
 ### Maintain insights
 

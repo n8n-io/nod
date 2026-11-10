@@ -46,6 +46,7 @@ import { createMacEncryption } from '../main/mac-encryption.mjs';
 import { waitFor } from '../runtime/index.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
+import posthogHost from '../../src/shared/posthog-host.json' with { type: 'json' };
 
 test('setup resources cannot read other origins or local files', () => {
   assert.equal(setupResource('nod-setup://app/index.html?firstSetup=true'), 'index.html');
@@ -500,7 +501,8 @@ async function runningDesktop(
     return appSessions.get(partition);
   };
   const context = {
-    readFileSync: () => JSON.stringify(appPages),
+    readFileSync: (path) =>
+      JSON.stringify(path.endsWith('posthog-host.json') ? posthogHost : appPages),
     appOpenPath,
     app: {
       on: (name, listener) => appEvents.on(name, listener),
@@ -2949,7 +2951,7 @@ test('packaged pages add their content policy without replacing server policy or
     response.responseHeaders['content-security-policy'][1]
       .split('; ')
       .find((directive) => directive.startsWith('connect-src')),
-    "connect-src 'self' https://eu.i.posthog.com",
+    `connect-src 'self' ${new URL(posthogHost.host).origin}`,
   );
   for (const url of [
     'https://other.example.test/',

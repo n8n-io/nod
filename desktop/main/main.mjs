@@ -56,6 +56,10 @@ const engineRoot = app.isPackaged
   : resolve(desktopRoot, '..');
 const notificationIcon = join(engineRoot, app.isPackaged ? 'dist/web' : 'public', 'nod-logo.png');
 const appPages = JSON.parse(readFileSync(join(engineRoot, 'src/shared/app-pages.json'), 'utf8'));
+const posthogHost = JSON.parse(
+  readFileSync(join(engineRoot, 'src/shared/posthog-host.json'), 'utf8'),
+).host;
+const appContentPolicy = desktopContentPolicy(posthogHost);
 let pendingAppPath = process.argv.map((value) => appOpenPath(value, appPages)).find(Boolean);
 let appLinksReady = false;
 app.on('open-url', (event, value) => {
@@ -1104,7 +1108,7 @@ function configureAppSession() {
       const name =
         Object.keys(headers).find((key) => key.toLowerCase() === 'content-security-policy') ??
         'Content-Security-Policy';
-      headers[name] = [...(headers[name] ?? []), desktopContentPolicy];
+      headers[name] = [...(headers[name] ?? []), appContentPolicy];
       callback({ responseHeaders: headers });
     });
   appSession.setPermissionCheckHandler((sender, permission, origin, details) => {
